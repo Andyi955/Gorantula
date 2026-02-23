@@ -1,0 +1,126 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"sync"
+
+	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
+
+	"spider-agent/brain"
+	"spider-agent/models"
+	"spider-agent/nervous_system"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all for local dev
+	},
+}
+
+var (
+	clients   = make(map[*websocket.Conn]bool)
+	clientsMu sync.Mutex
+)
+
+func broadcast(msg models.WSMessage) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	for client := range clients {
+		err := client.WriteJSON(msg)
+		if err != nil {
+			log.Printf("error: %v", err)
+			client.Close()
+			delete(clients, client)
+		}
+	}
+}
+
+func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("Upgrade error:", err)
+		return
+	}
+	defer ws.Close()
+
+	clientsMu.Lock()
+	clients[ws] = true
+	clientsMu.Unlock()
+
+	for {
+		var msg map[string]interface{}
+		err := ws.ReadJSON(&msg)
+		if err != nil {
+			log.Printf("error reading json: %v", err)
+			clientsMu.Lock()
+			delete(clients, ws)
+			clientsMu.Unlock()
+			break
+		}
+
+		// Support both legacy {"prompt": "..."} and new {"type": "CRAWL", "payload": "..."}
+		if prompt, ok := msg["prompt"].(string); ok {
+			triggerCrawl(br, prompt)
+		} else if msgType, ok := msg["type"].(string); ok {
+			switch msgType {
+			case "CRAWL":
+				if prompt, ok := msg["payload"].(string); ok {
+					triggerCrawl(br, prompt)
+				}
+			case "CONNECT_DOTS":
+				// payload should be an array of MemoryNodes
+				payloadBytes, _ := json.Marshal(msg["payload"])
+				var nodes []models.MemoryNode
+				if err := json.Unmarshal(payloadBytes, &nodes); err == nil {
+					go func() {
+						connections, err := br.AnalyzeConnections(context.Background(), nodes)
+						if err != nil {
+							broadcast(models.WSMessage{Type: "ERROR", Payload: err.Error()})
+						} else {
+							broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+						}
+					}()
+				}
+			}
+		}
+	}
+}
+
+func triggerCrawl(br *brain.Brain, prompt string) {
+	go func() {
+		_, err := br.ProcessPrompt(context.Background(), prompt)
+		if err != nil {
+			broadcast(models.WSMessage{
+				Type:    "ERROR",
+				Payload: err.Error(),
+			})
+		}
+	}()
+}
+
+func main() {
+	_ = godotenv.Load() // Loads .env if it exists
+
+	abdomen := &models.Abdomen{}
+	ns := nervous_system.NewNervousSystem(broadcast)
+	br, err := brain.NewBrain(ns, abdomen)
+	if err != nil {
+		fmt.Printf("Startup Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		handleConnections(w, r, br)
+	})
+
+	port := "8080"
+	fmt.Printf("Gorantula Backend running on :%s\n", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
