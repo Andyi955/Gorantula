@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import SpiderVisualizer from './components/SpiderVisualizer'
 import DetectiveBoard from './components/DetectiveBoard'
-import { Terminal, Database, Folder, Plus } from 'lucide-react'
+import { Terminal, Database, Folder, Plus, Trash2 } from 'lucide-react'
 
 interface Investigation {
   id: string
@@ -11,14 +11,36 @@ interface Investigation {
 function App() {
   const [activeTab, setActiveTab] = useState<'spider' | 'board'>('spider')
   const [prompt, setPrompt] = useState('')
-  const [socket, setSocket] = useState<WebSocket | null>(null)
+  const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
 
-  useEffect(() => {
+  const reconnectTimeoutRef = useRef<number | null>(null);
+
+  const connect = () => {
+    console.log('[App] Connecting to WebSocket...');
     const s = new WebSocket('ws://localhost:8080/ws')
-    setSocket(s)
+
+    s.onopen = () => {
+      console.log('[App] WebSocket Connected');
+      setSocketConfig({ socket: s, ready: true });
+    };
+
+    s.onclose = () => {
+      console.log('[App] WebSocket Disconnected. Retrying in 2s...');
+      setSocketConfig({ socket: null, ready: false });
+      reconnectTimeoutRef.current = window.setTimeout(connect, 2000);
+    };
+
+    s.onerror = (err) => {
+      console.error('[App] WebSocket Error:', err);
+      s.close();
+    };
+  };
+
+  useEffect(() => {
+    connect();
 
     // Load list from local storage if any
     const saved = localStorage.getItem('gorantula_investigations')
@@ -28,22 +50,64 @@ function App() {
       if (data.length > 0) setCurrentInvestigationId(data[0].id)
     }
 
-    return () => s.close()
+    return () => {
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (socketConfig.socket) socketConfig.socket.close();
+    }
   }, [])
 
-  const runSpider = () => {
-    if (socket && prompt) {
+  const runSpider = (customPrompt?: string, customLabel?: string) => {
+    const textToRun = customPrompt || prompt;
+    const labelToUse = customLabel || textToRun;
+    if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
-      const newInv = { id, topic: prompt }
+      const newInv = { id, topic: labelToUse }
 
       const updated = [newInv, ...investigations]
       setInvestigations(updated)
       setCurrentInvestigationId(id)
       localStorage.setItem('gorantula_investigations', JSON.stringify(updated))
 
-      socket.send(JSON.stringify({ type: 'CRAWL', payload: prompt }))
-      setPrompt('')
+      socketConfig.socket.send(JSON.stringify({ type: 'CRAWL', payload: textToRun }))
+      if (!customPrompt) setPrompt('')
       setActiveTab('spider')
+      return id;
+    } else {
+      alert("System not ready. Please check backend connection.");
+      return null;
+    }
+  }
+
+  const handleDeepDiveNode = (promptStr: string, titleStr: string, sourceNodeId: string) => {
+    const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`);
+    if (newInvId && currentInvestigationId) {
+      // Update original board to link to this new investigation
+      const saved = localStorage.getItem(`inv_data_${currentInvestigationId}`);
+      if (saved) {
+        const { nodes, edges } = JSON.parse(saved);
+        const updatedNodes = nodes.map((n: any) =>
+          n.id === sourceNodeId ? { ...n, data: { ...n.data, linkedInvestigationId: newInvId, isDeepDiveSource: false } } : n
+        );
+        localStorage.setItem(`inv_data_${currentInvestigationId}`, JSON.stringify({ nodes: updatedNodes, edges }));
+      }
+    }
+  }
+
+  const handleNavigateToChild = (id: string) => {
+    setCurrentInvestigationId(id);
+    setActiveTab('board');
+  }
+
+  const deleteInvestigation = (e: React.MouseEvent, idToRemove: string) => {
+    e.stopPropagation()
+    // Instantly delete without blocking browser popup
+    const updated = investigations.filter(inv => inv.id !== idToRemove)
+    setInvestigations(updated)
+    localStorage.setItem('gorantula_investigations', JSON.stringify(updated))
+    localStorage.removeItem(`inv_data_${idToRemove}`)
+
+    if (currentInvestigationId === idToRemove) {
+      setCurrentInvestigationId(updated.length > 0 ? updated[0].id : null)
     }
   }
 
@@ -85,16 +149,24 @@ function App() {
 
           <div className="flex-1 overflow-y-auto">
             {investigations.map((inv) => (
-              <button
-                key={inv.id}
-                onClick={() => setCurrentInvestigationId(inv.id)}
-                className={`w-full text-left p-4 border-b border-cyber-gray/30 flex items-start gap-3 transition-colors ${currentInvestigationId === inv.id ? 'bg-cyber-green/10 border-l-2 border-l-cyber-green' : 'hover:bg-cyber-gray/20 text-gray-400'}`}
-              >
-                <Folder size={16} className={currentInvestigationId === inv.id ? 'text-cyber-green' : 'text-gray-600'} />
-                <span className={`text-xs truncate ${currentInvestigationId === inv.id ? 'text-white font-bold' : ''}`}>
-                  {inv.topic}
-                </span>
-              </button>
+              <div key={inv.id} className="group relative">
+                <button
+                  onClick={() => setCurrentInvestigationId(inv.id)}
+                  className={`w-full text-left p-4 border-b border-cyber-gray/30 flex items-start gap-3 transition-colors ${currentInvestigationId === inv.id ? 'bg-cyber-green/10 border-l-2 border-l-cyber-green' : 'hover:bg-cyber-gray/20 text-gray-400'}`}
+                >
+                  <Folder size={16} className={currentInvestigationId === inv.id ? 'text-cyber-green' : 'text-gray-600'} />
+                  <span className={`text-xs truncate max-w-[150px] ${currentInvestigationId === inv.id ? 'text-white font-bold' : ''}`}>
+                    {inv.topic}
+                  </span>
+                </button>
+                <button
+                  onClick={(e) => deleteInvestigation(e, inv.id)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Delete Investigation"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             ))}
           </div>
         </aside>
@@ -104,7 +176,7 @@ function App() {
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <div className="h-full flex flex-col">
               <div className="flex-1 overflow-hidden">
-                <SpiderVisualizer />
+                <SpiderVisualizer sharedSocket={socketConfig.socket} />
               </div>
 
               {/* Input Footer */}
@@ -119,7 +191,7 @@ function App() {
                     className="flex-1 bg-black border border-cyber-gray px-4 py-3 text-cyber-green focus:border-cyber-green outline-none transition-colors"
                   />
                   <button
-                    onClick={runSpider}
+                    onClick={() => runSpider()}
                     className="bg-cyber-green text-black px-8 py-3 font-bold hover:bg-white transition-colors"
                   >
                     EXECUTE
@@ -130,15 +202,31 @@ function App() {
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'board' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-            <DetectiveBoard investigationId={currentInvestigationId} />
+            <DetectiveBoard
+              investigationId={currentInvestigationId}
+              sharedSocket={socketConfig.socket}
+              onDeepDiveNode={handleDeepDiveNode}
+              onNavigateToChild={handleNavigateToChild}
+            />
           </div>
         </main>
       </div>
 
       {/* Status Bar */}
-      <footer className="px-4 py-1 border-t border-cyber-gray text-[10px] text-gray-600 flex justify-between z-50 bg-cyber-black">
-        <div>SYSTEM STATUS: NOMINAL // WEBSOCKET: {socket?.readyState === 1 ? 'ACTIVE' : 'CONNECTING'}</div>
-        <div>CURENT INVESTIGATION: {investigations.find(i => i.id === currentInvestigationId)?.topic || 'NONE'}</div>
+      <footer className="px-4 py-2 border-t border-cyber-gray text-[10px] text-gray-600 flex items-center justify-between z-50 bg-cyber-black shadow-[0_-5px_20px_rgba(0,0,0,0.5)] overflow-hidden h-8">
+        <div className="flex items-center gap-2 shrink-0 bg-cyber-black z-10 pr-4">
+          <div className={`w-2 h-2 rounded-full ${socketConfig.ready ? 'bg-cyber-green animate-pulse' : 'bg-red-500'}`} />
+          <span>SYSTEM STATUS: {socketConfig.ready ? 'NOMINAL // WEBSOCKET: ACTIVE' : 'OFFLINE'}</span>
+        </div>
+
+        <div className="flex-1 relative overflow-hidden flex items-center h-full ml-4 mask-edges-left">
+          <div className="absolute whitespace-nowrap animate-marquee flex items-center gap-2 text-cyber-cyan">
+            <span className="font-bold opacity-50 shrink-0">CURRENT INVESTIGATION:</span>
+            <span className="font-black tracking-widest uppercase truncate max-w-none">
+              {investigations.find(i => i.id === currentInvestigationId)?.topic || 'NONE'}
+            </span>
+          </div>
+        </div>
       </footer>
     </div>
   )

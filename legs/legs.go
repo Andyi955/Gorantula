@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"spider-agent/models"
 
@@ -44,30 +45,39 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 
 	searchURL := fmt.Sprintf("https://api.search.brave.com/res/v1/web/search?q=%s", url.QueryEscape(query))
-	req, err := http.NewRequest("GET", searchURL, nil)
-	if err != nil {
-		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("search request error: %w", err)}
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", apiKey)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("search api request failed: %w", err)}
+	// Retry loop for Search API
+	var resp *http.Response
+	var err error
+	client := &http.Client{Timeout: 10 * time.Second}
+	for i := 0; i < 3; i++ {
+		req, _ := http.NewRequest("GET", searchURL, nil)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("X-Subscription-Token", apiKey)
+		resp, err = client.Do(req)
+		if err == nil && resp.StatusCode == 200 {
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
+
+	if err != nil || (resp != nil && resp.StatusCode != 200) {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("search api failed after retries (status %d): %v", status, err)}
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("brave search returned status code: %d", resp.StatusCode)}
-	}
 
 	var searchRes SearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
 		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("failed to decode json: %w", err)}
 	}
 
-	// Capture top 2 URLs
 	var topURLs []string
 	for i, result := range searchRes.Web.Results {
 		if i >= 2 {
@@ -77,7 +87,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 
 	if len(topURLs) == 0 {
-		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("no search results found for query: %s", query)}
+		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("no search results found for: %s", query)}
 	}
 
 	if broadcast != nil {
@@ -85,41 +95,67 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 			Type: "LEG_UPDATE",
 			Payload: map[string]interface{}{
 				"legId":  legID,
-				"state":  "Scraping Top URLs",
-				"target": strings.Join(topURLs, ", "),
+				"state":  "Scraping Content",
+				"target": fmt.Sprintf("%d sources", len(topURLs)),
 			},
 		})
 	}
 
-	// Extract paragraph text using goquery
 	var extractedTexts []string
 	for _, targetURL := range topURLs {
-		res, err := http.Get(targetURL)
-		if err != nil {
-			continue // Skip URLs that fail
+		var scrapeResp *http.Response
+		var scrapeErr error
+		for i := 0; i < 2; i++ { // Inner retry for individual sites
+			scrapeResp, scrapeErr = http.Get(targetURL)
+			if scrapeErr == nil && scrapeResp.StatusCode == 200 {
+				break
+			}
+			if scrapeResp != nil {
+				scrapeResp.Body.Close()
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
-		doc, err := goquery.NewDocumentFromReader(res.Body)
-		res.Body.Close()
+
+		if scrapeErr != nil || (scrapeResp != nil && scrapeResp.StatusCode != 200) {
+			continue
+		}
+
+		doc, err := goquery.NewDocumentFromReader(scrapeResp.Body)
+		scrapeResp.Body.Close()
 		if err != nil {
+			continue
+		}
+
+		// 404 / Dead Link Detection
+		title := strings.ToLower(doc.Find("title").Text())
+		bodyText := strings.ToLower(doc.Find("body").Text())
+		if strings.Contains(title, "404") || strings.Contains(title, "not found") ||
+			strings.Contains(title, "access denied") || strings.Contains(bodyText, "404 not found") {
 			continue
 		}
 
 		doc.Find("p").Each(func(i int, s *goquery.Selection) {
 			text := strings.TrimSpace(s.Text())
-			if len(text) > 40 {
+			if len(text) > 80 { // Increased threshold for quality
 				extractedTexts = append(extractedTexts, text)
 			}
 		})
 	}
 
 	fullContext := strings.Join(extractedTexts, "\n")
-	// Cap the size of context so we don't blow up the LLM token limit per leg easily
-	if len(fullContext) > 3000 {
-		fullContext = fullContext[:3000]
+	if len(fullContext) > 4000 {
+		runes := []rune(fullContext)
+		if len(runes) > 4000 {
+			fullContext = string(runes[:4000])
+		}
 	}
 
-	if fullContext == "" {
-		fullContext = "No valid paragraph text extracted."
+	// VALIDATION: If we have no meaningful content, return an error so no card is created
+	if len(extractedTexts) < 2 || len(fullContext) < 200 {
+		return models.NutrientFlow{
+			LegID: legID,
+			Error: fmt.Errorf("insufficient content extracted (found %d snippets)", len(extractedTexts)),
+		}
 	}
 
 	if broadcast != nil {

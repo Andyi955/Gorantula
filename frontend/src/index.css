@@ -7,6 +7,17 @@
   --color-cyber-cyan: #00f3ff;
   --color-cyber-purple: #bc13fe;
   --font-mono: "Fira Code", "JetBrains Mono", monospace;
+  --animate-marquee: marquee 20s linear infinite;
+
+  @keyframes marquee {
+    0% {
+      transform: translateX(100%);
+    }
+
+    100% {
+      transform: translateX(-100%);
+    }
+  }
 }
 
 :root {
@@ -24,4 +35,9 @@ body {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-cyber-gray) var(--color-cyber-black);
+}
+
+.mask-edges-left {
+  mask-image: linear-gradient(to right, transparent, black 15%);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 15%);
 }
