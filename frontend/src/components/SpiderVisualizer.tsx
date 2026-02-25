@@ -1,42 +1,46 @@
 import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { Canvas } from '@react-three/fiber';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { SpiderScene } from './SpiderScene';
 
-const SpiderVisualizer: React.FC = () => {
+interface SpiderVisualizerProps {
+    sharedSocket: WebSocket | null;
+}
+
+const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => {
     const [legStates, setLegStates] = useState<Record<number, string>>(
         Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle']))
     );
     const [brainState, setBrainState] = useState<string>('Offline');
 
     useEffect(() => {
-        const socket = new WebSocket('ws://localhost:8080/ws');
+        if (!sharedSocket) {
+            setBrainState('Offline');
+            return;
+        }
 
-        socket.onopen = () => {
-            console.log('Connected to Gorantula Backend');
-            setBrainState('Connected');
-        };
-
-        socket.onmessage = (event) => {
+        const handleMessage = (event: MessageEvent) => {
             const msg = JSON.parse(event.data);
             if (msg.type === 'LEG_UPDATE') {
                 const { legId, state } = msg.payload;
                 setLegStates((prev) => ({ ...prev, [legId]: state }));
             } else if (msg.type === 'BRAIN_STATE') {
                 setBrainState(msg.payload);
+                if (['Done', 'Offline', 'Disconnected'].includes(msg.payload)) {
+                    setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
+                }
+            } else if (msg.type === 'SYNTHESIS_COMPLETE') {
+                setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
             }
         };
 
-        socket.onclose = () => {
-            setBrainState('Disconnected');
+        sharedSocket.addEventListener('message', handleMessage);
+        setBrainState('Connected');
+
+        return () => {
+            sharedSocket.removeEventListener('message', handleMessage);
         };
-
-        return () => socket.close();
-    }, []);
-
-    const getLegColor = (state: string) => {
-        if (state === 'Searching Brave') return '#00ff41'; // Green
-        if (state === 'Scraping Top URLs') return '#00f3ff'; // Cyan
-        return '#333'; // Idle
-    };
+    }, [sharedSocket]);
 
     return (
         <div className="flex flex-col items-center justify-center h-full p-8 bg-black text-white font-mono">
@@ -44,47 +48,17 @@ const SpiderVisualizer: React.FC = () => {
                 <span className="text-cyber-green">Brain:</span> {brainState}
             </div>
 
-            <div className="relative w-80 h-80">
-                {/* Spider Body */}
-                <div className="absolute top-1/2 left-1/2 w-16 h-20 -mt-10 -ml-8 bg-cyber-gray border-2 border-cyber-cyan rounded-full z-10 flex items-center justify-center">
-                    <div className="w-2 h-2 bg-cyber-green rounded-full shadow-[0_0_10px_#00ff41] animate-pulse" />
-                </div>
-
-                <svg viewBox="0 0 100 100" className="absolute top-0 left-0 w-full h-full">
-                    {Array.from({ length: 8 }).map((_, i) => {
-                        const angle = (i * 45) * (Math.PI / 180);
-                        const x1 = 50 + Math.cos(angle) * 8;
-                        const y1 = 50 + Math.sin(angle) * 10;
-                        const x2 = 50 + Math.cos(angle) * 45;
-                        const y2 = 50 + Math.sin(angle) * 45;
-
-                        const state = legStates[i] || 'Idle';
-                        const isActive = state !== 'Idle';
-
-                        return (
-                            <motion.line
-                                key={i}
-                                x1={x1}
-                                y1={y1}
-                                x2={x2}
-                                y2={y2}
-                                stroke={getLegColor(state)}
-                                strokeWidth="2"
-                                initial={false}
-                                animate={{
-                                    x2: isActive ? 50 + Math.cos(angle) * (45 + Math.random() * 5) : x2,
-                                    y2: isActive ? 50 + Math.sin(angle) * (45 + Math.random() * 5) : y2,
-                                    strokeWidth: isActive ? 4 : 2,
-                                }}
-                                transition={{
-                                    repeat: isActive ? Infinity : 0,
-                                    duration: 0.1,
-                                    repeatType: "reverse"
-                                }}
-                            />
-                        );
-                    })}
-                </svg>
+            <div className="relative w-[600px] h-[600px] -my-10">
+                <Canvas camera={{ position: [0, 0, 15], fov: 50 }}>
+                    <SpiderScene legStates={legStates} brainState={brainState} />
+                    <EffectComposer>
+                        <Bloom
+                            luminanceThreshold={0.2}
+                            mipmapBlur
+                            intensity={0.5}
+                        />
+                    </EffectComposer>
+                </Canvas>
             </div>
 
             <div className="mt-12 w-full max-w-2xl grid grid-cols-2 gap-4">

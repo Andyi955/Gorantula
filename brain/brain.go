@@ -54,6 +54,12 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 
 // ProcessPrompt runs the entire lifecycle for a given user prompt
 func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error) {
+	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
+		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
+	} else {
+		fmt.Printf("[Brain] Processing new investigation: %s\n", prompt)
+	}
+
 	// --- STEP 1: Break down into 8 queries ---
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
@@ -63,9 +69,15 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	}
 
 	b.Model.ResponseMIMEType = "application/json"
+
+	currentDate := time.Now().Format("Monday, January 2, 2006")
+
 	// Ensure we only retrieve JSON from Gemini
 	b.Model.SystemInstruction = genai.NewUserContent(genai.Text(
-		"You are the central Brain of a web scraper. Break the user's prompt into exactly 8 distinct search queries. Return ONLY a JSON object with a 'queries' array of strings.",
+		fmt.Sprintf("You are the central Brain of a web scraper. Today's current date is %s. Break the user's prompt into exactly 8 distinct search queries that cover varied research angles. "+
+			"Use the current date to contextualize time-sensitive queries if applicable. "+
+			"Example angles: technical specifications, competitive landscape, historical context, future predictions, public sentiment/rumors, financial/market impact, recent news, and expert reviews. "+
+			"Return ONLY a JSON object with a 'queries' array of strings.", currentDate),
 	))
 
 	resp, err := b.Model.GenerateContent(ctx, genai.Text(prompt))
@@ -101,6 +113,10 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 			Payload: "Instructing Legs",
 		})
 	}
+	// Ensure channels are fresh for this run
+	b.NS.NerveChannel = make(chan models.NerveSignal, 8)
+	b.NS.NutrientChannel = make(chan models.NutrientFlow, 8)
+
 	for i, q := range subQ.Queries {
 		b.NS.NerveChannel <- models.NerveSignal{
 			TargetQuery: q,
@@ -119,31 +135,33 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 
 		b.Abdomen.Mutex.Lock()
 		if nutrient.Error == nil && nutrient.Content != "" {
-			memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
-			b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
-
 			// Generate a 2-sentence summary and title for the node
-			title, summary, _ := b.summarizeNode(ctx, nutrient.Content)
-			if title == "" {
-				title = fmt.Sprintf("Discovery %d", i)
-			}
+			title, summary, err := b.summarizeNode(ctx, nutrient.Content)
 
-			node := models.MemoryNode{
-				ID:        fmt.Sprintf("node-%d-%d", time.Now().UnixNano(), i),
-				Title:     title,
-				Summary:   summary,
-				FullText:  nutrient.Content,
-				SourceURL: nutrient.SourceURL,
-			}
+			// Skip node if summary fails or indicates junk content (e.g. security block or empty page)
+			if err != nil || title == "" || strings.Contains(strings.ToLower(summary), "security access") || strings.Contains(strings.ToLower(summary), "failed to extract") {
+				fmt.Printf("[Brain info] Skipping node for Leg %d due to low quality content or extraction failure.\n", nutrient.LegID)
+			} else {
+				memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
+				b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
 
-			if b.NS.Broadcast != nil {
-				b.NS.Broadcast(models.WSMessage{
-					Type: "MEMORY_NODE_GATHERED",
-					Payload: map[string]interface{}{
-						"node":  node,
-						"total": len(b.Abdomen.MemoryContext),
-					},
-				})
+				node := models.MemoryNode{
+					ID:        fmt.Sprintf("node-%d-%d", time.Now().UnixNano(), i),
+					Title:     title,
+					Summary:   summary,
+					FullText:  nutrient.Content,
+					SourceURL: nutrient.SourceURL,
+				}
+
+				if b.NS.Broadcast != nil {
+					b.NS.Broadcast(models.WSMessage{
+						Type: "MEMORY_NODE_GATHERED",
+						Payload: map[string]interface{}{
+							"node":  node,
+							"total": len(b.Abdomen.MemoryContext),
+						},
+					})
+				}
 			}
 		} else if nutrient.Error != nil {
 			fmt.Printf("[Brain Warning] Leg %d returned error: %v\n", nutrient.LegID, nutrient.Error)
@@ -168,7 +186,11 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 
 	// Reset MIME type and system instructions for clear text response
 	b.Model.ResponseMIMEType = "text/plain"
-	b.Model.SystemInstruction = nil
+
+	currentDate = time.Now().Format("Monday, January 2, 2006")
+	b.Model.SystemInstruction = genai.NewUserContent(genai.Text(
+		fmt.Sprintf("You are an expert intelligence analyst compiling a final report. Today's current date is %s. Contextualize all findings chronologically based on this date.", currentDate),
+	))
 
 	synthesisPrompt := fmt.Sprintf(
 		"Based on the following facts gathered by your scraping legs, provide a comprehensive answer to the user's original query.\n\nUser Query: %s\n\nGathered Facts:\n%s",
@@ -224,14 +246,14 @@ func saveVaultMemory(prompt, rawData, summary string) (string, error) {
 	}
 
 	// sanitize
-	topicBytes := []byte(topic)
-	for i, c := range topicBytes {
+	topicRunes := []rune(topic)
+	for i, c := range topicRunes {
 		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
-			topicBytes[i] = '-'
+			topicRunes[i] = '-'
 		}
 	}
 
-	filename := fmt.Sprintf("%s_%s.md", now.Format("15-04-05"), string(topicBytes))
+	filename := fmt.Sprintf("%s_%s.md", now.Format("15-04-05"), string(topicRunes))
 	filepath := dateDir + "/" + filename
 
 	content := fmt.Sprintf("# Crawler Result Vault\n\n## Final Summary\n%s\n\n## Raw Digested Facts\n%s\n", summary, rawData)
@@ -243,8 +265,14 @@ func (b *Brain) summarizeNode(ctx context.Context, content string) (string, stri
 	// Create a temporary model instance to avoid clobbering global instructions during concurrent leg processing
 	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
 	tempModel.ResponseMIMEType = "application/json"
+	currentDate := time.Now().Format("Monday, January 2, 2006")
 	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
-		"You are a summarizer. Provide a short Title (max 5 words) and exactly 2 sentences of Summary for the provided text. Return ONLY JSON with 'title' and 'summary' fields.",
+		fmt.Sprintf("You are a Senior Strategic Intelligence Officer. Today's current date is %s. Provide a professional 'INTEL_DOSSIER' style summary. "+
+			"1. Title: Short, punchy, high-impact (max 5 words). "+
+			"2. Summary: Exactly 2 sentences. Contextualize 'recent' or 'upcoming' based on today's current date. "+
+			"3. REQUIRED TAGGING: Wrap critical entities like this: [PERSON:Elon Musk], [ORG:OpenAI], [LOC:London], [DATE:2026-02-24]. "+
+			"4. IMPORTANT: Return ONLY a valid JSON object with 'title' and 'summary' keys. No text. No markdown. "+
+			"CRITICAL: If the text is a security block or indicates bot detection, return ONLY {}.", currentDate),
 	))
 
 	resp, err := tempModel.GenerateContent(ctx, genai.Text(content))
@@ -257,19 +285,29 @@ func (b *Brain) summarizeNode(ctx context.Context, content string) (string, stri
 	}
 
 	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+
+	// Clean up markdown formatting if the model wrapped the response
+	jsonText = strings.TrimPrefix(jsonText, "```json")
+	jsonText = strings.TrimPrefix(jsonText, "```")
+	jsonText = strings.TrimSuffix(jsonText, "```")
+	jsonText = strings.TrimSpace(jsonText)
+
 	var res struct {
 		Title   string `json:"title"`
 		Summary string `json:"summary"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &res); err != nil {
+		fmt.Printf("[Brain Error] summarizeNode failed to parse JSON: %v\nRaw text: %s\n", err, jsonText)
 		return "", "", err
 	}
 	return res.Title, res.Summary, nil
 }
 
 func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNode) ([]models.BoardConnection, error) {
+	fmt.Printf("[Brain] Analyzing connections for %d nodes...\n", len(nodes))
 	combinedText := ""
 	for _, node := range nodes {
+		fmt.Printf(" - Node: %s (%s)\n", node.ID, node.Title)
 		combinedText += fmt.Sprintf("ID: %s\nTitle: %s\nSummary: %s\n---\n", node.ID, node.Title, node.Summary)
 	}
 
@@ -281,14 +319,19 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 	config.Temperature = genai.Ptr(float32(0.2))
 	tempModel.GenerationConfig = config
 
+	currentDate := time.Now().Format("Monday, January 2, 2006")
 	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
-		"Analyze these pieces of research evidence. Find hidden logical connections between them. " +
-			"Return ONLY a JSON array of objects with: 'source' (ID), 'target' (ID), 'tag' (a 1-2 word uppercase relationship label, e.g., 'OPPOSES', 'SUPPORTS', 'CAUSAL'), " +
-			"and 'reasoning' (a detailed 1-sentence explanation). Only connect the 5 strongest relationships.",
+		fmt.Sprintf("You are a Senior Counter-Intelligence Analyst. Today's current date is %s. Conduct a rigorous cross-examination of these intelligence nodes. "+
+			"1. Map the logical infrastructure of the case. Seek contradictions (OPPOSES) and strategic dependencies (EXPANDS/DEPENDS) chronologically if needed. "+
+			"2. Only connect evidence with high clinical confidence. "+
+			"3. Tags MUST be one of: SUPPORTS, OPPOSES, EXPANDS, DEPENDS, RELATED. "+
+			"4. IMPORTANT: YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
+			"Connect the 6 strongest relationships.", currentDate),
 	))
 
 	resp, err := tempModel.GenerateContent(ctx, genai.Text(combinedText))
 	if err != nil {
+		fmt.Printf("[Brain Error] Connection analysis failed: %v\n", err)
 		return nil, err
 	}
 
@@ -297,9 +340,18 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 	}
 
 	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+
+	// Clean up markdown formatting if the model wrapped the response
+	jsonText = strings.TrimPrefix(jsonText, "```json")
+	jsonText = strings.TrimPrefix(jsonText, "```")
+	jsonText = strings.TrimSuffix(jsonText, "```")
+	jsonText = strings.TrimSpace(jsonText)
+
 	var connections []models.BoardConnection
 	if err := json.Unmarshal([]byte(jsonText), &connections); err != nil {
+		fmt.Printf("[Brain Error] Failed to parse connections JSON: %v\nRaw text: %s\n", err, jsonText)
 		return nil, err
 	}
+	fmt.Printf("[Brain] Analysis complete. Found %d relationships.\n", len(connections))
 	return connections, nil
 }

@@ -58,7 +58,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 		var msg map[string]interface{}
 		err := ws.ReadJSON(&msg)
 		if err != nil {
-			log.Printf("error reading json: %v", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+				log.Printf("error reading json: %v", err)
+			}
 			clientsMu.Lock()
 			delete(clients, ws)
 			clientsMu.Unlock()
@@ -75,19 +77,26 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					triggerCrawl(br, prompt)
 				}
 			case "CONNECT_DOTS":
-				// payload should be an array of MemoryNodes
+				log.Println("[WS] Received CONNECT_DOTS request")
 				payloadBytes, _ := json.Marshal(msg["payload"])
 				var nodes []models.MemoryNode
-				if err := json.Unmarshal(payloadBytes, &nodes); err == nil {
-					go func() {
-						connections, err := br.AnalyzeConnections(context.Background(), nodes)
-						if err != nil {
-							broadcast(models.WSMessage{Type: "ERROR", Payload: err.Error()})
-						} else {
-							broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
-						}
-					}()
+				if err := json.Unmarshal(payloadBytes, &nodes); err != nil {
+					log.Printf("[WS Error] Failed to unmarshal CONNECT_DOTS payload: %v", err)
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid node data sent for analysis"})
+					continue
 				}
+
+				log.Printf("[WS] Dispatching analysis for %d nodes...", len(nodes))
+				go func() {
+					connections, err := br.AnalyzeConnections(context.Background(), nodes)
+					if err != nil {
+						log.Printf("[WS Error] AnalyzeConnections failed: %v", err)
+						broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + err.Error()})
+					} else {
+						log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
+						broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+					}
+				}()
 			}
 		}
 	}
