@@ -90,7 +90,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onReadFull: () => setSelectedContent(n.data.fullText),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string) => onNavigateToChild(id),
-                    isDeepDiveSource: n.id === n.data.deepDiveSourceId
+                    isDeepDiveSource: !!n.data?.isDeepDiveSource
                 }
             }));
             setNodes(restoredNodes);
@@ -230,17 +230,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 if (state === 'Done' || state === 'Offline' || state === 'Disconnected') {
                     if (isGathering) {
                         setDeepDiveTopic(null);
-                        // After deep dive gathering, wait a beat then connect dots
-                        setTimeout(() => {
-                            // Only trigger connect if we are still on the board and nodes > 1
-                            setNodes(nds => {
-                                if (nds.length > 1) {
-                                    // Triggering from a closure. We'll use a ref or check state.
-                                    // For now, let's just use the function directly.
-                                }
-                                return nds;
-                            });
-                        }, 1000);
                     }
                     setIsGathering(false);
                 } else {
@@ -264,8 +253,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         };
 
         sharedSocket.addEventListener('message', handleMessage);
-        return () => sharedSocket.removeEventListener('message', handleMessage);
-    }, [sharedSocket, handleNewConnections]);
+
+        return () => {
+            sharedSocket.removeEventListener('message', handleMessage);
+        };
+    }, [sharedSocket, handleNewConnections, onDeepDiveNode, onNavigateToChild, isGathering]);
 
 
 

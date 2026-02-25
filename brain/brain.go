@@ -135,9 +135,6 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 
 		b.Abdomen.Mutex.Lock()
 		if nutrient.Error == nil && nutrient.Content != "" {
-			memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
-			b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
-
 			// Generate a 2-sentence summary and title for the node
 			title, summary, err := b.summarizeNode(ctx, nutrient.Content)
 
@@ -145,6 +142,9 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 			if err != nil || title == "" || strings.Contains(strings.ToLower(summary), "security access") || strings.Contains(strings.ToLower(summary), "failed to extract") {
 				fmt.Printf("[Brain info] Skipping node for Leg %d due to low quality content or extraction failure.\n", nutrient.LegID)
 			} else {
+				memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
+				b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
+
 				node := models.MemoryNode{
 					ID:        fmt.Sprintf("node-%d-%d", time.Now().UnixNano(), i),
 					Title:     title,

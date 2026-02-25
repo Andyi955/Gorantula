@@ -17,10 +17,14 @@ function App() {
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
 
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const isUnmounted = useRef(false);
 
   const connect = () => {
     console.log('[App] Connecting to WebSocket...');
     const s = new WebSocket('ws://localhost:8080/ws')
+
+    socketRef.current = s;
 
     s.onopen = () => {
       console.log('[App] WebSocket Connected');
@@ -30,7 +34,10 @@ function App() {
     s.onclose = () => {
       console.log('[App] WebSocket Disconnected. Retrying in 2s...');
       setSocketConfig({ socket: null, ready: false });
-      reconnectTimeoutRef.current = window.setTimeout(connect, 2000);
+      socketRef.current = null;
+      if (!isUnmounted.current) {
+        reconnectTimeoutRef.current = window.setTimeout(connect, 2000);
+      }
     };
 
     s.onerror = (err) => {
@@ -51,8 +58,9 @@ function App() {
     }
 
     return () => {
+      isUnmounted.current = true;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (socketConfig.socket) socketConfig.socket.close();
+      if (socketRef.current) socketRef.current.close();
     }
   }, [])
 

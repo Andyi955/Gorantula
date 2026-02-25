@@ -18,9 +18,19 @@ export interface NodeData {
     onNavigateToChild?: (id: string) => void;
 }
 
+const escapeHTML = (text: string) => {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+};
+
 const parseHighlightedText = (text: string) => {
     if (!text) return 'Awaiting further analysis...';
-    let parsed = text.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold">$1</span>');
+    let safeText = escapeHTML(text);
+    let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold">$1</span>');
     parsed = parsed.replace(/\[PERSON:(.*?)\]/gi, '<span class="text-cyber-purple font-bold bg-cyber-purple/20 px-1 rounded border border-cyber-purple/50">$1</span>');
     parsed = parsed.replace(/\[ORG:(.*?)\]/gi, '<span class="text-cyber-cyan font-bold bg-cyber-cyan/20 px-1 rounded border border-cyber-cyan/50">$1</span>');
     parsed = parsed.replace(/\[LOC:(.*?)\]/gi, '<span class="text-orange-400 font-bold bg-orange-400/20 px-1 rounded border border-orange-400/50">$1</span>');

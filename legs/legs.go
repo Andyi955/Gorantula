@@ -102,11 +102,12 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 
 	var extractedTexts []string
+	scrapeClient := &http.Client{Timeout: 15 * time.Second} // Quality gate: timeout slow sites
 	for _, targetURL := range topURLs {
 		var scrapeResp *http.Response
 		var scrapeErr error
 		for i := 0; i < 2; i++ { // Inner retry for individual sites
-			scrapeResp, scrapeErr = http.Get(targetURL)
+			scrapeResp, scrapeErr = scrapeClient.Get(targetURL)
 			if scrapeErr == nil && scrapeResp.StatusCode == 200 {
 				break
 			}
