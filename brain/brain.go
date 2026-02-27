@@ -22,10 +22,11 @@ type SubQueries struct {
 
 // Brain controls the LLM generation and orchestration of the Nervous System
 type Brain struct {
-	Client  *genai.Client
-	Model   *genai.GenerativeModel
-	NS      *nervous_system.NervousSystem
-	Abdomen *models.Abdomen
+	Client     *genai.Client
+	Model      *genai.GenerativeModel
+	NS         *nervous_system.NervousSystem
+	Abdomen    *models.Abdomen
+	ModelRouter map[string]ModelProvider
 }
 
 // NewBrain initializes the genai client and the Brain struct
@@ -44,12 +45,27 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	// Assuming 'gemini-3.0-flash' model string as per future specs (2026)
 	model := client.GenerativeModel("gemini-3-flash-preview")
 
-	return &Brain{
+	brain := &Brain{
 		Client:  client,
 		Model:   model,
 		NS:      ns,
 		Abdomen: abdomen,
-	}, nil
+	}
+
+	// Initialize model router with available providers
+	router, err := NewModelRouter(brain)
+	if err != nil {
+		fmt.Printf("[Brain] Warning: Failed to initialize model router: %v\n", err)
+	} else {
+		brain.ModelRouter = router
+		fmt.Printf("[Brain] Model router initialized with providers: ")
+		for name := range router {
+			fmt.Printf("%s ", name)
+		}
+		fmt.Println()
+	}
+
+	return brain, nil
 }
 
 // ProcessPrompt runs the entire lifecycle for a given user prompt
@@ -353,5 +369,154 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 		return nil, err
 	}
 	fmt.Printf("[Brain] Analysis complete. Found %d relationships.\n", len(connections))
+	return connections, nil
+}
+
+// AnalyzeWithPersonas runs multi-agent persona analysis on the gathered findings
+func (b *Brain) AnalyzeWithPersonas(ctx context.Context, nodes []models.MemoryNode) ([]PersonaInsight, error) {
+	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(GetDefaultPersonas()))
+
+	// Build findings text from all nodes
+	findingsText := ""
+	for _, node := range nodes {
+		findingsText += fmt.Sprintf("Source: %s\nTitle: %s\nSummary: %s\nFull Text: %s\n\n",
+			node.SourceURL, node.Title, node.Summary, node.FullText)
+	}
+
+	personas := GetDefaultPersonas()
+	insightsChan := make(chan PersonaInsight, len(personas))
+
+	// Run each persona analysis in parallel
+	for _, persona := range personas {
+		go func(p Persona) {
+			insight, err := b.runPersonaAnalysis(ctx, p, findingsText)
+			if err != nil {
+				fmt.Printf("[Brain] Persona %s failed: %v\n", p.Name, err)
+				// Send empty insight on failure
+				insightsChan <- PersonaInsight{PersonaName: p.Name, Confidence: 0}
+				return
+			}
+			insightsChan <- insight
+		}(persona)
+	}
+
+	// Collect insights from all personas
+	insights := make([]PersonaInsight, 0, len(personas))
+	for i := 0; i < len(personas); i++ {
+		insight := <-insightsChan
+		if insight.Confidence > 0 {
+			insights = append(insights, insight)
+			fmt.Printf("[Brain] Persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
+		}
+	}
+
+	fmt.Printf("[Brain] Persona analysis complete. Collected %d insights.\n", len(insights))
+	return insights, nil
+}
+
+// runPersonaAnalysis executes a single persona's analysis
+func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, findings string) (PersonaInsight, error) {
+	prompt := BuildPersonaPrompt(persona, findings)
+
+	// Get the appropriate model provider
+	provider, ok := b.ModelRouter[persona.ModelPref]
+	if !ok {
+		// Fall back to gemini if preferred model not available
+		provider = b.ModelRouter["gemini"]
+		if provider == nil {
+			return PersonaInsight{}, fmt.Errorf("no model provider available")
+		}
+	}
+
+	fmt.Printf("[Brain] Running persona %s with model %s\n", persona.Name, provider.Name())
+
+	var response PersonaJSONResponse
+	err := provider.GenerateJSON(ctx, prompt, &response)
+	if err != nil {
+		return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+	}
+
+	return PersonaInsight{
+		PersonaName:   persona.Name,
+		Perspective:  persona.Perspective,
+		KeyFindings:   response.KeyFindings,
+		Connections:   response.Connections,
+		Questions:     response.Questions,
+		Confidence:    response.Confidence,
+		FullAnalysis: response.FullAnalysis,
+	}, nil
+}
+
+// SynthesizePersonaInsights combines all persona insights into final connections
+func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.MemoryNode, insights []PersonaInsight) ([]models.BoardConnection, error) {
+	fmt.Printf("[Brain] Synthesizing %d persona insights into final connections...\n", len(insights))
+
+	if len(insights) == 0 {
+		// Fall back to standard analysis if no insights
+		return b.AnalyzeConnections(ctx, nodes)
+	}
+
+	// Build insights summary for synthesis
+	insightsSummary := ""
+	for _, insight := range insights {
+		insightsSummary += fmt.Sprintf("\n=== %s (%s) ===\n", insight.PersonaName, insight.Perspective)
+		insightsSummary += fmt.Sprintf("Confidence: %.2f\n", insight.Confidence)
+		insightsSummary += fmt.Sprintf("Key Findings:\n")
+		for _, f := range insight.KeyFindings {
+			insightsSummary += fmt.Sprintf("  - %s\n", f)
+		}
+		insightsSummary += fmt.Sprintf("Connections:\n")
+		for _, c := range insight.Connections {
+			insightsSummary += fmt.Sprintf("  - %s\n", c)
+		}
+		insightsSummary += fmt.Sprintf("Questions:\n")
+		for _, q := range insight.Questions {
+			insightsSummary += fmt.Sprintf("  - %s\n", q)
+		}
+		insightsSummary += fmt.Sprintf("Analysis: %s\n", insight.FullAnalysis)
+	}
+
+	// Now synthesize using the insights
+	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
+	tempModel.ResponseMIMEType = "application/json"
+
+	config := b.Model.GenerationConfig
+	config.Temperature = genai.Ptr(float32(0.2))
+	tempModel.GenerationConfig = config
+
+	currentDate := time.Now().Format("Monday, January 2, 2006")
+	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
+		fmt.Sprintf("You are a Senior Counter-Intelligence Analyst coordinating a team of 6 specialists. Today's current date is %s. "+
+			"Synthesize the insights from all specialists into the 6 strongest relationships between evidence nodes. "+
+			"Each specialist provided: key findings, connections they identified, and follow-up questions. "+
+			"Prioritize connections that multiple specialists agree on. "+
+			"Tags MUST be one of: SUPPORTS, OPPOSES, EXPANDS, DEPENDS, RELATED. "+
+			"YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
+			"The 'reasoning' should mention which specialists supported this connection.", currentDate),
+	))
+
+	resp, err := tempModel.GenerateContent(ctx, genai.Text(insightsSummary))
+	if err != nil {
+		fmt.Printf("[Brain Error] Persona synthesis failed: %v\n", err)
+		return nil, err
+	}
+
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("empty synthesis response")
+	}
+
+	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+	jsonText = strings.TrimPrefix(jsonText, "```json")
+	jsonText = strings.TrimPrefix(jsonText, "```")
+	jsonText = strings.TrimSuffix(jsonText, "```")
+	jsonText = strings.TrimSpace(jsonText)
+
+	var connections []models.BoardConnection
+	if err := json.Unmarshal([]byte(jsonText), &connections); err != nil {
+		fmt.Printf("[Brain Error] Failed to parse synthesis JSON: %v\nRaw text: %s\n", err, jsonText)
+		return nil, err
+	}
+
+	fmt.Printf("[Brain] Synthesis complete. Found %d final relationships.\n", len(connections))
 	return connections, nil
 }
