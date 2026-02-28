@@ -103,10 +103,10 @@ Provide your analysis in JSON format with the following structure:
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
   "fullAnalysis": "Your detailed analysis (2-3 paragraphs)",
-  "nodeIDs": ["list of node IDs that this analysis directly relates to - only include nodes you found meaningful insights for"]
+  "nodeIDs": ["list of node IDs (e.g., 'node-12345') that this analysis directly relates to"]
 }
 
-IMPORTANT: Only include node IDs in nodeIDs if you found significant insights for that specific node. Do NOT list all nodes - only the ones where your analysis added value.
+CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the [NodeID: xxx] markers in the input above. Do NOT use titles, entity names, or make up IDs. Use only IDs like: node-1772294753812066795-0
 Respond ONLY with the JSON.`, persona.SystemPrompt, findings, persona.Expertise, persona.Perspective, persona.Questions)
 }
 

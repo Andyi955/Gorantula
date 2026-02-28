@@ -172,10 +172,13 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                             e.stopPropagation();
                             setShowChat(true);
                         }}
-                        className="flex items-center gap-1 mt-1 shrink-0 text-[10px] px-2 py-1 rounded-full bg-cyber-purple/30 border border-cyber-purple/50 text-cyber-purple hover:bg-cyber-purple/50 transition-colors"
+                        className="relative mt-1 shrink-0 p-1 rounded-full bg-cyber-purple/30 border border-cyber-purple/50 text-cyber-purple hover:bg-cyber-purple/50 transition-colors"
+                        title={`${data.personaInsights.length} persona discussion`}
                     >
                         <MessageCircle className="w-3 h-3" />
-                        <span>{data.personaInsights.length} persona{data.personaInsights.length > 1 ? 's' : ''} discussed</span>
+                        <span className="absolute -top-1 -right-1 text-[8px] bg-cyber-purple text-white rounded-full w-3 h-3 flex items-center justify-center">
+                            {data.personaInsights.length}
+                        </span>
                     </button>
                 )}
 
@@ -183,16 +186,16 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                 {showChat && data.personaInsights && data.personaInsights.length > 0 && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setShowChat(false)}>
                         <div 
-                            className="bg-gray-900 border border-white/20 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl"
+                            className="bg-gray-900 border border-white/20 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div className="flex items-center justify-between p-4 border-b border-white/10">
+                            <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                                 <h3 className="text-lg font-bold text-white">Persona Discussion</h3>
                                 <button onClick={() => setShowChat(false)} className="text-gray-400 hover:text-white">
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>
-                            <div className="p-4 overflow-y-auto max-h-[calc(80vh-60px)] space-y-4">
+                            <div className="p-4 overflow-y-auto flex-1 custom-scrollbar" style={{ maxHeight: 'calc(85vh - 70px)' }}>
                                 {data.personaInsights.map((insight, idx) => (
                                     <div 
                                         key={idx}

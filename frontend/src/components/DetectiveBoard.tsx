@@ -362,13 +362,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     fullAnalysis: string;
                     nodeIDs: string[];
                 }>;
+                console.log('[PERSONA_INSIGHTS] Received insights:', insights);
                 if (insights && Array.isArray(insights)) {
                     setNodes((nds) => {
+                        console.log('[PERSONA_INSIGHTS] Current nodes:', nds.map(n => ({ id: n.id, title: n.data.title })));
                         return nds.map(node => {
                             // Find personas that contributed to this specific node
                             const nodeInsights = insights.filter(insight => 
                                 insight.nodeIDs && insight.nodeIDs.includes(node.id)
                             );
+                            console.log(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
                             return {
                                 ...node,
                                 data: {

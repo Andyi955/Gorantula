@@ -34,7 +34,26 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-cyber-gray) var(--color-cyber-black);
+  scrollbar-color: #444 var(--color-cyber-black);
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-cyber-black);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #666;
 }
 
 .mask-edges-left {

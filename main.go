@@ -104,6 +104,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						return
 					}
 
+					// Debug: Log insights before broadcasting
+					for _, insight := range insights {
+						log.Printf("[WS] Persona %s: nodeIDs=%v", insight.PersonaName, insight.NodeIDs)
+					}
 					// Broadcast insights to frontend
 					broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
 
