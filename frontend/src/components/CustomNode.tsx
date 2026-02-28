@@ -1,9 +1,9 @@
-import { memo } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
-import { ExternalLink, BookOpen, Search, ArrowRight } from 'lucide-react';
+import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
 
 export interface NodeData {
     id?: string;
@@ -13,9 +13,12 @@ export interface NodeData {
     sourceURL?: string;
     isDeepDiveSource?: boolean;
     linkedInvestigationId?: string;
+    personaInsights?: string[]; // Insights from persona analysis
     onReadFull: () => void;
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
     onNavigateToChild?: (id: string) => void;
+    onExpand?: (nodeId: string, expanded: boolean) => void;
+    expanded?: boolean;
 }
 
 const escapeHTML = (text: string) => {
@@ -39,9 +42,62 @@ const parseHighlightedText = (text: string) => {
     return parsed;
 };
 
+// Calculate appropriate card size based on content
+const calculateCardSize = (summary: string, fullText: string, isExpanded: boolean) => {
+    const content = isExpanded ? (fullText || summary) : summary;
+    const charCount = content.length;
+
+    // Base dimensions
+    let width = 320;
+    let height = 180;
+
+    // Calculate based on content length
+    // Roughly 40 chars per line, ~20 lines max before expansion
+    const lines = Math.ceil(charCount / 40);
+    const estimatedLines = Math.min(lines, isExpanded ? 30 : 8);
+
+    // Height grows with content, but capped
+    height = Math.max(180, 100 + estimatedLines * 18);
+
+    // Width grows for longer content (horizontal extension)
+    if (charCount > 300) {
+        width = Math.min(500, 320 + Math.min(charCount - 300, 180));
+    }
+
+    return { width, height };
+};
+
 const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
+    const [isExpanded, setIsExpanded] = useState(data.expanded || false);
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    // Calculate size based on content
+    const { width, height } = calculateCardSize(
+        data.summary || '',
+        data.fullText || '',
+        isExpanded
+    );
+
+    const handleExpand = () => {
+        const newExpanded = !isExpanded;
+        setIsExpanded(newExpanded);
+        // Call the expand callback if provided
+        if (data.onExpand && data.id) {
+            data.onExpand(data.id, newExpanded);
+        }
+    };
+
+    // Show expanded content when isExpanded is true
+    const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
+    const hasFullText = !!data.fullText && data.fullText !== data.summary;
+
     return (
-        <div className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] min-h-[160px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]'} rounded-none p-4 transition-shadow duration-500 group backdrop-blur-sm relative overflow-visible`}>
+        <div
+            className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]'} rounded-none p-4 transition-all duration-300 group backdrop-blur-sm relative overflow-visible`}
+            style={{
+                minHeight: height,
+            }}
+        >
             <NodeResizer
                 minWidth={288}
                 minHeight={160}
@@ -66,23 +122,50 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
             <div className="absolute -top-1 -left-1 w-2 h-2 border-t-2 border-l-2 border-cyber-cyan" />
             <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b-2 border-r-2 border-cyber-purple" />
 
-            <div className="flex flex-col flex-1 gap-3 min-h-0">
-                {/* Header */}
-                <div className="flex items-center justify-between border-b border-cyber-cyan/30 pb-2 mb-1 shrink-0">
+            <div className="flex flex-col flex-1 gap-2 min-h-0">
+                {/* Header with Expand Button */}
+                <div className="flex items-center justify-between border-b border-cyber-cyan/30 pb-2 shrink-0">
                     <div className="text-cyber-cyan font-black text-[10px] uppercase tracking-[0.2em] truncate flex-1 leading-none">
                         {data.title || 'ARCHIVED_INTEL'}
                     </div>
+                    {hasFullText && (
+                        <button
+                            onClick={handleExpand}
+                            className="ml-2 flex items-center gap-1 text-[8px] font-bold text-cyber-cyan hover:text-white transition-colors"
+                            title={isExpanded ? 'Collapse' : 'Expand'}
+                        >
+                            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                    )}
                 </div>
 
                 {/* Summary with Auto Flex */}
-                <div className="relative group/text flex-1 min-h-0 flex flex-col pr-1">
+                <div
+                    ref={contentRef}
+                    className={`relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300 ${isExpanded ? 'overflow-y-auto' : ''}`}
+                    style={{ maxHeight: isExpanded ? '400px' : '200px' }}
+                >
                     <div
-                        className="text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2"
+                        className="text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar"
                         dangerouslySetInnerHTML={{
-                            __html: parseHighlightedText(data.summary || '')
+                            __html: parseHighlightedText(displayContent || '')
                         }}
                     />
                 </div>
+
+                {/* Persona Insights Badge */}
+                {data.personaInsights && data.personaInsights.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1 shrink-0">
+                        {data.personaInsights.map((insight, idx) => (
+                            <span
+                                key={idx}
+                                className="text-[7px] px-1.5 py-0.5 bg-cyber-purple/20 border border-cyber-purple/50 text-cyber-purple rounded"
+                            >
+                                {insight}
+                            </span>
+                        ))}
+                    </div>
+                )}
 
                 {/* Actions Footer */}
                 <div className="flex items-center justify-between mt-auto pt-3 border-t border-white/5 shrink-0">

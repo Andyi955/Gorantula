@@ -22,17 +22,59 @@ import CustomNode from './CustomNode';
 import { Zap, Info, Trash2 } from 'lucide-react';
 import dagre from 'dagre';
 
-const nodeWidth = 260;
-const nodeHeight = 200;
+// Calculate dynamic node dimensions based on content
+const getNodeDimensions = (node: Node): { width: number; height: number } => {
+    // Use style dimensions if available, otherwise use defaults
+    const style = node.style || {};
+    const width = (style.width as number) || 320;
+    const height = (style.height as number) || 180;
+    return { width, height };
+};
 
-const dagreGraph = new dagre.graphlib.Graph();
-dagreGraph.setDefaultEdgeLabel(() => ({}));
-
+// Enhanced layout function with smart rectangle formation
 const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
-    dagreGraph.setGraph({ rankdir: 'LR', nodesep: 100, ranksep: 200 });
+    const dagreGraph = new dagre.graphlib.Graph();
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
 
+    // Determine layout direction based on node count and graph structure
+    const nodeCount = nodes.length;
+    const edgeCount = edges.length;
+
+    // For fewer nodes with many connections, use TB (top-bottom) for vertical rectangles
+    // For more nodes, use LR (left-right) for horizontal flow
+    const isDenseGraph = edgeCount > nodeCount * 1.5;
+    const rankdir = nodeCount <= 6 || isDenseGraph ? 'TB' : 'LR';
+
+    // Calculate spacing based on average node size
+    let totalWidth = 0;
+    let totalHeight = 0;
+    nodes.forEach(node => {
+        const dim = getNodeDimensions(node);
+        totalWidth += dim.width;
+        totalHeight += dim.height;
+    });
+    const avgWidth = nodeCount > 0 ? totalWidth / nodeCount : 320;
+    const avgHeight = nodeCount > 0 ? totalHeight / nodeCount : 180;
+
+    // Adaptive spacing
+    const nodesep = Math.max(80, avgWidth * 0.3);
+    const ranksep = rankdir === 'LR'
+        ? Math.max(180, avgWidth * 0.8)
+        : Math.max(150, avgHeight * 0.6);
+
+    dagreGraph.setGraph({
+        rankdir,
+        nodesep,
+        ranksep,
+        align: 'DL', // Align to bottom-left for consistent positioning
+        marginx: 20,
+        marginy: 20,
+    });
+
+    // Register nodes with their actual dimensions
     nodes.forEach((node) => {
-        dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
+        const dim = getNodeDimensions(node);
+        dagreGraph.setNode(node.id, { width: dim.width, height: dim.height });
     });
 
     edges.forEach((edge) => {
@@ -41,14 +83,49 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
 
     dagre.layout(dagreGraph);
 
+    // Calculate row heights for consistent alignment
+    const ranks = new Map<number, number>();
     nodes.forEach((node) => {
         const nodeWithPosition = dagreGraph.node(node.id);
-        node.position = {
-            x: nodeWithPosition.x - nodeWidth / 2,
-            y: nodeWithPosition.y - nodeHeight / 2,
+        if (nodeWithPosition) {
+            const rank = Math.floor(nodeWithPosition.y / ranksep);
+            const dim = getNodeDimensions(node);
+            const currentRankHeight = ranks.get(rank) || 0;
+            ranks.set(rank, Math.max(currentRankHeight, dim.height));
+        }
+    });
+
+    // Apply positions with consistent row heights
+    nodes.forEach((node) => {
+        const nodeWithPosition = dagreGraph.node(node.id);
+        const dim = getNodeDimensions(node);
+
+        if (nodeWithPosition) {
+            // Get row height for vertical alignment within the row
+            const rank = Math.floor(nodeWithPosition.y / ranksep);
+            const rowHeight = ranks.get(rank) || dim.height;
+
+            node.position = {
+                x: nodeWithPosition.x - dim.width / 2,
+                y: nodeWithPosition.y - rowHeight / 2,
+            };
+
+            // Set connection positions based on layout direction
+            if (rankdir === 'LR') {
+                node.targetPosition = Position.Left;
+                node.sourcePosition = Position.Right;
+            } else {
+                node.targetPosition = Position.Top;
+                node.sourcePosition = Position.Bottom;
+            }
+        }
+
+        // Update style with calculated dimensions
+        node.style = {
+            ...node.style,
+            width: dim.width,
+            height: dim.height,
         };
-        node.targetPosition = Position.Left;
-        node.sourcePosition = Position.Right;
     });
 
     return { nodes, edges };
@@ -123,6 +200,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     const handleNewConnections = useCallback((connections: any[]) => {
         console.log('[Board] Received connections:', connections);
+        console.log('[Board] Current nodes:', nodes.map(n => ({ id: n.id, title: n.data.title })));
+
+        // Filter connections to only include those where source and target exist
+        const nodeIds = new Set(nodes.map(n => n.id));
+        const validConnections = connections.filter(c => {
+            const sourceExists = nodeIds.has(c.source);
+            const targetExists = nodeIds.has(c.target);
+            if (!sourceExists || !targetExists) {
+                console.log('[Board] Skipping invalid connection:', c.source, '->', c.target, '| Valid:', sourceExists, targetExists);
+            }
+            return sourceExists && targetExists;
+        });
+
+        console.log('[Board] Valid connections:', validConnections.length, 'of', connections.length);
+
         const getEdgeStyles = (tag: string) => {
             switch (tag?.toUpperCase()) {
                 case 'SUPPORTS': return {
@@ -164,7 +256,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         };
 
-        const newEdges: Edge[] = connections.map((c: any) => {
+        const newEdges: Edge[] = validConnections.map((c: any) => {
             const edgeConfig = getEdgeStyles(c.tag);
             return {
                 id: `e-${c.source}-${c.target}-${c.tag}`, // Added tag to edge ID in case of multiple different edges between same nodes
@@ -204,16 +296,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
             if (msg.type === 'MEMORY_NODE_GATHERED') {
                 const { node } = msg.payload;
+
+                // Calculate dimensions based on content length
+                const summary = node.summary || '';
+                const fullText = node.fullText || '';
+                const charCount = Math.max(summary.length, fullText.length);
+
+                let width = 320;
+                let height = 180;
+
+                // Width grows for longer content
+                if (charCount > 300) {
+                    width = Math.min(500, 320 + Math.min(charCount - 300, 180));
+                }
+                // Height grows with content
+                const estimatedLines = Math.ceil(charCount / 40);
+                height = Math.max(180, 100 + Math.min(estimatedLines, 12) * 18);
+
                 const newNode: Node = {
                     id: node.id,
                     type: 'custom',
-                    style: { width: 288, height: 160 },
+                    style: { width, height },
                     data: {
                         ...node,
                         onReadFull: () => setSelectedContent(node.fullText),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string) => onNavigateToChild(id),
-                        isDeepDiveSource: false
+                        isDeepDiveSource: false,
+                        expanded: false,
                     },
                     position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
                     sourcePosition: Position.Right,
@@ -223,6 +333,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     if (nds.find(n => n.id === node.id)) return nds;
                     return [...nds, newNode];
                 });
+            } else if (msg.type === 'PERSONA_INSIGHTS') {
+                // Handle persona insights - attach to relevant nodes
+                const insights = msg.payload as Array<{ personaName: string; keyFindings: string[] }>;
+                if (insights && Array.isArray(insights)) {
+                    setNodes((nds) => {
+                        return nds.map(node => ({
+                            ...node,
+                            data: {
+                                ...node.data,
+                                personaInsights: insights.map(i => i.personaName)
+                            }
+                        }));
+                    });
+                }
             } else if (msg.type === 'CONNECTIONS_FOUND') {
                 handleNewConnections(msg.payload);
             } else if (msg.type === 'BRAIN_STATE') {

@@ -2,7 +2,7 @@
 
 ![Dashboard Preview](./public/assets/dash1.png)
 
-**Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses Gemini 3 Flash to synthesize connections and visualize them on an interactive detective board.
+**Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses Gemini 3 Flash or MiniMax to synthesize connections and visualize them on an interactive detective board.
 
 ---
 
@@ -13,7 +13,16 @@
 - **Robust Multi-Byte Parsing**: Advanced `rune` UTF-8 token handling ensures foreign languages (Chinese, Japanese) parsing is pristine without bytes-truncation corruption.
 - **3D WebGL Spider View**: Next-gen visually stunning React Three Fiber data pipeline flow, visualizing live task delegation to parallel worker legs.
 - **Detective Board**: A React Flow-powered visualization interface that maps gathered intelligence as interactive nodes with dynamic edge-wiring.
-- **Intelligent Relationships**: "Connect The Dots" draws distinct visual relations (`SUPPORTS` [solid green], `OPPOSES` [dashed red], `EXPANDS`/`DEPENDS` [cyan/orange]) using multiple card ports to eliminate graph-tangle.
+- **Multi-Agent Persona Analysis**: "Connect The Dots" runs 6 specialized AI personas in parallel to analyze evidence from different angles:
+  - **Skeptic** — Questions assumptions, finds gaps and contradictions
+  - **Connector** — Finds hidden links between different pieces of info
+  - **Timeline Analyst** — Orders events chronologically, spots causality
+  - **Entity Hunter** — Identifies key people, orgs, and locations
+  - **Context Provider** — Adds historical background and explains jargon
+  - **Implications Mapper** — Evaluates consequences and predicts outcomes
+  Results are synthesized into color-coded relationships between evidence nodes.
+- **Color-Coordinated Connections**: Relationships are visualized with distinct colors (`SUPPORTS` green, `OPPOSES` red, `EXPANDS` blue, `DEPENDS` orange, `RELATED` purple) with animated dashed lines for dynamic connections.
+- **Multi-Model Support**: Supports both Google Gemini and MiniMax (Coding Plan) for AI analysis, with automatic fallback on API failures.
 - **Auto-Layout**: Integrated Dagre graph engine ensuring clean, structured, and non-overlapping board organization.
 - **Investigation Persistence**: Fast, popup-free instant-switching between research projects with seamless LocalStorage transitions and marquee UX.
 - **Intel Vault**: Every successful crawl is automatically archived as a markdown report in the timestamped `abdomen_vault`.
@@ -23,7 +32,7 @@
 - **Backend**: Go (Gorilla WebSockets, Google GenAI SDK)
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS (v4)
 - **Visualization**: React Flow, Dagre
-- **AI Engine**: Google Gemini 3 Flash
+- **AI Engine**: Google Gemini 3 Flash + MiniMax M2.5 HighSpeed (with multi-model routing)
 - **Search Engine**: Brave Search API
 
 ---
@@ -32,15 +41,17 @@
 
 ### 1. Prerequisites
 - **Go** (1.21+)
-- **Node.js** (v18+) & **npm**
+- **Node.js** (v18+) & **npm** or **pnpm**
 - **Brave Search API Key**: [Get it here](https://api.search.brave.com/app/dashboard)
 - **Google Gemini API Key**: [Get it here](https://aistudio.google.com/app/apikey)
+- **MiniMax API Key (Optional)**: [Get it here](https://platform.minimax.io) - Supports Coding Plan for high-speed inference
 
 ### 2. Environment Configuration
 Create a `.env` file in the root directory (or copy from `.env.example`):
 ```bash
 GEMINI_API_KEY=your_gemini_api_key
 BRAVE_API_KEY=your_brave_api_key
+MINIMAX_API_KEY=your_minimax_api_key  # Optional: enables multi-model support
 ```
 
 ### 3. Installation

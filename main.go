@@ -86,16 +86,38 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					continue
 				}
 
-				log.Printf("[WS] Dispatching analysis for %d nodes...", len(nodes))
+				log.Printf("[WS] Dispatching multi-agent persona analysis for %d nodes...", len(nodes))
 				go func() {
-					connections, err := br.AnalyzeConnections(context.Background(), nodes)
+					// Step 1: Run persona analysis
+					broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Running multi-agent persona analysis..."})
+					insights, err := br.AnalyzeWithPersonas(context.Background(), nodes)
 					if err != nil {
-						log.Printf("[WS Error] AnalyzeConnections failed: %v", err)
-						broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + err.Error()})
-					} else {
-						log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
-						broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+						log.Printf("[WS Error] AnalyzeWithPersonas failed: %v", err)
+						broadcast(models.WSMessage{Type: "ERROR", Payload: "Persona analysis failed: " + err.Error()})
+						// Fall back to standard analysis
+						connections, fallbackErr := br.AnalyzeConnections(context.Background(), nodes)
+						if fallbackErr != nil {
+							broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + fallbackErr.Error()})
+						} else {
+							broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+						}
+						return
 					}
+
+					// Broadcast insights to frontend
+					broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
+
+					// Step 2: Synthesize insights into final connections
+					broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
+					connections, err := br.SynthesizePersonaInsights(context.Background(), nodes, insights)
+					if err != nil {
+						log.Printf("[WS Error] SynthesizePersonaInsights failed: %v", err)
+						broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
+						return
+					}
+
+					log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
+					broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
 				}()
 			}
 		}
