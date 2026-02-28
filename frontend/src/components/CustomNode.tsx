@@ -156,7 +156,7 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                 {/* Persona Insights Badge */}
                 {data.personaInsights && data.personaInsights.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1 shrink-0">
-                        {data.personaInsights.slice(0, 3).map((insight, idx) => (
+                        {data.personaInsights.map((insight, idx) => (
                             <span
                                 key={idx}
                                 className="text-[7px] px-1.5 py-0.5 bg-cyber-purple/20 border border-cyber-purple/50 text-cyber-purple rounded"
@@ -164,11 +164,6 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                                 {insight}
                             </span>
                         ))}
-                        {data.personaInsights.length > 3 && (
-                            <span className="text-[7px] px-1.5 py-0.5 text-gray-500">
-                                +{data.personaInsights.length - 3}
-                            </span>
-                        )}
                     </div>
                 )}
 

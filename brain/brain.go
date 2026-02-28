@@ -319,6 +319,17 @@ func (b *Brain) summarizeNode(ctx context.Context, content string) (string, stri
 	return res.Title, res.Summary, nil
 }
 
+// buildNodeMapping creates a mapping table of node IDs to titles for the AI prompt
+func buildNodeMapping(nodes []models.MemoryNode) string {
+	mapping := "\n=== NODE ID MAPPING (USE THESE IDs!) ===\n"
+	for _, node := range nodes {
+		mapping += fmt.Sprintf("ID: %s -> Title: %s\n", node.ID, node.Title)
+	}
+	mapping += "\nIMPORTANT: When creating connections, you MUST use the EXACT node IDs (like 'node-1738182800-0'), NOT the titles!\n"
+	mapping += "The 'source' and 'target' fields must contain only the node IDs.\n\n"
+	return mapping
+}
+
 func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNode) ([]models.BoardConnection, error) {
 	fmt.Printf("[Brain] Analyzing connections for %d nodes...\n", len(nodes))
 	combinedText := ""
@@ -326,6 +337,9 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 		fmt.Printf(" - Node: %s (%s)\n", node.ID, node.Title)
 		combinedText += fmt.Sprintf("ID: %s\nTitle: %s\nSummary: %s\n---\n", node.ID, node.Title, node.Summary)
 	}
+
+	// Add node ID mapping to help AI use correct IDs
+	combinedText += buildNodeMapping(nodes)
 
 	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
 	tempModel.ResponseMIMEType = "application/json"
@@ -341,7 +355,8 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 			"1. Map the logical infrastructure of the case. Seek contradictions (OPPOSES) and strategic dependencies (EXPANDS/DEPENDS) chronologically if needed. "+
 			"2. Only connect evidence with high clinical confidence. "+
 			"3. Tags MUST be one of: SUPPORTS, OPPOSES, EXPANDS, DEPENDS, RELATED. "+
-			"4. IMPORTANT: YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
+			"4. CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
+			"5. IMPORTANT: YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
 			"Connect the 6 strongest relationships.", currentDate),
 	))
 
@@ -476,6 +491,9 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 		insightsSummary += fmt.Sprintf("Analysis: %s\n", insight.FullAnalysis)
 	}
 
+	// Add node ID mapping so AI knows which IDs to use
+	insightsSummary += buildNodeMapping(nodes)
+
 	// Now synthesize using the insights
 	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
 	tempModel.ResponseMIMEType = "application/json"
@@ -491,6 +509,7 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 			"Each specialist provided: key findings, connections they identified, and follow-up questions. "+
 			"Prioritize connections that multiple specialists agree on. "+
 			"Tags MUST be one of: SUPPORTS, OPPOSES, EXPANDS, DEPENDS, RELATED. "+
+			"CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
 			"YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
 			"The 'reasoning' should mention which specialists supported this connection.", currentDate),
 	))

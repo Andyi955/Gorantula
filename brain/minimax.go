@@ -62,11 +62,11 @@ func NewMiniMaxClient() (*MiniMaxClient, error) {
 
 	return &MiniMaxClient{
 		APIKey: apiKey,
-		BaseURL: "https://api.minimax.chat/v1",
+		BaseURL: "https://www.minimax.io/v1", // Coding Plan uses www.minimax.io, not api.minimax.chat
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		Model: "MiniMax-M2.5-HighSpeed", // Default to the high-speed model
+		Model: "MiniMax-M2.5-highspeed", // Plus High-Speed model
 	}, nil
 }
 
