@@ -13,7 +13,14 @@
 - **Robust Multi-Byte Parsing**: Advanced `rune` UTF-8 token handling ensures foreign languages (Chinese, Japanese) parsing is pristine without bytes-truncation corruption.
 - **3D WebGL Spider View**: Next-gen visually stunning React Three Fiber data pipeline flow, visualizing live task delegation to parallel worker legs.
 - **Detective Board**: A React Flow-powered visualization interface that maps gathered intelligence as interactive nodes with dynamic edge-wiring.
-- **Multi-Agent Persona Analysis**: "Connect The Dots" runs 6 specialized AI personas (Skeptic, Connector, Timeline Analyst, Entity Hunter, Context Provider, Implications Mapper) in parallel to analyze evidence from different angles.
+- **Multi-Agent Persona Analysis**: "Connect The Dots" runs 6 specialized AI personas in parallel to analyze evidence from different angles:
+  - **Skeptic** — Questions assumptions, finds gaps and contradictions
+  - **Connector** — Finds hidden links between different pieces of info
+  - **Timeline Analyst** — Orders events chronologically, spots causality
+  - **Entity Hunter** — Identifies key people, orgs, and locations
+  - **Context Provider** — Adds historical background and explains jargon
+  - **Implications Mapper** — Evaluates consequences and predicts outcomes
+  Results are synthesized into color-coded relationships between evidence nodes.
 - **Color-Coordinated Connections**: Relationships are visualized with distinct colors (`SUPPORTS` green, `OPPOSES` red, `EXPANDS` blue, `DEPENDS` orange, `RELATED` purple) with animated dashed lines for dynamic connections.
 - **Multi-Model Support**: Supports both Google Gemini and MiniMax (Coding Plan) for AI analysis, with automatic fallback on API failures.
 - **Auto-Layout**: Integrated Dagre graph engine ensuring clean, structured, and non-overlapping board organization.
