@@ -21,6 +21,7 @@ type PersonaInsight struct {
 	Questions    []string `json:"questions"`    // Follow-up questions raised
 	Confidence   float32  `json:"confidence"`    // 0.0-1.0 confidence score
 	FullAnalysis string   `json:"fullAnalysis"` // Full text analysis
+	NodeIDs      []string `json:"nodeIDs"`      // Node IDs this persona contributed insights to
 }
 
 // GetDefaultPersonas returns a set of 6 distinct personas for multi-agent collaboration
@@ -101,9 +102,11 @@ Provide your analysis in JSON format with the following structure:
   "connections": ["connections you identify between facts"],
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
-  "fullAnalysis": "Your detailed analysis (2-3 paragraphs)"
+  "fullAnalysis": "Your detailed analysis (2-3 paragraphs)",
+  "nodeIDs": ["list of node IDs that this analysis directly relates to - only include nodes you found meaningful insights for"]
 }
 
+IMPORTANT: Only include node IDs in nodeIDs if you found significant insights for that specific node. Do NOT list all nodes - only the ones where your analysis added value.
 Respond ONLY with the JSON.`, persona.SystemPrompt, findings, persona.Expertise, persona.Perspective, persona.Questions)
 }
 
@@ -114,4 +117,5 @@ type PersonaJSONResponse struct {
 	Questions   []string `json:"questions"`
 	Confidence  float32  `json:"confidence"`
 	FullAnalysis string  `json:"fullAnalysis"`
+	NodeIDs     []string `json:"nodeIDs"` // Which node IDs this persona's insights apply to
 }

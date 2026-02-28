@@ -334,17 +334,28 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     return [...nds, newNode];
                 });
             } else if (msg.type === 'PERSONA_INSIGHTS') {
-                // Handle persona insights - attach to relevant nodes
-                const insights = msg.payload as Array<{ personaName: string; keyFindings: string[] }>;
+                // Handle persona insights - attach to relevant nodes only
+                const insights = msg.payload as Array<{ personaName: string; nodeIDs: string[] }>;
                 if (insights && Array.isArray(insights)) {
                     setNodes((nds) => {
-                        return nds.map(node => ({
-                            ...node,
-                            data: {
-                                ...node.data,
-                                personaInsights: insights.map(i => i.personaName)
-                            }
-                        }));
+                        return nds.map(node => {
+                            // Find personas that contributed to this specific node
+                            const relevantPersonas = insights
+                                .filter(insight => 
+                                    insight.nodeIDs && 
+                                    insight.nodeIDs.includes(node.id) &&
+                                    insight.personaName
+                                )
+                                .map(insight => insight.personaName);
+                            
+                            return {
+                                ...node,
+                                data: {
+                                    ...node.data,
+                                    personaInsights: relevantPersonas
+                                }
+                            };
+                        });
                     });
                 }
             } else if (msg.type === 'CONNECTIONS_FOUND') {

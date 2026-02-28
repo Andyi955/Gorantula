@@ -459,6 +459,7 @@ func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, finding
 		Questions:     response.Questions,
 		Confidence:    response.Confidence,
 		FullAnalysis: response.FullAnalysis,
+		NodeIDs:       response.NodeIDs,
 	}, nil
 }
 
