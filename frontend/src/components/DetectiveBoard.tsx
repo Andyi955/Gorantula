@@ -13,6 +13,22 @@ import type {
     Node,
     Edge,
     OnNodesChange,
+
+// Persona colors - each gets a unique neon glow
+const PERSONA_COLORS: Record<string, string> = {
+    'Skeptic': 'bg-red-500/40 border-red-400 text-red-200 shadow-[0_0_10px_rgba(248,113,113,0.5)]',
+    'Connector': 'bg-purple-500/40 border-purple-400 text-purple-200 shadow-[0_0_10px_rgba(168,85,247,0.5)]',
+    'Timeline Analyst': 'bg-cyan-500/40 border-cyan-400 text-cyan-200 shadow-[0_0_10px_rgba(6,182,212,0.5)]',
+    'Entity Hunter': 'bg-green-500/40 border-green-400 text-green-200 shadow-[0_0_10px_rgba(74,222,128,0.5)]',
+    'Context Provider': 'bg-amber-500/40 border-amber-400 text-amber-200 shadow-[0_0_10px_rgba(251,191,36,0.5)]',
+    'Implications Mapper': 'bg-pink-500/40 border-pink-400 text-pink-200 shadow-[0_0_10px_rgba(244,114,182,0.5)]',
+};
+
+// Parse persona names from connection reasoning
+const parsePersonasFromReasoning = (reasoning: string): string[] => {
+    const personas = Object.keys(PERSONA_COLORS);
+    return personas.filter(p => reasoning.includes(p));
+};
     OnEdgesChange,
     Connection,
     OnConnect
@@ -279,7 +295,33 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const existingIds = new Set(eds.map(e => e.id));
             const filteredNew = newEdges.filter(e => !existingIds.has(e.id));
             const combinedEdges = [...eds, ...filteredNew];
-            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, combinedEdges);
+            
+            // Extract personas from connection reasoning and update nodes
+            const nodePersonas: Record<string, Set<string>> = {};
+            validConnections.forEach((c: any) => {
+                const personas = parsePersonasFromReasoning(c.reasoning || '');
+                [c.source, c.target].forEach(nodeId => {
+                    if (!nodePersonas[nodeId]) nodePersonas[nodeId] = new Set();
+                    personas.forEach(p => nodePersonas[nodeId].add(p));
+                });
+            });
+            
+            // Update nodes with their personas
+            const updatedNodes = nodes.map(node => {
+                const personas = nodePersonas[node.id];
+                if (personas && personas.size > 0) {
+                    return {
+                        ...node,
+                        data: {
+                            ...node.data,
+                            personaInsights: Array.from(personas)
+                        }
+                    };
+                }
+                return node;
+            });
+            
+            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(updatedNodes, combinedEdges);
             setNodes([...layoutedNodes]);
             setTimeout(() => fitView({ duration: 800 }), 100);
             return layoutedEdges;
@@ -339,14 +381,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 if (insights && Array.isArray(insights)) {
                     setNodes((nds) => {
                         return nds.map(node => {
-                            // Find personas that contributed to this specific node
-                            const relevantPersonas = insights
-                                .filter(insight => 
-                                    insight.nodeIDs && 
-                                    insight.nodeIDs.includes(node.id) &&
-                                    insight.personaName
-                                )
-                                .map(insight => insight.personaName);
+                            // Check if any insights have nodeIDs populated
+                            const hasNodeIDs = insights.some(i => i.nodeIDs && i.nodeIDs.length > 0);
+                            
+                            let relevantPersonas: string[];
+                            if (!hasNodeIDs) {
+                                // Fallback: show all personas if AI didn't return nodeIDs
+                                relevantPersonas = insights.map(i => i.personaName).filter(Boolean);
+                            } else {
+                                // Filter to only personas that contributed to this specific node
+                                relevantPersonas = insights
+                                    .filter(insight => 
+                                        insight.nodeIDs && 
+                                        insight.nodeIDs.includes(node.id) &&
+                                        insight.personaName
+                                    )
+                                    .map(insight => insight.personaName);
+                            }
                             
                             return {
                                 ...node,

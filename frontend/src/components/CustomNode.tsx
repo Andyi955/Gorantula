@@ -159,7 +159,15 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                         {data.personaInsights.map((insight, idx) => (
                             <span
                                 key={idx}
-                                className="text-[7px] px-1.5 py-0.5 bg-cyber-purple/20 border border-cyber-purple/50 text-cyber-purple rounded"
+                                className={`text-[7px] px-1.5 py-0.5 rounded border ${
+                                    insight === 'Skeptic' ? 'bg-red-500/40 border-red-400 text-red-200 shadow-[0_0_8px_rgba(248,113,113,0.5)]' :
+                                    insight === 'Connector' ? 'bg-purple-500/40 border-purple-400 text-purple-200 shadow-[0_0_8px_rgba(168,85,247,0.5)]' :
+                                    insight === 'Timeline Analyst' ? 'bg-cyan-500/40 border-cyan-400 text-cyan-200 shadow-[0_0_8px_rgba(6,182,212,0.5)]' :
+                                    insight === 'Entity Hunter' ? 'bg-green-500/40 border-green-400 text-green-200 shadow-[0_0_8px_rgba(74,222,128,0.5)]' :
+                                    insight === 'Context Provider' ? 'bg-amber-500/40 border-amber-400 text-amber-200 shadow-[0_0_8px_rgba(251,191,36,0.5)]' :
+                                    insight === 'Implications Mapper' ? 'bg-pink-500/40 border-pink-400 text-pink-200 shadow-[0_0_8px_rgba(244,114,182,0.5)]' :
+                                    'bg-cyber-purple/20 border border-cyber-purple/50 text-cyber-purple'
+                                }`}
                             >
                                 {insight}
                             </span>
