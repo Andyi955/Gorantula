@@ -3,7 +3,18 @@ import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
-import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X } from 'lucide-react';
+
+// Persona insight type
+export interface PersonaInsight {
+    personaName: string;
+    perspective: string;
+    keyFindings: string[];
+    connections: string[];
+    questions: string[];
+    confidence: number;
+    fullAnalysis: string;
+}
 
 export interface NodeData {
     id?: string;
@@ -13,7 +24,7 @@ export interface NodeData {
     sourceURL?: string;
     isDeepDiveSource?: boolean;
     linkedInvestigationId?: string;
-    personaInsights?: string[]; // Insights from persona analysis
+    personaInsights?: PersonaInsight[]; // Full insight objects
     onReadFull: () => void;
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
     onNavigateToChild?: (id: string) => void;
@@ -69,6 +80,7 @@ const calculateCardSize = (summary: string, fullText: string, isExpanded: boolea
 
 const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
     const [isExpanded, setIsExpanded] = useState(data.expanded || false);
+    const [showChat, setShowChat] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
 
     // Calculate size based on content
@@ -153,25 +165,87 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                     />
                 </div>
 
-                {/* Persona Insights Badge */}
+                {/* Persona Chat Icon - shows who discussed this card */}
                 {data.personaInsights && data.personaInsights.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1 shrink-0">
-                        {data.personaInsights.map((insight, idx) => (
-                            <span
-                                key={idx}
-                                className={`text-[7px] px-1.5 py-0.5 rounded border ${
-                                    insight === 'Skeptic' ? 'bg-red-500/40 border-red-400 text-red-200 shadow-[0_0_8px_rgba(248,113,113,0.5)]' :
-                                    insight === 'Connector' ? 'bg-purple-500/40 border-purple-400 text-purple-200 shadow-[0_0_8px_rgba(168,85,247,0.5)]' :
-                                    insight === 'Timeline Analyst' ? 'bg-cyan-500/40 border-cyan-400 text-cyan-200 shadow-[0_0_8px_rgba(6,182,212,0.5)]' :
-                                    insight === 'Entity Hunter' ? 'bg-green-500/40 border-green-400 text-green-200 shadow-[0_0_8px_rgba(74,222,128,0.5)]' :
-                                    insight === 'Context Provider' ? 'bg-amber-500/40 border-amber-400 text-amber-200 shadow-[0_0_8px_rgba(251,191,36,0.5)]' :
-                                    insight === 'Implications Mapper' ? 'bg-pink-500/40 border-pink-400 text-pink-200 shadow-[0_0_8px_rgba(244,114,182,0.5)]' :
-                                    'bg-cyber-purple/20 border border-cyber-purple/50 text-cyber-purple'
-                                }`}
-                            >
-                                {insight}
-                            </span>
-                        ))}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setShowChat(true);
+                        }}
+                        className="flex items-center gap-1 mt-1 shrink-0 text-[10px] px-2 py-1 rounded-full bg-cyber-purple/30 border border-cyber-purple/50 text-cyber-purple hover:bg-cyber-purple/50 transition-colors"
+                    >
+                        <MessageCircle className="w-3 h-3" />
+                        <span>{data.personaInsights.length} persona{data.personaInsights.length > 1 ? 's' : ''} discussed</span>
+                    </button>
+                )}
+
+                {/* Chat Modal */}
+                {showChat && data.personaInsights && data.personaInsights.length > 0 && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setShowChat(false)}>
+                        <div 
+                            className="bg-gray-900 border border-white/20 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between p-4 border-b border-white/10">
+                                <h3 className="text-lg font-bold text-white">Persona Discussion</h3>
+                                <button onClick={() => setShowChat(false)} className="text-gray-400 hover:text-white">
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                            <div className="p-4 overflow-y-auto max-h-[calc(80vh-60px)] space-y-4">
+                                {data.personaInsights.map((insight, idx) => (
+                                    <div 
+                                        key={idx}
+                                        className={`p-4 rounded-lg border ${
+                                            insight.personaName === 'Skeptic' ? 'bg-red-500/10 border-red-400/30' :
+                                            insight.personaName === 'Connector' ? 'bg-purple-500/10 border-purple-400/30' :
+                                            insight.personaName === 'Timeline Analyst' ? 'bg-cyan-500/10 border-cyan-400/30' :
+                                            insight.personaName === 'Entity Hunter' ? 'bg-green-500/10 border-green-400/30' :
+                                            insight.personaName === 'Context Provider' ? 'bg-amber-500/10 border-amber-400/30' :
+                                            insight.personaName === 'Implications Mapper' ? 'bg-pink-500/10 border-pink-400/30' :
+                                            'bg-cyber-purple/10 border-cyber-purple/30'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="font-bold text-white">{insight.personaName}</span>
+                                            <span className="text-xs text-gray-400">• {insight.perspective}</span>
+                                        </div>
+                                        {insight.fullAnalysis && (
+                                            <p className="text-sm text-gray-300 mb-3">{insight.fullAnalysis}</p>
+                                        )}
+                                        {insight.keyFindings && insight.keyFindings.length > 0 && (
+                                            <div className="mb-2">
+                                                <span className="text-xs font-semibold text-gray-400 uppercase">Key Findings</span>
+                                                <ul className="mt-1 space-y-1">
+                                                    {insight.keyFindings.map((finding, fidx) => (
+                                                        <li key={fidx} className="text-sm text-gray-300 flex gap-2">
+                                                            <span className="text-cyan-400">•</span>
+                                                            {finding}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                        {insight.questions && insight.questions.length > 0 && (
+                                            <div className="mt-2">
+                                                <span className="text-xs font-semibold text-gray-400 uppercase">Questions Raised</span>
+                                                <ul className="mt-1 space-y-1">
+                                                    {insight.questions.map((q, qidx) => (
+                                                        <li key={qidx} className="text-sm text-amber-300 flex gap-2">
+                                                            <span className="text-amber-400">?</span>
+                                                            {q}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                        <div className="mt-2 text-xs text-gray-500">
+                                            Confidence: {Math.round(insight.confidence * 100)}%
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 )}
 
