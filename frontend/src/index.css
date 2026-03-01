@@ -60,3 +60,36 @@ body {
   mask-image: linear-gradient(to right, transparent, black 15%);
   -webkit-mask-image: linear-gradient(to right, transparent, black 15%);
 }
+
+/* Custom scrollbar class for persona chat modal */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #00f3ff var(--color-cyber-black);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 243, 255, 0.05);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #00f3ff;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #00ffff;
+}
+
+/* Enable wheel scrolling on hover */
+.custom-scrollbar {
+  scroll-behavior: smooth;
+}
+
+.custom-scrollbar:focus {
+  outline: 2px solid #00f3ff;
+  outline-offset: 2px;
+}
