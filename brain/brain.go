@@ -391,11 +391,11 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 func (b *Brain) AnalyzeWithPersonas(ctx context.Context, nodes []models.MemoryNode) ([]PersonaInsight, error) {
 	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(GetDefaultPersonas()))
 
-	// Build findings text from all nodes
+	// Build findings text from all nodes - include ID so AI can reference them
 	findingsText := ""
 	for _, node := range nodes {
-		findingsText += fmt.Sprintf("Source: %s\nTitle: %s\nSummary: %s\nFull Text: %s\n\n",
-			node.SourceURL, node.Title, node.Summary, node.FullText)
+		findingsText += fmt.Sprintf("[NodeID: %s]\nSource: %s\nTitle: %s\nSummary: %s\nFull Text: %s\n\n",
+			node.ID, node.SourceURL, node.Title, node.Summary, node.FullText)
 	}
 
 	personas := GetDefaultPersonas()
@@ -459,6 +459,7 @@ func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, finding
 		Questions:     response.Questions,
 		Confidence:    response.Confidence,
 		FullAnalysis: response.FullAnalysis,
+		NodeIDs:       response.NodeIDs,
 	}, nil
 }
 

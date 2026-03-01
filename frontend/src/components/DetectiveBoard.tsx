@@ -19,6 +19,23 @@ import type {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
+
+// Persona colors - each gets a unique neon glow
+const PERSONA_COLORS: Record<string, string> = {
+    'Skeptic': 'bg-red-500/40 border-red-400 text-red-200',
+    'Connector': 'bg-purple-500/40 border-purple-400 text-purple-200',
+    'Timeline Analyst': 'bg-cyan-500/40 border-cyan-400 text-cyan-200',
+    'Entity Hunter': 'bg-green-500/40 border-green-400 text-green-200',
+    'Context Provider': 'bg-amber-500/40 border-amber-400 text-amber-200',
+    'Implications Mapper': 'bg-pink-500/40 border-pink-400 text-pink-200',
+};
+
+// Parse persona names from connection reasoning
+const parsePersonasFromReasoning = (reasoning: string): string[] => {
+    const personas = Object.keys(PERSONA_COLORS);
+    return personas.filter(p => reasoning.includes(p));
+};
+
 import { Zap, Info, Trash2 } from 'lucide-react';
 import dagre from 'dagre';
 
@@ -334,17 +351,35 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     return [...nds, newNode];
                 });
             } else if (msg.type === 'PERSONA_INSIGHTS') {
-                // Handle persona insights - attach to relevant nodes
-                const insights = msg.payload as Array<{ personaName: string; keyFindings: string[] }>;
+                // Handle full persona insights with chat data
+                const insights = msg.payload as Array<{
+                    personaName: string;
+                    perspective: string;
+                    keyFindings: string[];
+                    connections: string[];
+                    questions: string[];
+                    confidence: number;
+                    fullAnalysis: string;
+                    nodeIDs: string[];
+                }>;
+                console.log('[PERSONA_INSIGHTS] Received insights:', insights);
                 if (insights && Array.isArray(insights)) {
                     setNodes((nds) => {
-                        return nds.map(node => ({
-                            ...node,
-                            data: {
-                                ...node.data,
-                                personaInsights: insights.map(i => i.personaName)
-                            }
-                        }));
+                        console.log('[PERSONA_INSIGHTS] Current nodes:', nds.map(n => ({ id: n.id, title: n.data.title })));
+                        return nds.map(node => {
+                            // Find personas that contributed to this specific node
+                            const nodeInsights = insights.filter(insight => 
+                                insight.nodeIDs && insight.nodeIDs.includes(node.id)
+                            );
+                            console.log(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
+                            return {
+                                ...node,
+                                data: {
+                                    ...node.data,
+                                    personaInsights: nodeInsights // Full insight objects
+                                }
+                            };
+                        });
                     });
                 }
             } else if (msg.type === 'CONNECTIONS_FOUND') {
