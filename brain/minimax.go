@@ -29,10 +29,10 @@ type MiniMaxMessage struct {
 
 // MiniMaxChatRequest represents the request structure for MiniMax chat API
 type MiniMaxChatRequest struct {
-	Model      string            `json:"model"`
-	Messages   []MiniMaxMessage `json:"messages"`
+	Model       string           `json:"model"`
+	Messages    []MiniMaxMessage `json:"messages"`
 	Temperature float32          `json:"temperature,omitempty"`
-	MaxTokens  int               `json:"max_tokens,omitempty"`
+	MaxTokens   int              `json:"max_tokens,omitempty"`
 }
 
 // MiniMaxChatResponse represents the response structure from MiniMax chat API
@@ -61,7 +61,7 @@ func NewMiniMaxClient() (*MiniMaxClient, error) {
 	}
 
 	return &MiniMaxClient{
-		APIKey: apiKey,
+		APIKey:  apiKey,
 		BaseURL: "https://www.minimax.io/v1", // Coding Plan uses www.minimax.io, not api.minimax.chat
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
@@ -182,40 +182,7 @@ func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string, respon
 		return err
 	}
 
-	// Clean markdown wrapper if present
-	content = cleanMarkdownJSON(content)
-
-	// Try direct parse first
-	if err := json.Unmarshal([]byte(content), response); err == nil {
-		return nil
-	}
-
-	// If that fails, try to find JSON object in the content
-	fmt.Printf("[Gemini] JSON parse failed, trying to fix. Content: %s\n", content)
-	start := -1
-	end := -1
-	depth := 0
-	for i, c := range content {
-		if c == '{' {
-			if start == -1 {
-				start = i
-			}
-			depth++
-		} else if c == '}' {
-			depth--
-			if depth == 0 && start != -1 {
-				end = i + 1
-				break
-			}
-		}
-	}
-
-	if start != -1 && end != -1 {
-		jsonStr := content[start:end]
-		return json.Unmarshal([]byte(jsonStr), response)
-	}
-
-	return fmt.Errorf("could not parse JSON from response: %s", content)
+	return parseJSONResponse(content, response)
 }
 
 // MiniMaxProvider wraps the MiniMax client for the ModelProvider interface
@@ -237,20 +204,34 @@ func (m *MiniMaxProvider) GenerateJSON(ctx context.Context, prompt string, respo
 		return err
 	}
 
+	return parseJSONResponse(content, response)
+}
+
+// parseJSONResponse handles common LLM response cleaning and JSON parsing
+func parseJSONResponse(content string, response interface{}) error {
 	// Clean markdown wrapper if present
-	content = cleanMarkdownJSON(content)
+	cleaned := cleanMarkdownJSON(content)
 
 	// Try direct parse first
-	if err := json.Unmarshal([]byte(content), response); err == nil {
+	if err := json.Unmarshal([]byte(cleaned), response); err == nil {
 		return nil
 	}
 
-	// If that fails, try to handle common issues:
-	// 1. Response might be wrapped in quotes
-	// 2. Response might be an array format
-	fmt.Printf("[MiniMax] JSON parse failed, trying to fix. Content: %s\n", content)
+	// If that fails, try to find JSON object in the content
+	jsonStr, err := extractJSONObject(cleaned)
+	if err != nil {
+		return fmt.Errorf("could not find JSON object in response: %w, original content: %s", err, content)
+	}
 
-	// Try to find JSON object in the content
+	if err := json.Unmarshal([]byte(jsonStr), response); err != nil {
+		return fmt.Errorf("failed to parse extracted JSON: %w, extracted: %s", err, jsonStr)
+	}
+
+	return nil
+}
+
+// extractJSONObject finds the first valid-looking JSON object in a string by tracking brace depth
+func extractJSONObject(content string) (string, error) {
 	start := -1
 	end := -1
 	depth := 0
@@ -269,12 +250,11 @@ func (m *MiniMaxProvider) GenerateJSON(ctx context.Context, prompt string, respo
 		}
 	}
 
-	if start != -1 && end != -1 {
-		jsonStr := content[start:end]
-		return json.Unmarshal([]byte(jsonStr), response)
+	if start != -1 && end != -1 && depth == 0 {
+		return content[start:end], nil
 	}
 
-	return fmt.Errorf("could not parse JSON from response: %s", content)
+	return "", fmt.Errorf("no balanced JSON object found")
 }
 
 // NewModelRouter creates a model router with the available providers
