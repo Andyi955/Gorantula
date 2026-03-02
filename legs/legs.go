@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"spider-agent/models"
+	"spider-agent/pkg/document"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -165,6 +167,62 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 }
 
+// ExecuteLocalFileTask reads a local file using the document parsing package.
+func ExecuteLocalFileTask(legID int, filePath string, broadcast models.Broadcaster) models.NutrientFlow {
+	if broadcast != nil {
+		broadcast(models.WSMessage{
+			Type: "LEG_UPDATE",
+			Payload: map[string]interface{}{
+				"legId":  legID,
+				"state":  "Parsing Document",
+				"target": filepath.Base(filePath),
+			},
+		})
+	}
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+	var content string
+	var err error
+
+	// We significantly increase the context window for local files to support massive PDFs
+	limit := 1000000
+
+	switch ext {
+	case ".txt", ".md", ".csv":
+		content, err = document.ParseTXT(filePath, limit)
+	case ".pdf":
+		content, err = document.ParsePDF(filePath, limit)
+	case ".docx":
+		content, err = document.ParseDOCX(filePath, limit)
+	default:
+		err = fmt.Errorf("unsupported file extension: %s", ext)
+	}
+
+	if err != nil {
+		return models.NutrientFlow{
+			LegID: legID,
+			Error: fmt.Errorf("failed to parse local file %s: %w", filepath.Base(filePath), err),
+		}
+	}
+
+	if broadcast != nil {
+		broadcast(models.WSMessage{
+			Type: "LEG_UPDATE",
+			Payload: map[string]interface{}{
+				"legId": legID,
+				"state": "Idle",
+			},
+		})
+	}
+
+	return models.NutrientFlow{
+		LegID:     legID,
+		SourceURL: "file://" + filePath, // Use file protocol structure, but we can treat as pseudo URL
+		Content:   content,
+		Error:     nil,
+	}
+}
+
 // ExtractTopURLs retrieves up to limit URLs from the search response
 func ExtractTopURLs(res *SearchResponse, limit int) []string {
 	var urls []string
@@ -184,4 +242,38 @@ func TruncateContent(content string, limit int) string {
 		return string(runes[:limit])
 	}
 	return content
+}
+
+// ExecuteChunkTask processes a pre-parsed text chunk.
+func ExecuteChunkTask(legID int, targetQuery string, chunkData string, broadcast models.Broadcaster) models.NutrientFlow {
+	if broadcast != nil {
+		broadcast(models.WSMessage{
+			Type: "LEG_UPDATE",
+			Payload: map[string]interface{}{
+				"legId":  legID,
+				"state":  "Analyzing Chunk",
+				"target": targetQuery,
+			},
+		})
+	}
+
+	// Artificial delay so the UI shows the "Analyzing Chunk" state before returning to Brain
+	time.Sleep(200 * time.Millisecond)
+
+	if broadcast != nil {
+		broadcast(models.WSMessage{
+			Type: "LEG_UPDATE",
+			Payload: map[string]interface{}{
+				"legId": legID,
+				"state": "Idle",
+			},
+		})
+	}
+
+	return models.NutrientFlow{
+		LegID:     legID,
+		SourceURL: targetQuery,
+		Content:   chunkData,
+		Error:     nil,
+	}
 }

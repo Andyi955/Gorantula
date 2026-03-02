@@ -11,6 +11,7 @@ interface Investigation {
 function App() {
   const [activeTab, setActiveTab] = useState<'spider' | 'board'>('spider')
   const [prompt, setPrompt] = useState('')
+  const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<Investigation[]>([])
@@ -64,19 +65,28 @@ function App() {
     }
   }, [])
 
-  const runSpider = (customPrompt?: string, customLabel?: string) => {
+  const runSpider = (customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
     const textToRun = customPrompt || prompt;
     const labelToUse = customLabel || textToRun;
+    const modeToUse = overrideMode || crawlMode;
     if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
-      const newInv = { id, topic: labelToUse }
+
+      // Extract folder name for better label
+      let displayTopic = labelToUse;
+      if (modeToUse === 'local') {
+        const parts = labelToUse.split(/[\\/]/);
+        displayTopic = `Local: ${parts[parts.length - 1] || labelToUse}`;
+      }
+
+      const newInv = { id, topic: displayTopic }
 
       const updated = [newInv, ...investigations]
       setInvestigations(updated)
       setCurrentInvestigationId(id)
       localStorage.setItem('gorantula_investigations', JSON.stringify(updated))
 
-      socketConfig.socket.send(JSON.stringify({ type: 'CRAWL', payload: textToRun }))
+      socketConfig.socket.send(JSON.stringify({ type: modeToUse === 'local' ? 'CRAWL_LOCAL' : 'CRAWL', payload: textToRun }))
       if (!customPrompt) setPrompt('')
       setActiveTab('spider')
       return id;
@@ -87,7 +97,7 @@ function App() {
   }
 
   const handleDeepDiveNode = (promptStr: string, titleStr: string, sourceNodeId: string) => {
-    const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`);
+    const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`, 'web');
     if (newInvId && currentInvestigationId) {
       // Update original board to link to this new investigation
       const saved = localStorage.getItem(`inv_data_${currentInvestigationId}`);
@@ -189,15 +199,52 @@ function App() {
 
               {/* Input Footer */}
               <div className="p-6 bg-cyber-gray/30 border-t border-cyber-gray backdrop-blur-sm">
-                <div className="max-w-3xl mx-auto flex gap-4">
-                  <input
-                    type="text"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && runSpider()}
-                    placeholder="ENTER CRAWL PARAMETERS..."
-                    className="flex-1 bg-black border border-cyber-gray px-4 py-3 text-cyber-green focus:border-cyber-green outline-none transition-colors"
-                  />
+                <div className="max-w-4xl mx-auto flex gap-4 items-center">
+                  <div className="flex bg-black border border-cyber-gray overflow-hidden shrink-0">
+                    <button
+                      onClick={() => setCrawlMode('web')}
+                      className={`px-4 py-3 text-xs font-bold transition-colors ${crawlMode === 'web' ? 'bg-cyber-purple text-white shadow-[0_0_10px_rgba(188,19,254,0.5)]' : 'text-gray-500 hover:text-white'}`}
+                    >
+                      WEB
+                    </button>
+                    <button
+                      onClick={() => setCrawlMode('local')}
+                      className={`px-4 py-3 text-xs font-bold transition-colors border-l border-cyber-gray ${crawlMode === 'local' ? 'bg-cyber-cyan text-black shadow-[0_0_10px_rgba(0,243,255,0.5)]' : 'text-gray-500 hover:text-white'}`}
+                    >
+                      LOCAL
+                    </button>
+                  </div>
+
+                  <div className="flex-1 flex gap-2 relative">
+                    <input
+                      type="text"
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && runSpider()}
+                      placeholder={crawlMode === 'web' ? "ENTER CRAWL PARAMETERS..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
+                      className="w-full bg-black border border-cyber-gray px-4 py-3 text-cyber-green focus:border-cyber-green outline-none transition-colors"
+                    />
+
+                    {crawlMode === 'local' && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('http://localhost:8080/api/pick-files');
+                            if (!res.ok) throw new Error('Failed to open file picker');
+                            const paths = await res.json();
+                            if (paths && paths.length > 0) {
+                              setPrompt(paths.join('|'));
+                            }
+                          } catch (err) {
+                            console.error(err);
+                          }
+                        }}
+                        className="absolute right-0 top-0 bottom-0 bg-cyber-gray/20 hover:bg-cyber-cyan/20 text-cyber-cyan px-4 font-bold border-l border-cyber-gray transition-colors flex items-center gap-2 text-xs"
+                      >
+                        <Folder size={14} /> BROWSE...
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={() => runSpider()}
                     className="bg-cyber-green text-black px-8 py-3 font-bold hover:bg-white transition-colors"
