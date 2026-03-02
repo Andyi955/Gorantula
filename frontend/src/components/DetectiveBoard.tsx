@@ -7,7 +7,9 @@ import ReactFlow, {
     addEdge,
     useReactFlow,
     ReactFlowProvider,
-    Position
+    Position,
+    reconnectEdge,
+    ConnectionMode
 } from 'reactflow';
 import type {
     Node,
@@ -19,25 +21,15 @@ import type {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
+import CustomEdge from './CustomEdge';
 
-// Persona colors - each gets a unique neon glow
-const PERSONA_COLORS: Record<string, string> = {
-    'Skeptic': 'bg-red-500/40 border-red-400 text-red-200',
-    'Connector': 'bg-purple-500/40 border-purple-400 text-purple-200',
-    'Timeline Analyst': 'bg-cyan-500/40 border-cyan-400 text-cyan-200',
-    'Entity Hunter': 'bg-green-500/40 border-green-400 text-green-200',
-    'Context Provider': 'bg-amber-500/40 border-amber-400 text-amber-200',
-    'Implications Mapper': 'bg-pink-500/40 border-pink-400 text-pink-200',
-};
-
-// Parse persona names from connection reasoning
-const parsePersonasFromReasoning = (reasoning: string): string[] => {
-    const personas = Object.keys(PERSONA_COLORS);
-    return personas.filter(p => reasoning.includes(p));
-};
-
-import { Zap, Info, Trash2 } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2 } from 'lucide-react';
 import dagre from 'dagre';
+
+export interface TagStyle {
+    color: string;
+    pattern: 'solid' | 'dashed' | 'dotted';
+}
 
 // Calculate dynamic node dimensions based on content
 const getNodeDimensions = (node: Node): { width: number; height: number } => {
@@ -159,6 +151,83 @@ const nodeTypes = {
     custom: CustomNode,
 };
 
+const edgeTypes = {
+    customEdge: CustomEdge,
+};
+// Helper to distribute edges evenly around ALL sides of every node (Load Balancing) to prevent overlaps and use all sides
+const distributeEdges = (edges: Edge[], nodes: Node[]): { edges: Edge[], handledNodes: Node[] } => {
+    const nodeSideUsage: Record<string, { top: number, bottom: number, left: number, right: number }> = {};
+
+    // Initialize handle counts for all nodes
+    nodes.forEach(n => {
+        nodeSideUsage[n.id] = { top: 0, bottom: 0, left: 0, right: 0 };
+    });
+
+    // We will assign specific handles to edges, tracking usage to perfectly balance each node
+    const distributedEdges = edges.map(e => {
+        const sId = e.source;
+        const tId = e.target;
+
+        let sHandle = 'port-right-0';
+        let tHandle = 'port-left-0';
+
+        if (nodeSideUsage[sId] && nodeSideUsage[tId]) {
+            // Find least used side for Source (prefer Right -> Bottom -> Top -> Left)
+            const sUsage = nodeSideUsage[sId];
+            const sMin = Math.min(sUsage.right, sUsage.bottom, sUsage.top, sUsage.left);
+            let sSide: 'right' | 'bottom' | 'top' | 'left' = 'right';
+
+            // For stability, prefer placing outgoing connections on right/bottom naturally
+            if (sUsage.right === sMin) sSide = 'right';
+            else if (sUsage.bottom === sMin) sSide = 'bottom';
+            else if (sUsage.top === sMin) sSide = 'top';
+            else sSide = 'left';
+
+            // CustomNode names bottom handle prefix 'bot'
+            const sSideString = sSide === 'bottom' ? 'bot' : sSide;
+            sHandle = `port-${sSideString}-${sUsage[sSide]}`;
+            sUsage[sSide]++;
+
+            // Find least used side for Target (prefer Left -> Top -> Bottom -> Right)
+            const tUsage = nodeSideUsage[tId];
+            const tMin = Math.min(tUsage.left, tUsage.top, tUsage.bottom, tUsage.right);
+            let tSide: 'left' | 'top' | 'bottom' | 'right' = 'left';
+
+            // Prefer placing incoming connections on left/top naturally
+            if (tUsage.left === tMin) tSide = 'left';
+            else if (tUsage.top === tMin) tSide = 'top';
+            else if (tUsage.bottom === tMin) tSide = 'bottom';
+            else tSide = 'right';
+
+            // CustomNode names bottom handle prefix 'bot'
+            const tSideString = tSide === 'bottom' ? 'bot' : tSide;
+            tHandle = `port-${tSideString}-${tUsage[tSide]}`;
+            tUsage[tSide]++;
+        }
+
+        return {
+            ...e,
+            sourceHandle: sHandle,
+            targetHandle: tHandle,
+            type: 'customEdge',
+            zIndex: 0 // Force edges to render in background layer behind all cards
+        };
+    });
+
+    // Update node data with final handle counts so CustomNode renders exactly the right amount
+    // Set zIndex 100 so nodes render visually on top of all lines
+    const handledNodes = nodes.map(n => ({
+        ...n,
+        zIndex: 100, // Force nodes into the foreground layer above all lines
+        data: {
+            ...n.data,
+            handleCounts: nodeSideUsage[n.id] || { top: 0, bottom: 0, left: 0, right: 0 }
+        }
+    }));
+
+    return { edges: distributedEdges, handledNodes };
+};
+
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, sharedSocket, onDeepDiveNode, onNavigateToChild }) => {
     const { fitView } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
@@ -169,6 +238,51 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [isGathering, setIsGathering] = useState(false);
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
+
+    // Dynamic tag styles
+    const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
+    const [editingTag, setEditingTag] = useState<string | null>(null);
+
+    // Load tag styles on mount
+    useEffect(() => {
+        const saved = localStorage.getItem('board_tag_styles');
+        if (saved) {
+            try {
+                setTagStyles(JSON.parse(saved));
+            } catch (e) {
+                console.error("Failed to parse tag styles", e);
+            }
+        }
+    }, []);
+
+    // Effect to update edge styles dynamically when tagStyles change
+    useEffect(() => {
+        setEdges(eds => eds.map(e => {
+            const tag = (e.label as string)?.toUpperCase() || 'UNKNOWN';
+            const styleDef = tagStyles[tag];
+            if (!styleDef) return e;
+
+            let strokeDasharray = undefined;
+            let animated = false;
+            if (styleDef.pattern === 'dashed') {
+                strokeDasharray = '6,4';
+                animated = true;
+            } else if (styleDef.pattern === 'dotted') {
+                strokeDasharray = '2,4';
+                animated = true;
+            }
+
+            return {
+                ...e,
+                type: 'customEdge',
+                style: { ...e.style, stroke: styleDef.color, strokeDasharray },
+                animated,
+                data: { ...e.data, color: styleDef.color },
+                labelStyle: { ...e.labelStyle, fill: styleDef.color },
+                labelBgStyle: { ...e.labelBgStyle, stroke: styleDef.color },
+            };
+        }));
+    }, [tagStyles]);
 
     // Persist per investigation
     useEffect(() => {
@@ -187,8 +301,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     isDeepDiveSource: !!n.data?.isDeepDiveSource
                 }
             }));
-            setNodes(restoredNodes);
-            setEdges(savedEdges);
+            const { edges: finalEdges, handledNodes } = distributeEdges(
+                savedEdges.map((e: Edge) => ({ ...e, type: 'customEdge', updatable: true, interactionWidth: 20 })),
+                restoredNodes
+            );
+            setNodes(handledNodes);
+            setEdges(finalEdges);
         } else {
             setNodes([]);
             setEdges([]);
@@ -211,7 +329,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         []
     );
     const onConnect: OnConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge({ ...params, sourceHandle: params.sourceHandle || 's-right', targetHandle: params.targetHandle || 't-left' }, eds)),
+        (params: Connection) => setEdges((eds) => addEdge({ ...params, sourceHandle: params.sourceHandle || 'port-right-0', targetHandle: params.targetHandle || 'port-left-0' }, eds)),
+        []
+    );
+    const onReconnect = useCallback(
+        (oldEdge: Edge, newConnection: Connection) => setEdges((els) => reconnectEdge(oldEdge, newConnection, els)),
         []
     );
 
@@ -232,61 +354,53 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         console.log('[Board] Valid connections:', validConnections.length, 'of', connections.length);
 
-        const getEdgeStyles = (tag: string) => {
-            switch (tag?.toUpperCase()) {
-                case 'SUPPORTS': return {
-                    color: '#10b981', // Green
-                    sourceHandle: 's-right',
-                    targetHandle: 't-left',
-                    style: { stroke: '#10b981', strokeWidth: 3 }, // Solid, thick, stable flow
-                    animated: false,
-                };
-                case 'OPPOSES': return {
-                    color: '#ef4444', // Red
-                    sourceHandle: 's-bottom',
-                    targetHandle: 't-bottom',
-                    style: { stroke: '#ef4444', strokeWidth: 2, strokeDasharray: '5,5' }, // Undercutting dashed
-                    animated: true,
-                };
-                case 'EXPANDS': return {
-                    color: '#3b82f6', // Blue
-                    sourceHandle: 's-top',
-                    targetHandle: 't-top',
-                    style: { stroke: '#3b82f6', strokeWidth: 2, strokeDasharray: '2,6' }, // Overarching dotted
-                    animated: true,
-                };
-                case 'DEPENDS': return {
-                    color: '#f97316', // Orange
-                    sourceHandle: 's-right',
-                    targetHandle: 't-top',
-                    style: { stroke: '#f97316', strokeWidth: 2, strokeDasharray: '10,5' }, // Long dash structural tie
-                    animated: true,
-                };
-                case 'RELATED':
-                default: return {
-                    color: '#bc13fe', // Purple
-                    sourceHandle: 's-bottom',
-                    targetHandle: 't-left',
-                    style: { stroke: '#bc13fe', strokeWidth: 1.5, strokeDasharray: '4,4' }, // Generic neural link
-                    animated: true,
-                };
+        setTagStyles(prev => {
+            let updated = false;
+            const newStyles = { ...prev };
+            validConnections.forEach(c => {
+                const tag = c.tag?.toUpperCase() || 'UNKNOWN';
+                if (!newStyles[tag]) {
+                    let hash = 0;
+                    for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+
+                    const r = (Math.abs(hash) % 156) + 100;
+                    const g = (Math.abs(hash * 3) % 156) + 100;
+                    const b = (Math.abs(hash * 7) % 156) + 100;
+                    const hexColor = `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`;
+
+                    const patterns: ('solid' | 'dashed' | 'dotted')[] = ['solid', 'dashed', 'dotted'];
+                    newStyles[tag] = {
+                        color: hexColor,
+                        pattern: patterns[Math.abs(hash) % 3]
+                    };
+                    updated = true;
+                }
+            });
+            if (updated) {
+                localStorage.setItem('board_tag_styles', JSON.stringify(newStyles));
+                return newStyles;
             }
-        };
+            return prev;
+        });
 
         const newEdges: Edge[] = validConnections.map((c: any) => {
-            const edgeConfig = getEdgeStyles(c.tag);
+            const tag = c.tag?.toUpperCase() || 'UNKNOWN';
+            // Placeholder styles. The useEffect listening to tagStyles will immediately overwrite these
+            // with the actual settings from state/localStorage.
+            const tempColor = '#bc13fe';
             return {
-                id: `e-${c.source}-${c.target}-${c.tag}`, // Added tag to edge ID in case of multiple different edges between same nodes
+                id: `e-${c.source}-${c.target}-${c.tag}`,
                 source: c.source,
                 target: c.target,
-                label: c.tag,
-                sourceHandle: edgeConfig.sourceHandle,
-                targetHandle: edgeConfig.targetHandle,
-                data: { reasoning: c.reasoning, color: edgeConfig.color },
-                animated: edgeConfig.animated,
-                style: edgeConfig.style,
-                labelStyle: { fill: edgeConfig.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
-                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: edgeConfig.color, strokeWidth: 1 },
+                type: 'customEdge',
+                label: tag,
+                zIndex: 10,
+                updatable: true,
+                interactionWidth: 20,
+                data: { reasoning: c.reasoning, color: tempColor },
+                style: { stroke: tempColor, strokeWidth: 2 },
+                labelStyle: { fill: tempColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: tempColor, strokeWidth: 1 },
                 labelBgPadding: [8, 4],
                 labelBgBorderRadius: 2,
             };
@@ -296,10 +410,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const existingIds = new Set(eds.map(e => e.id));
             const filteredNew = newEdges.filter(e => !existingIds.has(e.id));
             const combinedEdges = [...eds, ...filteredNew];
-            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, combinedEdges);
-            setNodes([...layoutedNodes]);
-            setTimeout(() => fitView({ duration: 800 }), 100);
-            return layoutedEdges;
+
+            setNodes((currentNodes) => {
+                const { edges: finalEdges, handledNodes } = distributeEdges(combinedEdges, currentNodes);
+                const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+
+                // Update nodes synchronously inside the same pass
+                setNodes([...layoutedNodes]);
+                setTimeout(() => fitView({ duration: 800 }), 100);
+                return layoutedNodes; // Return isn't used by setNodes, but standard practice.
+            });
+
+            // We calculate distributed edges against current nodes. 
+            // Because React state updates are queued, we resolve them both cleanly in the node queue.
+            // For edges state, we need to return the final array independently avoiding stale node reads
+            return combinedEdges; // Temporary fallback. The node queue recalculates the real edges.
         });
         setIsAnalyzing(false);
     }, [nodes, fitView]);
@@ -368,7 +493,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         console.log('[PERSONA_INSIGHTS] Current nodes:', nds.map(n => ({ id: n.id, title: n.data.title })));
                         return nds.map(node => {
                             // Find personas that contributed to this specific node
-                            const nodeInsights = insights.filter(insight => 
+                            const nodeInsights = insights.filter(insight =>
                                 insight.nodeIDs && insight.nodeIDs.includes(node.id)
                             );
                             console.log(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
@@ -457,6 +582,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
     };
 
+    const activeTags = new Set(edges.map(e => (e.label as string)?.toUpperCase() || 'UNKNOWN'));
+    const visibleStyles = Object.entries(tagStyles).filter(([tag]) => activeTags.has(tag));
+
     return (
         <div className="w-full h-full relative bg-cyber-black">
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
@@ -492,8 +620,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                onReconnect={onReconnect}
                 onEdgeClick={onEdgeClick}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                connectionMode={ConnectionMode.Loose}
                 fitView
             >
                 <Background color="#111" gap={15} />
@@ -510,17 +641,69 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 </div>
             )}
 
-            <div className="absolute bottom-10 right-10 w-48 bg-cyber-black/90 border border-cyber-cyan p-4 z-40 shadow-[0_0_20px_rgba(0,243,255,0.1)] backdrop-blur-md">
+            <div className="absolute bottom-10 right-10 w-64 bg-cyber-black/90 border border-cyber-cyan p-4 z-40 shadow-[0_0_20px_rgba(0,243,255,0.1)] backdrop-blur-md max-h-[50vh] flex flex-col">
                 <h3 className="text-cyber-cyan text-xs font-black mb-3 tracking-widest border-b border-cyber-cyan/30 pb-2">RELATIONSHIPS</h3>
-                <div className="flex flex-col gap-2">
-                    {[{ label: 'SUPPORTS', color: '#10b981' }, { label: 'OPPOSES', color: '#ef4444' }, { label: 'EXPANDS', color: '#3b82f6' }, { label: 'DEPENDS', color: '#f97316' }, { label: 'RELATED', color: '#bc13fe' }].map(tag => (
-                        <div key={tag.label} className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full border border-black shadow-sm" style={{ backgroundColor: tag.color }}></div>
-                            <span className="text-[10px] font-bold tracking-wider text-gray-300">{tag.label}</span>
+                <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1 custom-scrollbar">
+                    {visibleStyles.length === 0 && (
+                        <div className="text-[10px] text-gray-500 italic">No connections yet. Dynamic tags will appear here.</div>
+                    )}
+                    {visibleStyles.map(([tag, style]) => (
+                        <div
+                            key={tag}
+                            onClick={() => setEditingTag(editingTag === tag ? null : tag)}
+                            className={`flex items-center gap-2 cursor-pointer p-1 -ml-1 rounded transition-colors group ${editingTag === tag ? 'bg-cyber-cyan/20 border border-cyber-cyan/50' : 'hover:bg-white/5 border border-transparent'}`}
+                        >
+                            <div className="w-3 h-3 rounded-full border border-black shadow-sm shrink-0" style={{ backgroundColor: style.color }}></div>
+                            <span className="text-[10px] font-bold tracking-wider text-gray-300 truncate" title={tag}>{tag}</span>
+                            <Edit2 size={10} className="ml-auto text-gray-500 opacity-0 group-hover:opacity-100" />
                         </div>
                     ))}
                 </div>
             </div>
+
+            {editingTag && tagStyles[editingTag] && (
+                <div className="absolute bottom-10 right-[320px] w-64 bg-cyber-black/95 border border-cyber-purple p-4 z-50 shadow-[0_0_25px_rgba(188,19,254,0.2)] backdrop-blur-md">
+                    <div className="flex justify-between items-center mb-4 border-b border-cyber-purple/30 pb-2">
+                        <h3 className="text-cyber-purple text-xs font-black tracking-widest truncate max-w-[150px]">EDIT: {editingTag}</h3>
+                        <button onClick={() => setEditingTag(null)} className="text-gray-400 hover:text-white">✕</button>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">COLOR</label>
+                            <input
+                                type="color"
+                                value={tagStyles[editingTag].color || '#bc13fe'}
+                                onChange={(e) => {
+                                    const newStyles = { ...tagStyles, [editingTag]: { ...tagStyles[editingTag], color: e.target.value } };
+                                    setTagStyles(newStyles);
+                                    localStorage.setItem('board_tag_styles', JSON.stringify(newStyles));
+                                }}
+                                className="w-full h-8 bg-black border border-gray-700 cursor-pointer"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">LINE PATTERN</label>
+                            <div className="flex gap-2 text-[10px]">
+                                {['solid', 'dashed', 'dotted'].map(pat => (
+                                    <button
+                                        key={pat}
+                                        onClick={() => {
+                                            const newStyles = { ...tagStyles, [editingTag]: { ...tagStyles[editingTag], pattern: pat as any } };
+                                            setTagStyles(newStyles);
+                                            localStorage.setItem('board_tag_styles', JSON.stringify(newStyles));
+                                        }}
+                                        className={`flex-1 py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].pattern === pat ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                                    >
+                                        {pat}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {selectedContent && (
                 <div className="absolute right-0 top-0 w-1/3 h-full bg-cyber-gray border-l border-cyber-cyan p-8 overflow-y-auto z-30 shadow-2xl backdrop-blur-md bg-opacity-95">

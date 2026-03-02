@@ -25,6 +25,12 @@ export interface NodeData {
     isDeepDiveSource?: boolean;
     linkedInvestigationId?: string;
     personaInsights?: PersonaInsight[]; // Full insight objects
+    handleCounts?: {
+        left: number;
+        right: number;
+        top: number;
+        bottom: number;
+    };
     onReadFull: () => void;
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
     onNavigateToChild?: (id: string) => void;
@@ -100,7 +106,7 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
     }, [showChat]);
 
     // Calculate size based on content
-    const { width, height } = calculateCardSize(
+    const { height } = calculateCardSize(
         data.summary || '',
         data.fullText || '',
         isExpanded
@@ -137,14 +143,39 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
             {data.isDeepDiveSource && (
                 <div className="absolute inset-0 bg-cyber-green/5 animate-pulse pointer-events-none" />
             )}
-            {/* Connection Handles - Flow Left-to-Right */}
-            <Handle type="target" id="t-top" position={Position.Top} className="!bg-cyber-cyan w-2 h-2 border border-black !rounded-none" />
-            <Handle type="target" id="t-bottom" position={Position.Bottom} className="!bg-cyber-cyan w-2 h-2 border border-black !rounded-none" />
-            <Handle type="target" id="t-left" position={Position.Left} className="!bg-cyber-cyan w-2 h-2 border border-black !rounded-none" />
+            {/* Dynamic Connection Handles - offset so they don't overlap z-indexes restricting drops */}
 
-            <Handle type="source" id="s-right" position={Position.Right} className="!bg-cyber-purple w-2 h-2 border border-black !rounded-none" />
-            <Handle type="source" id="s-top" position={Position.Top} className="!bg-cyber-purple w-2 h-2 border border-black !rounded-none" />
-            <Handle type="source" id="s-bottom" position={Position.Bottom} className="!bg-cyber-purple w-2 h-2 border border-black !rounded-none" />
+            {/* Top Handles */}
+            {Array.from({ length: Math.max(1, data.handleCounts?.top || 0) }).map((_, i, arr) => {
+                const percent = ((i + 1) * 100) / (arr.length + 1);
+                return (
+                    <Handle key={`top-${i}`} type="source" id={`port-top-${i}`} position={Position.Top} style={{ left: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                );
+            })}
+
+            {/* Bottom Handles */}
+            {Array.from({ length: Math.max(1, data.handleCounts?.bottom || 0) }).map((_, i, arr) => {
+                const percent = ((i + 1) * 100) / (arr.length + 1);
+                return (
+                    <Handle key={`bot-${i}`} type="source" id={`port-bot-${i}`} position={Position.Bottom} style={{ left: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                );
+            })}
+
+            {/* Left Handles */}
+            {Array.from({ length: Math.max(1, data.handleCounts?.left || 0) }).map((_, i, arr) => {
+                const percent = ((i + 1) * 100) / (arr.length + 1);
+                return (
+                    <Handle key={`left-${i}`} type="source" id={`port-left-${i}`} position={Position.Left} style={{ top: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                );
+            })}
+
+            {/* Right Handles */}
+            {Array.from({ length: Math.max(1, data.handleCounts?.right || 0) }).map((_, i, arr) => {
+                const percent = ((i + 1) * 100) / (arr.length + 1);
+                return (
+                    <Handle key={`right-${i}`} type="source" id={`port-right-${i}`} position={Position.Right} style={{ top: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                );
+            })}
 
             {/* Corner Accents */}
             <div className="absolute -top-1 -left-1 w-2 h-2 border-t-2 border-l-2 border-cyber-cyan" />

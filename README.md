@@ -20,8 +20,10 @@
   - **Entity Hunter** — Identifies key people, orgs, and locations
   - **Context Provider** — Adds historical background and explains jargon
   - **Implications Mapper** — Evaluates consequences and predicts outcomes
-  Results are synthesized into color-coded relationships between evidence nodes.
-- **Color-Coordinated Connections**: Relationships are visualized with distinct colors (`SUPPORTS` green, `OPPOSES` red, `EXPANDS` blue, `DEPENDS` orange, `RELATED` purple) with animated dashed lines for dynamic connections.
+  Results are synthesized by the AI into distinct relationship tags based on what the personas investigated.
+- **Draggable Relationship Edges**: Custom graph wire-routing allows users to click and drag the actual relationship words to act as physical waypoints, cleanly bending and re-routing the connecting SVG lines around other cards to declutter dense network views. Double-click the label to snap it back instantly.
+- **Universal Connection Ports**: Dynamically generated, load-balanced universal connection nodes scale on hover and act as omni-directional tether points without enforcing strict left/right input-output bounds, enabling fluid line layout mapping.
+- **AI-Decided Connections**: Rather than relying on hardcoded tag lists, the AI analysis engine explicitly decides the best specific word to describe the relationship between two nodes based on context. These dynamic relationships are automatically assigned unique hashed color-coding and dashed line styling on the fly.
 - **Multi-Model Support**: Supports both Google Gemini and MiniMax (Coding Plan) for AI analysis, with automatic fallback on API failures.
 - **Auto-Layout**: Integrated Dagre graph engine ensuring clean, structured, and non-overlapping board organization.
 - **Investigation Persistence**: Fast, popup-free instant-switching between research projects with seamless LocalStorage transitions and marquee UX.
@@ -92,6 +94,6 @@ Open your browser to the local Vite URL (usually `localhost:5173`).
 1. **Initiate Crawl**: Go to the "Spider View" and enter a research topic (e.g., "Future of fusion energy"). The AI will parse this intelligently using today's exact date.
 2. **Watch the WebGL Spider**: Observe the 3D visualizer map out the "Nervous System." You will see 8 distinct worker legs pulse with activity, lock onto targets, and glow as data physically returns to the central core.
 3. **Analyze the Board**: Head over to the "Detective Board" tab. Watch as cards "pop in" with AI-generated summaries. You can safely resize cards for a better fit or use the mini-map to overview massive case networks.
-4. **Connect The Dots**: Once gathering is complete, click the **[ CONNECT THE DOTS ]** button. The board will automatically organize itself into a logical hierarchy, connecting topics with distinct visual evidence wires (`SUPPORTS` = solid green, `OPPOSES` = dashed red, etc.).
+4. **Connect The Dots**: Once gathering is complete, click the **[ CONNECT THE DOTS ]** button. The board will automatically organize itself into a logical hierarchy, connecting topics with distinct visual evidence wires. These relationship tags are explicitly decided by the AI analysis engine investigating the context, rather than a hardcoded list. Users can freely drag the dynamically generated relationship labels around to manually re-route and bend the visual connection lines to their liking!
 5. **Read Deep**: Click "READ FULL" on any card to slide out the complete Intel Report, fully parsed and untruncated even if in multi-byte languages.
 6. **Switch Topics**: Use the fast, popup-free sidebar to rapidly ditch old investigations and swap seamlessly into new cases while monitoring the lower Status Ticker.

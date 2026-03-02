@@ -574,9 +574,9 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 	currentDate := time.Now().Format("Monday, January 2, 2006")
 	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
 		fmt.Sprintf("You are a Senior Counter-Intelligence Analyst. Today's current date is %s. Conduct a rigorous cross-examination of these intelligence nodes. "+
-			"1. Map the logical infrastructure of the case. Seek contradictions (OPPOSES) and strategic dependencies (EXPANDS/DEPENDS) chronologically if needed. "+
+			"1. Map the logical infrastructure of the case. Seek strategic dependencies, contradictions, and connections chronologically if needed. "+
 			"2. Only connect evidence with high clinical confidence. "+
-			"3. Tags MUST be one of: SUPPORTS, OPPOSES, EXPANDS, DEPENDS, RELATED. "+
+			"3. Generate a concise, uppercase relationship tag (1-3 words) that best describes each connection (e.g., FUNDED_BY, CONTRADICTS, CORROBORATES, WORKS_FOR). "+
 			"4. CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
 			"5. IMPORTANT: YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
 			"Connect the 6 strongest relationships.", currentDate),
@@ -605,6 +605,11 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 		fmt.Printf("[Brain Error] Failed to parse connections JSON: %v\nRaw text: %s\n", err, jsonText)
 		return nil, err
 	}
+
+	for i := range connections {
+		connections[i].Tag = SanitizeTag(connections[i].Tag)
+	}
+
 	fmt.Printf("[Brain] Analysis complete. Found %d relationships.\n", len(connections))
 	return connections, nil
 }
@@ -731,7 +736,7 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 			"Synthesize the insights from all specialists into the 6 strongest relationships between evidence nodes. "+
 			"Each specialist provided: key findings, connections they identified, and follow-up questions. "+
 			"Prioritize connections that multiple specialists agree on. "+
-			"Tags MUST be one of: SUPPORTS, OPPOSES, EXPANDS, DEPENDS, RELATED. "+
+			"Generate a concise, uppercase relationship tag (1-3 words) that best describes the connection (e.g., FUNDS, OWNS, DIRECTS, CONTRADICTS). "+
 			"CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
 			"YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
 			"The 'reasoning' should mention which specialists supported this connection.", currentDate),
@@ -757,6 +762,10 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 	if err := json.Unmarshal([]byte(jsonText), &connections); err != nil {
 		fmt.Printf("[Brain Error] Failed to parse synthesis JSON: %v\nRaw text: %s\n", err, jsonText)
 		return nil, err
+	}
+
+	for i := range connections {
+		connections[i].Tag = SanitizeTag(connections[i].Tag)
 	}
 
 	fmt.Printf("[Brain] Synthesis complete. Found %d final relationships.\n", len(connections))
