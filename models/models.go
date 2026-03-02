@@ -10,8 +10,11 @@ type Abdomen struct {
 
 // Represents a command sent from Brain to Leg
 type NerveSignal struct {
-	TargetQuery string
+	TargetQuery string // Can be a URL, file path, or chunk index "Chunk 1/10"
 	LegID       int
+	IsLocal     bool // True if TargetQuery is a local file path
+	IsChunk     bool // True if this signal contains a pre-parsed text chunk
+	ChunkData   string
 }
 
 // Represents data sent from Leg back to Abdomen

@@ -29,9 +29,16 @@ func (ns *NervousSystem) RealWorker(legID int) {
 	defer ns.WaitGroup.Done()
 
 	for signal := range ns.NerveChannel {
-		fmt.Printf("[Leg %d] Received signal for query: %s\n", legID, signal.TargetQuery)
+		fmt.Printf("[Leg %d] Received signal for target: %s (Local: %v, Chunk: %v)\n", legID, signal.TargetQuery, signal.IsLocal, signal.IsChunk)
 
-		flow := legs.ExecuteLegTask(legID, signal.TargetQuery, ns.Broadcast)
+		var flow models.NutrientFlow
+		if signal.IsChunk {
+			flow = legs.ExecuteChunkTask(legID, signal.TargetQuery, signal.ChunkData, ns.Broadcast)
+		} else if signal.IsLocal {
+			flow = legs.ExecuteLocalFileTask(legID, signal.TargetQuery, ns.Broadcast)
+		} else {
+			flow = legs.ExecuteLegTask(legID, signal.TargetQuery, ns.Broadcast)
+		}
 
 		ns.NutrientChannel <- flow
 		fmt.Printf("[Leg %d] Sent nutrient back.\n", legID)

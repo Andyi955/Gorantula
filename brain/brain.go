@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"spider-agent/models"
 	"spider-agent/nervous_system"
+	"spider-agent/pkg/document"
 
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
@@ -215,6 +217,233 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 
 	// Save to Vault
 	vaultPath, err := saveVaultMemory(prompt, contextText, finalSynthesis)
+	if err != nil {
+		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
+	}
+
+	if b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "BRAIN_STATE",
+			Payload: "Done",
+		})
+		b.NS.Broadcast(models.WSMessage{
+			Type: "SYNTHESIS_COMPLETE",
+			Payload: map[string]interface{}{
+				"result":    finalSynthesis,
+				"vaultPath": vaultPath,
+			},
+		})
+	}
+
+	return finalSynthesis, nil
+}
+
+// ProcessLocalDirectory reads a local folder, finding supported files, and dispatches them to Legs.
+func (b *Brain) ProcessLocalDirectory(ctx context.Context, dirPath string) (string, error) {
+	fmt.Printf("[Brain] Processing local directory: %s\n", dirPath)
+
+	if b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "BRAIN_STATE",
+			Payload: "Scanning Local Files",
+		})
+	}
+
+	var supportedFiles []string
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".txt" || ext == ".pdf" || ext == ".docx" || ext == ".md" || ext == ".csv" {
+			supportedFiles = append(supportedFiles, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to scan directory: %w", err)
+	}
+
+	if len(supportedFiles) == 0 {
+		return "", fmt.Errorf("no supported files (txt, md, csv, pdf, docx) found in directory")
+	}
+
+	return b.ProcessLocalFiles(ctx, supportedFiles)
+}
+
+// ProcessLocalFiles takes specific absolute file paths and dispatches them to Legs.
+func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (string, error) {
+	fmt.Printf("[Brain] Processing %d local files\n", len(filePaths))
+
+	supportedFiles := make([]string, 0, len(filePaths))
+	for _, path := range filePaths {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".txt" || ext == ".pdf" || ext == ".docx" || ext == ".md" || ext == ".csv" {
+			// Verify file actually exists before dispatching
+			if _, err := os.Stat(path); err == nil {
+				supportedFiles = append(supportedFiles, path)
+			}
+		}
+	}
+
+	if len(supportedFiles) == 0 {
+		return "", fmt.Errorf("no valid supported files found in the provided list")
+	}
+
+	// --- STEP 2: Pre-parse and slice into Chunks ---
+	if b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "BRAIN_STATE",
+			Payload: "Ingesting & Chunking local files...",
+		})
+	}
+
+	var allChunks []models.NerveSignal
+	chunkLimit := 10000 // ~3-4 pages per chunk
+	fileLimit := 1000000
+
+	for _, path := range supportedFiles {
+		ext := strings.ToLower(filepath.Ext(path))
+		var content string
+		var err error
+
+		switch ext {
+		case ".txt", ".md", ".csv":
+			content, err = document.ParseTXT(path, fileLimit)
+		case ".pdf":
+			content, err = document.ParsePDF(path, fileLimit)
+		case ".docx":
+			content, err = document.ParseDOCX(path, fileLimit)
+		}
+
+		if err != nil || content == "" {
+			fmt.Printf("[Brain Warning] Failed to parse local file %s: %v\n", filepath.Base(path), err)
+			continue
+		}
+
+		textChunks := document.ChunkText(content, chunkLimit, 50) // Max 50 chunks per file (Edge case 2)
+		totalChunks := len(textChunks)
+
+		for idx, chunkText := range textChunks {
+			chunkIdentifier := fmt.Sprintf("%s (Part %d/%d)", filepath.Base(path), idx+1, totalChunks)
+
+			allChunks = append(allChunks, models.NerveSignal{
+				TargetQuery: chunkIdentifier,
+				IsLocal:     false,
+				IsChunk:     true,
+				ChunkData:   chunkText,
+			})
+		}
+	}
+
+	if len(allChunks) == 0 {
+		return "", fmt.Errorf("failed to extract any content from the selected files")
+	}
+
+	// --- STEP 3: Dispatch Queries to Nervous System ---
+	if b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "BRAIN_STATE",
+			Payload: fmt.Sprintf("Dispatching %d chunks to Legs", len(allChunks)),
+		})
+	}
+
+	// Ensure channels are fresh for this run
+	// Capacity matches total chunks to prevent blocking if workers are slow
+	b.NS.NerveChannel = make(chan models.NerveSignal, len(allChunks))
+	b.NS.NutrientChannel = make(chan models.NutrientFlow, len(allChunks))
+
+	for i := range allChunks {
+		b.NS.NerveChannel <- allChunks[i]
+	}
+	// Important: close nerveChannel so workers eventually exit
+	close(b.NS.NerveChannel)
+
+	// Start working Goroutines (The Legs)
+	b.NS.StartLegs()
+
+	// --- STEP 4: Wait for Nutrients and Store in Abdomen ---
+	// Wait for exactly as many chunks as we dispatched
+	expected := len(allChunks)
+	for i := 0; i < expected; i++ {
+		nutrient := <-b.NS.NutrientChannel
+
+		b.Abdomen.Mutex.Lock()
+		if nutrient.Error == nil && nutrient.Content != "" {
+			title, summary, err := b.summarizeNode(ctx, nutrient.Content)
+
+			if err != nil || title == "" || strings.Contains(strings.ToLower(summary), "security access") || strings.Contains(strings.ToLower(summary), "failed to extract") {
+				fmt.Printf("[Brain info] Skipping node for Leg %d due to low quality content or extraction failure.\n", nutrient.LegID)
+			} else {
+				memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
+				b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
+
+				node := models.MemoryNode{
+					ID:        fmt.Sprintf("node-%d-%d", time.Now().UnixNano(), i),
+					Title:     title,
+					Summary:   summary,
+					FullText:  nutrient.Content,
+					SourceURL: nutrient.SourceURL,
+				}
+
+				if b.NS.Broadcast != nil {
+					b.NS.Broadcast(models.WSMessage{
+						Type: "MEMORY_NODE_GATHERED",
+						Payload: map[string]interface{}{
+							"node":  node,
+							"total": len(b.Abdomen.MemoryContext),
+						},
+					})
+				}
+			}
+		} else if nutrient.Error != nil {
+			fmt.Printf("[Brain Warning] Leg %d returned error: %v\n", nutrient.LegID, nutrient.Error)
+		}
+		b.Abdomen.Mutex.Unlock()
+	}
+
+	b.NS.WaitGroup.Wait()
+
+	// --- STEP 4: Synthesize Final Response ---
+	if b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "BRAIN_STATE",
+			Payload: "Synthesizing Final Response",
+		})
+	}
+
+	b.Abdomen.Mutex.RLock()
+	contextText := strings.Join(b.Abdomen.MemoryContext, "\n\n")
+	b.Abdomen.Mutex.RUnlock()
+
+	b.Model.ResponseMIMEType = "text/plain"
+
+	currentDate := time.Now().Format("Monday, January 2, 2006")
+	b.Model.SystemInstruction = genai.NewUserContent(genai.Text(
+		fmt.Sprintf("You are an expert intelligence analyst compiling a final report. Today's current date is %s. Contextualize all findings chronologically based on this date.", currentDate),
+	))
+
+	synthesisPrompt := fmt.Sprintf(
+		"Based on the following facts gathered from local files, provide a comprehensive summary of the documents' contents.\n\nLocal Files: %s\n\nGathered Facts:\n%s",
+		strings.Join(filePaths, ", "), contextText,
+	)
+
+	finalResp, err := b.Model.GenerateContent(ctx, genai.Text(synthesisPrompt))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
+	}
+
+	finalSynthesis := fmt.Sprintf("%v", finalResp.Candidates[0].Content.Parts[0])
+
+	// Save to Vault
+	var vaultPrefix string
+	if len(filePaths) == 1 {
+		vaultPrefix = "local_file_" + filepath.Base(filePaths[0])
+	} else {
+		vaultPrefix = "local_files_multiple"
+	}
+	vaultPath, err := saveVaultMemory(vaultPrefix, contextText, finalSynthesis)
 	if err != nil {
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
 	}

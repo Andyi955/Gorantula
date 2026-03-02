@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
+	"github.com/ncruces/zenity"
 
 	"spider-agent/brain"
 	"spider-agent/models"
@@ -76,6 +78,24 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 				if prompt, ok := msg["payload"].(string); ok {
 					triggerCrawl(br, prompt)
 				}
+			case "CRAWL_LOCAL":
+				if payload, ok := msg["payload"].(string); ok {
+					payload = strings.TrimSpace(payload)
+					var filePaths []string
+
+					// Check if it's a JSON array
+					if strings.HasPrefix(payload, "[") && strings.HasSuffix(payload, "]") {
+						if err := json.Unmarshal([]byte(payload), &filePaths); err != nil {
+							log.Printf("[WS Error] Failed to parse JSON file paths: %v", err)
+							filePaths = []string{payload} // Fallback to raw string
+						}
+					} else if strings.Contains(payload, "|") {
+						filePaths = strings.Split(payload, "|")
+					} else {
+						filePaths = []string{payload}
+					}
+					triggerLocalCrawl(br, filePaths)
+				}
 			case "CONNECT_DOTS":
 				log.Println("[WS] Received CONNECT_DOTS request")
 				payloadBytes, _ := json.Marshal(msg["payload"])
@@ -140,6 +160,18 @@ func triggerCrawl(br *brain.Brain, prompt string) {
 	}()
 }
 
+func triggerLocalCrawl(br *brain.Brain, filePaths []string) {
+	go func() {
+		_, err := br.ProcessLocalFiles(context.Background(), filePaths)
+		if err != nil {
+			broadcast(models.WSMessage{
+				Type:    "ERROR",
+				Payload: err.Error(),
+			})
+		}
+	}()
+}
+
 func main() {
 	_ = godotenv.Load() // Loads .env if it exists
 
@@ -153,6 +185,38 @@ func main() {
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleConnections(w, r, br)
+	})
+
+	http.HandleFunc("/api/pick-files", func(w http.ResponseWriter, r *http.Request) {
+		// Enable CORS for local dev
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		paths, err := zenity.SelectFileMultiple(
+			zenity.Title("Select Local Documents & Case Files"),
+			zenity.FileFilter{
+				Name:     "Documents (PDF, DOCX, TXT)",
+				Patterns: []string{"*.pdf", "*.docx", "*.txt"},
+			},
+		)
+
+		if err != nil {
+			if err == zenity.ErrCanceled {
+				// User cancelled the dialog, just return an empty array
+				json.NewEncoder(w).Encode([]string{})
+				return
+			}
+			log.Printf("[Picker Error] %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(paths)
 	})
 
 	port := "8080"
