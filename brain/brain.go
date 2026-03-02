@@ -22,10 +22,10 @@ type SubQueries struct {
 
 // Brain controls the LLM generation and orchestration of the Nervous System
 type Brain struct {
-	Client     *genai.Client
-	Model      *genai.GenerativeModel
-	NS         *nervous_system.NervousSystem
-	Abdomen    *models.Abdomen
+	Client      *genai.Client
+	Model       *genai.GenerativeModel
+	NS          *nervous_system.NervousSystem
+	Abdomen     *models.Abdomen
 	ModelRouter map[string]ModelProvider
 }
 
@@ -111,15 +111,8 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 		return "", fmt.Errorf("failed to parse sub-queries JSON: %w", err)
 	}
 
-	// Make sure we have exactly 8 queries
-	if len(subQ.Queries) == 0 {
-		return "", fmt.Errorf("gemini returned 0 queries")
-	}
-	for len(subQ.Queries) < 8 {
-		subQ.Queries = append(subQ.Queries, subQ.Queries[0])
-	}
-	if len(subQ.Queries) > 8 {
-		subQ.Queries = subQ.Queries[:8]
+	if err := b.ValidateSubQueries(&subQ); err != nil {
+		return "", fmt.Errorf("invalid sub-queries: %w", err)
 	}
 
 	// --- STEP 2: Dispatch Queries to Nervous System ---
@@ -452,14 +445,14 @@ func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, finding
 	}
 
 	return PersonaInsight{
-		PersonaName:   persona.Name,
+		PersonaName:  persona.Name,
 		Perspective:  persona.Perspective,
-		KeyFindings:   response.KeyFindings,
-		Connections:   response.Connections,
-		Questions:     response.Questions,
-		Confidence:    response.Confidence,
+		KeyFindings:  response.KeyFindings,
+		Connections:  response.Connections,
+		Questions:    response.Questions,
+		Confidence:   response.Confidence,
 		FullAnalysis: response.FullAnalysis,
-		NodeIDs:       response.NodeIDs,
+		NodeIDs:      response.NodeIDs,
 	}, nil
 }
 
@@ -477,15 +470,15 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 	for _, insight := range insights {
 		insightsSummary += fmt.Sprintf("\n=== %s (%s) ===\n", insight.PersonaName, insight.Perspective)
 		insightsSummary += fmt.Sprintf("Confidence: %.2f\n", insight.Confidence)
-		insightsSummary += fmt.Sprintf("Key Findings:\n")
+		insightsSummary += "Key Findings:\n"
 		for _, f := range insight.KeyFindings {
 			insightsSummary += fmt.Sprintf("  - %s\n", f)
 		}
-		insightsSummary += fmt.Sprintf("Connections:\n")
+		insightsSummary += "Connections:\n"
 		for _, c := range insight.Connections {
 			insightsSummary += fmt.Sprintf("  - %s\n", c)
 		}
-		insightsSummary += fmt.Sprintf("Questions:\n")
+		insightsSummary += "Questions:\n"
 		for _, q := range insight.Questions {
 			insightsSummary += fmt.Sprintf("  - %s\n", q)
 		}
@@ -539,4 +532,23 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 
 	fmt.Printf("[Brain] Synthesis complete. Found %d final relationships.\n", len(connections))
 	return connections, nil
+}
+
+// ValidateSubQueries ensures we have exactly 8 distinct search queries
+func (b *Brain) ValidateSubQueries(subQ *SubQueries) error {
+	if len(subQ.Queries) == 0 {
+		return fmt.Errorf("no queries provided")
+	}
+
+	// Pad with existing queries if we have fewer than 8
+	for len(subQ.Queries) < 8 {
+		subQ.Queries = append(subQ.Queries, subQ.Queries[0])
+	}
+
+	// Truncate if we have more than 8
+	if len(subQ.Queries) > 8 {
+		subQ.Queries = subQ.Queries[:8]
+	}
+
+	return nil
 }

@@ -78,13 +78,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("failed to decode json: %w", err)}
 	}
 
-	var topURLs []string
-	for i, result := range searchRes.Web.Results {
-		if i >= 2 {
-			break
-		}
-		topURLs = append(topURLs, result.URL)
-	}
+	topURLs := ExtractTopURLs(&searchRes, 2)
 
 	if len(topURLs) == 0 {
 		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("no search results found for: %s", query)}
@@ -143,13 +137,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		})
 	}
 
-	fullContext := strings.Join(extractedTexts, "\n")
-	if len(fullContext) > 4000 {
-		runes := []rune(fullContext)
-		if len(runes) > 4000 {
-			fullContext = string(runes[:4000])
-		}
-	}
+	fullContext := TruncateContent(strings.Join(extractedTexts, "\n"), 4000)
 
 	// VALIDATION: If we have no meaningful content, return an error so no card is created
 	if len(extractedTexts) < 2 || len(fullContext) < 200 {
@@ -175,4 +163,25 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		Content:   fullContext,
 		Error:     nil,
 	}
+}
+
+// ExtractTopURLs retrieves up to limit URLs from the search response
+func ExtractTopURLs(res *SearchResponse, limit int) []string {
+	var urls []string
+	for i, result := range res.Web.Results {
+		if i >= limit {
+			break
+		}
+		urls = append(urls, result.URL)
+	}
+	return urls
+}
+
+// TruncateContent caps string length by runes to ensure UTF-8 safety
+func TruncateContent(content string, limit int) string {
+	runes := []rune(content)
+	if len(runes) > limit {
+		return string(runes[:limit])
+	}
+	return content
 }
