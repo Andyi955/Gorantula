@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import SpiderVisualizer from './components/SpiderVisualizer'
 import DetectiveBoard from './components/DetectiveBoard'
-import { Terminal, Database, Folder, Plus, Trash2 } from 'lucide-react'
+import SettingsDashboard from './components/SettingsDashboard'
+import { Terminal, Database, Folder, Plus, Trash2, Settings } from 'lucide-react'
 
 interface Investigation {
   id: string
@@ -9,7 +10,7 @@ interface Investigation {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'spider' | 'board'>('spider')
+  const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
@@ -152,6 +153,13 @@ function App() {
             <Database size={18} />
             Detective Board
           </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === 'settings' ? 'bg-cyber-gray/30 text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]' : 'text-gray-500 hover:text-white'}`}
+          >
+            <Settings size={18} />
+            Settings
+          </button>
         </div>
       </header>
 
@@ -264,11 +272,15 @@ function App() {
               onNavigateToChild={handleNavigateToChild}
             />
           </div>
+
+          <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'settings' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+            <SettingsDashboard />
+          </div>
         </main>
       </div>
 
       {/* Status Bar */}
-      <footer className="px-4 py-2 border-t border-cyber-gray text-[10px] text-gray-600 flex items-center justify-between z-50 bg-cyber-black shadow-[0_-5px_20px_rgba(0,0,0,0.5)] overflow-hidden h-8">
+      < footer className="px-4 py-2 border-t border-cyber-gray text-[10px] text-gray-600 flex items-center justify-between z-50 bg-cyber-black shadow-[0_-5px_20px_rgba(0,0,0,0.5)] overflow-hidden h-8" >
         <div className="flex items-center gap-2 shrink-0 bg-cyber-black z-10 pr-4">
           <div className={`w-2 h-2 rounded-full ${socketConfig.ready ? 'bg-cyber-green animate-pulse' : 'bg-red-500'}`} />
           <span>SYSTEM STATUS: {socketConfig.ready ? 'NOMINAL // WEBSOCKET: ACTIVE' : 'OFFLINE'}</span>
@@ -282,8 +294,8 @@ function App() {
             </span>
           </div>
         </div>
-      </footer>
-    </div>
+      </footer >
+    </div >
   )
 }
 
