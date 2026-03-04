@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Lock, Bot } from 'lucide-react';
+import { Save, Lock, Bot, Cpu } from 'lucide-react';
 
 const PROVIDERS = [
     { id: 'GEMINI_API_KEY', name: 'Google Gemini', default: '' },
@@ -12,6 +12,24 @@ const PROVIDERS = [
     { id: 'MINIMAX_API_KEY', name: 'MiniMax', default: '' },
     { id: 'OLLAMA_HOST', name: 'Ollama Base URL', default: 'http://localhost:11434' },
     { id: 'LM_API_TOKEN', name: 'LM Studio Token', default: '' }
+];
+
+const ROUTING_OPTIONS = [
+    { id: 'gemini', name: 'Google Gemini' },
+    { id: 'openai', name: 'OpenAI (ChatGPT)' },
+    { id: 'anthropic', name: 'Anthropic (Claude)' },
+    { id: 'deepseek', name: 'DeepSeek' },
+    { id: 'qwen', name: 'Qwen (DashScope)' },
+    { id: 'zhipuai', name: 'GLM (Zhipu AI)' },
+    { id: 'moonshot', name: 'Kimi (Moonshot)' },
+    { id: 'minimax', name: 'MiniMax' },
+    { id: 'ollama', name: 'Ollama Local' },
+    { id: 'lmstudio', name: 'LM Studio Local' }
+];
+
+const ROUTING_SETTINGS = [
+    { id: 'DEFAULT_SEARCH_MODEL', name: 'Internet Browsing & Search', desc: 'Synthesizing information' },
+    { id: 'DEFAULT_PERSONA_MODEL', name: 'Background Personas', desc: 'Multi-agent reasoning' }
 ];
 
 const SettingsDashboard = () => {
@@ -85,6 +103,51 @@ const SettingsDashboard = () => {
                 <div className="space-y-6">
                     <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
                         <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
+                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Cpu size={20} /> Model Routing</h3>
+                        <p className="text-sm text-gray-400 mb-6">Select the default neural models for various cognitive tasks. Make sure you have configured the corresponding API keys below.</p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {ROUTING_SETTINGS.map(r => (
+                                <div key={r.id} className="flex flex-col gap-2">
+                                    <label className="text-xs font-bold text-cyber-cyan tracking-widest uppercase flex items-center gap-2">
+                                        {r.name}
+                                    </label>
+                                    <select
+                                        value={keys[r.id] || ''}
+                                        onChange={(e) => handleChange(r.id, e.target.value)}
+                                        className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono text-white"
+                                    >
+                                        <option value="">-- Autoselect (Gemini) --</option>
+                                        {ROUTING_OPTIONS.map(opt => {
+                                            // Determine if the option should be disabled because the key is missing
+                                            let disabled = false;
+
+                                            if (opt.id === 'openai' && !keys['OPENAI_API_KEY']) disabled = true;
+                                            if (opt.id === 'deepseek' && !keys['DEEPSEEK_API_KEY']) disabled = true;
+                                            if (opt.id === 'qwen' && !keys['DASHSCOPE_API_KEY']) disabled = true;
+                                            if (opt.id === 'glm' && !keys['ZHIPU_API_KEY']) disabled = true;
+                                            if (opt.id === 'kimi' && !keys['MOONSHOT_API_KEY']) disabled = true;
+                                            if (opt.id === 'minimax' && !keys['MINIMAX_API_KEY']) disabled = true;
+                                            if (opt.id === 'ollama' && !keys['OLLAMA_HOST']) disabled = true;
+                                            if (opt.id === 'lmstudio' && !keys['LMSTUDIO_HOST']) disabled = true;
+                                            if (opt.id === 'anthropic' && !keys['ANTHROPIC_API_KEY']) disabled = true;
+
+                                            return (
+                                                <option key={opt.id} value={opt.id} disabled={disabled}>
+                                                    {opt.name} {disabled ? '(Requires Key)' : ''}
+                                                </option>
+                                            )
+                                        })}
+                                    </select>
+                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {r.id} | {r.desc}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
+                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Lock size={20} /> API Credentials</h3>
                         <p className="text-sm text-gray-400 mb-2">Configure API keys for external intelligences and local LLM routers. Blank fields will unset the environment configuration.</p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">

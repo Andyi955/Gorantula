@@ -272,6 +272,77 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		router["minimax"] = &MiniMaxProvider{client: minimax}
 	}
 
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		router["openai"] = &OpenAICompatibleProvider{
+			NameID:     "openai",
+			APIKey:     key,
+			BaseURL:    "https://api.openai.com/v1",
+			Model:      "gpt-4o",
+			HTTPClient: httpClient,
+		}
+	}
+
+	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
+		router["deepseek"] = &OpenAICompatibleProvider{
+			NameID:     "deepseek",
+			APIKey:     key,
+			BaseURL:    "https://api.deepseek.com/v1",
+			Model:      "deepseek-chat",
+			HTTPClient: httpClient,
+		}
+	}
+
+	if key := os.Getenv("DASHSCOPE_API_KEY"); key != "" {
+		router["qwen"] = &OpenAICompatibleProvider{
+			NameID:     "qwen",
+			APIKey:     key,
+			BaseURL:    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			Model:      "qwen-plus",
+			HTTPClient: httpClient,
+		}
+	}
+
+	if key := os.Getenv("ZHIPUAI_API_KEY"); key != "" {
+		router["zhipuai"] = &OpenAICompatibleProvider{
+			NameID:     "zhipuai",
+			APIKey:     key,
+			BaseURL:    "https://open.bigmodel.cn/api/paas/v4",
+			Model:      "glm-4-plus",
+			HTTPClient: httpClient,
+		}
+	}
+
+	if key := os.Getenv("MOONSHOT_API_KEY"); key != "" {
+		router["moonshot"] = &OpenAICompatibleProvider{
+			NameID:     "moonshot",
+			APIKey:     key,
+			BaseURL:    "https://api.moonshot.cn/v1",
+			Model:      "moonshot-v1-8k",
+			HTTPClient: httpClient,
+		}
+	}
+
+	if host := os.Getenv("OLLAMA_HOST"); host != "" {
+		router["ollama"] = &OpenAICompatibleProvider{
+			NameID:     "ollama",
+			BaseURL:    host + "/v1",
+			Model:      "llama3",
+			HTTPClient: httpClient,
+		}
+	}
+
+	if token := os.Getenv("LM_API_TOKEN"); token != "" {
+		router["lmstudio"] = &OpenAICompatibleProvider{
+			NameID:     "lmstudio",
+			APIKey:     token,
+			BaseURL:    "http://localhost:1234/v1",
+			Model:      "local-model",
+			HTTPClient: httpClient,
+		}
+	}
+
 	return router, nil
 }
 

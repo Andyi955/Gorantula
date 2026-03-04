@@ -83,7 +83,7 @@ func TestSettingsHandler(t *testing.T) {
 			// for testability. Since the original handler is an inline anonymous
 			// function in main.go, we reproduce the core logic here with the injected test path.
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				handleSettings(w, r, tempEnvFile.Name(), &envMutex)
+				handleSettings(w, r, tempEnvFile.Name(), &envMutex, nil)
 			})
 
 			handler.ServeHTTP(rr, req)
