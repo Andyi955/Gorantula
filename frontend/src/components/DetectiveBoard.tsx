@@ -507,8 +507,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         });
                     });
                 }
+                // Stop gathering when persona insights are complete
+                setIsGathering(false);
             } else if (msg.type === 'CONNECTIONS_FOUND') {
                 handleNewConnections(msg.payload);
+                // Also stop gathering/analyzing when connections are actually found and displayed
+                setIsGathering(false);
             } else if (msg.type === 'BRAIN_STATE') {
                 const state = msg.payload;
                 if (state === 'Done' || state === 'Offline' || state === 'Disconnected') {
