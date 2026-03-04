@@ -42,45 +42,23 @@ const getNodeDimensions = (node: Node): { width: number; height: number } => {
 
 // Enhanced layout function with smart rectangle formation
 const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+    console.log('[Layout] Executing Dagre with', nodes.length, 'nodes and', edges.length, 'edges');
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    // Determine layout direction based on node count and graph structure
-    const nodeCount = nodes.length;
-    const edgeCount = edges.length;
-
-    // For fewer nodes with many connections, use TB (top-bottom) for vertical rectangles
-    // For more nodes, use LR (left-right) for horizontal flow
-    const isDenseGraph = edgeCount > nodeCount * 1.5;
-    const rankdir = nodeCount <= 6 || isDenseGraph ? 'TB' : 'LR';
-
-    // Calculate spacing based on average node size
-    let totalWidth = 0;
-    let totalHeight = 0;
-    nodes.forEach(node => {
-        const dim = getNodeDimensions(node);
-        totalWidth += dim.width;
-        totalHeight += dim.height;
-    });
-    const avgWidth = nodeCount > 0 ? totalWidth / nodeCount : 320;
-    const avgHeight = nodeCount > 0 ? totalHeight / nodeCount : 180;
-
-    // Adaptive spacing
-    const nodesep = Math.max(80, avgWidth * 0.3);
-    const ranksep = rankdir === 'LR'
-        ? Math.max(180, avgWidth * 0.8)
-        : Math.max(150, avgHeight * 0.6);
+    // Detect dense graphs for vertical layout
+    const edgeToNodeRatio = nodes.length > 0 ? edges.length / nodes.length : 0;
+    const isDenseGraph = edgeToNodeRatio > 1.5;
+    const rankdir = nodes.length <= 6 || isDenseGraph ? 'TB' : 'LR';
 
     dagreGraph.setGraph({
         rankdir,
-        nodesep,
-        ranksep,
-        align: 'DL', // Align to bottom-left for consistent positioning
-        marginx: 20,
-        marginy: 20,
+        nodesep: 100,
+        ranksep: 200,
+        marginx: 50,
+        marginy: 50
     });
 
-    // Register nodes with their actual dimensions
     nodes.forEach((node) => {
         const dim = getNodeDimensions(node);
         dagreGraph.setNode(node.id, { width: dim.width, height: dim.height });
@@ -92,52 +70,34 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
 
     dagre.layout(dagreGraph);
 
-    // Calculate row heights for consistent alignment
-    const ranks = new Map<number, number>();
-    nodes.forEach((node) => {
-        const nodeWithPosition = dagreGraph.node(node.id);
-        if (nodeWithPosition) {
-            const rank = Math.floor(nodeWithPosition.y / ranksep);
-            const dim = getNodeDimensions(node);
-            const currentRankHeight = ranks.get(rank) || 0;
-            ranks.set(rank, Math.max(currentRankHeight, dim.height));
-        }
-    });
-
-    // Apply positions with consistent row heights
-    nodes.forEach((node) => {
+    const layoutedNodes = nodes.map((node) => {
         const nodeWithPosition = dagreGraph.node(node.id);
         const dim = getNodeDimensions(node);
 
-        if (nodeWithPosition) {
-            // Get row height for vertical alignment within the row
-            const rank = Math.floor(nodeWithPosition.y / ranksep);
-            const rowHeight = ranks.get(rank) || dim.height;
+        const newPos = {
+            x: nodeWithPosition.x - dim.width / 2,
+            y: nodeWithPosition.y - dim.height / 2,
+        };
 
-            node.position = {
-                x: nodeWithPosition.x - dim.width / 2,
-                y: nodeWithPosition.y - rowHeight / 2,
-            };
+        console.log(`[Layout] Node ${node.id}: (${Math.round(node.position.x)}, ${Math.round(node.position.y)}) -> (${Math.round(newPos.x)}, ${Math.round(newPos.y)})`);
 
-            // Set connection positions based on layout direction
-            if (rankdir === 'LR') {
-                node.targetPosition = Position.Left;
-                node.sourcePosition = Position.Right;
-            } else {
-                node.targetPosition = Position.Top;
-                node.sourcePosition = Position.Bottom;
+        return {
+            ...node,
+            position: newPos,
+            targetPosition: rankdir === 'LR' ? Position.Left : Position.Top,
+            sourcePosition: rankdir === 'LR' ? Position.Right : Position.Bottom,
+            style: {
+                ...node.style,
+                width: dim.width,
+                height: dim.height
             }
-        }
-
-        // Update style with calculated dimensions
-        node.style = {
-            ...node.style,
-            width: dim.width,
-            height: dim.height,
         };
     });
 
-    return { nodes, edges };
+    return {
+        nodes: layoutedNodes.map(n => ({ ...n, position: { ...n.position } })),
+        edges: [...edges]
+    };
 };
 
 interface DetectiveBoardProps {
@@ -147,13 +107,8 @@ interface DetectiveBoardProps {
     onNavigateToChild: (id: string) => void;
 }
 
-const nodeTypes = {
-    custom: CustomNode,
-};
-
-const edgeTypes = {
-    customEdge: CustomEdge,
-};
+// Memoize nodeTypes and edgeTypes outside to satisfy React Flow optimization
+// Utility components were moved inside DetectiveBoardContent to ensure proper memoization and resolve warnings.
 // Helper to distribute edges evenly around ALL sides of every node (Load Balancing) to prevent overlaps and use all sides
 const distributeEdges = (edges: Edge[], nodes: Node[]): { edges: Edge[], handledNodes: Node[] } => {
     const nodeSideUsage: Record<string, { top: number, bottom: number, left: number, right: number }> = {};
@@ -228,6 +183,14 @@ const distributeEdges = (edges: Edge[], nodes: Node[]): { edges: Edge[], handled
     return { edges: distributedEdges, handledNodes };
 };
 
+const NODE_TYPES = {
+    custom: CustomNode,
+};
+
+const EDGE_TYPES = {
+    customEdge: CustomEdge,
+};
+
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, sharedSocket, onDeepDiveNode, onNavigateToChild }) => {
     const { fitView } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
@@ -236,8 +199,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
+    const [isReorganizing, setIsReorganizing] = useState(false);
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
+
+    // Track node transitions for debugging
+    useEffect(() => {
+        if (nodes.length > 0) {
+            console.log('[Board] Nodes state sync. First node:', nodes[0].id, 'pos:', nodes[0].position);
+        }
+    }, [nodes]);
+
+    // NODE_TYPES and EDGE_TYPES are now defined outside the component
 
     // Dynamic tag styles
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -286,7 +259,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     // Persist per investigation
     useEffect(() => {
-        if (!investigationId) return;
+        if (!investigationId || loadedInvestigationId === investigationId) return;
+
+        console.log('[DetectiveBoard] Loading investigation:', investigationId);
         const saved = localStorage.getItem(`inv_data_${investigationId}`);
         if (saved) {
             const { nodes: savedNodes, edges: savedEdges } = JSON.parse(saved);
@@ -312,7 +287,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             setEdges([]);
         }
         setLoadedInvestigationId(investigationId);
-    }, [investigationId, onDeepDiveNode, onNavigateToChild]);
+    }, [investigationId]); // Only run when investigationId changes
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -415,10 +390,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 const { edges: finalEdges, handledNodes } = distributeEdges(combinedEdges, currentNodes);
                 const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
 
-                // Update nodes synchronously inside the same pass
-                setNodes([...layoutedNodes]);
+                // Update edges synchronously (outside setNodes if possible, but for simplicity here we return nodes and set edges separately)
+                setEdges(finalEdges);
                 setTimeout(() => fitView({ duration: 800 }), 100);
-                return layoutedNodes; // Return isn't used by setNodes, but standard practice.
+                return layoutedNodes;
             });
 
             // We calculate distributed edges against current nodes. 
@@ -580,6 +555,50 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
     };
 
+    const handleReorganize = useCallback(() => {
+        console.log('[TidyUp] Clicked. Current nodes:', nodes.length, 'Current edges:', edges.length);
+        if (nodes.length === 0) {
+            console.log('[TidyUp] No nodes to organize.');
+            return;
+        }
+
+        setIsReorganizing(true);
+
+        // Run calculation after a short timeout to allow UI to show loading state
+        setTimeout(() => {
+            try {
+                // Reset handles and distribution
+                console.log('[TidyUp] Distributing edges...');
+                const { edges: finalEdges, handledNodes } = distributeEdges(edges, nodes);
+
+                // Compute new layout positions
+                console.log('[TidyUp] Running Dagre layout...');
+                const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+
+                console.log('[TidyUp] Setting state with layouted nodes...');
+
+                // Set both at once. The CSS transition in index.css will handle the motion.
+                setNodes(layoutedNodes);
+                setEdges(finalEdges);
+
+                // Wait for the SLIDE transition to complete (0.8s) before fitting view
+                setTimeout(() => {
+                    console.log('[TidyUp] Triggering fitView...');
+                    fitView({ duration: 800, padding: 0.2 });
+
+                    // Final finish after animation
+                    setTimeout(() => {
+                        setIsReorganizing(false);
+                        console.log('[TidyUp] Reorganization cycle complete.');
+                    }, 850);
+                }, 850); // Matches the CSS transition duration
+            } catch (err) {
+                console.error('[TidyUp] Error during reorganization:', err);
+                setIsReorganizing(false);
+            }
+        }, 100);
+    }, [nodes, edges, fitView]);
+
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
             setEdgeReasoning({ tag: edge.label as string, text: edge.data.reasoning, color: edge.data.color || '#bc13fe' });
@@ -593,19 +612,27 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         <div className="w-full h-full relative bg-cyber-black">
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
                 <div className="flex gap-2">
-                    {isGathering && (
+                    {(isGathering || isReorganizing) && (
                         <div className="flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black uppercase tracking-widest text-xs animate-pulse shadow-[0_0_15px_rgba(0,243,255,0.3)]">
-                            {deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...'} {nodes.length}/8
+                            {isReorganizing ? 'Reorganizing Neural Pathways...' : (deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...')} {isReorganizing ? '' : `${nodes.length}/8`}
                         </div>
                     )}
                     <button
                         id="connect-dots-btn"
                         onClick={connectTheDots}
-                        disabled={isAnalyzing || nodes.length < 2 || isGathering}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-purple text-cyber-purple font-black shadow-[0_0_15px_rgba(188,19,254,0.3)] transition-all uppercase tracking-widest text-xs ${(isAnalyzing || isGathering) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-purple hover:text-white'}`}
+                        disabled={isAnalyzing || nodes.length < 2 || isGathering || isReorganizing}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-purple text-cyber-purple font-black shadow-[0_0_15px_rgba(188,19,254,0.3)] transition-all uppercase tracking-widest text-xs ${(isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-purple hover:text-white'}`}
                     >
-                        <Zap size={14} />
+                        <Zap size={14} className={isAnalyzing ? 'animate-spin' : ''} />
                         {isAnalyzing ? 'Analyzing Patterns...' : 'Connect The Dots'}
+                    </button>
+                    <button
+                        onClick={handleReorganize}
+                        disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black shadow-[0_0_15px_rgba(0,243,255,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-cyan hover:text-white'}`}
+                    >
+                        <Edit2 size={14} className={isReorganizing ? 'animate-bounce' : ''} />
+                        {isReorganizing ? 'Tidying...' : 'Tidy Up'}
                     </button>
                     <button
                         onClick={clearBoard}
@@ -626,8 +653,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onConnect={onConnect}
                 onReconnect={onReconnect}
                 onEdgeClick={onEdgeClick}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
+                nodeTypes={NODE_TYPES}
+                edgeTypes={EDGE_TYPES}
                 connectionMode={ConnectionMode.Loose}
                 fitView
             >

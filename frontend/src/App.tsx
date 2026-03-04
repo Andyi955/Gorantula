@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import SpiderVisualizer from './components/SpiderVisualizer'
 import DetectiveBoard from './components/DetectiveBoard'
 import SettingsDashboard from './components/SettingsDashboard'
@@ -97,7 +97,7 @@ function App() {
     }
   }
 
-  const handleDeepDiveNode = (promptStr: string, titleStr: string, sourceNodeId: string) => {
+  const handleDeepDiveNode = useCallback((promptStr: string, titleStr: string, sourceNodeId: string) => {
     const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`, 'web');
     if (newInvId && currentInvestigationId) {
       // Update original board to link to this new investigation
@@ -110,12 +110,12 @@ function App() {
         localStorage.setItem(`inv_data_${currentInvestigationId}`, JSON.stringify({ nodes: updatedNodes, edges }));
       }
     }
-  }
+  }, [currentInvestigationId, runSpider]);
 
-  const handleNavigateToChild = (id: string) => {
+  const handleNavigateToChild = useCallback((id: string) => {
     setCurrentInvestigationId(id);
     setActiveTab('board');
-  }
+  }, []);
 
   const deleteInvestigation = (e: React.MouseEvent, idToRemove: string) => {
     e.stopPropagation()
