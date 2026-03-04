@@ -2,11 +2,11 @@ package brain
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"spider-agent/models"
@@ -29,6 +29,29 @@ type Brain struct {
 	NS          *nervous_system.NervousSystem
 	Abdomen     *models.Abdomen
 	ModelRouter map[string]ModelProvider
+	routerMu    sync.RWMutex
+}
+
+// GetRouter safely retrieves a model provider from the router
+func (b *Brain) GetRouter(name string) (ModelProvider, bool) {
+	b.routerMu.RLock()
+	defer b.routerMu.RUnlock()
+	provider, ok := b.ModelRouter[name]
+	return provider, ok
+}
+
+// ReloadModelProviders re-initializes the ModelRouter based on the current environment variables
+func (b *Brain) ReloadModelProviders() error {
+	b.routerMu.Lock()
+	defer b.routerMu.Unlock()
+
+	router, err := NewModelRouter(b)
+	if err != nil {
+		return err
+	}
+	b.ModelRouter = router
+	fmt.Printf("[Brain] Model providers successfully reloaded. Available: %d\n", len(router))
+	return nil
 }
 
 // NewBrain initializes the genai client and the Brain struct
@@ -38,36 +61,53 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	if apiKey == "" {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable not set")
 	}
-
 	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		return nil, err
 	}
 
-	// Assuming 'gemini-3.0-flash' model string as per future specs (2026)
 	model := client.GenerativeModel("gemini-3-flash-preview")
 
 	brain := &Brain{
 		Client:  client,
-		Model:   model,
+		Model:   model, // Legacy ref, kept for backward compatibility if needed temporarily
 		NS:      ns,
 		Abdomen: abdomen,
 	}
 
-	// Initialize model router with available providers
 	router, err := NewModelRouter(brain)
 	if err != nil {
-		fmt.Printf("[Brain] Warning: Failed to initialize model router: %v\n", err)
+		fmt.Printf("[Brain] Warning: failed to initialize model router: %v\n", err)
 	} else {
 		brain.ModelRouter = router
-		fmt.Printf("[Brain] Model router initialized with providers: ")
-		for name := range router {
-			fmt.Printf("%s ", name)
-		}
-		fmt.Println()
 	}
 
 	return brain, nil
+}
+
+func (b *Brain) GetSearchProvider() ModelProvider {
+	pref := os.Getenv("DEFAULT_SEARCH_MODEL")
+	if pref == "" {
+		pref = "gemini"
+	}
+	provider, ok := b.GetRouter(pref)
+	if !ok {
+		if provider, ok = b.GetRouter("gemini"); ok {
+			return provider
+		}
+	}
+
+	// Safe Fallback: if gemini is missing, use any available provider
+	if provider == nil {
+		b.routerMu.RLock()
+		defer b.routerMu.RUnlock()
+		for _, p := range b.ModelRouter {
+			fmt.Printf("[Brain Warning] Gemini missing. Using '%s' as generic search fallback.\n", p.Name())
+			return p
+		}
+	}
+
+	return provider
 }
 
 // ProcessPrompt runs the entire lifecycle for a given user prompt
@@ -89,28 +129,30 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	b.Model.ResponseMIMEType = "application/json"
 
 	currentDate := time.Now().Format("Monday, January 2, 2006")
-
-	// Ensure we only retrieve JSON from Gemini
-	b.Model.SystemInstruction = genai.NewUserContent(genai.Text(
-		fmt.Sprintf("You are the central Brain of a web scraper. Today's current date is %s. Break the user's prompt into exactly 8 distinct search queries that cover varied research angles. "+
-			"Use the current date to contextualize time-sensitive queries if applicable. "+
-			"Example angles: technical specifications, competitive landscape, historical context, future predictions, public sentiment/rumors, financial/market impact, recent news, and expert reviews. "+
-			"Return ONLY a JSON object with a 'queries' array of strings.", currentDate),
-	))
-
-	resp, err := b.Model.GenerateContent(ctx, genai.Text(prompt))
-	if err != nil {
-		return "", fmt.Errorf("failed to generate sub-queries: %w", err)
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return "", fmt.Errorf("no AI model providers are configured or available")
 	}
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("empty response from Gemini")
-	}
+	systemInstruction := fmt.Sprintf("You are the central Brain of a web scraper. Today's current date is %s. Break the user's prompt into exactly 8 distinct search queries that cover varied research angles. "+
+		"Use the current date to contextualize time-sensitive queries if applicable. "+
+		"Example angles: technical specifications, competitive landscape, historical context, future predictions, public sentiment/rumors, financial/market impact, recent news, and expert reviews. "+
+		"Return ONLY a JSON object with a 'queries' array of strings.", currentDate)
 
-	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
+	fullPrompt := systemInstruction + "\n\nUser Prompt: " + prompt
 	var subQ SubQueries
-	if err := json.Unmarshal([]byte(jsonText), &subQ); err != nil {
-		return "", fmt.Errorf("failed to parse sub-queries JSON: %w", err)
+	if err := provider.GenerateJSON(ctx, fullPrompt, &subQ); err != nil {
+		fmt.Printf("[Brain Error] Selected provider %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type:    "BRAIN_STATE",
+				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+			})
+		}
+		fallbackProvider, ok := b.GetRouter("gemini")
+		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &subQ) != nil {
+			return "", fmt.Errorf("failed to generate sub-queries format (even after fallback): %w", err)
+		}
 	}
 
 	if err := b.ValidateSubQueries(&subQ); err != nil {
@@ -195,25 +237,34 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	contextText := strings.Join(b.Abdomen.MemoryContext, "\n\n")
 	b.Abdomen.Mutex.RUnlock()
 
-	// Reset MIME type and system instructions for clear text response
-	b.Model.ResponseMIMEType = "text/plain"
-
+	// provider is already declared above
 	currentDate = time.Now().Format("Monday, January 2, 2006")
-	b.Model.SystemInstruction = genai.NewUserContent(genai.Text(
-		fmt.Sprintf("You are an expert intelligence analyst compiling a final report. Today's current date is %s. Contextualize all findings chronologically based on this date.", currentDate),
-	))
+
+	synthesisInstruction := fmt.Sprintf("You are an expert intelligence analyst compiling a final report. Today's current date is %s. Contextualize all findings chronologically based on this date.", currentDate)
 
 	synthesisPrompt := fmt.Sprintf(
-		"Based on the following facts gathered by your scraping legs, provide a comprehensive answer to the user's original query.\n\nUser Query: %s\n\nGathered Facts:\n%s",
-		prompt, contextText,
+		"%s\n\nBased on the following facts gathered by your scraping legs, provide a comprehensive answer to the user's original query.\n\nUser Query: %s\n\nGathered Facts:\n%s",
+		synthesisInstruction, prompt, contextText,
 	)
 
-	finalResp, err := b.Model.GenerateContent(ctx, genai.Text(synthesisPrompt))
+	finalSynthesis, err := provider.GenerateContent(ctx, synthesisPrompt)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
+		fmt.Printf("[Brain Error] Selected provider %s failed synthesis: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type:    "BRAIN_STATE",
+				Payload: fmt.Sprintf("Provider %s failed synthesis, falling back to Gemini...", provider.Name()),
+			})
+		}
+		fallbackProvider, ok := b.GetRouter("gemini")
+		if !ok {
+			return "", fmt.Errorf("failed to generate final synthesis and no fallback available: %w", err)
+		}
+		finalSynthesis, err = fallbackProvider.GenerateContent(ctx, synthesisPrompt)
+		if err != nil {
+			return "", fmt.Errorf("fallback failed to generate final synthesis: %w", err)
+		}
 	}
-
-	finalSynthesis := fmt.Sprintf("%v", finalResp.Candidates[0].Content.Parts[0])
 
 	// Save to Vault
 	vaultPath, err := saveVaultMemory(prompt, contextText, finalSynthesis)
@@ -500,43 +551,37 @@ func saveVaultMemory(prompt, rawData, summary string) (string, error) {
 }
 
 func (b *Brain) summarizeNode(ctx context.Context, content string) (string, string, error) {
-	// Create a temporary model instance to avoid clobbering global instructions during concurrent leg processing
-	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
-	tempModel.ResponseMIMEType = "application/json"
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return "", "", fmt.Errorf("no model providers available")
+	}
 	currentDate := time.Now().Format("Monday, January 2, 2006")
-	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
-		fmt.Sprintf("You are a Senior Strategic Intelligence Officer. Today's current date is %s. Provide a professional 'INTEL_DOSSIER' style summary. "+
-			"1. Title: Short, punchy, high-impact (max 5 words). "+
-			"2. Summary: Exactly 2 sentences. Contextualize 'recent' or 'upcoming' based on today's current date. "+
-			"3. REQUIRED TAGGING: Wrap critical entities like this: [PERSON:Elon Musk], [ORG:OpenAI], [LOC:London], [DATE:2026-02-24]. "+
-			"4. IMPORTANT: Return ONLY a valid JSON object with 'title' and 'summary' keys. No text. No markdown. "+
-			"CRITICAL: If the text is a security block or indicates bot detection, return ONLY {}.", currentDate),
-	))
 
-	resp, err := tempModel.GenerateContent(ctx, genai.Text(content))
-	if err != nil {
-		return "", "", err
-	}
+	systemInstruction := fmt.Sprintf("You are a Senior Strategic Intelligence Officer. Today's current date is %s. Provide a professional 'INTEL_DOSSIER' style summary. "+
+		"1. Title: Short, punchy, high-impact (max 5 words). "+
+		"2. Summary: Exactly 2 sentences. Contextualize 'recent' or 'upcoming' based on today's current date. "+
+		"3. REQUIRED TAGGING: Wrap critical entities like this: [PERSON:Elon Musk], [ORG:OpenAI], [LOC:London], [DATE:2026-02-24]. "+
+		"4. IMPORTANT: Return ONLY a valid JSON object with 'title' and 'summary' keys. No text. No markdown. "+
+		"CRITICAL: If the text is a security block or indicates bot detection, return ONLY {}.", currentDate)
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", "", fmt.Errorf("empty summary response")
-	}
-
-	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
-
-	// Clean up markdown formatting if the model wrapped the response
-	jsonText = strings.TrimPrefix(jsonText, "```json")
-	jsonText = strings.TrimPrefix(jsonText, "```")
-	jsonText = strings.TrimSuffix(jsonText, "```")
-	jsonText = strings.TrimSpace(jsonText)
-
+	fullPrompt := systemInstruction + "\n\nContent to summarize:\n" + content
 	var res struct {
 		Title   string `json:"title"`
 		Summary string `json:"summary"`
 	}
-	if err := json.Unmarshal([]byte(jsonText), &res); err != nil {
-		fmt.Printf("[Brain Error] summarizeNode failed to parse JSON: %v\nRaw text: %s\n", err, jsonText)
-		return "", "", err
+	if err := provider.GenerateJSON(ctx, fullPrompt, &res); err != nil {
+		fmt.Printf("[Brain Error] summarizeNode provider %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type:    "BRAIN_STATE",
+				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+			})
+		}
+		fallbackProvider, ok := b.GetRouter("gemini")
+		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &res) != nil {
+			fmt.Printf("[Brain Error] summarizeNode fallback failed or disabled\n")
+			return "", "", err
+		}
 	}
 	return res.Title, res.Summary, nil
 }
@@ -563,47 +608,36 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 	// Add node ID mapping to help AI use correct IDs
 	combinedText += buildNodeMapping(nodes)
 
-	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
-	tempModel.ResponseMIMEType = "application/json"
-
-	// Set temperature to 0.2 for analytical precision
-	config := b.Model.GenerationConfig
-	config.Temperature = genai.Ptr(float32(0.2))
-	tempModel.GenerationConfig = config
-
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return nil, fmt.Errorf("no model providers available")
+	}
 	currentDate := time.Now().Format("Monday, January 2, 2006")
-	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
-		fmt.Sprintf("You are a Senior Counter-Intelligence Analyst. Today's current date is %s. Conduct a rigorous cross-examination of these intelligence nodes. "+
-			"1. Map the logical infrastructure of the case. Seek strategic dependencies, contradictions, and connections chronologically if needed. "+
-			"2. Only connect evidence with high clinical confidence. "+
-			"3. Generate a concise, uppercase relationship tag (1-3 words) that best describes each connection (e.g., FUNDED_BY, CONTRADICTS, CORROBORATES, WORKS_FOR). "+
-			"4. CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
-			"5. IMPORTANT: YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
-			"Connect the 6 strongest relationships.", currentDate),
-	))
 
-	resp, err := tempModel.GenerateContent(ctx, genai.Text(combinedText))
-	if err != nil {
-		fmt.Printf("[Brain Error] Connection analysis failed: %v\n", err)
-		return nil, err
-	}
+	systemInstruction := fmt.Sprintf("You are a Senior Counter-Intelligence Analyst. Today's current date is %s. Conduct a rigorous cross-examination of these intelligence nodes. "+
+		"1. Map the logical infrastructure of the case. Seek strategic dependencies, contradictions, and connections chronologically if needed. "+
+		"2. Only connect evidence with high clinical confidence. "+
+		"3. Generate a concise, uppercase relationship tag (1-3 words) that best describes each connection (e.g., FUNDED_BY, CONTRADICTS, CORROBORATES, WORKS_FOR). "+
+		"4. CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
+		"5. IMPORTANT: YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
+		"Connect the 6 strongest relationships.", currentDate)
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("empty connection response")
-	}
-
-	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
-
-	// Clean up markdown formatting if the model wrapped the response
-	jsonText = strings.TrimPrefix(jsonText, "```json")
-	jsonText = strings.TrimPrefix(jsonText, "```")
-	jsonText = strings.TrimSuffix(jsonText, "```")
-	jsonText = strings.TrimSpace(jsonText)
+	fullPrompt := systemInstruction + "\n\nEvidence Nodes:\n" + combinedText
 
 	var connections []models.BoardConnection
-	if err := json.Unmarshal([]byte(jsonText), &connections); err != nil {
-		fmt.Printf("[Brain Error] Failed to parse connections JSON: %v\nRaw text: %s\n", err, jsonText)
-		return nil, err
+	if err := provider.GenerateJSON(ctx, fullPrompt, &connections); err != nil {
+		fmt.Printf("[Brain Error] Connection analysis %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type:    "BRAIN_STATE",
+				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+			})
+		}
+		fallbackProvider, ok := b.GetRouter("gemini")
+		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &connections) != nil {
+			fmt.Printf("[Brain Error] Connection analysis fallback failed\n")
+			return nil, err
+		}
 	}
 
 	for i := range connections {
@@ -661,13 +695,25 @@ func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, finding
 	prompt := BuildPersonaPrompt(persona, findings)
 
 	// Get the appropriate model provider
-	provider, ok := b.ModelRouter[persona.ModelPref]
+	provider, ok := b.GetRouter(persona.ModelPref)
 	if !ok {
 		// Fall back to gemini if preferred model not available
-		provider = b.ModelRouter["gemini"]
-		if provider == nil {
-			return PersonaInsight{}, fmt.Errorf("no model provider available")
+		provider, _ = b.GetRouter("gemini")
+	}
+
+	// Safe Fallback: If gemini is also missing, pick any available provider
+	if provider == nil {
+		b.routerMu.RLock()
+		for _, p := range b.ModelRouter {
+			provider = p
+			break
 		}
+		b.routerMu.RUnlock()
+
+		if provider == nil {
+			return PersonaInsight{PersonaName: persona.Name, Confidence: 0}, fmt.Errorf("no model providers available to run persona analysis")
+		}
+		fmt.Printf("[Brain Warning] Preferred model '%s' and 'gemini' unavailable. Using '%s' for Persona '%s'\n", persona.ModelPref, provider.Name(), persona.Name)
 	}
 
 	fmt.Printf("[Brain] Running persona %s with model %s\n", persona.Name, provider.Name())
@@ -723,45 +769,37 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 	insightsSummary += buildNodeMapping(nodes)
 
 	// Now synthesize using the insights
-	tempModel := b.Client.GenerativeModel("gemini-3-flash-preview")
-	tempModel.ResponseMIMEType = "application/json"
-
-	config := b.Model.GenerationConfig
-	config.Temperature = genai.Ptr(float32(0.2))
-	tempModel.GenerationConfig = config
-
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return nil, fmt.Errorf("no model providers available")
+	}
 	currentDate := time.Now().Format("Monday, January 2, 2006")
-	tempModel.SystemInstruction = genai.NewUserContent(genai.Text(
-		fmt.Sprintf("You are a Senior Counter-Intelligence Analyst coordinating a team of 6 specialists. Today's current date is %s. "+
-			"Synthesize the insights from all specialists into the 6 strongest relationships between evidence nodes. "+
-			"Each specialist provided: key findings, connections they identified, and follow-up questions. "+
-			"Prioritize connections that multiple specialists agree on. "+
-			"Generate a concise, uppercase relationship tag (1-3 words) that best describes the connection (e.g., FUNDS, OWNS, DIRECTS, CONTRADICTS). "+
-			"CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
-			"YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
-			"The 'reasoning' should mention which specialists supported this connection.", currentDate),
-	))
 
-	resp, err := tempModel.GenerateContent(ctx, genai.Text(insightsSummary))
-	if err != nil {
-		fmt.Printf("[Brain Error] Persona synthesis failed: %v\n", err)
-		return nil, err
-	}
+	systemInstruction := fmt.Sprintf("You are a Senior Counter-Intelligence Analyst coordinating a team of 6 specialists. Today's current date is %s. "+
+		"Synthesize the insights from all specialists into the 6 strongest relationships between evidence nodes. "+
+		"Each specialist provided: key findings, connections they identified, and follow-up questions. "+
+		"Prioritize connections that multiple specialists agree on. "+
+		"Generate a concise, uppercase relationship tag (1-3 words) that best describes the connection (e.g., FUNDS, OWNS, DIRECTS, CONTRADICTS). "+
+		"CRITICAL: Use the node IDs from the mapping above - NOT titles! "+
+		"YOU MUST RETURN ONLY A VALID JSON ARRAY OF OBJECTS. NO TEXT. NO MARKDOWN. Elements must be: 'source', 'target', 'tag', 'reasoning'. "+
+		"The 'reasoning' should mention which specialists supported this connection.", currentDate)
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("empty synthesis response")
-	}
-
-	jsonText := fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0])
-	jsonText = strings.TrimPrefix(jsonText, "```json")
-	jsonText = strings.TrimPrefix(jsonText, "```")
-	jsonText = strings.TrimSuffix(jsonText, "```")
-	jsonText = strings.TrimSpace(jsonText)
+	fullPrompt := systemInstruction + "\n\nInsights Summary to Synthesize:\n" + insightsSummary
 
 	var connections []models.BoardConnection
-	if err := json.Unmarshal([]byte(jsonText), &connections); err != nil {
-		fmt.Printf("[Brain Error] Failed to parse synthesis JSON: %v\nRaw text: %s\n", err, jsonText)
-		return nil, err
+	if err := provider.GenerateJSON(ctx, fullPrompt, &connections); err != nil {
+		fmt.Printf("[Brain Error] Persona synthesis %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type:    "BRAIN_STATE",
+				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+			})
+		}
+		fallbackProvider, ok := b.GetRouter("gemini")
+		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &connections) != nil {
+			fmt.Printf("[Brain Error] Persona synthesis fallback failed\n")
+			return nil, err
+		}
 	}
 
 	for i := range connections {

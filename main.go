@@ -222,7 +222,7 @@ func main() {
 	http.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		envFile := ".env"
 		var envMutex sync.Mutex
-		handleSettings(w, r, envFile, &envMutex)
+		handleSettings(w, r, envFile, &envMutex, br)
 	})
 
 	port := "8080"
@@ -231,7 +231,7 @@ func main() {
 }
 
 // handleSettings is extracted for testability
-func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envMutex *sync.Mutex) {
+func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envMutex *sync.Mutex, br *brain.Brain) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -313,6 +313,13 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 		if err := godotenv.Write(envMap, envFile); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		// Edge Case 3: Dynamically reload the backend router mapping
+		if br != nil {
+			if err := br.ReloadModelProviders(); err != nil {
+				log.Printf("[Settings Error] Failed to reload backend model router: %v", err)
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

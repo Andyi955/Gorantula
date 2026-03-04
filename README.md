@@ -24,7 +24,8 @@
 - **Draggable Relationship Edges**: Custom graph wire-routing allows users to click and drag the actual relationship words to act as physical waypoints, cleanly bending and re-routing the connecting SVG lines around other cards to declutter dense network views. Double-click the label to snap it back instantly.
 - **Universal Connection Ports**: Dynamically generated, load-balanced universal connection nodes scale on hover and act as omni-directional tether points without enforcing strict left/right input-output bounds, enabling fluid line layout mapping.
 - **AI-Decided Connections**: Rather than relying on hardcoded tag lists, the AI analysis engine explicitly decides the best specific word to describe the relationship between two nodes based on context. These dynamic relationships are automatically assigned unique hashed color-coding and dashed line styling on the fly.
-- **Multi-Model Support**: Supports both Google Gemini and MiniMax (Coding Plan) for AI analysis, with automatic fallback on API failures.
+- **Multi-Model Routing & Safe Fallbacks**: Supports a vast array of AI models for analysis. Users can explicitly route distinct LLMs to specific tasks (e.g., using DeepSeek for searching, and Gemini for Persona Analysis). Includes a robust thread-safe fallback mechanism that intercepts API failures and seamlessly re-routes prompts to the next available active provider without interrupting the investigation.
+- **Provider Agnostic**: Native integration for Google Gemini, Anthropic Claude, OpenAI, DeepSeek, Qwen, GLM, Kimi, Ollama, and LM Studio.
 - **Auto-Layout**: Integrated Dagre graph engine ensuring clean, structured, and non-overlapping board organization.
 - **Investigation Persistence**: Fast, popup-free instant-switching between research projects with seamless LocalStorage transitions and marquee UX.
 - **Intel Vault**: Every successful crawl is automatically archived as a markdown report in the timestamped `abdomen_vault`.
@@ -34,7 +35,7 @@
 - **Backend**: Go (Gorilla WebSockets, Google GenAI SDK)
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS (v4)
 - **Visualization**: React Flow, Dagre
-- **AI Engine**: Google Gemini 3 Flash + MiniMax M2.5 HighSpeed (with multi-model routing)
+- **AI Engine**: Dynamic multi-model routing supporting Gemini, Anthropic, OpenAI, DeepSeek, Qwen, Ollama, and more via a generic `/v1/chat/completions` provider architecture.
 - **Search Engine**: Brave Search API
 
 ---
@@ -49,11 +50,20 @@
 - **MiniMax API Key (Optional)**: [Get it here](https://platform.minimax.io) - Supports Coding Plan for high-speed inference
 
 ### 2. Environment Configuration
-Create a `.env` file in the root directory (or copy from `.env.example`):
+Create a `.env` file in the root directory (or copy from `.env.example`). You can configure these directly in the application UI under the "Settings" tab without needing to restart the server:
 ```bash
 GEMINI_API_KEY=your_gemini_api_key
 BRAVE_API_KEY=your_brave_api_key
-MINIMAX_API_KEY=your_minimax_api_key  # Optional: enables multi-model support
+# Optional Providers:
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+DEEPSEEK_API_KEY=
+QWEN_API_KEY=
+GLM_API_KEY=
+KIMI_API_KEY=
+MINIMAX_API_KEY=
+OLLAMA_HOST=http://localhost:11434
+LMSTUDIO_HOST=http://localhost:1234
 ```
 
 ### 3. Installation
