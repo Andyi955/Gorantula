@@ -14,6 +14,8 @@ export interface PersonaInsight {
     questions: string[];
     confidence: number;
     fullAnalysis: string;
+    nodeIDs?: string[];
+    timelineEvents?: { timestamp: string, event: string, sourceNodeId: string }[];
 }
 
 export interface NodeData {

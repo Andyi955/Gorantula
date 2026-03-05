@@ -725,14 +725,15 @@ func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, finding
 	}
 
 	return PersonaInsight{
-		PersonaName:  persona.Name,
-		Perspective:  persona.Perspective,
-		KeyFindings:  response.KeyFindings,
-		Connections:  response.Connections,
-		Questions:    response.Questions,
-		Confidence:   response.Confidence,
-		FullAnalysis: response.FullAnalysis,
-		NodeIDs:      response.NodeIDs,
+		PersonaName:    persona.Name,
+		Perspective:    persona.Perspective,
+		KeyFindings:    response.KeyFindings,
+		Connections:    response.Connections,
+		Questions:      response.Questions,
+		Confidence:     response.Confidence,
+		FullAnalysis:   response.FullAnalysis,
+		NodeIDs:        response.NodeIDs,
+		TimelineEvents: response.TimelineEvents,
 	}, nil
 }
 
