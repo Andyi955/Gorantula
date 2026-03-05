@@ -1,6 +1,7 @@
 # GORANTULA v2.0 // ARCHITECT
 
-![Dashboard Preview](./public/assets/dash1.png)
+![Dashboard Preview](./public/assets/dashboard.png)
+![Timeline Preview](./public/assets/timeline.png)
 
 **Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses Gemini 3 Flash or MiniMax to synthesize connections and visualize them on an interactive detective board.
 
@@ -13,6 +14,7 @@
 - **Robust Multi-Byte Parsing**: Advanced `rune` UTF-8 token handling ensures foreign languages (Chinese, Japanese) parsing is pristine without bytes-truncation corruption.
 - **3D WebGL Spider View**: Next-gen visually stunning React Three Fiber data pipeline flow, visualizing live task delegation to parallel worker legs.
 - **Detective Board**: A React Flow-powered visualization interface that maps gathered intelligence as interactive nodes with dynamic edge-wiring.
+- **Interactive Timeline**: A dedicated horizontal, scrubbable timeline view plotting chronologically relevant events on a mathematically infinite virtual floating canvas, allowing for buttery smooth drag-panning and dynamic scaling.
 - **Multi-Agent Persona Analysis**: "Connect The Dots" runs 6 specialized AI personas in parallel to analyze evidence from different angles:
   - **Skeptic** — Questions assumptions, finds gaps and contradictions
   - **Connector** — Finds hidden links between different pieces of info
@@ -106,4 +108,5 @@ Open your browser to the local Vite URL (usually `localhost:5173`).
 3. **Analyze the Board**: Head over to the "Detective Board" tab. Watch as cards "pop in" with AI-generated summaries. You can safely resize cards for a better fit or use the mini-map to overview massive case networks.
 4. **Connect The Dots**: Once gathering is complete, click the **[ CONNECT THE DOTS ]** button. The board will automatically organize itself into a logical hierarchy, connecting topics with distinct visual evidence wires. These relationship tags are explicitly decided by the AI analysis engine investigating the context, rather than a hardcoded list. Users can freely drag the dynamically generated relationship labels around to manually re-route and bend the visual connection lines to their liking!
 5. **Read Deep**: Click "READ FULL" on any card to slide out the complete Intel Report, fully parsed and untruncated even if in multi-byte languages.
-6. **Switch Topics**: Use the fast, popup-free sidebar to rapidly ditch old investigations and swap seamlessly into new cases while monitoring the lower Status Ticker.
+6. **Timeline Analysis**: Toggle to the "Timeline" view to see dates extracted from reports logically laid out chronologically on a virtual floating canvas. Smoothly drag and zoom to investigate cascading historical implications!
+7. **Switch Topics**: Use the fast, popup-free sidebar to rapidly ditch old investigations and swap seamlessly into new cases while monitoring the lower Status Ticker.

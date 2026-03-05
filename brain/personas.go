@@ -15,16 +15,24 @@ type Persona struct {
 	SystemPrompt string `json:"systemPrompt"` // Custom system instructions for this persona
 }
 
+// TimelineEvent represents a chronological event extracted by the Timeline Analyst
+type TimelineEvent struct {
+	Timestamp    string `json:"timestamp"`    // The date/time of the event
+	Event        string `json:"event"`        // Description of the event
+	SourceNodeID string `json:"sourceNodeId"` // The node ID where this event was found
+}
+
 // PersonaInsight represents the analysis output from a single persona
 type PersonaInsight struct {
-	PersonaName  string   `json:"personaName"`
-	Perspective  string   `json:"perspective"`
-	KeyFindings  []string `json:"keyFindings"`  // List of important discoveries
-	Connections  []string `json:"connections"`  // Connections this persona sees
-	Questions    []string `json:"questions"`    // Follow-up questions raised
-	Confidence   float32  `json:"confidence"`   // 0.0-1.0 confidence score
-	FullAnalysis string   `json:"fullAnalysis"` // Full text analysis
-	NodeIDs      []string `json:"nodeIDs"`      // Node IDs this persona contributed insights to
+	PersonaName    string          `json:"personaName"`
+	Perspective    string          `json:"perspective"`
+	KeyFindings    []string        `json:"keyFindings"`    // List of important discoveries
+	Connections    []string        `json:"connections"`    // Connections this persona sees
+	Questions      []string        `json:"questions"`      // Follow-up questions raised
+	Confidence     float32         `json:"confidence"`     // 0.0-1.0 confidence score
+	FullAnalysis   string          `json:"fullAnalysis"`   // Full text analysis
+	NodeIDs        []string        `json:"nodeIDs"`        // Node IDs this persona contributed insights to
+	TimelineEvents []TimelineEvent `json:"timelineEvents"` // Chronological events extracted
 }
 
 // GetDefaultPersonas returns a set of 6 distinct personas for multi-agent collaboration
@@ -63,7 +71,7 @@ func GetDefaultPersonas() []Persona {
 			Perspective:  "Chronologically orders events, identifies causality, and spots temporal patterns",
 			Questions:    "When did this happen? What led to this? What's the sequence of events?",
 			ModelPref:    defaultGemini,
-			SystemPrompt: "You are a timeline specialist. Your role is to order events chronologically, identify cause-and-effect relationships, and spot temporal patterns.",
+			SystemPrompt: "You are a timeline specialist. Your role is to order events chronologically, identify cause-and-effect relationships, and spot temporal patterns. Extract ALL events with their corresponding timestamps.",
 		},
 		{
 			Name:         "Entity Hunter",
@@ -117,7 +125,14 @@ Provide your analysis in JSON format with the following structure:
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
   "fullAnalysis": "Your detailed analysis (2-3 paragraphs)",
-  "nodeIDs": ["list of node IDs (e.g., 'node-12345') that this analysis directly relates to"]
+  "nodeIDs": ["list of node IDs (e.g., 'node-12345') that this analysis directly relates to"],
+  "timelineEvents": [
+    {
+      "timestamp": "extracted date/time (e.g. 2026-02-24, 2025, or Unknown)",
+      "event": "description of what happened",
+      "sourceNodeId": "the EXACT node ID where this event was found"
+    }
+  ]
 }
 
 CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the [NodeID: xxx] markers in the input above. Do NOT use titles, entity names, or make up IDs. Use only IDs like: node-1772294753812066795-0
@@ -126,10 +141,11 @@ Respond ONLY with the JSON.`, persona.SystemPrompt, findings, persona.Expertise,
 
 // PersonaJSONResponse represents the expected JSON structure from persona analysis
 type PersonaJSONResponse struct {
-	KeyFindings  []string `json:"keyFindings"`
-	Connections  []string `json:"connections"`
-	Questions    []string `json:"questions"`
-	Confidence   float32  `json:"confidence"`
-	FullAnalysis string   `json:"fullAnalysis"`
-	NodeIDs      []string `json:"nodeIDs"` // Which node IDs this persona's insights apply to
+	KeyFindings    []string        `json:"keyFindings"`
+	Connections    []string        `json:"connections"`
+	Questions      []string        `json:"questions"`
+	Confidence     float32         `json:"confidence"`
+	FullAnalysis   string          `json:"fullAnalysis"`
+	NodeIDs        []string        `json:"nodeIDs"` // Which node IDs this persona's insights apply to
+	TimelineEvents []TimelineEvent `json:"timelineEvents"`
 }

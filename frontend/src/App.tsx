@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import SpiderVisualizer from './components/SpiderVisualizer'
 import DetectiveBoard from './components/DetectiveBoard'
 import SettingsDashboard from './components/SettingsDashboard'
-import { Terminal, Database, Folder, Plus, Trash2, Settings } from 'lucide-react'
+import TimelineView from './components/TimelineView'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock } from 'lucide-react'
 
 interface Investigation {
   id: string
@@ -10,7 +11,7 @@ interface Investigation {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'settings'>('spider')
+  const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
@@ -154,6 +155,13 @@ function App() {
             Detective Board
           </button>
           <button
+            onClick={() => setActiveTab('timeline')}
+            className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === 'timeline' ? 'bg-cyber-green text-black shadow-[0_0_15px_rgba(16,185,129,0.5)]' : 'text-gray-500 hover:text-white'}`}
+          >
+            <Clock size={18} />
+            Timeline View
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === 'settings' ? 'bg-cyber-gray/30 text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]' : 'text-gray-500 hover:text-white'}`}
           >
@@ -270,6 +278,16 @@ function App() {
               sharedSocket={socketConfig.socket}
               onDeepDiveNode={handleDeepDiveNode}
               onNavigateToChild={handleNavigateToChild}
+            />
+          </div>
+
+          <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'timeline' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+            <TimelineView
+              investigationId={currentInvestigationId}
+              onNavigateToNode={() => {
+                setActiveTab('board');
+                // Could implement node highlighting or centering here in the future
+              }}
             />
           </div>
 
