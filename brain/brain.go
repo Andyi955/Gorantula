@@ -134,7 +134,7 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 		return "", fmt.Errorf("no AI model providers are configured or available")
 	}
 
-	systemInstruction := fmt.Sprintf("You are the central Brain of a web scraper. Today's current date is %s. Break the user's prompt into exactly 8 distinct search queries that cover varied research angles. "+
+	systemInstruction := fmt.Sprintf("You are the central Brain of a web scraper. Today's current date is %s. Break the user's prompt into between 4 and 12 distinct search queries that cover varied research angles based on the complexity of the request. "+
 		"Use the current date to contextualize time-sensitive queries if applicable. "+
 		"Example angles: technical specifications, competitive landscape, historical context, future predictions, public sentiment/rumors, financial/market impact, recent news, and expert reviews. "+
 		"Return ONLY a JSON object with a 'queries' array of strings.", currentDate)
@@ -155,8 +155,16 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 		}
 	}
 
-	if err := b.ValidateSubQueries(&subQ); err != nil {
-		return "", fmt.Errorf("invalid sub-queries: %w", err)
+	numQueries := len(subQ.Queries)
+	if numQueries < 4 {
+		numQueries = 4
+	}
+	if numQueries > 12 {
+		numQueries = 12
+	}
+	// Ensure slice matches the validated length
+	if len(subQ.Queries) > numQueries {
+		subQ.Queries = subQ.Queries[:numQueries]
 	}
 
 	// --- STEP 2: Dispatch Queries to Nervous System ---
@@ -167,8 +175,8 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 		})
 	}
 	// Ensure channels are fresh for this run
-	b.NS.NerveChannel = make(chan models.NerveSignal, 8)
-	b.NS.NutrientChannel = make(chan models.NutrientFlow, 8)
+	b.NS.NerveChannel = make(chan models.NerveSignal, numQueries)
+	b.NS.NutrientChannel = make(chan models.NutrientFlow, numQueries)
 
 	for i, q := range subQ.Queries {
 		b.NS.NerveChannel <- models.NerveSignal{
@@ -179,11 +187,11 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	// Important: close nerveChannel so workers eventually exit
 	close(b.NS.NerveChannel)
 
-	// Start 8 working Goroutines (The Legs)
+	// Start working Goroutines (The Legs)
 	b.NS.StartLegs()
 
-	// --- STEP 3: Wait for 8 Nutrients and Store in Abdomen ---
-	for i := 0; i < 8; i++ {
+	// --- STEP 3: Wait for Nutrients and Store in Abdomen ---
+	for i := 0; i < numQueries; i++ {
 		nutrient := <-b.NS.NutrientChannel
 
 		b.Abdomen.Mutex.Lock()
@@ -811,20 +819,20 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 	return connections, nil
 }
 
-// ValidateSubQueries ensures we have exactly 8 distinct search queries
+// ValidateSubQueries ensures we have a valid number of distinct search queries (between 4 and 12)
 func (b *Brain) ValidateSubQueries(subQ *SubQueries) error {
 	if len(subQ.Queries) == 0 {
 		return fmt.Errorf("no queries provided")
 	}
 
-	// Pad with existing queries if we have fewer than 8
-	for len(subQ.Queries) < 8 {
+	// Dynamic padding if too few
+	for len(subQ.Queries) < 4 {
 		subQ.Queries = append(subQ.Queries, subQ.Queries[0])
 	}
 
-	// Truncate if we have more than 8
-	if len(subQ.Queries) > 8 {
-		subQ.Queries = subQ.Queries[:8]
+	// Truncate if more than 12
+	if len(subQ.Queries) > 12 {
+		subQ.Queries = subQ.Queries[:12]
 	}
 
 	return nil
