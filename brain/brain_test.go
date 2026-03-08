@@ -10,31 +10,36 @@ func TestValidateSubQueries(t *testing.T) {
 	tests := []struct {
 		name          string
 		inputQueries  []string
-		expectedCount int
+		minCount      int
+		maxCount      int
 		expectError   bool
 	}{
 		{
 			name:          "Exactly 8 queries",
 			inputQueries:  []string{"q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"},
-			expectedCount: 8,
+			minCount:      8,
+			maxCount:      8,
 			expectError:   false,
 		},
 		{
-			name:          "Fewer than 8 - must pad",
+			name:          "Fewer than 4 - must pad",
 			inputQueries:  []string{"q1"},
-			expectedCount: 8,
+			minCount:      4,
+			maxCount:      4,
 			expectError:   false,
 		},
 		{
-			name:          "More than 8 - must truncate",
-			inputQueries:  []string{"q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9"},
-			expectedCount: 8,
+			name:          "More than 12 - must truncate",
+			inputQueries:  []string{"q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10", "q11", "q12", "q13"},
+			minCount:      12,
+			maxCount:      12,
 			expectError:   false,
 		},
 		{
 			name:          "No queries - must error",
 			inputQueries:  []string{},
-			expectedCount: 0,
+			minCount:      0,
+			maxCount:      0,
 			expectError:   true,
 		},
 	}
@@ -49,8 +54,10 @@ func TestValidateSubQueries(t *testing.T) {
 				return
 			}
 
-			if !tt.expectError && len(subQ.Queries) != tt.expectedCount {
-				t.Errorf("ValidateSubQueries() count = %d; want %d", len(subQ.Queries), tt.expectedCount)
+			if !tt.expectError {
+				if len(subQ.Queries) < tt.minCount || len(subQ.Queries) > tt.maxCount {
+					t.Errorf("ValidateSubQueries() count = %d; want between %d and %d", len(subQ.Queries), tt.minCount, tt.maxCount)
+				}
 			}
 		})
 	}
