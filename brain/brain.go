@@ -22,6 +22,12 @@ type SubQueries struct {
 	Queries []string `json:"queries"`
 }
 
+// RankResult encapsulates the relevance score for a fact (Generation 2)
+type RankResult struct {
+	Score  int    `json:"score"`
+	Reason string `json:"reason"`
+}
+
 // Brain controls the LLM generation and orchestration of the Nervous System
 type Brain struct {
 	Client      *genai.Client
@@ -242,8 +248,15 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	}
 
 	b.Abdomen.Mutex.RLock()
-	contextText := strings.Join(b.Abdomen.MemoryContext, "\n\n")
+	rawFacts := b.Abdomen.MemoryContext
 	b.Abdomen.Mutex.RUnlock()
+
+	// Rank and filter facts to prevent token overflow (Generation 2: Selective Memory)
+	contextText, err := b.RankAndFilterFacts(ctx, prompt, rawFacts)
+	if err != nil {
+		fmt.Printf("[Brain Warning] Ranking failed, falling back to raw join: %v\n", err)
+		contextText = strings.Join(rawFacts, "\n\n")
+	}
 
 	// provider is already declared above
 	currentDate = time.Now().Format("Monday, January 2, 2006")
@@ -836,4 +849,76 @@ func (b *Brain) ValidateSubQueries(subQ *SubQueries) error {
 	}
 
 	return nil
+}
+
+// RankAndFilterFacts takes raw gathered facts and ranks them by relevance to the user's prompt (Generation 2: Selective Memory)
+func (b *Brain) RankAndFilterFacts(ctx context.Context, originalPrompt string, facts []string) (string, error) {
+	if len(facts) == 0 {
+		return "", nil
+	}
+
+	// Step 1: Brainstorm relevance criteria (Internal Mental Check)
+	// - Is the fact directly answering the prompt?
+	// - Is it a security block/bot detection? (Discard)
+	// - Is it a duplicate?
+
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return "", fmt.Errorf("no model providers available for ranking")
+	}
+
+	fmt.Printf("[Brain] Ranking %d facts for relevance...\n", len(facts))
+
+	// Construct a ranking prompt
+	rankingInstruction := "You are a Senior Strategic Intelligence Analyst. Rank the following gathered facts by relevance to the user's prompt. " +
+		"Ignore security blocks, 'access denied', or empty content. Give a score from 0 (useless) to 10 (highly relevant). " +
+		"Return ONLY a JSON array of objects with 'score' (int) and 'reason' (string) for each fact, in the exact same order as the facts provided."
+
+	// Due to potential token limits on the ranking call itself, we limit the facts processed if huge
+	limit := 15
+	if len(facts) > limit {
+		facts = facts[:limit]
+	}
+
+	factsContext := ""
+	for i, f := range facts {
+		// Truncate individual facts if they are massive to avoid breaking the ranking call
+		factSnippet := f
+		if len(factSnippet) > 2000 {
+			factSnippet = factSnippet[:2000] + "... [TRUNCATED]"
+		}
+		factsContext += fmt.Sprintf("FACT %d:\n%s\n---\n", i, factSnippet)
+	}
+
+	fullPrompt := fmt.Sprintf("%s\n\nUser Prompt: %s\n\nFacts to Rank:\n%s", rankingInstruction, originalPrompt, factsContext)
+
+	var results []RankResult
+
+	if err := provider.GenerateJSON(ctx, fullPrompt, &results); err != nil {
+		return "", fmt.Errorf("ranking generation failed: %w", err)
+	}
+
+	// Step 2: Filter and reconstruct
+	var filteredFacts []string
+	for i, res := range results {
+		if i >= len(facts) {
+			break
+		}
+		// Only keep high-confidence facts (Score > 5)
+		if res.Score > 5 {
+			filteredFacts = append(filteredFacts, facts[i])
+		}
+	}
+
+	// Fallback: If everything was low score, take the top 3 anyway to avoid empty synthesis
+	if len(filteredFacts) == 0 && len(facts) > 0 {
+		count := 3
+		if len(facts) < 3 {
+			count = len(facts)
+		}
+		filteredFacts = facts[:count]
+	}
+
+	fmt.Printf("[Brain] Ranking complete. Retained %d/%d facts.\n", len(filteredFacts), len(facts))
+	return strings.Join(filteredFacts, "\n\n"), nil
 }
