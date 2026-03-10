@@ -7,8 +7,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
@@ -143,6 +146,29 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
 					broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
 				}()
+			case "CHAT_RAG":
+				log.Println("[WS] Received CHAT_RAG request")
+				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
+					query, _ := payloadMap["query"].(string)
+					filesIf, _ := payloadMap["files"].([]interface{})
+					var files []string
+					for _, f := range filesIf {
+						if str, ok := f.(string); ok {
+							files = append(files, str)
+						}
+					}
+
+					go func() {
+						broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Interrogating Vault..."})
+						response, err := br.InterrogateVault(context.Background(), files, query)
+						if err != nil {
+							log.Printf("[WS Error] InterrogateVault failed: %v", err)
+							broadcast(models.WSMessage{Type: "ERROR", Payload: "Vault interrogation failed: " + err.Error()})
+							return
+						}
+						broadcast(models.WSMessage{Type: "CHAT_RESPONSE", Payload: response})
+					}()
+				}
 			}
 		}
 	}
@@ -217,6 +243,60 @@ func main() {
 		}
 
 		json.NewEncoder(w).Encode(paths)
+	})
+
+	http.HandleFunc("/api/vault-files", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		type VaultFile struct {
+			FileName string `json:"fileName"`
+			FilePath string `json:"filePath"`
+			ModTime  string `json:"modTime"`
+		}
+
+		var files []VaultFile
+		vaultDir := filepath.Join(".", "abdomen_vault")
+
+		if _, err := os.Stat(vaultDir); os.IsNotExist(err) {
+			_ = os.MkdirAll(vaultDir, 0755)
+			json.NewEncoder(w).Encode([]VaultFile{})
+			return
+		}
+
+		// We will test if Vault works by just walking it
+		err := filepath.Walk(vaultDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil // skip errors
+			}
+			if !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
+				// use relative path nicely
+				relPath, _ := filepath.Rel(vaultDir, path)
+
+				files = append(files, VaultFile{
+					FileName: relPath,
+					FilePath: path,
+					ModTime:  info.ModTime().Format(time.RFC3339),
+				})
+			}
+			return nil
+		})
+
+		if err != nil {
+			log.Printf("[Picker Error] %v", err)
+		}
+
+		// Sort newest first
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].ModTime > files[j].ModTime
+		})
+
+		json.NewEncoder(w).Encode(files)
 	})
 
 	http.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {

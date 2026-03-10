@@ -3,7 +3,8 @@ import SpiderVisualizer from './components/SpiderVisualizer'
 import DetectiveBoard from './components/DetectiveBoard'
 import SettingsDashboard from './components/SettingsDashboard'
 import TimelineView from './components/TimelineView'
-import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock } from 'lucide-react'
+import VaultChatbot from './components/VaultChatbot'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare } from 'lucide-react'
 
 interface Investigation {
   id: string
@@ -11,7 +12,7 @@ interface Investigation {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'settings'>('spider')
+  const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
@@ -163,6 +164,13 @@ function App() {
             Timeline View
           </button>
           <button
+            onClick={() => setActiveTab('chat')}
+            className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === 'chat' ? 'bg-cyber-purple text-white shadow-[0_0_15px_rgba(188,19,254,0.5)]' : 'text-gray-500 hover:text-white'}`}
+          >
+            <MessageSquare size={18} />
+            Vault Chat
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={`flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === 'settings' ? 'bg-cyber-gray/30 text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]' : 'text-gray-500 hover:text-white'}`}
           >
@@ -293,6 +301,10 @@ function App() {
                 setTimeout(() => setFocusedNodeId(null), 1000);
               }}
             />
+          </div>
+
+          <div className={`absolute inset-0 transition-opacity duration-500 flex flex-col ${activeTab === 'chat' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+            <VaultChatbot sharedSocket={socketConfig.socket} />
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'settings' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
