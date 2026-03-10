@@ -10,6 +10,7 @@
 ## 🚀 Key Features
 
 - **Concurrent Crawling**: Deploys 8 parallel scraping workers (Legs) to gather information from disparate sources simultaneously.
+- **Cross-Case Synthesis Engine**: The "Grand Unified Theory" background engine silently analyzes incoming evidence against your entire historical archive of past investigations using a persistent, $O(1)$ Inverted Entity Index. It automatically alerts you via floating UI notifications if a person, organization, or location from today's case was previously discovered months ago in an unrelated investigation.
 - **RAG Vault Chatbot**: Interrogate your archived investigations natively. Select multiple historical case files from the interactive Checklist UI and ask the AI specific questions; it dynamically enforces strict constraints to answer *only* based on the provided evidence.
 - **Audio/Video Media Transcription**: Send YouTube, Vimeo, or standard audio/video URLs (.mp4, .mp3, etc.) straight into the crawler. If the currently routed AI provider supports multimodal parsing (like Gemini 1.5 Pro), it physically rips the media and extracts the intelligence. If not, a Graceful Fallback dynamically intercepts the payload without crashing the investigation.
 - **Date-Aware AI**: The central Brain contextually limits searches and connects data via chronological relation to the absolute exact current date, ensuring modern timeline accuracy.

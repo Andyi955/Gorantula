@@ -76,10 +76,10 @@ func GetDefaultPersonas() []Persona {
 		{
 			Name:         "Entity Hunter",
 			Expertise:    "Entity Extraction",
-			Perspective:  "Identifies and profiles key people, organizations, and locations mentioned in the data",
+			Perspective:  "Identifies only the exact names of key people, organizations, and locations mentioned",
 			Questions:    "Who are the key players? What organizations are involved? Where is this happening?",
 			ModelPref:    defaultMiniMax,
-			SystemPrompt: "You are an entity extraction expert. Your role is to identify and profile all key people, organizations, locations, and dates mentioned in the evidence.",
+			SystemPrompt: "You are a strict entity extraction expert. YOUR ONLY ROLE is to identify the RAW NAMES of key people, organizations, and locations. YOU MUST return ONLY the short exact noun phrases (e.g., 'Elon Musk', 'SpaceX', 'White House'). DO NOT EVER return full sentences, descriptions, or explanations. Each finding MUST strictly be a single entity name of maximum 3-4 words.",
 		},
 		{
 			Name:         "Context Provider",
@@ -120,7 +120,7 @@ Specifically, consider these questions:
 
 Provide your analysis in JSON format with the following structure:
 {
-  "keyFindings": ["list of important discoveries"],
+  "keyFindings": ["list of short strings answering your prompt. IF you are Entity Hunter, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
   "connections": ["connections you identify between facts"],
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,

@@ -371,40 +371,49 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         console.log('[Board] Valid connections:', validConnections.length, 'of', connections.length);
 
-        setTagStyles(prev => {
-            let updated = false;
-            const newStyles = { ...prev };
-            validConnections.forEach(c => {
-                const tag = c.tag?.toUpperCase() || 'UNKNOWN';
-                if (!newStyles[tag]) {
-                    let hash = 0;
-                    for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+        const nextStyles = { ...tagStyles };
+        let stylesUpdated = false;
 
-                    const r = (Math.abs(hash) % 156) + 100;
-                    const g = (Math.abs(hash * 3) % 156) + 100;
-                    const b = (Math.abs(hash * 7) % 156) + 100;
-                    const hexColor = `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`;
+        validConnections.forEach(c => {
+            const tag = c.tag?.toUpperCase() || 'UNKNOWN';
+            if (!nextStyles[tag]) {
+                let hash = 0;
+                for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
 
-                    const patterns: ('solid' | 'dashed' | 'dotted')[] = ['solid', 'dashed', 'dotted'];
-                    newStyles[tag] = {
-                        color: hexColor,
-                        pattern: patterns[Math.abs(hash) % 3]
-                    };
-                    updated = true;
-                }
-            });
-            if (updated) {
-                localStorage.setItem('board_tag_styles', JSON.stringify(newStyles));
-                return newStyles;
+                const r = (Math.abs(hash) % 156) + 100;
+                const g = (Math.abs(hash * 3) % 156) + 100;
+                const b = (Math.abs(hash * 7) % 156) + 100;
+                const hexColor = `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`;
+
+                const patterns: ('solid' | 'dashed' | 'dotted')[] = ['solid', 'dashed', 'dotted'];
+                nextStyles[tag] = {
+                    color: hexColor,
+                    pattern: patterns[Math.abs(hash) % 3] as any
+                };
+                stylesUpdated = true;
             }
-            return prev;
         });
+
+        if (stylesUpdated) {
+            setTagStyles(nextStyles);
+            localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+        }
 
         const newEdges: Edge[] = validConnections.map((c: any) => {
             const tag = c.tag?.toUpperCase() || 'UNKNOWN';
-            // Placeholder styles. The useEffect listening to tagStyles will immediately overwrite these
-            // with the actual settings from state/localStorage.
-            const tempColor = '#bc13fe';
+            const styleDef = nextStyles[tag] || { color: '#bc13fe', pattern: 'solid' };
+            const edgeColor = styleDef.color;
+            let strokeDasharray = undefined;
+            let animated = false;
+
+            if (styleDef.pattern === 'dashed') {
+                strokeDasharray = '6,4';
+                animated = true;
+            } else if (styleDef.pattern === 'dotted') {
+                strokeDasharray = '2,4';
+                animated = true;
+            }
+
             return {
                 id: `e-${c.source}-${c.target}-${c.tag}`,
                 source: c.source,
@@ -414,10 +423,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 zIndex: 10,
                 updatable: true,
                 interactionWidth: 20,
-                data: { reasoning: c.reasoning, color: tempColor },
-                style: { stroke: tempColor, strokeWidth: 2 },
-                labelStyle: { fill: tempColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
-                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: tempColor, strokeWidth: 1 },
+                animated,
+                data: { reasoning: c.reasoning, color: edgeColor },
+                style: { stroke: edgeColor, strokeWidth: 2, strokeDasharray },
+                labelStyle: { fill: edgeColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: edgeColor, strokeWidth: 1 },
                 labelBgPadding: [8, 4],
                 labelBgBorderRadius: 2,
             };

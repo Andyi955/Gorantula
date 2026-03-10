@@ -129,10 +129,29 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 					// Debug: Log insights before broadcasting
 					for _, insight := range insights {
-						log.Printf("[WS] Persona %s: nodeIDs=%v", insight.PersonaName, insight.NodeIDs)
+						log.Printf("[WS] Persona %s: nodeIDs=%v, keyFindings=%d", insight.PersonaName, insight.NodeIDs, len(insight.KeyFindings))
 					}
 					// Broadcast insights to frontend
 					broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
+
+					// Trigger Cross-Case Synthesis using Entity Hunter extracted entities
+					var entities []string
+					for _, insight := range insights {
+						if insight.PersonaName == "Entity Hunter" {
+							entities = append(entities, insight.KeyFindings...)
+						}
+					}
+
+					log.Printf("[Synthesis] Triggering overlaps check with %d entities for %d nodes", len(entities), len(nodes))
+					if len(entities) > 0 && len(nodes) > 0 {
+						// Create a unique case ID based on the node timestamp piece
+						parts := strings.Split(nodes[0].ID, "-")
+						vaultID := "case-" + time.Now().Format("2006-01-02-150405")
+						if len(parts) >= 2 {
+							vaultID = "case-" + parts[1]
+						}
+						go br.Synthesis.AnalyzeOverlap(entities, vaultID)
+					}
 
 					// Step 2: Synthesize insights into final connections
 					broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
