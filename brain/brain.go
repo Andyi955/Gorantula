@@ -180,15 +180,38 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 			Payload: "Instructing Legs",
 		})
 	}
-	// Ensure channels are fresh for this run
-	b.NS.NerveChannel = make(chan models.NerveSignal, numQueries)
-	b.NS.NutrientChannel = make(chan models.NutrientFlow, numQueries)
 
-	for i, q := range subQ.Queries {
+	var mediaURLs []string
+	words := strings.Fields(prompt)
+	for _, word := range words {
+		lWord := strings.ToLower(word)
+		if strings.HasPrefix(lWord, "http") && (strings.Contains(lWord, "youtube.com") || strings.Contains(lWord, "youtu.be") || strings.Contains(lWord, "vimeo.com") || strings.HasSuffix(lWord, ".mp3") || strings.HasSuffix(lWord, ".m4a") || strings.HasSuffix(lWord, ".mp4")) {
+			mediaURLs = append(mediaURLs, word)
+		}
+	}
+
+	totalLegs := numQueries + len(mediaURLs)
+
+	// Ensure channels are fresh for this run
+	b.NS.NerveChannel = make(chan models.NerveSignal, totalLegs)
+	b.NS.NutrientChannel = make(chan models.NutrientFlow, totalLegs)
+
+	legID := 0
+	for _, url := range mediaURLs {
+		b.NS.NerveChannel <- models.NerveSignal{
+			TargetQuery: url,
+			LegID:       legID,
+			IsMedia:     true,
+		}
+		legID++
+	}
+
+	for _, q := range subQ.Queries {
 		b.NS.NerveChannel <- models.NerveSignal{
 			TargetQuery: q,
-			LegID:       i,
+			LegID:       legID,
 		}
+		legID++
 	}
 	// Important: close nerveChannel so workers eventually exit
 	close(b.NS.NerveChannel)
@@ -197,7 +220,7 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	b.NS.StartLegs()
 
 	// --- STEP 3: Wait for Nutrients and Store in Abdomen ---
-	for i := 0; i < numQueries; i++ {
+	for i := 0; i < totalLegs; i++ {
 		nutrient := <-b.NS.NutrientChannel
 
 		b.Abdomen.Mutex.Lock()
