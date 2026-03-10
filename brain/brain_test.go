@@ -11,7 +11,8 @@ type MockProvider struct {
 	GenerateJSONFunc func(ctx context.Context, prompt string, target interface{}) error
 }
 
-func (m *MockProvider) Name() string { return m.NameFunc() }
+func (m *MockProvider) Name() string        { return m.NameFunc() }
+func (m *MockProvider) SupportsMedia() bool { return false }
 func (m *MockProvider) GenerateJSON(ctx context.Context, prompt string, target interface{}) error {
 	return m.GenerateJSONFunc(ctx, prompt, target)
 }

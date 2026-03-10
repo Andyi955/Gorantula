@@ -1,0 +1,52 @@
+# Feature 6: RAG "Interrogation" Chatbot
+
+This document presents the implementation plan for the new RAG (Retrieval-Augmented Generation) Chatbot feature, which allows users to directly interrogate their Intel Vault (`abdomen_vault`) about past investigations.
+
+## User Review Required
+
+> [!NOTE]
+> Instead of blindly scanning the entire `abdomen_vault` directory (which could blow out the context window or cause hallucinations if the vault gets too large), the Chatbot UI will allow you to **select specific investigations** to "chat with". 
+> 
+> The backend will only mount the selected markdown files into the Gemini context. This keeps token usage lean and keeps the RAG answers strictly grounded to the topics you actually care about at that moment.
+
+## Proposed Changes
+
+### Backend Structure
+
+#### [MODIFY] [main.go](file:///c:/Users/Andrewq/Projects/Gorantula/main.go)
+- Add a new WebSocket listener case for the payload type `CHAT_RAG`.
+- Upon receiving `CHAT_RAG`, the server will dispatch the user's query asynchronously to the [Brain](file:///C:/Users/Andrewq/Projects/Gorantula/brain/brain.go#32-40).
+- Results will be broadcasted back via WebSocket on a new event type `CHAT_RESPONSE`.
+
+#### [MODIFY] [brain/brain.go](file:///c:/Users/Andrewq/Projects/Gorantula/brain/brain.go)
+- Implement an `InterrogateVault(ctx context.Context, filePaths []string, query string) (string, error)` function.
+- This function will:
+  1. Read only the specific [.md](file:///C:/Users/Andrewq/Projects/Gorantula/README.md) files requested by the frontend from the `./abdomen_vault`.
+  2. Assemble the contents of those specific historical investigations into a structured system prompt context.
+  3. Dispatch the combined context and the user query to the `gemini-3-flash-preview` model.
+  4. Return the synthesized response.
+
+#### [MODIFY] [main.go](file:///c:/Users/Andrewq/Projects/Gorantula/main.go)
+- Add a new API endpoint `/api/vault-files` (or similar WebSocket payload) to list all available investigations in the `abdomen_vault` so the frontend can populate a selection dropdown.
+
+---
+
+### Frontend Structure
+
+#### [MODIFY] [frontend/src/App.tsx](file:///c:/Users/Andrewq/Projects/Gorantula/frontend/src/App.tsx)
+- Integrate a new "Vault Chat" tab button within the main application header alongside Spider View, Detective Board, and Timeline View.
+- Provide state hooks necessary to toggle visibility for the chat view (`activeTab === 'chat'`).
+
+#### [NEW] [frontend/src/components/VaultChatbot.tsx](file:///c:/Users/Andrewq/Projects/Gorantula/frontend/src/components/VaultChatbot.tsx)
+- Create a dedicated chat interface component.
+- Add a **File Selector UI** (dropdown or multiselect checklist) that fetches and displays all past investigations in the vault.
+- Manage local conversation history state (`role`, `content`).
+- Ensure it hooks into the `sharedSocket` to emit `CHAT_RAG` queries (passing the selected `filePaths` along with the query) and append incoming `CHAT_RESPONSE` answers to the chat view.
+- Incorporate markdown rendering for Gemini's responses.
+
+## Verification Plan
+
+### Manual Verification
+1. Open the UI, click "Vault Chat", and ensure the layout renders correctly.
+2. Ask a question such as "What was the conclusion generated regarding [Topic that exists in your vault]?"
+3. Confirm that the chatbot returns a coherent answer synthesized exclusively from existing markdown vault records instead of relying entirely on its pre-trained base knowledge.

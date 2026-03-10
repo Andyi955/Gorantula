@@ -49,6 +49,10 @@ func (p *OpenAICompatibleProvider) Name() string {
 	return p.NameID
 }
 
+func (p *OpenAICompatibleProvider) SupportsMedia() bool {
+	return false
+}
+
 func (p *OpenAICompatibleProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
 	messages := []OpenAIMessage{
 		{Role: "user", Content: prompt},
