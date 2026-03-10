@@ -4,6 +4,7 @@ import DetectiveBoard from './components/DetectiveBoard'
 import SettingsDashboard from './components/SettingsDashboard'
 import TimelineView from './components/TimelineView'
 import VaultChatbot from './components/VaultChatbot'
+import SynthesisPanel from './components/SynthesisPanel'
 import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare } from 'lucide-react'
 
 interface Investigation {
@@ -216,6 +217,8 @@ function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 relative">
+          <SynthesisPanel sharedSocket={socketConfig.socket} />
+
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <div className="h-full flex flex-col">
               <div className="flex-1 overflow-hidden">

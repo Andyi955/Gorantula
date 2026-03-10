@@ -36,6 +36,7 @@ type Brain struct {
 	Abdomen     *models.Abdomen
 	ModelRouter map[string]ModelProvider
 	routerMu    sync.RWMutex
+	Synthesis   *SynthesisEngine
 }
 
 // GetRouter safely retrieves a model provider from the router
@@ -87,6 +88,19 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	} else {
 		brain.ModelRouter = router
 	}
+
+	alertChan := make(chan SynthesisAlert, 20)
+	brain.Synthesis = NewSynthesisEngine("./abdomen_vault", alertChan)
+	go func() {
+		for alert := range alertChan {
+			if brain.NS.Broadcast != nil {
+				brain.NS.Broadcast(models.WSMessage{
+					Type:    "SYNTHESIS_ALERT",
+					Payload: alert,
+				})
+			}
+		}
+	}()
 
 	return brain, nil
 }
