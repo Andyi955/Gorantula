@@ -121,11 +121,12 @@ func ExecuteMediaTask(legID int, targetQuery string, broadcast models.Broadcaste
 				if err != nil {
 					return models.NutrientFlow{LegID: legID, SourceURL: targetQuery, Error: err}
 				}
-				if fileInfo.State == genai.FileStateActive {
+				switch fileInfo.State {
+				case genai.FileStateActive:
 					ready = true
-				} else if fileInfo.State == genai.FileStateFailed {
+				case genai.FileStateFailed:
 					return models.NutrientFlow{LegID: legID, SourceURL: targetQuery, Error: fmt.Errorf("gemini file processing failed")}
-				} else {
+				default:
 					time.Sleep(2 * time.Second)
 				}
 			}
