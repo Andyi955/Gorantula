@@ -343,7 +343,10 @@ const TimelineView: React.FC<TimelineViewProps> = ({ investigationId, onNavigate
                                     <div className={`absolute left-1/2 w-0.5 ${colors.line} opacity-40 h-24 ${isTop ? 'bottom-1/2 origin-bottom' : 'top-1/2 origin-top'} transition-all group-hover/card:opacity-100 group-hover/card:shadow-[0_0_10px_rgba(0,243,255,0.5)]`} />
 
                                     {/* Event Card */}
-                                    <div className={`absolute left-1/2 -translate-x-1/2 ${isTop ? 'bottom-[calc(50%+6rem)]' : 'top-[calc(50%+6rem)]'} w-64 bg-black/90 border ${colors.border} opacity-80 p-4 transition-all hover:bg-black hover:opacity-100 shadow-[0_0_10px_rgba(0,0,0,0.8)] hover:${colors.shadow} flex flex-col gap-2 z-20`}>
+                                    <div
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        className={`absolute left-1/2 -translate-x-1/2 ${isTop ? 'bottom-[calc(50%+6rem)]' : 'top-[calc(50%+6rem)]'} w-64 bg-black/90 border ${colors.border} opacity-80 p-4 transition-all hover:bg-black hover:opacity-100 shadow-[0_0_10px_rgba(0,0,0,0.8)] hover:${colors.shadow} flex flex-col gap-2 z-20`}
+                                    >
                                         <div className={`${colors.text} font-black text-[11px] tracking-widest uppercase border-b border-white/20 pb-1 break-words`}>
                                             {ev.timestamp}
                                         </div>
@@ -382,8 +385,16 @@ const TimelineView: React.FC<TimelineViewProps> = ({ investigationId, onNavigate
                                 <p className="text-gray-300 text-[11px] flex-1 overflow-y-auto custom-scrollbar leading-relaxed">
                                     {ev.event}
                                 </p>
-                                <div className="text-[9px] text-gray-500 uppercase flex justify-between pt-1 mt-1 border-t border-cyber-purple/10">
+                                <div className="text-[9px] text-gray-500 uppercase flex justify-between items-center pt-1 mt-1 border-t border-cyber-purple/10">
                                     <span className="truncate max-w-[120px]" title={ev.nodeTitle}>{ev.nodeTitle}</span>
+                                    {onNavigateToNode && (
+                                        <button
+                                            onClick={() => onNavigateToNode(ev.sourceNodeId)}
+                                            className="text-cyber-purple hover:text-white flex items-center gap-1"
+                                        >
+                                            SOURCE <ArrowRight size={10} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         ))}

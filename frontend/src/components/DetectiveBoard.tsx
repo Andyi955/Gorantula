@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -105,6 +105,7 @@ interface DetectiveBoardProps {
     sharedSocket: WebSocket | null;
     onDeepDiveNode: (prompt: string, titleStr: string, sourceNodeId: string) => void;
     onNavigateToChild: (id: string) => void;
+    focusNodeId?: string | null;
 }
 
 // Memoize nodeTypes and edgeTypes outside to satisfy React Flow optimization
@@ -191,7 +192,7 @@ const EDGE_TYPES = {
     customEdge: CustomEdge,
 };
 
-const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, sharedSocket, onDeepDiveNode, onNavigateToChild }) => {
+const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId }) => {
     const { fitView } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
@@ -209,6 +210,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             console.log('[Board] Nodes state sync. First node:', nodes[0].id, 'pos:', nodes[0].position);
         }
     }, [nodes]);
+
+    const lastFocusedRef = useRef<string | null>(null);
+
+    // Handle node focusing from props (e.g. from Timeline)
+    useEffect(() => {
+        if (focusNodeId && focusNodeId !== lastFocusedRef.current && nodes.length > 0) {
+            const nodeExists = nodes.some(n => n.id === focusNodeId);
+
+            if (nodeExists) {
+                console.log('[Board] Focusing node:', focusNodeId);
+                lastFocusedRef.current = focusNodeId;
+
+                // Close any open side panels (intel reports) to show the node clearly
+                setSelectedContent(null);
+
+                // Center and zoom in slightly on the node
+                fitView({ nodes: [{ id: focusNodeId }], duration: 800, padding: 0.5 });
+
+                // Visually select it
+                setNodes(nds => nds.map(n => ({
+                    ...n,
+                    selected: n.id === focusNodeId
+                })));
+            }
+        } else if (!focusNodeId) {
+            lastFocusedRef.current = null;
+        }
+    }, [focusNodeId, nodes, fitView]);
 
     // NODE_TYPES and EDGE_TYPES are now defined outside the component
 

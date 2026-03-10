@@ -18,6 +18,7 @@ function App() {
 
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -278,15 +279,18 @@ function App() {
               sharedSocket={socketConfig.socket}
               onDeepDiveNode={handleDeepDiveNode}
               onNavigateToChild={handleNavigateToChild}
+              focusNodeId={focusedNodeId}
             />
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'timeline' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <TimelineView
               investigationId={currentInvestigationId}
-              onNavigateToNode={() => {
+              onNavigateToNode={(nodeId) => {
+                setFocusedNodeId(nodeId);
                 setActiveTab('board');
-                // Could implement node highlighting or centering here in the future
+                // Clear the focus after a delay to allow re-triggering same node
+                setTimeout(() => setFocusedNodeId(null), 1000);
               }}
             />
           </div>
