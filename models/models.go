@@ -15,6 +15,7 @@ type NerveSignal struct {
 	IsLocal     bool // True if TargetQuery is a local file path
 	IsChunk     bool // True if this signal contains a pre-parsed text chunk
 	ChunkData   string
+	IsMedia     bool // True if TargetQuery is a media URL (e.g. YouTube, podcast)
 }
 
 // Represents data sent from Leg back to Abdomen

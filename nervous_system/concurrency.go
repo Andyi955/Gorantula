@@ -36,6 +36,8 @@ func (ns *NervousSystem) RealWorker(legID int) {
 			flow = legs.ExecuteChunkTask(legID, signal.TargetQuery, signal.ChunkData, ns.Broadcast)
 		} else if signal.IsLocal {
 			flow = legs.ExecuteLocalFileTask(legID, signal.TargetQuery, ns.Broadcast)
+		} else if signal.IsMedia {
+			flow = legs.ExecuteMediaTask(legID, signal.TargetQuery, ns.Broadcast)
 		} else {
 			flow = legs.ExecuteLegTask(legID, signal.TargetQuery, ns.Broadcast)
 		}
