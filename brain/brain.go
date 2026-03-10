@@ -190,14 +190,30 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 		}
 	}
 
-	totalLegs := numQueries + len(mediaURLs)
+	var supportedMediaURLs []string
+	if len(mediaURLs) > 0 {
+		if !provider.SupportsMedia() {
+			warningMsg := fmt.Sprintf("⚠️ Provider '%s' does not support media transcriptions. Skipping media URLs.", provider.Name())
+			fmt.Println("[Brain Warning]", warningMsg)
+			if b.NS.Broadcast != nil {
+				b.NS.Broadcast(models.WSMessage{
+					Type:    "SYSTEM_LOG",
+					Payload: warningMsg,
+				})
+			}
+		} else {
+			supportedMediaURLs = mediaURLs
+		}
+	}
+
+	totalLegs := numQueries + len(supportedMediaURLs)
 
 	// Ensure channels are fresh for this run
 	b.NS.NerveChannel = make(chan models.NerveSignal, totalLegs)
 	b.NS.NutrientChannel = make(chan models.NutrientFlow, totalLegs)
 
 	legID := 0
-	for _, url := range mediaURLs {
+	for _, url := range supportedMediaURLs {
 		b.NS.NerveChannel <- models.NerveSignal{
 			TargetQuery: url,
 			LegID:       legID,

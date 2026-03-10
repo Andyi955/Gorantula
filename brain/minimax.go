@@ -150,6 +150,7 @@ func (m *MiniMaxClient) GenerateText(ctx context.Context, systemPrompt, userProm
 type ModelProvider interface {
 	GenerateContent(ctx context.Context, prompt string) (string, error)
 	GenerateJSON(ctx context.Context, prompt string, response interface{}) error
+	SupportsMedia() bool
 	Name() string
 }
 
@@ -160,6 +161,10 @@ type GeminiProvider struct {
 
 func (g *GeminiProvider) Name() string {
 	return "gemini"
+}
+
+func (g *GeminiProvider) SupportsMedia() bool {
+	return true
 }
 
 func (g *GeminiProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
@@ -192,6 +197,10 @@ type MiniMaxProvider struct {
 
 func (m *MiniMaxProvider) Name() string {
 	return "minimax"
+}
+
+func (m *MiniMaxProvider) SupportsMedia() bool {
+	return false
 }
 
 func (m *MiniMaxProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
