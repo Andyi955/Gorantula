@@ -871,6 +871,47 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 	return connections, nil
 }
 
+// InterrogateVault reads selected investigations and answers a direct query using ONLY those texts as context.
+func (b *Brain) InterrogateVault(ctx context.Context, filePaths []string, query string) (string, error) {
+	if len(filePaths) == 0 {
+		return "", fmt.Errorf("no files selected for interrogation")
+	}
+
+	var builder strings.Builder
+	builder.WriteString("Here is a collection of previously gathered intelligence reports and investigations:\n\n")
+
+	// Read each file and append to context
+	for _, path := range filePaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Printf("[Brain Warning] Could not read vault file %s: %v\n", path, err)
+			continue
+		}
+
+		fileName := filepath.Base(path)
+		builder.WriteString(fmt.Sprintf("--- START OF REPORT: %s ---\n", fileName))
+		builder.WriteString(string(data))
+		builder.WriteString(fmt.Sprintf("\n--- END OF REPORT: %s ---\n\n", fileName))
+	}
+
+	vaultContext := builder.String()
+
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return "", fmt.Errorf("no model providers available")
+	}
+
+	systemPrompt := "You are GORANTULA, an elite AI intelligence analyst. " +
+		"You have been asked to interrogate your 'Vault' of past investigations to answer a specific query. " +
+		"CRITICAL INSTRUCTION: You MUST base your answer ENTIRELY on the provided investigation reports. " +
+		"If the reports do not contain the answer, state that the information is not present in the selected vault files. " +
+		"Use Markdown for formatting your response. Provide citations back to the specific report names when possible."
+
+	userPrompt := fmt.Sprintf("%s\n\nUSER QUERY: %s", vaultContext, query)
+
+	return provider.GenerateContent(ctx, systemPrompt+"\n\n"+userPrompt)
+}
+
 // ValidateSubQueries ensures we have a valid number of distinct search queries (between 4 and 12)
 func (b *Brain) ValidateSubQueries(subQ *SubQueries) error {
 	if len(subQ.Queries) == 0 {
