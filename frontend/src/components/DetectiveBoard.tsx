@@ -23,8 +23,9 @@ import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 
-import { Zap, Info, Trash2, Edit2 } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box } from 'lucide-react';
 import dagre from 'dagre';
+import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
 export interface TagStyle {
     color: string;
@@ -203,6 +204,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [isReorganizing, setIsReorganizing] = useState(false);
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
+    const [showExportMenu, setShowExportMenu] = useState(false);
+    const exportMenuRef = useRef<HTMLDivElement>(null);
 
     // Track node transitions for debugging
     useEffect(() => {
@@ -244,6 +247,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     // Dynamic tag styles
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
     const [editingTag, setEditingTag] = useState<string | null>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as unknown as globalThis.Node)) {
+                setShowExportMenu(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     // Load tag styles on mount
     useEffect(() => {
@@ -530,6 +543,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
                 setIsGathering(false);
                 setDeepDiveTopic(null);
+                // Save synthesis result for reporting
+                localStorage.setItem(`vault_result_${investigationId}`, JSON.stringify(msg.payload));
                 // Trigger auto connect dots
                 setTimeout(() => {
                     const btn = document.getElementById('connect-dots-btn');
@@ -637,8 +652,42 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const activeTags = new Set(edges.map(e => (e.label as string)?.toUpperCase() || 'UNKNOWN'));
     const visibleStyles = Object.entries(tagStyles).filter(([tag]) => activeTags.has(tag));
 
+    const handleExport = async (type: 'png' | 'svg' | 'pdf') => {
+        setShowExportMenu(false);
+        const boardElementId = 'detective-board-flow';
+
+        if (type === 'png') {
+            await exportAsPng(boardElementId);
+        } else if (type === 'svg') {
+            await exportAsSvg(boardElementId);
+        } else if (type === 'pdf') {
+            const currentInv = JSON.parse(localStorage.getItem('gorantula_investigations') || '[]')
+                .find((i: any) => i.id === investigationId);
+
+            const saved = localStorage.getItem(`inv_data_${investigationId}`);
+            let nodesData = [];
+            if (saved) {
+                const { nodes: savedNodes } = JSON.parse(saved);
+                nodesData = savedNodes.map((n: any) => ({
+                    title: n.data.title,
+                    summary: n.data.summary,
+                    sourceURL: n.data.sourceURL
+                }));
+            }
+
+            const vaultSaved = localStorage.getItem(`vault_result_${investigationId}`);
+            const finalSynthesis = vaultSaved ? JSON.parse(vaultSaved).result : "No synthesis available for this investigation.";
+
+            await exportAsPdf({
+                topic: currentInv?.topic || 'Unknown Investigation',
+                finalSynthesis: finalSynthesis,
+                nodes: nodesData
+            });
+        }
+    };
+
     return (
-        <div className="w-full h-full relative bg-cyber-black">
+        <div className="w-full h-full relative bg-cyber-black" id="detective-board-container">
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
                 <div className="flex gap-2">
                     {(isGathering || isReorganizing) && (
@@ -655,6 +704,41 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         <Zap size={14} className={isAnalyzing ? 'animate-spin' : ''} />
                         {isAnalyzing ? 'Analyzing Patterns...' : 'Connect The Dots'}
                     </button>
+
+                    <div className="relative" ref={exportMenuRef}>
+                        <button
+                            onClick={() => setShowExportMenu(!showExportMenu)}
+                            disabled={nodes.length === 0 || isReorganizing}
+                            className={`flex items-center gap-2 px-6 py-2 bg-black border border-white/20 text-white font-black shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white hover:text-black'}`}
+                        >
+                            <Download size={14} />
+                            EXPORT
+                            <ChevronDown size={14} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {showExportMenu && (
+                            <div className="absolute top-12 left-0 w-48 bg-cyber-black border border-white/20 shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
+                                <button
+                                    onClick={() => handleExport('png')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-[10px] font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors border-b border-white/5"
+                                >
+                                    <ImageIcon size={14} className="text-cyber-cyan" /> SNAPSHOT (PNG)
+                                </button>
+                                <button
+                                    onClick={() => handleExport('svg')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-[10px] font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors border-b border-white/5"
+                                >
+                                    <Box size={14} className="text-cyber-green" /> VECTOR (SVG)
+                                </button>
+                                <button
+                                    onClick={() => handleExport('pdf')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-[10px] font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+                                >
+                                    <FileText size={14} className="text-cyber-purple" /> FULL REPORT (PDF)
+                                </button>
+                            </div>
+                        )}
+                    </div>
                     <button
                         onClick={handleReorganize}
                         disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing}
@@ -674,22 +758,24 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 </div>
             </div>
 
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onReconnect={onReconnect}
-                onEdgeClick={onEdgeClick}
-                nodeTypes={NODE_TYPES}
-                edgeTypes={EDGE_TYPES}
-                connectionMode={ConnectionMode.Loose}
-                fitView
-            >
-                <Background color="#111" gap={15} />
-                <Controls />
-            </ReactFlow>
+            <div className="w-full h-full" id="detective-board-flow">
+                <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    onReconnect={onReconnect}
+                    onEdgeClick={onEdgeClick}
+                    nodeTypes={NODE_TYPES}
+                    edgeTypes={EDGE_TYPES}
+                    connectionMode={ConnectionMode.Loose}
+                    fitView
+                >
+                    <Background color="#111" gap={15} />
+                    <Controls />
+                </ReactFlow>
+            </div>
 
             {edgeReasoning && (
                 <div className="absolute bottom-10 left-10 w-80 bg-cyber-black/90 border p-4 z-40 shadow-2xl backdrop-blur-md" style={{ borderColor: edgeReasoning.color, boxShadow: `0 0 20px ${edgeReasoning.color}33` }}>
