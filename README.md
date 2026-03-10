@@ -10,6 +10,8 @@
 ## 🚀 Key Features
 
 - **Concurrent Crawling**: Deploys 8 parallel scraping workers (Legs) to gather information from disparate sources simultaneously.
+- **RAG Vault Chatbot**: Interrogate your archived investigations natively. Select multiple historical case files from the interactive Checklist UI and ask the AI specific questions; it dynamically enforces strict constraints to answer *only* based on the provided evidence.
+- **Audio/Video Media Transcription**: Send YouTube, Vimeo, or standard audio/video URLs (.mp4, .mp3, etc.) straight into the crawler. If the currently routed AI provider supports multimodal parsing (like Gemini 1.5 Pro), it physically rips the media and extracts the intelligence. If not, a Graceful Fallback dynamically intercepts the payload without crashing the investigation.
 - **Date-Aware AI**: The central Brain contextually limits searches and connects data via chronological relation to the absolute exact current date, ensuring modern timeline accuracy.
 - **Robust Multi-Byte Parsing**: Advanced `rune` UTF-8 token handling ensures foreign languages (Chinese, Japanese) parsing is pristine without bytes-truncation corruption.
 - **3D WebGL Spider View**: Next-gen visually stunning React Three Fiber data pipeline flow, visualizing live task delegation to parallel worker legs.
@@ -110,3 +112,4 @@ Open your browser to the local Vite URL (usually `localhost:5173`).
 5. **Read Deep**: Click "READ FULL" on any card to slide out the complete Intel Report, fully parsed and untruncated even if in multi-byte languages.
 6. **Timeline Analysis**: Toggle to the "Timeline" view to see dates extracted from reports logically laid out chronologically on a virtual floating canvas. Smoothly drag and zoom to investigate cascading historical implications!
 7. **Switch Topics**: Use the fast, popup-free sidebar to rapidly ditch old investigations and swap seamlessly into new cases while monitoring the lower Status Ticker.
+8. **Interrogate Vault**: Open the "Vault Chat" tab anytime to review past investigations. Select multiple`.md` files using the dropdown, and chat with the AI exclusively bounded by the contents of those documents.
