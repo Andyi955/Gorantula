@@ -121,6 +121,15 @@ function App() {
     setActiveTab('board');
   }, []);
 
+  const handleNavigateSynthesis = useCallback((id: string, nodeId?: string) => {
+    setCurrentInvestigationId(id);
+    setActiveTab('board');
+    if (nodeId) {
+      setFocusedNodeId(nodeId);
+      setTimeout(() => setFocusedNodeId(null), 1000);
+    }
+  }, []);
+
   const deleteInvestigation = (e: React.MouseEvent, idToRemove: string) => {
     e.stopPropagation()
     // Instantly delete without blocking browser popup
@@ -217,7 +226,11 @@ function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 relative">
-          <SynthesisPanel sharedSocket={socketConfig.socket} />
+          <SynthesisPanel
+            sharedSocket={socketConfig.socket}
+            currentInvestigationId={currentInvestigationId}
+            onNavigateVault={handleNavigateSynthesis}
+          />
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <div className="h-full flex flex-col">

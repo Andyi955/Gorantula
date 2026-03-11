@@ -48,7 +48,7 @@ func TestBuildPersonaPrompt(t *testing.T) {
 		{"Contains Expertise", "Testing"},
 		{"Contains Perspective", "Testing things"},
 		{"Contains Questions", "Does it work?"},
-		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of important discoveries\"]"},
+		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your prompt."},
 	}
 
 	for _, tt := range tests {
