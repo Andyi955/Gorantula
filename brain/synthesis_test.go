@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -48,7 +49,7 @@ func TestSynthesisEngine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			engine.AnalyzeOverlap(tt.entities, tt.vaultID)
+			engine.AnalyzeOverlap(context.Background(), tt.entities, tt.vaultID, nil, nil)
 
 			// Allow dispatch goroutines to run
 			time.Sleep(50 * time.Millisecond)
@@ -80,7 +81,7 @@ func TestSynthesisEngine(t *testing.T) {
 	// Verify persistence logic works correctly
 	engine2 := NewSynthesisEngine(tempDir, alertChan)
 	engine2.mu.RLock()
-	if len(engine2.EntityMap) == 0 {
+	if len(engine2.Index.EntityMap) == 0 {
 		t.Errorf("Failed to reload index file into new engine instance")
 	}
 	engine2.mu.RUnlock()
@@ -98,7 +99,7 @@ func TestConcurrentSynthesisOverlaps(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			vaultID := "case-" + string(rune(id))
-			engine.AnalyzeOverlap([]string{"ConvergencePoint"}, vaultID)
+			engine.AnalyzeOverlap(context.Background(), []string{"ConvergencePoint"}, vaultID, nil, nil)
 		}(i)
 	}
 
@@ -107,7 +108,7 @@ func TestConcurrentSynthesisOverlaps(t *testing.T) {
 
 	engine.mu.RLock()
 	defer engine.mu.RUnlock()
-	caseMap := engine.EntityMap["convergencepoint"]
+	caseMap := engine.Index.EntityMap["convergencepoint"]
 	if len(caseMap) != 50 {
 		t.Errorf("Expected exactly 50 distinct overlapping cases for entity 'ConvergencePoint', got %d", len(caseMap))
 	}

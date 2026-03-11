@@ -150,7 +150,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						if len(parts) >= 2 {
 							vaultID = "case-" + parts[1]
 						}
-						go br.Synthesis.AnalyzeOverlap(entities, vaultID)
+						go br.Synthesis.AnalyzeOverlap(context.Background(), entities, vaultID, nodes, br)
 					}
 
 					// Step 2: Synthesize insights into final connections

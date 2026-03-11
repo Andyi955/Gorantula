@@ -1,38 +1,61 @@
 package brain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"spider-agent/models"
 )
+
+// NodeContextPayload represents where an entity was found
+type NodeContextPayload struct {
+	VaultID string `json:"vaultId"`
+	NodeID  string `json:"nodeId"`
+	Summary string `json:"summary"`
+}
+
+// SynthesisIndex stores the inverted entity index with NodeContext
+type SynthesisIndex struct {
+	TotalVaults int                                        `json:"totalVaults"`
+	Vaults      map[string]bool                            `json:"vaults"`
+	EntityMap   map[string]map[string][]NodeContextPayload `json:"entityMap"`
+}
+
+// SynthesisAlert represents the payload sent to the frontend when a connection is found.
+type SynthesisAlert struct {
+	Type           string               `json:"type"`
+	Entity         string               `json:"entity"`
+	ConnectedCases []string             `json:"connectedCases"`
+	Nodes          []NodeContextPayload `json:"nodes"`
+	Analysis       string               `json:"analysis"`
+	Timestamp      string               `json:"timestamp"`
+	Score          float64              `json:"score"`
+}
 
 // SynthesisEngine manages the cross-case inverted entity index.
 type SynthesisEngine struct {
 	mu         sync.RWMutex
 	indexPath  string
-	EntityMap  map[string]map[string]bool // Entity -> map[VaultID]true
+	Index      SynthesisIndex
 	activeChan chan SynthesisAlert
-}
-
-// SynthesisAlert represents the payload sent to the frontend when a connection is found.
-type SynthesisAlert struct {
-	Type           string   `json:"type"`
-	Entity         string   `json:"entity"`
-	ConnectedCases []string `json:"connectedCases"`
-	Analysis       string   `json:"analysis"`
-	Timestamp      string   `json:"timestamp"`
 }
 
 // NewSynthesisEngine initializes the engine, loading the index if it exists.
 func NewSynthesisEngine(vaultDir string, alertChan chan SynthesisAlert) *SynthesisEngine {
 	engine := &SynthesisEngine{
-		indexPath:  filepath.Join(vaultDir, "entity_index.json"),
-		EntityMap:  make(map[string]map[string]bool),
+		indexPath: filepath.Join(vaultDir, "entity_index.json"),
+		Index: SynthesisIndex{
+			Vaults:    make(map[string]bool),
+			EntityMap: make(map[string]map[string][]NodeContextPayload),
+		},
 		activeChan: alertChan,
 	}
 	engine.loadIndex()
@@ -52,20 +75,30 @@ func (s *SynthesisEngine) loadIndex() {
 		return
 	}
 
-	if err := json.Unmarshal(data, &s.EntityMap); err != nil {
-		log.Printf("[SynthesisEngine] Error parsing index: %v", err)
+	if err := json.Unmarshal(data, &s.Index); err != nil {
+		log.Printf("[SynthesisEngine] Index migration format error: %v, starting fresh.", err)
+		s.Index = SynthesisIndex{
+			Vaults:    make(map[string]bool),
+			EntityMap: make(map[string]map[string][]NodeContextPayload),
+		}
+	}
+	if s.Index.Vaults == nil {
+		s.Index.Vaults = make(map[string]bool)
+	}
+	if s.Index.EntityMap == nil {
+		s.Index.EntityMap = make(map[string]map[string][]NodeContextPayload)
 	}
 }
 
 // saveIndex writes the current entity index to disk.
 func (s *SynthesisEngine) saveIndex() {
-	data, err := json.MarshalIndent(s.EntityMap, "", "  ")
+	s.Index.TotalVaults = len(s.Index.Vaults)
+	data, err := json.MarshalIndent(s.Index, "", "  ")
 	if err != nil {
 		log.Printf("[SynthesisEngine] Error marshaling index: %v", err)
 		return
 	}
 
-	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0755); err != nil {
 		log.Printf("[SynthesisEngine] Error creating directory for index: %v", err)
 		return
@@ -76,87 +109,245 @@ func (s *SynthesisEngine) saveIndex() {
 	}
 }
 
-// cleanEntity normalizes an entity name to improve matching (lowercase, trim).
 func (s *SynthesisEngine) cleanEntity(entity string) string {
 	return strings.ToLower(strings.TrimSpace(entity))
 }
 
+func levenshtein(s1, s2 string) int {
+	lenS1 := len(s1)
+	lenS2 := len(s2)
+
+	if lenS1 == 0 {
+		return lenS2
+	}
+	if lenS2 == 0 {
+		return lenS1
+	}
+
+	row := make([]int, lenS2+1)
+	for i := 0; i <= lenS2; i++ {
+		row[i] = i
+	}
+
+	for i := 1; i <= lenS1; i++ {
+		prev := i
+		for j := 1; j <= lenS2; j++ {
+			current := row[j-1]
+			if s1[i-1] != s2[j-1] {
+				current++
+				if prev+1 < current {
+					current = prev + 1
+				}
+				if row[j]+1 < current {
+					current = row[j] + 1
+				}
+			}
+			row[j-1] = prev
+			prev = current
+		}
+		row[lenS2] = prev
+	}
+	return row[lenS2]
+}
+
+// findClosestEntity fuzzy matches strings that are very close (tolerate 1-2 typos)
+func (s *SynthesisEngine) findClosestEntity(exact string) string {
+	if _, exists := s.Index.EntityMap[exact]; exists {
+		return exact
+	}
+
+	exactLen := len(exact)
+	if exactLen < 4 {
+		return exact // Too small to fuzzy match
+	}
+
+	bestMatch := exact
+	bestDist := 99
+
+	for existing := range s.Index.EntityMap {
+		if math.Abs(float64(len(existing)-exactLen)) > 2 {
+			continue // Large length disparages
+		}
+		dist := levenshtein(exact, existing)
+		maxTolerated := 1
+		if exactLen > 7 {
+			maxTolerated = 2
+		}
+
+		if dist <= maxTolerated && dist < bestDist {
+			bestMatch = existing
+			bestDist = dist
+		}
+	}
+	return bestMatch
+}
+
+// computeIDF calculates rarity of the entity
+func (s *SynthesisEngine) computeIDF(entity string) float64 {
+	total := float64(len(s.Index.Vaults))
+	if total == 0 {
+		total = 1
+	}
+	df := float64(len(s.Index.EntityMap[entity]))
+	if df == 0 {
+		df = 1
+	}
+	return math.Log10((total + 1.5) / (df + 0.5)) // smooth
+}
+
+type OverlapAnalysis struct {
+	Meaningful bool   `json:"meaningful"`
+	Reason     string `json:"reason"`
+}
+
 // AnalyzeOverlap checks newly extracted entities for cross-case overlap and triggers LLM analysis if found.
-// Call this independently in a goroutine so it doesn't block the main flow.
-func (s *SynthesisEngine) AnalyzeOverlap(newEntities []string, newVaultID string) {
+func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []string, newVaultID string, nodes []models.MemoryNode, br *Brain) {
 	log.Printf("[SynthesisEngine] Starting execution for Vault: %s. Processing %d possible entities", newVaultID, len(newEntities))
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
-	overlapsFound := make(map[string][]string) // Entity -> List of VaultIDs it appears in
+	overlapsFound := make(map[string][]string) // Entity -> List of Historical VaultIDs it appears in
 	indexChanged := false
+
+	s.Index.Vaults[newVaultID] = true
+
 	seenInRun := make(map[string]bool)
 
+	entityToNodes := make(map[string][]NodeContextPayload)
+
 	for _, rawEntity := range newEntities {
-		entity := s.cleanEntity(rawEntity)
-		if entity == "" || seenInRun[entity] {
+		exact := s.cleanEntity(rawEntity)
+		if exact == "" {
+			continue
+		}
+		entity := s.findClosestEntity(exact)
+		if seenInRun[entity] {
 			continue
 		}
 		seenInRun[entity] = true
 
-		if s.EntityMap[entity] == nil {
-			s.EntityMap[entity] = make(map[string]bool)
+		if s.Index.EntityMap[entity] == nil {
+			s.Index.EntityMap[entity] = make(map[string][]NodeContextPayload)
 		}
 
-		// Look for overlaps before we add the current case to it
-		for existingCase := range s.EntityMap[entity] {
+		// Map to contexts
+		var contexts []NodeContextPayload
+		for _, n := range nodes {
+			if strings.Contains(strings.ToLower(n.Summary), entity) || strings.Contains(strings.ToLower(n.Title), entity) {
+				contexts = append(contexts, NodeContextPayload{
+					VaultID: newVaultID,
+					NodeID:  n.ID,
+					Summary: n.Summary,
+				})
+			}
+		}
+
+		for existingCase := range s.Index.EntityMap[entity] {
 			if existingCase != newVaultID {
-				// We found overlap
 				overlapsFound[entity] = append(overlapsFound[entity], existingCase)
 			}
 		}
 
-		// Add the new vault ID
-		if !s.EntityMap[entity][newVaultID] {
-			s.EntityMap[entity][newVaultID] = true
-			indexChanged = true
+		if len(contexts) > 0 {
+			if len(s.Index.EntityMap[entity][newVaultID]) == 0 {
+				s.Index.EntityMap[entity][newVaultID] = contexts
+				indexChanged = true
+			}
+		} else {
+			if len(s.Index.EntityMap[entity][newVaultID]) == 0 {
+				nodeID := "synthetic-node"
+				if len(nodes) > 0 {
+					nodeID = nodes[0].ID
+				}
+				s.Index.EntityMap[entity][newVaultID] = []NodeContextPayload{{
+					VaultID: newVaultID,
+					NodeID:  nodeID,
+					Summary: "Detected synthetically inside this case without clear node attribution.", // fallback
+				}}
+				indexChanged = true
+			}
+		}
+
+		// Keep map up to date for dispatch mapping
+		if len(s.Index.EntityMap[entity][newVaultID]) > 0 {
+			entityToNodes[entity] = s.Index.EntityMap[entity][newVaultID]
 		}
 	}
 
 	if indexChanged {
-		s.saveIndex() // Write back updated index
+		s.saveIndex()
 	}
 
-	// For any overlaps found, we dispatch an alert (and hypothetically, trigger LLM connecting logic)
-	// We run the actual LLM dispatch in a separate unbounded goroutine to prevent holding the lock
+	overlapContexts := make(map[string][]NodeContextPayload)
+	for entity, vaults := range overlapsFound {
+		var hNodes []NodeContextPayload
+		for _, v := range vaults {
+			hNodes = append(hNodes, s.Index.EntityMap[entity][v]...)
+		}
+		hNodes = append(hNodes, entityToNodes[entity]...)
+		overlapContexts[entity] = hNodes
+	}
+
+	s.mu.Unlock() // unlock BEFORE calling LLMs block to avoid deadlock on index saves
+
 	if len(overlapsFound) > 0 {
-		go s.dispatchSynthesis(overlapsFound, newVaultID)
+		go s.dispatchSynthesis(ctx, overlapsFound, newVaultID, overlapContexts, br)
 	}
 }
 
-// dispatchSynthesis generates the alert payloads. In a full implementation, this calls an LLM to explain the link.
-func (s *SynthesisEngine) dispatchSynthesis(overlaps map[string][]string, currentVaultID string) {
+func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[string][]string, currentVaultID string, overlapContexts map[string][]NodeContextPayload, br *Brain) {
 	log.Printf("[SynthesisEngine] Dispatching %d overlaps for current vault %s", len(overlaps), currentVaultID)
 
 	if s.activeChan == nil {
-		log.Printf("[SynthesisEngine] activeChan is nil! Cannot send alerts.")
 		return
 	}
 
 	for entity, historicalVaults := range overlaps {
-		log.Printf("[SynthesisEngine] Alert: %s found in historical vaults %v", entity, historicalVaults)
+		s.mu.RLock()
+		idfScore := s.computeIDF(entity)
+		s.mu.RUnlock()
+
+		nodesList := overlapContexts[entity]
 		allCases := append(historicalVaults, currentVaultID)
 
-		// Here you would normally dispatch a prompt to Gemini/Minimax checking the context.
-		// For now, we simulate the 'Grand Unified Theory' finding.
 		analysisText := fmt.Sprintf("Gorantula detected that %q appears in this case, but was also previously investigated in: %s. This connection suggests a potential hidden overlap.", entity, strings.Join(historicalVaults, ", "))
+
+		// Try to verify Context if we have a brain and the term might be somewhat common or we just want better analysis
+		if br != nil && br.GetSearchProvider() != nil {
+			provider := br.GetSearchProvider()
+			contextBuilder := strings.Builder{}
+			for _, nc := range nodesList {
+				contextBuilder.WriteString(fmt.Sprintf("\n[Case: %s | Node: %s] %s\n", nc.VaultID, nc.NodeID, nc.Summary))
+			}
+
+			prompt := fmt.Sprintf("You are an anomaly detection filter analyzing connections across case files. We found the term '%s' in multiple independent investigations. Here are the summaries of where it was found across these investigations:\n%s\n\nIs there a meaningful thematic or circumstantial overlap between these usages, or is '%s' just being used coincidentally in unrelated contexts? If IDF is low, it might be a generic buzzword. Answer ONLY with a JSON object { \"meaningful\": true/false, \"reason\": \"1-2 sentences explaining the connection or lack thereof\" }", entity, contextBuilder.String(), entity)
+
+			var overlap OverlapAnalysis
+			err := provider.GenerateJSON(ctx, prompt, &overlap)
+			if err == nil {
+				if !overlap.Meaningful {
+					log.Printf("[SynthesisEngine] Suppressed buzzword '%s' due to LLM Context Filter. Reason: %s", entity, overlap.Reason)
+					continue
+				} else {
+					analysisText = overlap.Reason
+				}
+			} else {
+				log.Printf("[SynthesisEngine] LLM eval failed for '%s', keeping default alert. Err: %v", entity, err)
+			}
+		}
 
 		alert := SynthesisAlert{
 			Type:           "synthesis_alert",
 			Entity:         entity,
 			ConnectedCases: allCases,
+			Nodes:          nodesList,
 			Analysis:       analysisText,
 			Timestamp:      time.Now().Format("15:04:05"),
+			Score:          idfScore,
 		}
 
-		// Non-blocking send
 		select {
 		case s.activeChan <- alert:
+			log.Printf("[SynthesisEngine] Alert triggered via WebSocket for: %s", entity)
 		default:
 			log.Printf("[SynthesisEngine] Warning: Alert channel full, dropping synthesis alert for %s", entity)
 		}
