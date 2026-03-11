@@ -35,6 +35,17 @@ function App() {
     s.onopen = () => {
       console.log('[App] WebSocket Connected');
       setSocketConfig({ socket: s, ready: true });
+      
+      const saved = localStorage.getItem('gorantula_investigations');
+      if (saved) {
+        try {
+          const data = JSON.parse(saved);
+          const ids = data.map((inv: Investigation) => inv.id);
+          s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
+        } catch (e) {
+          console.error('[App] Failed to parse investigations for sync', e);
+        }
+      }
     };
 
     s.onclose = () => {
@@ -137,6 +148,24 @@ function App() {
     setInvestigations(updated)
     localStorage.setItem('gorantula_investigations', JSON.stringify(updated))
     localStorage.removeItem(`inv_data_${idToRemove}`)
+
+    let vaultPathToRemove = "";
+    const vaultResultStr = localStorage.getItem(`vault_result_${idToRemove}`);
+    if (vaultResultStr) {
+      try {
+        const vaultResult = JSON.parse(vaultResultStr);
+        vaultPathToRemove = vaultResult.vaultPath || "";
+      } catch (err) {}
+    }
+    localStorage.removeItem(`vault_result_${idToRemove}`)
+
+    if (socketConfig.socket && socketConfig.ready) {
+      socketConfig.socket.send(JSON.stringify({ 
+        type: 'DELETE_VAULT', 
+        payload: idToRemove,
+        vaultPath: vaultPathToRemove 
+      }))
+    }
 
     if (currentInvestigationId === idToRemove) {
       setCurrentInvestigationId(updated.length > 0 ? updated[0].id : null)

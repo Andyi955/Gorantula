@@ -597,7 +597,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             fullText: n.data.fullText
         }));
 
-        sharedSocket.send(JSON.stringify({ type: 'CONNECT_DOTS', payload: nodeData }));
+        sharedSocket.send(JSON.stringify({ 
+            type: 'CONNECT_DOTS', 
+            payload: nodeData,
+            vaultId: investigationId
+        }));
     };
 
     const clearBoard = () => {

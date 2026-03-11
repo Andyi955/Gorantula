@@ -109,6 +109,63 @@ func (s *SynthesisEngine) saveIndex() {
 	}
 }
 
+// PurgeVault completely removes a vault and its associated entity associations from the inverted index.
+func (s *SynthesisEngine) PurgeVault(vaultID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Remove from tracked vaults
+	if !s.Index.Vaults[vaultID] {
+		return // Vault doesn't exist in the index anyway
+	}
+	delete(s.Index.Vaults, vaultID)
+
+	// 2. Remove all contexts belonging to this VaultID from the entity index
+	for entity, contextsMap := range s.Index.EntityMap {
+		delete(contextsMap, vaultID)
+
+		// Cleanup orphaned entity entries completely
+		if len(contextsMap) == 0 {
+			delete(s.Index.EntityMap, entity)
+		}
+	}
+
+	// 3. Save index
+	s.saveIndexLocked()
+}
+
+// PurgeOrphans completely removes any vaults that are not in the provided activeVaults map
+func (s *SynthesisEngine) PurgeOrphans(activeVaults map[string]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var orphans []string
+	for vaultID := range s.Index.Vaults {
+		if !activeVaults[vaultID] {
+			orphans = append(orphans, vaultID)
+		}
+	}
+
+	for _, vaultID := range orphans {
+		delete(s.Index.Vaults, vaultID)
+		for entity, contextsMap := range s.Index.EntityMap {
+			delete(contextsMap, vaultID)
+			if len(contextsMap) == 0 {
+				delete(s.Index.EntityMap, entity)
+			}
+		}
+	}
+
+	if len(orphans) > 0 {
+		s.saveIndexLocked()
+	}
+}
+
+// saveIndexLocked must be called with s.mu already locked.
+func (s *SynthesisEngine) saveIndexLocked() {
+	s.saveIndex() // It just serializes, fine to reuse
+}
+
 func (s *SynthesisEngine) cleanEntity(entity string) string {
 	return strings.ToLower(strings.TrimSpace(entity))
 }
@@ -274,7 +331,7 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []stri
 	}
 
 	if indexChanged {
-		s.saveIndex()
+		s.saveIndexLocked()
 	}
 
 	overlapContexts := make(map[string][]NodeContextPayload)
