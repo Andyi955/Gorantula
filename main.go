@@ -101,6 +101,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 				}
 			case "CONNECT_DOTS":
 				log.Println("[WS] Received CONNECT_DOTS request")
+
+				vaultID := ""
+				if vId, ok := msg["vaultId"].(string); ok {
+					vaultID = strings.TrimSpace(vId)
+				}
+
 				payloadBytes, _ := json.Marshal(msg["payload"])
 				var nodes []models.MemoryNode
 				if err := json.Unmarshal(payloadBytes, &nodes); err != nil {
@@ -144,11 +150,13 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 					log.Printf("[Synthesis] Triggering overlaps check with %d entities for %d nodes", len(entities), len(nodes))
 					if len(entities) > 0 && len(nodes) > 0 {
-						// Create a unique case ID based on the node timestamp piece
-						parts := strings.Split(nodes[0].ID, "-")
-						vaultID := "case-" + time.Now().Format("2006-01-02-150405")
-						if len(parts) >= 2 {
-							vaultID = "case-" + parts[1]
+						if vaultID == "" {
+							// Fallback: Create a unique case ID based on the node timestamp piece if not provided
+							parts := strings.Split(nodes[0].ID, "-")
+							vaultID = "case-" + time.Now().Format("2006-01-02-150405")
+							if len(parts) >= 2 {
+								vaultID = "case-" + parts[1]
+							}
 						}
 						go br.Synthesis.AnalyzeOverlap(context.Background(), entities, vaultID, nodes, br)
 					}
@@ -186,6 +194,53 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 							return
 						}
 						broadcast(models.WSMessage{Type: "CHAT_RESPONSE", Payload: response})
+					}()
+				}
+			case "DELETE_VAULT":
+				log.Println("[WS] Received DELETE_VAULT request")
+
+				vaultPath := ""
+				if vp, ok := msg["vaultPath"].(string); ok {
+					vaultPath = strings.TrimSpace(vp)
+				}
+
+				if vID, ok := msg["payload"].(string); ok {
+					vID = strings.TrimSpace(vID)
+					// Prevent path traversal
+					if filepath.Base(vID) == vID && vID != "" {
+						if vaultPath != "" {
+							// Delete the specific physical markdown file
+							cleanPath := filepath.Clean(vaultPath)
+							// ensure path starts with abdomen_vault for safety
+							if strings.HasPrefix(strings.ReplaceAll(cleanPath, "\\", "/"), "abdomen_vault/") {
+								log.Printf("[WS] Deleting specific vault file: %s", cleanPath)
+								os.Remove(cleanPath)
+							}
+						}
+
+						if br != nil && br.Synthesis != nil {
+							go br.Synthesis.PurgeVault(vID)
+						}
+					} else {
+						log.Printf("[WS Error] Invalid DELETE_VAULT payload: %s", vID)
+					}
+				}
+			case "SYNC_VAULTS":
+				log.Println("[WS] Received SYNC_VAULTS request")
+				if payloadIf, ok := msg["payload"].([]interface{}); ok {
+					activeVaults := make(map[string]bool)
+					log.Printf("[WS] SYNC_VAULTS mapping %d active IDs", len(payloadIf))
+					for _, v := range payloadIf {
+						if idStr, ok := v.(string); ok {
+							activeVaults[idStr] = true
+						}
+					}
+
+					go func() {
+						if br != nil && br.Synthesis != nil {
+							log.Printf("[WS] SYNC_VAULTS running PurgeOrphans for stale index entries...")
+							br.Synthesis.PurgeOrphans(activeVaults)
+						}
 					}()
 				}
 			}

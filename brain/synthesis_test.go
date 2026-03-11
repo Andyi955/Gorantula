@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"spider-agent/models"
 )
 
 func TestSynthesisEngine(t *testing.T) {
@@ -111,5 +113,75 @@ func TestConcurrentSynthesisOverlaps(t *testing.T) {
 	caseMap := engine.Index.EntityMap["convergencepoint"]
 	if len(caseMap) != 50 {
 		t.Errorf("Expected exactly 50 distinct overlapping cases for entity 'ConvergencePoint', got %d", len(caseMap))
+	}
+}
+
+func TestPurgeVault(t *testing.T) {
+	tempDir := t.TempDir()
+	alertChan := make(chan SynthesisAlert, 10)
+	engine := NewSynthesisEngine(tempDir, alertChan)
+
+	// Pre-seed some data
+	nodes := []models.MemoryNode{{ID: "n1", Summary: "Apple is a fruit"}}
+	engine.AnalyzeOverlap(context.Background(), []string{"Apple", "Banana"}, "vault-1", nodes, nil)
+	engine.AnalyzeOverlap(context.Background(), []string{"Apple", "Cherry"}, "vault-2", nodes, nil)
+
+	// Ensure propagation
+	time.Sleep(50 * time.Millisecond)
+
+	tests := []struct {
+		name                 string
+		vaultToDelete        string
+		expectedVaultsCount  int
+		expectedAppleRefs    int
+		expectedBananaExists bool
+	}{
+		{
+			name:                 "Purge vault-1",
+			vaultToDelete:        "vault-1",
+			expectedVaultsCount:  1,
+			expectedAppleRefs:    1,
+			expectedBananaExists: false, // Banana was only in vault-1
+		},
+		{
+			name:                 "Purge non-existent vault",
+			vaultToDelete:        "vault-404",
+			expectedVaultsCount:  1,
+			expectedAppleRefs:    1,
+			expectedBananaExists: false,
+		},
+		{
+			name:                 "Purge vault-2",
+			vaultToDelete:        "vault-2",
+			expectedVaultsCount:  0,
+			expectedAppleRefs:    0,
+			expectedBananaExists: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine.PurgeVault(tt.vaultToDelete)
+
+			engine.mu.RLock()
+			defer engine.mu.RUnlock()
+
+			if len(engine.Index.Vaults) != tt.expectedVaultsCount {
+				t.Errorf("Expected %d Vaults, got %d", tt.expectedVaultsCount, len(engine.Index.Vaults))
+			}
+
+			if appleRefs, exists := engine.Index.EntityMap["apple"]; exists {
+				if len(appleRefs) != tt.expectedAppleRefs {
+					t.Errorf("Expected %d refs for Apple, got %d", tt.expectedAppleRefs, len(appleRefs))
+				}
+			} else if tt.expectedAppleRefs > 0 {
+				t.Errorf("Expected Apple to exist with %d refs, but it was deleted entirely", tt.expectedAppleRefs)
+			}
+
+			_, bananaExists := engine.Index.EntityMap["banana"]
+			if bananaExists != tt.expectedBananaExists {
+				t.Errorf("Expected banana existence to be %v, got %v", tt.expectedBananaExists, bananaExists)
+			}
+		})
 	}
 }
