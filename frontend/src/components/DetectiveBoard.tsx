@@ -103,6 +103,7 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
 
 interface DetectiveBoardProps {
     investigationId: string | null;
+    returnVaultId?: string | null;
     sharedSocket: WebSocket | null;
     onDeepDiveNode: (prompt: string, titleStr: string, sourceNodeId: string) => void;
     onNavigateToChild: (id: string) => void;
@@ -185,18 +186,25 @@ const distributeEdges = (edges: Edge[], nodes: Node[]): { edges: Edge[], handled
     return { edges: distributedEdges, handledNodes };
 };
 
-const NODE_TYPES = {
-    custom: CustomNode,
-};
-
 const EDGE_TYPES = {
     customEdge: CustomEdge,
 };
 
-const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId }) => {
+const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId }) => {
     const { fitView } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
+
+    const nodeTypes = React.useMemo(() => ({
+        custom: (props: any) => (
+            <CustomNode
+                {...props}
+                returnVaultId={returnVaultId}
+                currentInvestigationId={investigationId}
+                sharedSocket={sharedSocket}
+            />
+        )
+    }), [returnVaultId, investigationId, sharedSocket]);
     const [selectedContent, setSelectedContent] = useState<string | null>(null);
     const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -464,7 +472,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             console.log('[Board] Received:', msg.type);
 
             if (msg.type === 'MEMORY_NODE_GATHERED') {
-                const { node } = msg.payload;
+                const { node, vaultId } = msg.payload;
 
                 // Calculate dimensions based on content length
                 const summary = node.summary || '';
@@ -498,6 +506,30 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     sourcePosition: Position.Right,
                     targetPosition: Position.Left
                 };
+
+                // Check if this node is meant for a different investigation (Pull Node flow)
+                if (vaultId && vaultId !== investigationId) {
+                    console.log(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
+                    const saved = localStorage.getItem(`inv_data_${vaultId}`);
+                    let vaultData: { nodes: any[], edges: any[] } = { nodes: [], edges: [] };
+                    
+                    if (saved) {
+                        try {
+                            vaultData = JSON.parse(saved);
+                        } catch (e) {
+                            console.error(`[Board] Failed to parse data for vault ${vaultId}`, e);
+                        }
+                    }
+
+                    const nodeExists = (vaultData.nodes || []).some((n: any) => n.id === node.id);
+                    if (!nodeExists) {
+                        vaultData.nodes = [...(vaultData.nodes || []), newNode];
+                        localStorage.setItem(`inv_data_${vaultId}`, JSON.stringify(vaultData));
+                        console.log(`[Board] Node ${node.id} successfully persisted to target vault ${vaultId}`);
+                    }
+                    return; // Don't add to the currently visible board (which is likely the source/historical vault)
+                }
+
                 setNodes((nds) => {
                     if (nds.find(n => n.id === node.id)) return nds;
                     return [...nds, newNode];
@@ -781,7 +813,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onConnect={onConnect}
                     onReconnect={onReconnect}
                     onEdgeClick={onEdgeClick}
-                    nodeTypes={NODE_TYPES}
+                    nodeTypes={nodeTypes}
                     edgeTypes={EDGE_TYPES}
                     connectionMode={ConnectionMode.Loose}
                     fitView

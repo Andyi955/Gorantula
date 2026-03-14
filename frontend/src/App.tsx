@@ -20,6 +20,7 @@ function App() {
 
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
+  const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
 
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -133,13 +134,18 @@ function App() {
   }, []);
 
   const handleNavigateSynthesis = useCallback((id: string, nodeId?: string) => {
+    if (id === returnVaultId) {
+      setReturnVaultId(null);
+    } else if (!returnVaultId && currentInvestigationId && currentInvestigationId !== id) {
+      setReturnVaultId(currentInvestigationId);
+    }
     setCurrentInvestigationId(id);
     setActiveTab('board');
     if (nodeId) {
       setFocusedNodeId(nodeId);
       setTimeout(() => setFocusedNodeId(null), 1000);
     }
-  }, []);
+  }, [currentInvestigationId, returnVaultId]);
 
   const deleteInvestigation = (e: React.MouseEvent, idToRemove: string) => {
     e.stopPropagation()
@@ -233,7 +239,10 @@ function App() {
             {investigations.map((inv) => (
               <div key={inv.id} className="group relative">
                 <button
-                  onClick={() => setCurrentInvestigationId(inv.id)}
+                  onClick={() => {
+                    setCurrentInvestigationId(inv.id);
+                    setReturnVaultId(null);
+                  }}
                   className={`w-full text-left p-4 border-b border-cyber-gray/30 flex items-start gap-3 transition-colors ${currentInvestigationId === inv.id ? 'bg-cyber-green/10 border-l-2 border-l-cyber-green' : 'hover:bg-cyber-gray/20 text-gray-400'}`}
                 >
                   <Folder size={16} className={currentInvestigationId === inv.id ? 'text-cyber-green' : 'text-gray-600'} />
@@ -259,6 +268,7 @@ function App() {
             sharedSocket={socketConfig.socket}
             currentInvestigationId={currentInvestigationId}
             onNavigateVault={handleNavigateSynthesis}
+            returnVaultId={returnVaultId}
           />
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
@@ -329,6 +339,7 @@ function App() {
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'board' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <DetectiveBoard
               investigationId={currentInvestigationId}
+              returnVaultId={returnVaultId}
               sharedSocket={socketConfig.socket}
               onDeepDiveNode={handleDeepDiveNode}
               onNavigateToChild={handleNavigateToChild}

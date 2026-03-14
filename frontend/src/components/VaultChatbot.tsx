@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
+import { useEffect } from 'react';
 import { Bot, Send, User, ChevronDown, CheckSquare, Square, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';

@@ -3,7 +3,7 @@ import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
-import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X } from 'lucide-react';
+import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle } from 'lucide-react';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -86,9 +86,10 @@ const calculateCardSize = (summary: string, fullText: string, isExpanded: boolea
     return { width, height };
 };
 
-const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
+const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sharedSocket }: NodeProps<NodeData> & { returnVaultId?: string | null, currentInvestigationId?: string | null, sharedSocket?: WebSocket | null }) => {
     const [isExpanded, setIsExpanded] = useState(data.expanded || false);
     const [showChat, setShowChat] = useState(false);
+    const [hasPulled, setHasPulled] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
     const chatContentRef = useRef<HTMLDivElement>(null);
 
@@ -126,10 +127,11 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
     // Show expanded content when isExpanded is true
     const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
     const hasFullText = !!data.fullText && data.fullText !== data.summary;
+    const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
 
     return (
         <div
-            className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]'} rounded-none p-4 transition-all duration-300 group backdrop-blur-sm relative overflow-visible`}
+            className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : (isImported ? 'border-amber-500 shadow-[0_0_20px_#f59e0b55]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]')} rounded-none p-4 transition-all duration-300 group backdrop-blur-sm relative overflow-visible`}
             style={{
                 minHeight: height,
             }}
@@ -142,6 +144,11 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                 handleStyle={{ width: 16, height: 16, borderRadius: 0, backgroundColor: '#00f3ff', border: '2px solid black' }}
                 lineStyle={{ borderWidth: 2 }}
             />
+            {isImported && (
+                <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[8px] font-black px-2 py-0.5 z-50 shadow-lg border border-black/10 uppercase tracking-widest">
+                    IMPORTED
+                </div>
+            )}
             {data.isDeepDiveSource && (
                 <div className="absolute inset-0 bg-cyber-green/5 animate-pulse pointer-events-none" />
             )}
@@ -190,13 +197,45 @@ const CustomNode = ({ data, selected }: NodeProps<NodeData>) => {
                         {data.title || 'ARCHIVED_INTEL'}
                     </div>
                     {hasFullText && (
+                        <div className="flex items-center gap-1">
+                    {/* Compact Pull Button */}
+                    {returnVaultId && currentInvestigationId !== returnVaultId && (
                         <button
-                            onClick={handleExpand}
-                            className="ml-2 flex items-center gap-1 text-[8px] font-bold text-cyber-cyan hover:text-white transition-colors"
-                            title={isExpanded ? 'Collapse' : 'Expand'}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (sharedSocket && sharedSocket.readyState === WebSocket.OPEN && data.id) {
+                                    sharedSocket.send(JSON.stringify({
+                                        type: 'PULL_NODE',
+                                        payload: {
+                                            sourceVaultId: currentInvestigationId,
+                                            sourceNodeId: data.id,
+                                            targetVaultId: returnVaultId
+                                        }
+                                    }));
+                                    setHasPulled(true);
+                                    // Reset after showing feedback
+                                    setTimeout(() => setHasPulled(false), 3000);
+                                }
+                            }}
+                            title="IMPORT NODE: Bring this evidence back to your active investigation"
+                            className={`p-1 transition-all ${
+                                hasPulled 
+                                    ? 'text-cyber-green' 
+                                    : 'text-cyber-green/80 hover:text-cyber-green animate-pulse-glow'
+                            }`}
                         >
-                            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                            {hasPulled ? <CheckCircle size={16} /> : <ArrowRightToLine size={16} />}
                         </button>
+                    )}
+
+                    <button
+                        onClick={handleExpand}
+                        className="text-cyber-purple hover:text-white transition-colors p-1"
+                        title={isExpanded ? "Collapse" : "Expand"}
+                    >
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                </div>
                     )}
                 </div>
 

@@ -243,6 +243,21 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						}
 					}()
 				}
+			case "PULL_NODE":
+				log.Println("[WS] Received PULL_NODE request")
+				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
+					sourceVaultID, _ := payloadMap["sourceVaultId"].(string)
+					sourceNodeID, _ := payloadMap["sourceNodeId"].(string)
+					targetVaultID, _ := payloadMap["targetVaultId"].(string)
+
+					go func() {
+						err := br.PullNode(context.Background(), sourceVaultID, sourceNodeID, targetVaultID)
+						if err != nil {
+							log.Printf("[WS Error] PullNode failed: %v", err)
+							broadcast(models.WSMessage{Type: "ERROR", Payload: "Pull node failed: " + err.Error()})
+						}
+					}()
+				}
 			}
 		}
 	}
