@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft } from 'lucide-react';
+import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
 
 interface NodeContextPayload {
     vaultId: string;
@@ -21,13 +21,14 @@ interface SynthesisPanelProps {
     sharedSocket: WebSocket | null;
     currentInvestigationId: string | null;
     onNavigateVault?: (id: string, nodeId?: string) => void;
+    returnVaultId: string | null;
 }
 
-export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault }: SynthesisPanelProps) {
+export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId }: SynthesisPanelProps) {
     const [alerts, setAlerts] = useState<SynthesisAlert[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const [hasUnread, setHasUnread] = useState(false);
-    const [returnVaultId, setReturnVaultId] = useState<string | null>(null);
+    const [pulledNodeId, setPulledNodeId] = useState<string | null>(null);
 
     useEffect(() => {
         // Load from local storage
@@ -73,16 +74,12 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     };
 
     const handleJump = (vaultId: string, nodeId?: string) => {
-        if (!returnVaultId && currentInvestigationId && currentInvestigationId !== vaultId) {
-            setReturnVaultId(currentInvestigationId);
-        }
         if (onNavigateVault) onNavigateVault(vaultId, nodeId);
     };
 
     const handleReturn = () => {
         if (returnVaultId && onNavigateVault) {
             onNavigateVault(returnVaultId);
-            setReturnVaultId(null);
         }
     };
 
@@ -197,6 +194,34 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                                             <div className="absolute top-full left-0 mt-1 hidden group-hover/node:block z-50 bg-black border border-cyber-purple p-2 shadow-[0_5px_15px_rgba(0,0,0,0.8)] w-64 text-xs text-gray-300 whitespace-normal break-words rounded">
                                                                 <div className="text-cyber-cyan font-bold mb-1 border-b border-cyber-purple/50 pb-1">Context Node ({n.nodeId})</div>
                                                                 {n.summary}
+                                                                
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        const targetId = returnVaultId || currentInvestigationId;
+                                                                        if (sharedSocket && sharedSocket.readyState === WebSocket.OPEN && targetId) {
+                                                                            sharedSocket.send(JSON.stringify({
+                                                                                type: 'PULL_NODE',
+                                                                                payload: {
+                                                                                    sourceVaultId: n.vaultId,
+                                                                                    sourceNodeId: n.nodeId,
+                                                                                    targetVaultId: targetId
+                                                                                }
+                                                                            }));
+                                                                            setPulledNodeId(n.nodeId);
+                                                                            setTimeout(() => setPulledNodeId(null), 3000);
+                                                                        }
+                                                                    }}
+                                                                    title="IMPORT NODE: Bring this context into your active investigation board"
+                                                                    className={`mt-3 w-full py-1.5 px-3 rounded-sm font-black transition-all flex items-center justify-center gap-2 text-[9px] tracking-widest uppercase ${
+                                                                        pulledNodeId === n.nodeId 
+                                                                        ? 'bg-cyber-green text-black shadow-[0_0_10px_rgba(34,197,94,0.4)]' 
+                                                                        : 'bg-white/10 text-cyber-green border border-cyber-green/30 hover:bg-cyber-green hover:text-black hover:border-transparent animate-pulse-glow'
+                                                                    }`}
+                                                                >
+                                                                    {pulledNodeId === n.nodeId ? <CheckCircle size={12} /> : <ArrowRightToLine size={12} />}
+                                                                    {pulledNodeId === n.nodeId ? 'IMPORT SUCCESS' : (returnVaultId ? 'IMPORT TO ACTIVE' : 'IMPORT TO BOARD')}
+                                                                </button>
                                                             </div>
                                                         </div>
                                                     ))}

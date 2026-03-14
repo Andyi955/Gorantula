@@ -17,9 +17,12 @@ import (
 
 // NodeContextPayload represents where an entity was found
 type NodeContextPayload struct {
-	VaultID string `json:"vaultId"`
-	NodeID  string `json:"nodeId"`
-	Summary string `json:"summary"`
+	VaultID   string `json:"vaultId"`
+	NodeID    string `json:"nodeId"`
+	Title     string `json:"title"`
+	Summary   string `json:"summary"`
+	FullText  string `json:"fullText"`
+	SourceURL string `json:"sourceURL"`
 }
 
 // SynthesisIndex stores the inverted entity index with NodeContext
@@ -27,6 +30,7 @@ type SynthesisIndex struct {
 	TotalVaults int                                        `json:"totalVaults"`
 	Vaults      map[string]bool                            `json:"vaults"`
 	EntityMap   map[string]map[string][]NodeContextPayload `json:"entityMap"`
+	NodeArchive map[string]map[string]models.MemoryNode    `json:"nodeArchive"` // VaultID -> NodeID -> Full Node
 }
 
 // SynthesisAlert represents the payload sent to the frontend when a connection is found.
@@ -53,8 +57,9 @@ func NewSynthesisEngine(vaultDir string, alertChan chan SynthesisAlert) *Synthes
 	engine := &SynthesisEngine{
 		indexPath: filepath.Join(vaultDir, "entity_index.json"),
 		Index: SynthesisIndex{
-			Vaults:    make(map[string]bool),
-			EntityMap: make(map[string]map[string][]NodeContextPayload),
+			Vaults:      make(map[string]bool),
+			EntityMap:   make(map[string]map[string][]NodeContextPayload),
+			NodeArchive: make(map[string]map[string]models.MemoryNode),
 		},
 		activeChan: alertChan,
 	}
@@ -78,8 +83,9 @@ func (s *SynthesisEngine) loadIndex() {
 	if err := json.Unmarshal(data, &s.Index); err != nil {
 		log.Printf("[SynthesisEngine] Index migration format error: %v, starting fresh.", err)
 		s.Index = SynthesisIndex{
-			Vaults:    make(map[string]bool),
-			EntityMap: make(map[string]map[string][]NodeContextPayload),
+			Vaults:      make(map[string]bool),
+			EntityMap:   make(map[string]map[string][]NodeContextPayload),
+			NodeArchive: make(map[string]map[string]models.MemoryNode),
 		}
 	}
 	if s.Index.Vaults == nil {
@@ -87,6 +93,9 @@ func (s *SynthesisEngine) loadIndex() {
 	}
 	if s.Index.EntityMap == nil {
 		s.Index.EntityMap = make(map[string]map[string][]NodeContextPayload)
+	}
+	if s.Index.NodeArchive == nil {
+		s.Index.NodeArchive = make(map[string]map[string]models.MemoryNode)
 	}
 }
 
@@ -130,7 +139,10 @@ func (s *SynthesisEngine) PurgeVault(vaultID string) {
 		}
 	}
 
-	// 3. Save index
+	// 3. Remove from NodeArchive
+	delete(s.Index.NodeArchive, vaultID)
+
+	// 4. Save index
 	s.saveIndexLocked()
 }
 
@@ -148,6 +160,7 @@ func (s *SynthesisEngine) PurgeOrphans(activeVaults map[string]bool) {
 
 	for _, vaultID := range orphans {
 		delete(s.Index.Vaults, vaultID)
+		delete(s.Index.NodeArchive, vaultID)
 		for entity, contextsMap := range s.Index.EntityMap {
 			delete(contextsMap, vaultID)
 			if len(contextsMap) == 0 {
@@ -266,6 +279,14 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []stri
 	indexChanged := false
 
 	s.Index.Vaults[newVaultID] = true
+	if s.Index.NodeArchive[newVaultID] == nil {
+		s.Index.NodeArchive[newVaultID] = make(map[string]models.MemoryNode)
+	}
+
+	// Store full node data in archive
+	for _, n := range nodes {
+		s.Index.NodeArchive[newVaultID][n.ID] = n
+	}
 
 	seenInRun := make(map[string]bool)
 
@@ -291,9 +312,12 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []stri
 		for _, n := range nodes {
 			if strings.Contains(strings.ToLower(n.Summary), entity) || strings.Contains(strings.ToLower(n.Title), entity) {
 				contexts = append(contexts, NodeContextPayload{
-					VaultID: newVaultID,
-					NodeID:  n.ID,
-					Summary: n.Summary,
+					VaultID:   newVaultID,
+					NodeID:    n.ID,
+					Title:     n.Title,
+					Summary:   n.Summary,
+					FullText:  n.FullText,
+					SourceURL: n.SourceURL,
 				})
 			}
 		}
@@ -312,13 +336,25 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []stri
 		} else {
 			if len(s.Index.EntityMap[entity][newVaultID]) == 0 {
 				nodeID := "synthetic-node"
+				title := "Synthetic Insight"
+				summary := "Detected synthetically inside this case without clear node attribution."
+				fullText := ""
+				sourceURL := ""
+
 				if len(nodes) > 0 {
 					nodeID = nodes[0].ID
+					title = nodes[0].Title
+					summary = nodes[0].Summary
+					fullText = nodes[0].FullText
+					sourceURL = nodes[0].SourceURL
 				}
 				s.Index.EntityMap[entity][newVaultID] = []NodeContextPayload{{
-					VaultID: newVaultID,
-					NodeID:  nodeID,
-					Summary: "Detected synthetically inside this case without clear node attribution.", // fallback
+					VaultID:   newVaultID,
+					NodeID:    nodeID,
+					Title:     title,
+					Summary:   summary,
+					FullText:  fullText,
+					SourceURL: sourceURL,
 				}}
 				indexChanged = true
 			}

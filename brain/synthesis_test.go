@@ -185,3 +185,44 @@ func TestPurgeVault(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeArchive(t *testing.T) {
+	tempDir := t.TempDir()
+	alertChan := make(chan SynthesisAlert, 10)
+	engine := NewSynthesisEngine(tempDir, alertChan)
+
+	vaultID := "test-vault"
+	nodeID := "node-1"
+	nodes := []models.MemoryNode{
+		{
+			ID:      nodeID,
+			Title:   "Original Title",
+			Summary: "Summary text",
+		},
+	}
+
+	// 1. Store node in archive via AnalyzeOverlap
+	engine.AnalyzeOverlap(context.Background(), []string{"Entity"}, vaultID, nodes, nil)
+
+	engine.mu.RLock()
+	archivedNode, exists := engine.Index.NodeArchive[vaultID][nodeID]
+	engine.mu.RUnlock()
+
+	if !exists {
+		t.Fatalf("Node was not stored in NodeArchive")
+	}
+	if archivedNode.Title != "Original Title" {
+		t.Errorf("Expected title 'Original Title', got '%s'", archivedNode.Title)
+	}
+
+	// 2. Verify purge cleans up NodeArchive
+	engine.PurgeVault(vaultID)
+
+	engine.mu.RLock()
+	_, exists = engine.Index.NodeArchive[vaultID]
+	engine.mu.RUnlock()
+
+	if exists {
+		t.Errorf("NodeArchive entry for vault was not purged")
+	}
+}

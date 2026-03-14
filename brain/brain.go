@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1015,4 +1016,58 @@ func (b *Brain) RankAndFilterFacts(ctx context.Context, originalPrompt string, f
 
 	fmt.Printf("[Brain] Ranking complete. Retained %d/%d facts.\n", len(filteredFacts), len(facts))
 	return strings.Join(filteredFacts, "\n\n"), nil
+}
+
+// PullNode imports a specific node from one investigation (vault) into another.
+func (b *Brain) PullNode(ctx context.Context, sourceVaultID, sourceNodeID, targetVaultID string) error {
+	fmt.Printf("[Brain] Pulling node %s from vault %s into %s\n", sourceNodeID, sourceVaultID, targetVaultID)
+
+	b.Synthesis.mu.RLock()
+	archive, ok := b.Synthesis.Index.NodeArchive[sourceVaultID]
+	if !ok {
+		b.Synthesis.mu.RUnlock()
+		return fmt.Errorf("source vault %s not found in archive", sourceVaultID)
+	}
+
+	node, ok := archive[sourceNodeID]
+	b.Synthesis.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("node %s not found in source vault %s", sourceNodeID, sourceVaultID)
+	}
+
+	// Create a copy with the [IMPORTED] tag
+	importedNode := node
+	importedNode.ID = fmt.Sprintf("imported-%d-%s", time.Now().UnixNano(), node.ID)
+	importedNode.Title = "[IMPORTED] " + node.Title
+
+	// Optional: add a visual marker or provenance tag if we had a metadata map
+	// For now, the title prefix is the clear indicator.
+
+	// Broadcast it so the frontend adds it to the current board
+	if b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type: "MEMORY_NODE_GATHERED",
+			Payload: map[string]interface{}{
+				"node":    importedNode,
+				"total":   0,
+				"vaultId": targetVaultID,
+			},
+		})
+
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "SYSTEM_LOG",
+			Payload: fmt.Sprintf("Imported evidence: %q has been added to the board.", node.Title),
+		})
+	}
+
+	// SAVE TO DISK: Persist the node in the target vault directory
+	targetDir := filepath.Join("abdomen_vault", targetVaultID)
+	if err := os.MkdirAll(targetDir, 0755); err == nil {
+		nodeJSON, _ := json.MarshalIndent(importedNode, "", "  ")
+		fileName := fmt.Sprintf("node_%s.json", importedNode.ID)
+		os.WriteFile(filepath.Join(targetDir, fileName), nodeJSON, 0644)
+	}
+
+	return nil
 }
