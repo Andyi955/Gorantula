@@ -22,9 +22,10 @@ interface SynthesisPanelProps {
     currentInvestigationId: string | null;
     onNavigateVault?: (id: string, nodeId?: string) => void;
     returnVaultId: string | null;
+    investigations?: { id: string; topic: string }[];
 }
 
-export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId }: SynthesisPanelProps) {
+export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [] }: SynthesisPanelProps) {
     const [alerts, setAlerts] = useState<SynthesisAlert[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const [hasUnread, setHasUnread] = useState(false);
@@ -173,8 +174,9 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                         return (
                                             <div key={cIdx} className="bg-cyber-gray/20 text-gray-300 p-2 text-xs rounded border border-cyber-gray/30 flex flex-col gap-2">
                                                 <div className="flex justify-between items-center">
-                                                    <span className="font-mono text-[10px] text-cyber-cyan">
-                                                        {caseId === currentInvestigationId ? `${caseId} (CURRENT)` : caseId}
+                                                    <span className="font-mono text-[10px] text-cyber-cyan truncate max-w-[200px]" title={caseId}>
+                                                        {investigations.find(inv => inv.id === caseId)?.topic || caseId}
+                                                        {caseId === currentInvestigationId && ' (CURRENT)'}
                                                     </span>
                                                     {caseId !== currentInvestigationId && (
                                                         <button

@@ -269,6 +269,7 @@ function App() {
             currentInvestigationId={currentInvestigationId}
             onNavigateVault={handleNavigateSynthesis}
             returnVaultId={returnVaultId}
+            investigations={investigations}
           />
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
