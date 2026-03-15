@@ -3,7 +3,7 @@ import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
-import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle } from 'lucide-react';
+import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save } from 'lucide-react';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -37,6 +37,8 @@ export interface NodeData {
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
     onNavigateToChild?: (id: string) => void;
     onExpand?: (nodeId: string, expanded: boolean) => void;
+    onDelete?: (nodeId: string) => void;
+    onUpdate?: (nodeId: string, data: any) => void;
     expanded?: boolean;
 }
 
@@ -86,10 +88,20 @@ const calculateCardSize = (summary: string, fullText: string, isExpanded: boolea
     return { width, height };
 };
 
-const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sharedSocket }: NodeProps<NodeData> & { returnVaultId?: string | null, currentInvestigationId?: string | null, sharedSocket?: WebSocket | null }) => {
+const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sharedSocket, onDeleteNode, onUpdateNode, isEditing, onSetEditing }: NodeProps<NodeData> & { 
+    returnVaultId?: string | null, 
+    currentInvestigationId?: string | null, 
+    sharedSocket?: WebSocket | null,
+    onDeleteNode?: (id: string) => void,
+    onUpdateNode?: (id: string, data: any) => void,
+    isEditing?: boolean,
+    onSetEditing?: (id: string | null) => void
+}) => {
     const [isExpanded, setIsExpanded] = useState(data.expanded || false);
     const [showChat, setShowChat] = useState(false);
     const [hasPulled, setHasPulled] = useState(false);
+    const [editText, setEditText] = useState(data.fullText || data.summary || '');
+    const [editTitle, setEditTitle] = useState(data.title || '');
     const contentRef = useRef<HTMLDivElement>(null);
     const chatContentRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +140,25 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
     const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
     const hasFullText = !!data.fullText && data.fullText !== data.summary;
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
+
+    const onSave = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onUpdateNode && data.id) {
+            onUpdateNode(data.id, { 
+                title: editTitle, 
+                fullText: editText,
+                summary: editText 
+            });
+        }
+        if (onSetEditing) onSetEditing(null);
+    };
+
+    const onCancel = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setEditText(data.fullText || data.summary || '');
+        setEditTitle(data.title || '');
+        if (onSetEditing) onSetEditing(null);
+    };
 
     return (
         <div
@@ -194,10 +225,43 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
                 {/* Header with Expand Button */}
                 <div className="flex items-center justify-between border-b border-cyber-cyan/30 pb-2 shrink-0">
                     <div className="text-cyber-cyan font-black text-[10px] uppercase tracking-[0.2em] truncate flex-1 leading-none">
-                        {data.title || 'ARCHIVED_INTEL'}
+                        {isEditing ? (
+                            <input
+                                autoFocus
+                                value={editTitle}
+                                onChange={(e) => setEditTitle(e.target.value)}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                className="bg-black/50 border border-cyber-cyan/30 text-cyber-cyan p-1 w-full outline-none"
+                            />
+                        ) : (data.title || 'ARCHIVED_INTEL')}
                     </div>
-                    {hasFullText && (
+                    {(hasFullText || isEditing || data.onDelete) && (
                         <div className="flex items-center gap-1">
+                            {!isEditing && (
+                                <>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (onSetEditing) onSetEditing(data.id || null);
+                                        }}
+                                        className="text-gray-500 hover:text-white transition-colors p-1 opacity-0 group-hover:opacity-100"
+                                        title="Edit Evidence"
+                                    >
+                                        <Edit2 size={14} />
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (onDeleteNode && data.id) onDeleteNode(data.id);
+                                        }}
+                                        className="text-red-900/50 hover:text-red-500 transition-colors p-1 opacity-0 group-hover:opacity-100"
+                                        title="Delete Evidence"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </>
+                            )}
                     {/* Compact Pull Button */}
                     {returnVaultId && currentInvestigationId !== returnVaultId && (
                         <button
@@ -242,15 +306,43 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
                 {/* Summary with Auto Flex */}
                 <div
                     ref={contentRef}
-                    className={`relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300 ${isExpanded ? 'overflow-y-auto' : ''}`}
-                    style={{ maxHeight: isExpanded ? '400px' : '200px' }}
+                    className={`relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300 ${isExpanded || isEditing ? 'overflow-y-auto' : ''}`}
+                    style={{ maxHeight: isExpanded || isEditing ? '400px' : '200px' }}
                 >
-                    <div
-                        className="text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar"
-                        dangerouslySetInnerHTML={{
-                            __html: parseHighlightedText(displayContent || '')
-                        }}
-                    />
+                    {isEditing ? (
+                        <div className="flex flex-col gap-2 h-full">
+                            <textarea
+                                autoFocus
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                className="bg-black/80 border border-cyber-cyan/30 text-white p-2 w-full flex-1 outline-none font-mono text-xs custom-scrollbar nodrag nowheel min-h-[150px]"
+                                placeholder="Enter evidence details..."
+                            />
+                            <div className="flex justify-end gap-2 shrink-0">
+                                <button
+                                    onClick={onCancel}
+                                    className="p-1 text-gray-400 hover:text-white"
+                                >
+                                    <X size={16} />
+                                </button>
+                                <button
+                                    onClick={onSave}
+                                    className="p-1 text-cyber-green hover:text-white"
+                                >
+                                    <Save size={16} />
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div
+                            className="text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar"
+                            dangerouslySetInnerHTML={{
+                                __html: parseHighlightedText(displayContent || '')
+                            }}
+                        />
+                    )}
                 </div>
 
                 {/* Persona Chat Icon - shows who discussed this card */}

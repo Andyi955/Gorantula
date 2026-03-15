@@ -23,7 +23,7 @@ import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -202,6 +202,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 returnVaultId={returnVaultId}
                 currentInvestigationId={investigationId}
                 sharedSocket={sharedSocket}
+                onDeleteNode={handleDeleteNode}
+                onUpdateNode={handleUpdateNode}
+                isEditing={editingNodeId === props.id}
+                onSetEditing={(id: string | null) => setEditingNodeId(id)}
             />
         )
     }), [returnVaultId, investigationId, sharedSocket]);
@@ -213,6 +217,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
 
     // Track node transitions for debugging
@@ -323,6 +328,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onReadFull: () => setSelectedContent(n.data.fullText),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string) => onNavigateToChild(id),
+                    onDelete: (id: string) => handleDeleteNode(id),
+                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                     isDeepDiveSource: !!n.data?.isDeepDiveSource
                 }
             }));
@@ -499,6 +506,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onReadFull: () => setSelectedContent(node.fullText),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string) => onNavigateToChild(id),
+                        onDelete: (id: string) => handleDeleteNode(id),
+                        onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                         isDeepDiveSource: false,
                         expanded: false,
                     },
@@ -598,6 +607,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setIsGathering(false);
                 setDeepDiveTopic(null);
                 alert(`System Error: ${msg.payload}`);
+            } else if (msg.type === 'MANUAL_NODE_PROCESSED') {
+                const { nodeId, text } = msg.payload;
+                setNodes(nds => nds.map(n => {
+                    if (n.id === nodeId) {
+                        return {
+                            ...n,
+                            data: {
+                                ...n.data,
+                                summary: text,
+                                fullText: text,
+                                title: n.data.title === 'NEW_EVIDENCE' ? (text.slice(0, 30) + '...') : n.data.title
+                            }
+                        };
+                    }
+                    return n;
+                }));
+                setEditingNodeId(null);
             }
         };
 
@@ -606,7 +632,59 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [sharedSocket, handleNewConnections, onDeepDiveNode, onNavigateToChild, isGathering]);
+    }, [sharedSocket, handleNewConnections, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
+
+    const addManualNode = () => {
+        const id = `manual-${Date.now()}`;
+        const newNode: Node = {
+            id,
+            type: 'custom',
+            position: { x: 100, y: 100 },
+            data: {
+                id,
+                title: 'NEW_EVIDENCE',
+                summary: '',
+                fullText: '',
+                onReadFull: () => setSelectedContent(''),
+                onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                onNavigateToChild: (id: string) => onNavigateToChild(id),
+                onDelete: (id: string) => handleDeleteNode(id),
+                onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
+                isDeepDiveSource: false,
+                expanded: true,
+            },
+        };
+
+        setNodes(nds => [...nds, newNode]);
+        setEditingNodeId(id);
+    };
+
+    const handleDeleteNode = (id: string) => {
+        if (window.confirm("Delete this evidence?")) {
+            setNodes(nds => nds.filter(n => n.id !== id));
+            setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
+        }
+    };
+
+    const handleUpdateNode = (id: string, data: any) => {
+        setNodes(nds => nds.map(n => {
+            if (n.id === id) {
+                return { ...n, data: { ...n.data, ...data } };
+            }
+            return n;
+        }));
+
+        // If saving text, trigger LLM processing
+        if (data.fullText && sharedSocket && sharedSocket.readyState === WebSocket.OPEN) {
+            sharedSocket.send(JSON.stringify({
+                type: 'PROCESS_MANUAL_NODE',
+                payload: {
+                    nodeId: id,
+                    text: data.fullText
+                }
+            }));
+        }
+    };
 
 
 
@@ -741,6 +819,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             {isReorganizing ? 'Reorganizing Neural Pathways...' : (deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...')} {isReorganizing ? '' : `${nodes.length}/8`}
                         </div>
                     )}
+                    <button
+                        onClick={addManualNode}
+                        className="flex items-center gap-2 px-6 py-2 bg-black border border-cyber-green text-cyber-green font-black shadow-[0_0_15px_rgba(0,255,65,0.2)] transition-all uppercase tracking-widest text-xs hover:bg-cyber-green hover:text-black animate-gloss"
+                    >
+                        <PlusSquare size={14} />
+                        ADD EVIDENCE
+                    </button>
+
                     <button
                         id="connect-dots-btn"
                         onClick={connectTheDots}
