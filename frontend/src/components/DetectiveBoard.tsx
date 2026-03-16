@@ -476,16 +476,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 edge.targetHandle
             );
 
-            console.debug('[StrictGridRoute]', {
-                edgeId: edge.id,
-                source: edge.source,
-                target: edge.target,
-                sourceHandleIn: edge.sourceHandle,
-                targetHandleIn: edge.targetHandle,
-                sourceHandleOut: route.sourcePortId,
-                targetHandleOut: route.targetPortId,
-                routePoints: route.points,
-            });
+            if (import.meta.env.DEV) {
+                console.debug('[StrictGridRoute]', {
+                    edgeId: edge.id,
+                    source: edge.source,
+                    target: edge.target,
+                    sourceHandleIn: edge.sourceHandle,
+                    targetHandleIn: edge.targetHandle,
+                    sourceHandleOut: route.sourcePortId,
+                    targetHandleOut: route.targetPortId,
+                    routePoints: route.points,
+                });
+            }
 
             return {
                 ...edge,
@@ -565,24 +567,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         const normalizedNodes = normalizeStrictGridNodes(nextNodes);
-        const nodeMap = new Map(normalizedNodes.map((node) => [node.id, node]));
+        const affectedEdges = nextEdges.filter((edge) => changedNodeIdSet.has(edge.source) || changedNodeIdSet.has(edge.target));
+        const affectedAssignments = assignStrictGridPorts(affectedEdges, normalizedNodes);
         const updatedEdges = nextEdges.map((edge) => {
-            if (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target)) {
+            const route = affectedAssignments.get(edge.id)?.route;
+            if (!route) {
                 return edge;
             }
-
-            const sourceNode = nodeMap.get(edge.source);
-            const targetNode = nodeMap.get(edge.target);
-            if (!sourceNode || !targetNode) {
-                return edge;
-            }
-
-            const route = buildStrictGridRoute(
-                sourceNode,
-                targetNode,
-                edge.sourceHandle,
-                edge.targetHandle
-            );
 
             return {
                 ...edge,
@@ -594,6 +585,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    sourcePortSide: route.sourceSide,
+                    targetPortSide: route.targetSide,
                     snapEnabled: snapConnectionLabels,
                 }
             };
@@ -673,6 +666,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    sourcePortSide: route.sourceSide,
+                    targetPortSide: route.targetSide,
                     snapEnabled: snapConnectionLabels,
                 }
             };
@@ -1127,7 +1122,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 ...relationshipDraft.connection,
                 id: `manual-${relationshipDraft.connection.source}-${relationshipDraft.connection.target}-${Date.now()}`,
                 sourceHandle: relationshipDraft.connection.sourceHandle || 'port-right-0',
-                targetHandle: relationshipDraft.connection.targetHandle || (boardMode === 'strict-grid' ? 'port-left-0' : 'port-left-0'),
+                targetHandle: relationshipDraft.connection.targetHandle || 'port-left-0',
                 type: 'customEdge',
                 label: visuals.tag,
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,

@@ -599,7 +599,17 @@ export const assignStrictGridPorts = (
             return;
         }
 
-        if (edge.sourceHandle && edge.targetHandle) {
+        const sourceAbsoluteSlots = getAbsolutePortSlots(sourceNode);
+        const targetAbsoluteSlots = getAbsolutePortSlots(targetNode);
+        const allSides: PortSide[] = ['top', 'right', 'bottom', 'left'];
+        const hasLockedSourcePort = Boolean(edge.sourceHandle) && allSides.some((side) =>
+            sourceAbsoluteSlots[side].some((port) => port.id === edge.sourceHandle),
+        );
+        const hasLockedTargetPort = Boolean(edge.targetHandle) && allSides.some((side) =>
+            targetAbsoluteSlots[side].some((port) => port.id === edge.targetHandle),
+        );
+
+        if (hasLockedSourcePort && hasLockedTargetPort) {
             const lockedRoute = buildStrictGridRoute(sourceNode, targetNode, edge.sourceHandle, edge.targetHandle);
             assignments.set(edge.id, { route: lockedRoute });
             if (!occupancy.has(edge.source)) occupancy.set(edge.source, new Set<string>());
@@ -614,8 +624,6 @@ export const assignStrictGridPorts = (
         const sourcePreferredSides = getPreferredSides(sourceCenter, targetCenter, true);
         const targetPreferredSides = getPreferredSides(targetCenter, sourceCenter, false);
         const preferredPairs = getPreferredSidePairs(sourceNode, targetNode);
-        const sourceAbsoluteSlots = getAbsolutePortSlots(sourceNode);
-        const targetAbsoluteSlots = getAbsolutePortSlots(targetNode);
         const sourceOccupancy = occupancy.get(edge.source) || new Set<string>();
         const targetOccupancy = occupancy.get(edge.target) || new Set<string>();
 

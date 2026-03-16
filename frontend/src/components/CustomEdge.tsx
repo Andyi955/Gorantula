@@ -488,8 +488,8 @@ export default function CustomEdge({
                         className="transition-all hover:bg-[#111] hover:scale-110 active:scale-95 active:cursor-grabbing"
                         title={isStrictGrid
                             ? (data?.snapEnabled
-                                ? 'Drag to reposition the relationship label on the grid. Double-click to reset it.'
-                                : 'Drag to reposition the relationship label. Double-click to reset it.')
+                                ? 'Drag to reroute line on the grid. Double-click to reset label position.'
+                                : 'Drag to reroute line. Double-click to reset label position.')
                             : (data?.snapEnabled
                                 ? 'Drag to reroute line with snapping and smart routing. Double-click to reset label position.'
                                 : 'Drag to reroute line with smart routing. Double-click to reset label position.')}
