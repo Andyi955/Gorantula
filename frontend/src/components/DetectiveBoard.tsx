@@ -23,7 +23,8 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
-import { BOARD_GRID_SIZE, calculateNodeFrame, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
+import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeCenter, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
+import type { BoardMode } from './boardGeometry';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move } from 'lucide-react';
 import dagre from 'dagre';
@@ -54,23 +55,37 @@ const createTagStyle = (tag: string): TagStyle => {
     };
 };
 
-// Calculate dynamic node dimensions based on content
-const getNodeDimensions = (node: Node): { width: number; height: number } => {
-    // Use style dimensions if available, otherwise use defaults
-    const style = node.style || {};
-    const width = (style.width as number) || 320;
-    const height = (style.height as number) || 180;
-    return normalizeNodeFrame(width, height);
-};
+interface PersistedBoardState {
+    mode?: BoardMode;
+    nodes: Node[];
+    edges: Edge[];
+}
 
-const getNodeCenter = (node: Node) => {
-    const { width, height } = getNodeDimensions(node);
+const STRICT_GRID_EDGE_Z_INDEX = 0;
+const STRICT_GRID_NODE_Z_INDEX = 100;
+const STRICT_GRID_ROW_GAP = BOARD_GRID_SIZE * 6;
+const STRICT_GRID_COLUMN_GAP = BOARD_GRID_SIZE * 8;
+
+const normalizeStrictGridNodes = (nodes: Node[]) => nodes.map((node) => {
+    const dimensions = getNodeDimensions(node);
 
     return {
-        x: node.position.x + width / 2,
-        y: node.position.y + height / 2,
+        ...node,
+        zIndex: STRICT_GRID_NODE_Z_INDEX,
+        position: {
+            x: snapCoordinateToGrid(node.position.x),
+            y: snapCoordinateToGrid(node.position.y),
+        },
+        style: {
+            ...node.style,
+            ...normalizeNodeFrame(dimensions.width, dimensions.height),
+        },
+        data: {
+            ...node.data,
+            boardMode: 'strict-grid' as BoardMode,
+        }
     };
-};
+});
 
 const clearStaleAlignedRoute = (edge: Edge, nodeMap: Map<string, Node>) => {
     const edgeData = edge.data || {};
@@ -116,16 +131,38 @@ const clearStaleAlignedRoute = (edge: Edge, nodeMap: Map<string, Node>) => {
     };
 };
 
+const parsePersistedBoardState = (raw: string | null): PersistedBoardState | null => {
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.nodes) && Array.isArray(parsed?.edges)) {
+            return {
+                mode: parsed.mode === 'strict-grid' ? 'strict-grid' : 'legacy',
+                nodes: parsed.nodes,
+                edges: parsed.edges,
+            };
+        }
+    } catch (error) {
+        console.error('[DetectiveBoard] Failed to parse persisted board state:', error);
+    }
+
+    return null;
+};
+
 // Enhanced layout function with smart rectangle formation
 const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
     console.log('[Layout] Executing Dagre with', nodes.length, 'nodes and', edges.length, 'edges');
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    // Detect dense graphs for vertical layout
+    // Prefer lateral layouts for investigation boards; only fall back to
+    // top-to-bottom when the graph is both large and very dense.
     const edgeToNodeRatio = nodes.length > 0 ? edges.length / nodes.length : 0;
-    const isDenseGraph = edgeToNodeRatio > 1.5;
-    const rankdir = nodes.length <= 6 || isDenseGraph ? 'TB' : 'LR';
+    const isVeryDenseGraph = edgeToNodeRatio > 2.25;
+    const rankdir = nodes.length >= 8 && isVeryDenseGraph ? 'TB' : 'LR';
 
     dagreGraph.setGraph({
         rankdir,
@@ -174,6 +211,70 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
         nodes: layoutedNodes.map(n => ({ ...n, position: { ...n.position } })),
         edges: [...edges]
     };
+};
+
+const getStrictGridBoardOrderedNodes = (nodes: Node[], edges: Edge[]) => {
+    const { nodes: layoutedNodes } = getLayoutedElements(nodes, edges);
+
+    return [...layoutedNodes].sort((left, right) => {
+        const yDelta = left.position.y - right.position.y;
+        if (Math.abs(yDelta) > BOARD_GRID_SIZE * 2) {
+            return yDelta;
+        }
+
+        return left.position.x - right.position.x;
+    });
+};
+
+const getStrictGridLayoutedNodes = (nodes: Node[], edges: Edge[]) => {
+    const orderedNodes = getStrictGridBoardOrderedNodes(nodes, edges);
+    const columnCount = Math.max(2, Math.ceil(Math.sqrt(Math.max(orderedNodes.length, 1))));
+    const rows: Node[][] = [];
+
+    for (let index = 0; index < orderedNodes.length; index += columnCount) {
+        rows.push(orderedNodes.slice(index, index + columnCount));
+    }
+
+    const rowWidths = rows.map((row) =>
+        row.reduce((width, node, index) => {
+            const dim = getNodeDimensions(node);
+            return width + dim.width + (index > 0 ? STRICT_GRID_COLUMN_GAP : 0);
+        }, 0)
+    );
+    const maxRowWidth = Math.max(...rowWidths, 0);
+
+    let currentY = 0;
+    const boardNodes = rows.flatMap((row, rowIndex) => {
+        const rowHeight = Math.max(...row.map((node) => getNodeDimensions(node).height), 0);
+        const rowWidth = rowWidths[rowIndex];
+        let currentX = (maxRowWidth - rowWidth) / 2;
+
+        const placedRow = row.map((node) => {
+            const dim = getNodeDimensions(node);
+            const nextNode = {
+                ...node,
+                position: {
+                    x: currentX,
+                    y: currentY,
+                },
+                sourcePosition: Position.Right,
+                targetPosition: Position.Left,
+                style: {
+                    ...node.style,
+                    width: dim.width,
+                    height: dim.height,
+                }
+            };
+
+            currentX += dim.width + STRICT_GRID_COLUMN_GAP;
+            return nextNode;
+        });
+
+        currentY += rowHeight + STRICT_GRID_ROW_GAP;
+        return placedRow;
+    });
+
+    return normalizeStrictGridNodes(boardNodes);
 };
 
 interface DetectiveBoardProps {
@@ -285,6 +386,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [showGrid, setShowGrid] = useState(true);
     const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
+    const [boardMode, setBoardMode] = useState<BoardMode>('strict-grid');
     const [isAligningToGrid, setIsAligningToGrid] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
@@ -296,6 +398,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
     const isDraggingNodeRef = useRef(false);
+    const draggingNodeIdsRef = useRef<Set<string>>(new Set());
+    const dragRouteFrameRef = useRef<number | null>(null);
     const persistTimerRef = useRef<number | null>(null);
 
     nodesRef.current = nodes;
@@ -345,6 +449,231 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         };
     }, []);
 
+    const decorateStrictGridEdges = useCallback((nextEdges: Edge[], nextNodes: Node[]) => {
+        const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
+        const assignments = assignStrictGridPorts(nextEdges, nextNodes);
+
+        return nextEdges.map((edge) => {
+            const sourceNode = nodeMap.get(edge.source);
+            const targetNode = nodeMap.get(edge.target);
+
+            if (!sourceNode || !targetNode) {
+                return {
+                    ...edge,
+                    zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                    data: {
+                        ...edge.data,
+                        boardMode: 'strict-grid' as BoardMode,
+                        snapEnabled: snapConnectionLabels,
+                    }
+                };
+            }
+
+            const route = assignments.get(edge.id)?.route || buildStrictGridRoute(
+                sourceNode,
+                targetNode,
+                edge.sourceHandle,
+                edge.targetHandle
+            );
+
+            if (import.meta.env.DEV) {
+                console.debug('[StrictGridRoute]', {
+                    edgeId: edge.id,
+                    source: edge.source,
+                    target: edge.target,
+                    sourceHandleIn: edge.sourceHandle,
+                    targetHandleIn: edge.targetHandle,
+                    sourceHandleOut: route.sourcePortId,
+                    targetHandleOut: route.targetPortId,
+                    routePoints: route.points,
+                });
+            }
+
+            return {
+                ...edge,
+                sourceHandle: route.sourcePortId,
+                targetHandle: route.targetPortId,
+                type: 'customEdge',
+                zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                data: {
+                    ...edge.data,
+                    boardMode: 'strict-grid' as BoardMode,
+                    routePoints: route.points,
+                    sourcePortSide: route.sourceSide,
+                    targetPortSide: route.targetSide,
+                    snapEnabled: snapConnectionLabels,
+                }
+            };
+        });
+    }, [snapConnectionLabels]);
+
+    const syncStrictGridEdgesToNodes = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
+        const collectActivePortIds = (edgesToInspect: Edge[]) => {
+            const activePortIdsByNode = new Map<string, Set<string>>();
+
+            edgesToInspect.forEach((edge) => {
+                if (edge.sourceHandle) {
+                    if (!activePortIdsByNode.has(edge.source)) {
+                        activePortIdsByNode.set(edge.source, new Set<string>());
+                    }
+                    activePortIdsByNode.get(edge.source)?.add(edge.sourceHandle);
+                }
+
+                if (edge.targetHandle) {
+                    if (!activePortIdsByNode.has(edge.target)) {
+                        activePortIdsByNode.set(edge.target, new Set<string>());
+                    }
+                    activePortIdsByNode.get(edge.target)?.add(edge.targetHandle);
+                }
+            });
+
+            return activePortIdsByNode;
+        };
+
+        const normalizedNodes = normalizeStrictGridNodes(nextNodes);
+        const strictEdges = decorateStrictGridEdges(nextEdges, normalizedNodes);
+        const activePortIdsByNode = collectActivePortIds(strictEdges);
+        const nodesWithActivePorts = normalizedNodes.map((node) => ({
+            ...node,
+            data: {
+                ...node.data,
+                activePortIds: Array.from(activePortIdsByNode.get(node.id) || []),
+            }
+        }));
+
+        const finalizedStrictEdges = decorateStrictGridEdges(strictEdges, nodesWithActivePorts);
+        const finalizedActivePortIdsByNode = collectActivePortIds(finalizedStrictEdges);
+        const finalizedNodes = nodesWithActivePorts.map((node) => ({
+            ...node,
+            data: {
+                ...node.data,
+                activePortIds: Array.from(finalizedActivePortIdsByNode.get(node.id) || []),
+            }
+        }));
+
+        setBoardMode('strict-grid');
+        setNodes(finalizedNodes);
+        setEdges(finalizedStrictEdges);
+    }, [decorateStrictGridEdges]);
+
+    const syncStrictGridSubset = useCallback((
+        changedNodeIds: string[],
+        nextEdges = edgesRef.current,
+        nextNodes = nodesRef.current
+    ) => {
+        const changedNodeIdSet = new Set(changedNodeIds);
+        if (changedNodeIdSet.size === 0) {
+            return;
+        }
+
+        const normalizedNodes = normalizeStrictGridNodes(nextNodes);
+        const affectedEdges = nextEdges.filter((edge) => changedNodeIdSet.has(edge.source) || changedNodeIdSet.has(edge.target));
+        const affectedAssignments = assignStrictGridPorts(affectedEdges, normalizedNodes);
+        const updatedEdges = nextEdges.map((edge) => {
+            const route = affectedAssignments.get(edge.id)?.route;
+            if (!route) {
+                return edge;
+            }
+
+            return {
+                ...edge,
+                sourceHandle: route.sourcePortId,
+                targetHandle: route.targetPortId,
+                type: 'customEdge',
+                zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                data: {
+                    ...edge.data,
+                    boardMode: 'strict-grid' as BoardMode,
+                    routePoints: route.points,
+                    sourcePortSide: route.sourceSide,
+                    targetPortSide: route.targetSide,
+                    snapEnabled: snapConnectionLabels,
+                }
+            };
+        });
+
+        const activePortIdsByNode = new Map<string, Set<string>>();
+        updatedEdges.forEach((edge) => {
+            if (edge.sourceHandle) {
+                if (!activePortIdsByNode.has(edge.source)) {
+                    activePortIdsByNode.set(edge.source, new Set<string>());
+                }
+                activePortIdsByNode.get(edge.source)?.add(edge.sourceHandle);
+            }
+
+            if (edge.targetHandle) {
+                if (!activePortIdsByNode.has(edge.target)) {
+                    activePortIdsByNode.set(edge.target, new Set<string>());
+                }
+                activePortIdsByNode.get(edge.target)?.add(edge.targetHandle);
+            }
+        });
+
+        const finalizedNodes = normalizedNodes.map((node) => {
+            if (!changedNodeIdSet.has(node.id) && !activePortIdsByNode.has(node.id)) {
+                return node;
+            }
+
+            return {
+                ...node,
+                data: {
+                    ...node.data,
+                    activePortIds: Array.from(activePortIdsByNode.get(node.id) || []),
+                }
+            };
+        });
+
+        setBoardMode('strict-grid');
+        setNodes(finalizedNodes);
+        setEdges(updatedEdges);
+    }, [snapConnectionLabels]);
+
+    const updateStrictGridDragRoutes = useCallback((
+        changedNodeIds: string[],
+        nextNodes: Node[]
+    ) => {
+        const changedNodeIdSet = new Set(changedNodeIds);
+        if (changedNodeIdSet.size === 0) {
+            return;
+        }
+
+        const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
+        setEdges((currentEdges) => currentEdges.map((edge) => {
+            if (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target)) {
+                return edge;
+            }
+
+            const sourceNode = nodeMap.get(edge.source);
+            const targetNode = nodeMap.get(edge.target);
+            if (!sourceNode || !targetNode) {
+                return edge;
+            }
+
+            const route = buildStrictGridRoute(
+                sourceNode,
+                targetNode,
+                edge.sourceHandle,
+                edge.targetHandle
+            );
+
+            return {
+                ...edge,
+                sourceHandle: route.sourcePortId,
+                targetHandle: route.targetPortId,
+                type: 'customEdge',
+                zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                data: {
+                    ...edge.data,
+                    boardMode: 'strict-grid' as BoardMode,
+                    routePoints: route.points,
+                    sourcePortSide: route.sourceSide,
+                    targetPortSide: route.targetSide,
+                    snapEnabled: snapConnectionLabels,
+                }
+            };
+        }));
+    }, [snapConnectionLabels]);
+
     const openRelationshipEditor = useCallback((draft: RelationshipDraft) => {
         setRelationshipDraft(draft);
         setRelationshipNameInput(draft.initialValue);
@@ -356,10 +685,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, []);
 
     const syncEdgesToNodes = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
+        if (boardMode === 'strict-grid') {
+            syncStrictGridEdgesToNodes(nextEdges, nextNodes);
+            return;
+        }
+
         const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
         setNodes(handledNodes);
         setEdges(finalEdges);
-    }, []);
+    }, [boardMode, syncStrictGridEdgesToNodes]);
 
     const handleDeleteNode = useCallback((id: string) => {
         setNodes(nds => nds.filter(n => n.id !== id));
@@ -390,7 +724,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 }
             };
         }));
-    }, []);
+
+        if (boardMode === 'strict-grid') {
+            window.requestAnimationFrame(() => {
+                syncStrictGridSubset([id], edgesRef.current, nodesRef.current);
+            });
+        }
+    }, [boardMode, syncStrictGridSubset]);
 
     const handleUpdateNode = useCallback((id: string, data: any) => {
         console.log(`[DetectiveBoard] Updating node ${id}`, data);
@@ -428,7 +768,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         } else {
             console.warn(`[DetectiveBoard] Socket not ready or no fullText for ${id}`);
         }
-    }, [sharedSocket, setNodes]);
+
+        if (boardMode === 'strict-grid') {
+            window.requestAnimationFrame(() => {
+                syncStrictGridSubset([id], edgesRef.current, nodesRef.current);
+            });
+        }
+    }, [boardMode, sharedSocket, setNodes, syncStrictGridSubset]);
 
     const handleSetEditing = useCallback((id: string | null) => {
         console.log(`[DetectiveBoard] Setting active editing node: ${id}`);
@@ -605,9 +951,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         if (!investigationId || loadedInvestigationId === investigationId) return;
 
         console.log('[DetectiveBoard] Loading investigation:', investigationId);
-        const saved = localStorage.getItem(`inv_data_${investigationId}`);
-        if (saved) {
-            const { nodes: savedNodes, edges: savedEdges } = JSON.parse(saved);
+        const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
+        if (savedState) {
+            const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
+            const savedNodes = savedState.nodes;
+            const savedEdges = savedState.edges;
             const restoredNodes = savedNodes.map((n: Node) => ({
                 ...n,
                 style: {
@@ -625,29 +973,35 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
                     onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
-                    isDeepDiveSource: !!n.data?.isDeepDiveSource
+                    isDeepDiveSource: !!n.data?.isDeepDiveSource,
+                    boardMode: savedMode,
                 }
             }));
-            const { edges: finalEdges, handledNodes } = distributeEdges(
-                savedEdges.map((e: Edge) => ({
-                    ...e,
-                    type: 'customEdge',
-                    updatable: true,
-                    interactionWidth: 20,
-                    data: { ...e.data, snapEnabled: snapConnectionLabels }
-                })),
-                restoredNodes
-            );
-            setNodes(handledNodes);
-            setEdges(finalEdges);
+            const restoredEdges = savedEdges.map((e: Edge) => ({
+                ...e,
+                type: 'customEdge',
+                updatable: true,
+                interactionWidth: 20,
+                data: { ...e.data, snapEnabled: snapConnectionLabels, boardMode: savedMode }
+            }));
+
+            setBoardMode(savedMode);
+            if (savedMode === 'strict-grid') {
+                syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
+            } else {
+                const { edges: finalEdges, handledNodes } = distributeEdges(restoredEdges, restoredNodes);
+                setNodes(handledNodes);
+                setEdges(finalEdges);
+            }
             setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
         } else {
+            setBoardMode('strict-grid');
             setNodes([]);
             setEdges([]);
             setHasConnectedDots(false);
         }
         setLoadedInvestigationId(investigationId);
-    }, [handleDeleteNode, handleNodeExpand, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, snapConnectionLabels]); // Only run when investigationId changes
+    }, [handleDeleteNode, handleNodeExpand, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -659,7 +1013,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         persistTimerRef.current = window.setTimeout(() => {
-            localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ nodes, edges }));
+            localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes, edges }));
             persistTimerRef.current = null;
         }, 250);
 
@@ -669,7 +1023,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 persistTimerRef.current = null;
             }
         };
-    }, [nodes, edges, investigationId, loadedInvestigationId]);
+    }, [boardMode, nodes, edges, investigationId, loadedInvestigationId]);
 
     const persistBoardNow = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -679,12 +1033,51 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             persistTimerRef.current = null;
         }
 
-        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current }));
-    }, [investigationId, loadedInvestigationId]);
+        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes: nodesRef.current, edges: edgesRef.current }));
+    }, [boardMode, investigationId, loadedInvestigationId]);
 
     const onNodesChange: OnNodesChange = useCallback(
-        (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-        []
+        (changes) => {
+            let nextNodesSnapshot: Node[] = [];
+            setNodes((nds) => {
+                const nextNodes = applyNodeChanges(changes, nds);
+                nextNodesSnapshot = nextNodes;
+                return nextNodes;
+            });
+
+            const hasNonSelectionChange = changes.some((change) => change.type !== 'select');
+            const hasDragPositionChange = changes.some((change) => change.type === 'position');
+            if (isDraggingNodeRef.current && hasDragPositionChange) {
+                changes.forEach((change) => {
+                    if (change.type === 'position' && 'id' in change) {
+                        draggingNodeIdsRef.current.add(change.id);
+                    }
+                });
+
+                if (dragRouteFrameRef.current) {
+                    window.cancelAnimationFrame(dragRouteFrameRef.current);
+                }
+
+                dragRouteFrameRef.current = window.requestAnimationFrame(() => {
+                    dragRouteFrameRef.current = null;
+                    updateStrictGridDragRoutes(
+                        Array.from(draggingNodeIdsRef.current),
+                        nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current
+                    );
+                });
+            }
+
+            if (
+                boardMode === 'strict-grid' &&
+                hasNonSelectionChange &&
+                !(isDraggingNodeRef.current && hasDragPositionChange)
+            ) {
+                window.requestAnimationFrame(() => {
+                    syncStrictGridEdgesToNodes(edgesRef.current, nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current);
+                });
+            }
+        },
+        [boardMode, syncStrictGridEdgesToNodes]
     );
     const onEdgesChange: OnEdgesChange = useCallback(
         (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -710,8 +1103,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             };
         });
 
+        if (boardMode === 'strict-grid') {
+            syncStrictGridEdgesToNodes(updatedEdges);
+            return;
+        }
+
         syncEdgesToNodes(updatedEdges);
-    }, [snapConnectionLabels, syncEdgesToNodes]);
+    }, [boardMode, snapConnectionLabels, syncEdgesToNodes, syncStrictGridEdgesToNodes]);
     const submitRelationshipEditor = useCallback(() => {
         if (!relationshipDraft) return;
 
@@ -727,11 +1125,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 targetHandle: relationshipDraft.connection.targetHandle || 'port-left-0',
                 type: 'customEdge',
                 label: visuals.tag,
-                zIndex: 10,
+                zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 updatable: true,
                 interactionWidth: 20,
                 animated: visuals.animated,
-                data: { reasoning: 'Manual connection', color: visuals.color, generatedBy: 'manual', snapEnabled: snapConnectionLabels },
+                data: { reasoning: 'Manual connection', color: visuals.color, generatedBy: 'manual', snapEnabled: snapConnectionLabels, boardMode },
                 style: { stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
                 labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                 labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
@@ -739,7 +1137,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 labelBgBorderRadius: 2,
             }, edgesRef.current) as Edge[];
 
-            syncEdgesToNodes(nextEdge);
+            if (boardMode === 'strict-grid') {
+                syncStrictGridEdgesToNodes(nextEdge);
+            } else {
+                syncEdgesToNodes(nextEdge);
+            }
         } else {
             const updatedEdges = edgesRef.current.map((edge) => {
                 if (edge.id !== relationshipDraft.edgeId) return edge;
@@ -754,6 +1156,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         reasoning: edge.data?.reasoning || 'Manual connection',
                         generatedBy: edge.data?.generatedBy || 'manual',
                         snapEnabled: snapConnectionLabels,
+                        boardMode,
                     },
                     style: { ...edge.style, stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
                     labelStyle: { ...edge.labelStyle, fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
@@ -763,13 +1166,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 };
             });
 
-            syncEdgesToNodes(updatedEdges);
+            if (boardMode === 'strict-grid') {
+                syncStrictGridEdgesToNodes(updatedEdges);
+            } else {
+                syncEdgesToNodes(updatedEdges);
+            }
         }
 
         closeRelationshipEditor();
-    }, [buildEdgeVisuals, closeRelationshipEditor, ensureTagStyles, relationshipDraft, relationshipNameInput, snapConnectionLabels, syncEdgesToNodes]);
+    }, [boardMode, buildEdgeVisuals, closeRelationshipEditor, ensureTagStyles, relationshipDraft, relationshipNameInput, snapConnectionLabels, syncEdgesToNodes, syncStrictGridEdgesToNodes]);
     const onNodeDragStart = useCallback(() => {
         isDraggingNodeRef.current = true;
+        draggingNodeIdsRef.current.clear();
+        if (dragRouteFrameRef.current) {
+            window.cancelAnimationFrame(dragRouteFrameRef.current);
+            dragRouteFrameRef.current = null;
+        }
         if (persistTimerRef.current) {
             window.clearTimeout(persistTimerRef.current);
             persistTimerRef.current = null;
@@ -777,15 +1189,29 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, []);
     const onNodeDragStop = useCallback(() => {
         isDraggingNodeRef.current = false;
+        if (dragRouteFrameRef.current) {
+            window.cancelAnimationFrame(dragRouteFrameRef.current);
+            dragRouteFrameRef.current = null;
+        }
+        if (boardMode === 'strict-grid') {
+            const changedNodeIds = Array.from(draggingNodeIdsRef.current);
+            draggingNodeIdsRef.current.clear();
+            if (changedNodeIds.length > 0) {
+                syncStrictGridSubset(changedNodeIds, edgesRef.current, nodesRef.current);
+            } else {
+                syncStrictGridEdgesToNodes(edgesRef.current, nodesRef.current);
+            }
+        }
         persistBoardNow();
-    }, [persistBoardNow]);
+    }, [boardMode, persistBoardNow, syncStrictGridEdgesToNodes, syncStrictGridSubset]);
 
     const handleNewConnections = useCallback((connections: any[]) => {
         console.log('[Board] Received connections:', connections);
-        console.log('[Board] Current nodes:', nodes.map(n => ({ id: n.id, title: n.data.title })));
+        const currentNodes = nodesRef.current;
+        console.log('[Board] Current nodes:', currentNodes.map(n => ({ id: n.id, title: n.data.title })));
 
         // Filter connections to only include those where source and target exist
-        const nodeIds = new Set(nodes.map(n => n.id));
+        const nodeIds = new Set(currentNodes.map(n => n.id));
         const validConnections = connections.filter(c => {
             const sourceExists = nodeIds.has(c.source);
             const targetExists = nodeIds.has(c.target);
@@ -834,11 +1260,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 target: c.target,
                 type: 'customEdge',
                 label: tag,
-                zIndex: 10,
+                zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 updatable: true,
                 interactionWidth: 20,
                 animated,
-                data: { reasoning: c.reasoning, color: edgeColor, generatedBy: 'connectTheDots' },
+                data: { reasoning: c.reasoning, color: edgeColor, generatedBy: 'connectTheDots', snapEnabled: snapConnectionLabels, boardMode },
                 style: { stroke: edgeColor, strokeWidth: 2, strokeDasharray },
                 labelStyle: { fill: edgeColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                 labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: edgeColor, strokeWidth: 1 },
@@ -846,6 +1272,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 labelBgBorderRadius: 2,
             };
         });
+
+        if (boardMode === 'strict-grid') {
+            const preservedEdges = edgesRef.current.filter(e => e.data?.generatedBy !== 'connectTheDots');
+            const existingIds = new Set(preservedEdges.map(e => e.id));
+            const filteredNew = newEdges.filter(e => !existingIds.has(e.id));
+            const combinedEdges = [...preservedEdges, ...filteredNew];
+
+            window.requestAnimationFrame(() => {
+                const layoutedNodes = getStrictGridLayoutedNodes(currentNodes, combinedEdges);
+                syncStrictGridEdgesToNodes(combinedEdges, layoutedNodes);
+                setTimeout(() => fitView({ duration: 800 }), 100);
+            });
+
+            setHasConnectedDots(true);
+            setIsAnalyzing(false);
+            return;
+        }
 
         setEdges((eds) => {
             const preservedEdges = eds.filter(e => e.data?.generatedBy !== 'connectTheDots');
@@ -870,7 +1313,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         });
         setHasConnectedDots(true);
         setIsAnalyzing(false);
-    }, [nodes, fitView, tagStyles]);
+    }, [boardMode, fitView, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -886,6 +1329,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 const newNode: Node = {
                     id: node.id,
                     type: 'custom',
+                    zIndex: boardMode === 'strict-grid' ? STRICT_GRID_NODE_Z_INDEX : undefined,
                     style: frame,
                     data: {
                         ...node,
@@ -897,8 +1341,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                         isDeepDiveSource: false,
                         expanded: false,
+                        boardMode,
                     },
-                    position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
+                    position: {
+                        x: boardMode === 'strict-grid' ? snapCoordinateToGrid(Math.random() * 400 + 100) : Math.random() * 400 + 100,
+                        y: boardMode === 'strict-grid' ? snapCoordinateToGrid(Math.random() * 400 + 100) : Math.random() * 400 + 100,
+                    },
                     sourcePosition: Position.Right,
                     targetPosition: Position.Left
                 };
@@ -906,20 +1354,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 // Check if this node is meant for a different investigation (Pull Node flow)
                 if (vaultId && vaultId !== investigationId) {
                     console.log(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
-                    const saved = localStorage.getItem(`inv_data_${vaultId}`);
-                    let vaultData: { nodes: any[], edges: any[] } = { nodes: [], edges: [] };
-                    
-                    if (saved) {
-                        try {
-                            vaultData = JSON.parse(saved);
-                        } catch (e) {
-                            console.error(`[Board] Failed to parse data for vault ${vaultId}`, e);
-                        }
-                    }
+                    const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
+                    let vaultData: PersistedBoardState = savedState || { mode: boardMode, nodes: [], edges: [] };
 
                     const nodeExists = (vaultData.nodes || []).some((n: any) => n.id === node.id);
                     if (!nodeExists) {
                         vaultData.nodes = [...(vaultData.nodes || []), newNode];
+                        vaultData.mode = vaultData.mode || boardMode;
                         localStorage.setItem(`inv_data_${vaultId}`, JSON.stringify(vaultData));
                         console.log(`[Board] Node ${node.id} successfully persisted to target vault ${vaultId}`);
                     }
@@ -1029,14 +1470,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [sharedSocket, handleNewConnections, handleDeleteNode, handleNodeExpand, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
+    }, [boardMode, sharedSocket, handleNewConnections, handleDeleteNode, handleNodeExpand, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
         const frame = calculateNodeFrame('', '', true);
+        setBoardMode('strict-grid');
         const newNode: Node = {
             id,
             type: 'custom',
+            zIndex: STRICT_GRID_NODE_Z_INDEX,
             position: { x: snapCoordinateToGrid(96), y: snapCoordinateToGrid(96) },
             style: frame,
             data: {
@@ -1069,6 +1512,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 isEditing: true,
                 isDeepDiveSource: false,
                 expanded: true,
+                boardMode: 'strict-grid',
             },
         };
 
@@ -1091,6 +1535,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 returnVaultId,
                 currentInvestigationId: investigationId,
                 sharedSocket,
+                boardMode,
                 onExpand: handleNodeExpand,
                 onDelete: handleDeleteNode,
                 onUpdate: handleUpdateNode,
@@ -1099,7 +1544,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         })));
     // We only want to sync these onto the nodes when the container state changes
-    }, [returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleSetEditing, editingNodeId]);
+    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleSetEditing, editingNodeId]);
 
 
 
@@ -1133,6 +1578,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     const clearBoard = () => {
         if (window.confirm("Clear board?")) {
+            setBoardMode('strict-grid');
             setNodes([]);
             setEdges([]);
             setEdgeReasoning(null);
@@ -1153,6 +1599,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         // Run calculation after a short timeout to allow UI to show loading state
         setTimeout(() => {
             try {
+                if (boardMode === 'strict-grid') {
+                    const normalizedNodes = getStrictGridLayoutedNodes(nodes, edges);
+                    syncStrictGridEdgesToNodes(edges, normalizedNodes);
+                    setTimeout(() => {
+                        fitView({ duration: 800, padding: 0.2 });
+                        setTimeout(() => {
+                            setIsReorganizing(false);
+                            console.log('[TidyUp] Reorganization cycle complete.');
+                        }, 850);
+                    }, 850);
+                    return;
+                }
+
                 // Reset handles and distribution
                 console.log('[TidyUp] Distributing edges...');
                 const { edges: finalEdges, handledNodes } = distributeEdges(edges, nodes);
@@ -1183,7 +1642,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setIsReorganizing(false);
             }
         }, 100);
-    }, [nodes, edges, fitView]);
+    }, [boardMode, edges, fitView, nodes, syncStrictGridEdgesToNodes]);
 
     const handleAlignToGrid = useCallback(() => {
         console.log('[AlignToGrid] Clicked. Current nodes:', nodes.length, 'Current edges:', edges.length);
@@ -1197,26 +1656,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setTimeout(() => {
             try {
                 const alignedNodes = nodes.map((node) => ({
-                    ...node,
-                    style: {
-                        ...node.style,
-                        ...normalizeNodeFrame(
-                            typeof node.style?.width === 'number' ? node.style.width : getNodeDimensions(node).width,
-                            typeof node.style?.height === 'number' ? node.style.height : getNodeDimensions(node).height
-                        ),
-                    },
-                    position: {
-                        x: snapCoordinateToGrid(node.position.x),
-                        y: snapCoordinateToGrid(node.position.y),
-                    }
+                    ...normalizeStrictGridNodes([node])[0]
                 }));
 
-                const nodeMap = new Map(alignedNodes.map((node) => [node.id, node]));
-                const cleanedEdges = edges.map((edge) => clearStaleAlignedRoute(edge, nodeMap));
-                const { edges: finalEdges, handledNodes } = distributeEdges(cleanedEdges, alignedNodes);
+                if (boardMode === 'strict-grid') {
+                    syncStrictGridEdgesToNodes(edges, alignedNodes);
+                } else {
+                    const nodeMap = new Map(alignedNodes.map((node) => [node.id, node]));
+                    const cleanedEdges = edges.map((edge) => clearStaleAlignedRoute(edge, nodeMap)).map((edge) => ({
+                        ...edge,
+                        data: {
+                            ...edge.data,
+                            boardMode: 'strict-grid' as BoardMode,
+                        }
+                    }));
 
-                setNodes(handledNodes);
-                setEdges(finalEdges);
+                    syncStrictGridEdgesToNodes(cleanedEdges, alignedNodes);
+                }
 
                 setTimeout(() => {
                     setIsAligningToGrid(false);
@@ -1227,7 +1683,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setIsAligningToGrid(false);
             }
         }, 50);
-    }, [edges, nodes]);
+    }, [boardMode, edges, nodes, syncStrictGridEdgesToNodes]);
 
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
@@ -1365,7 +1821,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-green text-cyber-green font-black shadow-[0_0_15px_rgba(0,255,65,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-green hover:text-black'}`}
                     >
                         <Grid3X3 size={14} className={isAligningToGrid ? 'animate-pulse' : ''} />
-                        {isAligningToGrid ? 'Aligning...' : 'Align To Grid'}
+                        {isAligningToGrid ? 'Aligning...' : (boardMode === 'strict-grid' ? 'Align To Grid' : 'Migrate To Strict Grid')}
                     </button>
                     <button
                         onClick={handleReorganize}
@@ -1400,7 +1856,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     nodeTypes={nodeTypes}
                     edgeTypes={EDGE_TYPES}
                     connectionMode={ConnectionMode.Loose}
-                    snapToGrid={snapNodes}
+                    snapToGrid={boardMode === 'strict-grid' || snapNodes}
                     snapGrid={[BOARD_GRID_SIZE, BOARD_GRID_SIZE]}
                     fitView
                 >

@@ -1,10 +1,11 @@
-import { memo, useState, useEffect, useRef } from 'react';
+import { Fragment, memo, useState, useEffect, useRef } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
 import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save } from 'lucide-react';
-import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, calculateNodeFrame } from './boardGeometry';
+import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
+import type { BoardMode } from './boardGeometry';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -34,6 +35,7 @@ export interface NodeData {
         top: number;
         bottom: number;
     };
+    activePortIds?: string[];
     onReadFull: () => void;
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
     onNavigateToChild?: (id: string) => void;
@@ -47,6 +49,7 @@ export interface NodeData {
     onSetEditing?: (id: string | null) => void;
     isEditing?: boolean;
     isAnalyzing?: boolean;
+    boardMode?: BoardMode;
 }
 
 const escapeHTML = (text: string) => {
@@ -97,6 +100,25 @@ const getGridAlignedHandleOffsets = (count: number, length: number) => {
         .sort((a, b) => a - b)
         .map((offset) => Math.max(BOARD_GRID_SIZE, Math.min(length - BOARD_GRID_SIZE, offset)));
 };
+
+const getVisibleStrictPortSlots = (
+    slots: Array<{ id: string; offset: number }>,
+    activePortIds: string[] | undefined,
+) => {
+    if (slots.length === 0) {
+        return slots;
+    }
+
+    const activeIds = new Set(activePortIds || []);
+    const defaultSlot = slots[Math.floor(slots.length / 2)];
+
+    return slots.filter((slot) => slot.id === defaultSlot.id || activeIds.has(slot.id));
+};
+
+const isStrictPortVisible = (
+    slotId: string,
+    visibleSlots: Array<{ id: string }>,
+) => visibleSlots.some((slot) => slot.id === slotId);
 
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
@@ -157,10 +179,24 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     );
     const frameWidth = typeof props.width === 'number' ? props.width : fallbackFrame.width;
     const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
-    const topHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.top || 0, frameWidth);
-    const bottomHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.bottom || 0, frameWidth);
-    const leftHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.left || 0, frameHeight);
-    const rightHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.right || 0, frameHeight);
+    const isStrictGrid = data.boardMode === 'strict-grid';
+    const strictPortSlots = getPortSlotsForDimensions(frameWidth, frameHeight);
+    const visibleStrictTopSlots = getVisibleStrictPortSlots(strictPortSlots.top, data.activePortIds);
+    const visibleStrictBottomSlots = getVisibleStrictPortSlots(strictPortSlots.bottom, data.activePortIds);
+    const visibleStrictLeftSlots = getVisibleStrictPortSlots(strictPortSlots.left, data.activePortIds);
+    const visibleStrictRightSlots = getVisibleStrictPortSlots(strictPortSlots.right, data.activePortIds);
+    const topHandleOffsets = isStrictGrid
+        ? strictPortSlots.top.map((slot) => slot.offset)
+        : getGridAlignedHandleOffsets(data.handleCounts?.top || 0, frameWidth);
+    const bottomHandleOffsets = isStrictGrid
+        ? strictPortSlots.bottom.map((slot) => slot.offset)
+        : getGridAlignedHandleOffsets(data.handleCounts?.bottom || 0, frameWidth);
+    const leftHandleOffsets = isStrictGrid
+        ? strictPortSlots.left.map((slot) => slot.offset)
+        : getGridAlignedHandleOffsets(data.handleCounts?.left || 0, frameHeight);
+    const rightHandleOffsets = isStrictGrid
+        ? strictPortSlots.right.map((slot) => slot.offset)
+        : getGridAlignedHandleOffsets(data.handleCounts?.right || 0, frameHeight);
 
     const handleExpand = () => {
         const newExpanded = !isExpanded;
@@ -269,29 +305,85 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
             {/* Top Handles */}
             {topHandleOffsets.map((offset, i) => {
+                const strictSlot = strictPortSlots.top[i];
+                const isVisible = !isStrictGrid || isStrictPortVisible(strictSlot.id, visibleStrictTopSlots);
                 return (
-                    <Handle key={`top-${i}`} type="source" id={`port-top-${i}`} position={Position.Top} style={{ left: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Fragment key={`top-${i}`}>
+                        <Handle
+                            key={`top-source-${i}`}
+                            type="source"
+                            id={isStrictGrid ? strictSlot.id : `port-top-${i}`}
+                            position={Position.Top}
+                            style={isStrictGrid ? { left: offset, opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none' } : { left: offset }}
+                            className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair"
+                        />
+                        {isStrictGrid && (
+                            <Handle key={`top-target-${i}`} type="target" id={strictSlot.id} position={Position.Top} style={{ left: offset, opacity: 0, pointerEvents: 'none' }} className="w-3 h-3" />
+                        )}
+                    </Fragment>
                 );
             })}
 
             {/* Bottom Handles */}
             {bottomHandleOffsets.map((offset, i) => {
+                const strictSlot = strictPortSlots.bottom[i];
+                const isVisible = !isStrictGrid || isStrictPortVisible(strictSlot.id, visibleStrictBottomSlots);
                 return (
-                    <Handle key={`bot-${i}`} type="source" id={`port-bot-${i}`} position={Position.Bottom} style={{ left: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Fragment key={`bottom-${i}`}>
+                        <Handle
+                            key={`bottom-source-${i}`}
+                            type="source"
+                            id={isStrictGrid ? strictSlot.id : `port-bot-${i}`}
+                            position={Position.Bottom}
+                            style={isStrictGrid ? { left: offset, opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none' } : { left: offset }}
+                            className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair"
+                        />
+                        {isStrictGrid && (
+                            <Handle key={`bottom-target-${i}`} type="target" id={strictSlot.id} position={Position.Bottom} style={{ left: offset, opacity: 0, pointerEvents: 'none' }} className="w-3 h-3" />
+                        )}
+                    </Fragment>
                 );
             })}
 
             {/* Left Handles */}
             {leftHandleOffsets.map((offset, i) => {
+                const strictSlot = strictPortSlots.left[i];
+                const isVisible = !isStrictGrid || isStrictPortVisible(strictSlot.id, visibleStrictLeftSlots);
                 return (
-                    <Handle key={`left-${i}`} type="source" id={`port-left-${i}`} position={Position.Left} style={{ top: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Fragment key={`left-${i}`}>
+                        <Handle
+                            key={`left-source-${i}`}
+                            type="source"
+                            id={isStrictGrid ? strictSlot.id : `port-left-${i}`}
+                            position={Position.Left}
+                            style={isStrictGrid ? { top: offset, opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none' } : { top: offset }}
+                            className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair"
+                        />
+                        {isStrictGrid && (
+                            <Handle key={`left-target-${i}`} type="target" id={strictSlot.id} position={Position.Left} style={{ top: offset, opacity: 0, pointerEvents: 'none' }} className="w-3 h-3" />
+                        )}
+                    </Fragment>
                 );
             })}
 
             {/* Right Handles */}
             {rightHandleOffsets.map((offset, i) => {
+                const strictSlot = strictPortSlots.right[i];
+                const isVisible = !isStrictGrid || isStrictPortVisible(strictSlot.id, visibleStrictRightSlots);
                 return (
-                    <Handle key={`right-${i}`} type="source" id={`port-right-${i}`} position={Position.Right} style={{ top: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Fragment key={`right-${i}`}>
+                        <Handle
+                            key={`right-source-${i}`}
+                            type="source"
+                            id={isStrictGrid ? strictSlot.id : `port-right-${i}`}
+                            position={Position.Right}
+                            style={isStrictGrid ? { top: offset, opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none' } : { top: offset }}
+                            className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair"
+                        />
+                        {isStrictGrid && (
+                            <Handle key={`right-target-${i}`} type="target" id={strictSlot.id} position={Position.Right} style={{ top: offset, opacity: 0, pointerEvents: 'none' }} className="w-3 h-3" />
+                        )}
+                    </Fragment>
                 );
             })}
 
