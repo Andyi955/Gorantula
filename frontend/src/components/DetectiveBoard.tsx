@@ -326,6 +326,65 @@ const EDGE_TYPES = {
     customEdge: CustomEdge,
 };
 
+const logResizePipelineDebug = (stage: string, payload: Record<string, unknown>) => {
+    if (!import.meta.env.DEV) {
+        return;
+    }
+
+    console.debug(`[DetectiveBoard][Resize:${stage}]`, payload);
+};
+
+const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNodesChange>[0]) => {
+    const resizedDimensions = new Map<string, { width: number; height: number }>();
+
+    changes.forEach((change) => {
+        if (change.type !== 'dimensions' || !('dimensions' in change) || !change.dimensions) {
+            return;
+        }
+
+        const width = change.dimensions.width;
+        const height = change.dimensions.height;
+
+        if (typeof width !== 'number' || typeof height !== 'number') {
+            return;
+        }
+
+        const isLiveResize = 'resizing' in change && change.resizing;
+        resizedDimensions.set(
+            change.id,
+            isLiveResize ? { width, height } : normalizeNodeFrame(width, height)
+        );
+    });
+
+    if (resizedDimensions.size === 0) {
+        return nodes;
+    }
+
+    logResizePipelineDebug('apply-dimensions', {
+        resizedNodeIds: Array.from(resizedDimensions.keys()),
+        normalizedDimensions: Array.from(resizedDimensions.entries()).map(([id, dimensions]) => ({
+            id,
+            ...dimensions,
+        })),
+    });
+
+    // Persist resize events into node.style so strict-grid syncs do not wipe out manual node sizing.
+    return nodes.map((node) => {
+        const nextDimensions = resizedDimensions.get(node.id);
+        if (!nextDimensions) {
+            return node;
+        }
+
+        return {
+            ...node,
+            style: {
+                ...node.style,
+                ...nextDimensions,
+            }
+        };
+    });
+};
+
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 
@@ -517,6 +576,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         }));
 
+        logResizePipelineDebug('strict-sync-all', {
+            nodeCount: finalizedNodes.length,
+            edgeCount: finalizedStrictEdges.length,
+        });
+
         setBoardMode('strict-grid');
         setNodes(finalizedNodes);
         setEdges(finalizedStrictEdges);
@@ -587,6 +651,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     activePortIds: Array.from(activePortIdsByNode.get(node.id) || []),
                 }
             };
+        });
+
+        logResizePipelineDebug('strict-sync-subset', {
+            changedNodeIds,
+            changedCount: changedNodeIds.length,
         });
 
         setBoardMode('strict-grid');
@@ -741,6 +810,42 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             });
         }
     }, [boardMode, sharedSocket, setNodes, syncStrictGridSubset]);
+
+    const handleNodeResizeCommit = useCallback((id: string, width: number, height: number) => {
+        const snappedFrame = normalizeNodeFrame(width, height);
+        let nextNodesSnapshot: Node[] = [];
+
+        logResizePipelineDebug('commit', {
+            id,
+            width,
+            height,
+            snappedWidth: snappedFrame.width,
+            snappedHeight: snappedFrame.height,
+        });
+
+        setNodes((nds) => {
+            const nextNodes = nds.map((node) => (
+                node.id === id
+                    ? {
+                        ...node,
+                        style: {
+                            ...node.style,
+                            ...snappedFrame,
+                        }
+                    }
+                    : node
+            ));
+
+            nextNodesSnapshot = nextNodes;
+            return nextNodes;
+        });
+
+        if (boardMode === 'strict-grid') {
+            window.requestAnimationFrame(() => {
+                syncStrictGridSubset([id], edgesRef.current, nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current);
+            });
+        }
+    }, [boardMode, syncStrictGridSubset]);
 
     const handleSetEditing = useCallback((id: string | null) => {
         console.log(`[DetectiveBoard] Setting active editing node: ${id}`);
@@ -1009,9 +1114,44 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const onNodesChange: OnNodesChange = useCallback(
         (changes) => {
             let nextNodesSnapshot: Node[] = [];
+            const dimensionChanges = changes
+                .flatMap((change) => {
+                    if (change.type !== 'dimensions' || !('id' in change) || !('dimensions' in change) || !change.dimensions) {
+                        return [];
+                    }
+
+                    return [{
+                        id: change.id,
+                        width: change.dimensions.width,
+                        height: change.dimensions.height,
+                        resizing: 'resizing' in change ? change.resizing : undefined,
+                        setAttributes: 'setAttributes' in change ? change.setAttributes : undefined,
+                    }];
+                });
+
+            if (dimensionChanges.length > 0) {
+                logResizePipelineDebug('onNodesChange:incoming', {
+                    boardMode,
+                    dimensionChanges,
+                });
+            }
+
             setNodes((nds) => {
-                const nextNodes = applyNodeChanges(changes, nds);
+                const nextNodes = applyResizeDimensionsToStyles(applyNodeChanges(changes, nds), changes);
                 nextNodesSnapshot = nextNodes;
+
+                if (dimensionChanges.length > 0) {
+                    logResizePipelineDebug('onNodesChange:next-state', {
+                        nodes: nextNodes
+                            .filter((node) => dimensionChanges.some((change) => change.id === node.id))
+                            .map((node) => ({
+                                id: node.id,
+                                styleWidth: node.style?.width,
+                                styleHeight: node.style?.height,
+                            })),
+                    });
+                }
+
                 return nextNodes;
             });
 
@@ -1042,12 +1182,25 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 hasNonSelectionChange &&
                 !(isDraggingNodeRef.current && hasDragPositionChange)
             ) {
-                window.requestAnimationFrame(() => {
-                    syncStrictGridEdgesToNodes(edgesRef.current, nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current);
-                });
+                if (dimensionChanges.some((change) => change.resizing)) {
+                    window.requestAnimationFrame(() => {
+                        updateStrictGridDragRoutes(
+                            dimensionChanges.map((change) => change.id),
+                            nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current
+                        );
+                    });
+                } else if (dimensionChanges.length > 0) {
+                    logResizePipelineDebug('onNodesChange:awaiting-commit', {
+                        resizedNodeIds: dimensionChanges.map((change) => change.id),
+                    });
+                } else {
+                    window.requestAnimationFrame(() => {
+                        syncStrictGridEdgesToNodes(edgesRef.current, nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current);
+                    });
+                }
             }
         },
-        [boardMode, syncStrictGridEdgesToNodes]
+        [boardMode, syncStrictGridEdgesToNodes, updateStrictGridDragRoutes]
     );
     const onEdgesChange: OnEdgesChange = useCallback(
         (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -1509,12 +1662,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onExpand: handleNodeExpand,
                 onDelete: handleDeleteNode,
                 onUpdate: handleUpdateNode,
+                onResizeCommit: handleNodeResizeCommit,
                 onSetEditing: handleSetEditing,
                 isEditing: node.id === editingNodeId
             }
         })));
     // We only want to sync these onto the nodes when the container state changes
-    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleSetEditing, editingNodeId]);
+    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleNodeResizeCommit, handleSetEditing, editingNodeId]);
 
 
 
