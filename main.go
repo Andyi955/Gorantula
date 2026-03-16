@@ -274,8 +274,8 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						broadcast(models.WSMessage{
 							Type: "MANUAL_NODE_PROCESSED",
 							Payload: map[string]interface{}{
-								"nodeId": nodeID,
-								"text":   processedText,
+								"nodeId":        nodeID,
+								"processedText": processedText,
 							},
 						})
 					}()

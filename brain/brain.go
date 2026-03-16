@@ -1074,7 +1074,9 @@ func (b *Brain) PullNode(ctx context.Context, sourceVaultID, sourceNodeID, targe
 
 // ProcessManualNodeText uses the LLM to identify entities in user-provided text and wrap them in custom tags.
 func (b *Brain) ProcessManualNodeText(ctx context.Context, rawText string) (string, error) {
-	fmt.Printf("[Brain] Processing manual node text for entities: %d chars\n", len(rawText))
+	start := time.Now()
+	fmt.Printf("[Brain] READING manual node evidence: %d characters\n", len(rawText))
+	fmt.Printf("[Brain] DETERMINING entity highlights for: %q\n", rawText[:min(len(rawText), 50)])
 
 	currentDate := time.Now().Format("Monday, January 2, 2006")
 	systemInstruction := fmt.Sprintf(`You are an expert intelligence analyst. 
@@ -1100,9 +1102,17 @@ RULES:
 	fullPrompt := systemInstruction + "\n\nTEXT TO PROCESS:\n" + rawText
 	processedText, err := provider.GenerateContent(ctx, fullPrompt)
 	if err != nil {
-		fmt.Printf("[Brain Error] Manual node processing failed: %v\n", err)
+		fmt.Printf("[Brain Error] Manual node processing failed after %v: %v\n", time.Since(start), err)
 		return "", err
 	}
 
+	fmt.Printf("[Brain] DETERMINATION COMPLETE in %v. Result snippet: %q\n", time.Since(start), processedText[:min(len(processedText), 50)])
 	return strings.TrimSpace(processedText), nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
