@@ -204,6 +204,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+    const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const exportMenuRef = useRef<HTMLDivElement>(null);
 
     // Track node transitions for debugging
@@ -325,9 +326,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             );
             setNodes(handledNodes);
             setEdges(finalEdges);
+            setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
         } else {
             setNodes([]);
             setEdges([]);
+            setHasConnectedDots(false);
         }
         setLoadedInvestigationId(investigationId);
     }, [investigationId]); // Only run when investigationId changes
@@ -425,7 +428,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 updatable: true,
                 interactionWidth: 20,
                 animated,
-                data: { reasoning: c.reasoning, color: edgeColor },
+                data: { reasoning: c.reasoning, color: edgeColor, generatedBy: 'connectTheDots' },
                 style: { stroke: edgeColor, strokeWidth: 2, strokeDasharray },
                 labelStyle: { fill: edgeColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                 labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: edgeColor, strokeWidth: 1 },
@@ -435,9 +438,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         });
 
         setEdges((eds) => {
-            const existingIds = new Set(eds.map(e => e.id));
+            const preservedEdges = eds.filter(e => e.data?.generatedBy !== 'connectTheDots');
+            const existingIds = new Set(preservedEdges.map(e => e.id));
             const filteredNew = newEdges.filter(e => !existingIds.has(e.id));
-            const combinedEdges = [...eds, ...filteredNew];
+            const combinedEdges = [...preservedEdges, ...filteredNew];
 
             setNodes((currentNodes) => {
                 const { edges: finalEdges, handledNodes } = distributeEdges(combinedEdges, currentNodes);
@@ -454,8 +458,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             // For edges state, we need to return the final array independently avoiding stale node reads
             return combinedEdges; // Temporary fallback. The node queue recalculates the real edges.
         });
+        setHasConnectedDots(true);
         setIsAnalyzing(false);
-    }, [nodes, fitView]);
+    }, [nodes, fitView, tagStyles]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -756,6 +761,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         console.log('[Board] Dispatching CONNECT_DOTS...');
         setIsAnalyzing(true);
+        setEdgeReasoning(null);
+        setEdges((eds) => eds.filter(e => e.data?.generatedBy !== 'connectTheDots'));
         const nodeData = nodes.map(n => ({
             id: n.id,
             title: n.data.title,
@@ -776,6 +783,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             setEdges([]);
             setEdgeReasoning(null);
             setSelectedContent(null);
+            setHasConnectedDots(false);
         }
     };
 
@@ -891,7 +899,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-purple text-cyber-purple font-black shadow-[0_0_15px_rgba(188,19,254,0.3)] transition-all uppercase tracking-widest text-xs ${(isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-purple hover:text-white'}`}
                     >
                         <Zap size={14} className={isAnalyzing ? 'animate-spin' : ''} />
-                        {isAnalyzing ? 'Analyzing Patterns...' : 'Connect The Dots'}
+                        {isAnalyzing ? 'Analyzing Patterns...' : (hasConnectedDots ? 'Reconnect The Dots' : 'Connect The Dots')}
                     </button>
 
                     <div className="relative" ref={exportMenuRef}>
