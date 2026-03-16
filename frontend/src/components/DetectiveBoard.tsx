@@ -26,7 +26,7 @@ import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -387,6 +387,7 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
 
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
+const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId }) => {
     const { fitView } = useReactFlow();
@@ -402,6 +403,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showBoardControls, setShowBoardControls] = useState(false);
+    const [showRelationshipLegend, setShowRelationshipLegend] = useState<boolean>(() => {
+        if (typeof window === 'undefined') {
+            return true;
+        }
+
+        const storedValue = window.localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY);
+        return storedValue === null ? true : storedValue === 'true';
+    });
     const [showGrid, setShowGrid] = useState(true);
     const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
@@ -427,6 +436,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
         localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+    }, []);
+
+    const closeRelationshipLegend = useCallback(() => {
+        setShowRelationshipLegend(false);
+        setEditingTag(null);
+    }, []);
+
+    const openRelationshipLegend = useCallback(() => {
+        setShowRelationshipLegend(true);
     }, []);
 
     const isBoardBusy = isAnalyzing || isGathering || isReorganizing;
@@ -948,6 +966,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         }
     }, []);
+
+    useEffect(() => {
+        localStorage.setItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY, String(showRelationshipLegend));
+    }, [showRelationshipLegend]);
 
     useEffect(() => {
         const savedGridPreference = localStorage.getItem('detective_board_show_grid');
@@ -2163,27 +2185,48 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 </div>
             )}
 
-            <div className="absolute bottom-10 right-10 w-64 bg-cyber-black/90 border border-cyber-cyan p-4 z-40 shadow-[0_0_20px_rgba(0,243,255,0.1)] backdrop-blur-md max-h-[50vh] flex flex-col">
-                <h3 className="text-cyber-cyan text-xs font-black mb-3 tracking-widest border-b border-cyber-cyan/30 pb-2">RELATIONSHIPS</h3>
-                <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1 custom-scrollbar">
-                    {visibleStyles.length === 0 && (
-                        <div className="text-[10px] text-gray-500 italic">No connections yet. Dynamic tags will appear here.</div>
-                    )}
-                    {visibleStyles.map(([tag, style]) => (
-                        <div
-                            key={tag}
-                            onClick={() => setEditingTag(editingTag === tag ? null : tag)}
-                            className={`flex items-center gap-2 cursor-pointer p-1 -ml-1 rounded transition-colors group ${editingTag === tag ? 'bg-cyber-cyan/20 border border-cyber-cyan/50' : 'hover:bg-white/5 border border-transparent'}`}
+            {showRelationshipLegend ? (
+                <div className="absolute bottom-10 right-10 z-40 flex max-h-[50vh] w-64 flex-col border border-cyber-cyan bg-cyber-black/90 p-4 shadow-[0_0_20px_rgba(0,243,255,0.1)] backdrop-blur-md">
+                    <div className="mb-3 flex items-center justify-between gap-3 border-b border-cyber-cyan/30 pb-2">
+                        <h3 className="text-cyber-cyan text-xs font-black tracking-widest">RELATIONSHIPS</h3>
+                        <button
+                            onClick={closeRelationshipLegend}
+                            className="flex items-center gap-1 rounded-md border border-cyber-cyan/30 bg-cyber-cyan/8 px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                            title="Hide relationship legend"
                         >
-                            <div className="w-3 h-3 rounded-full border border-black shadow-sm shrink-0" style={{ backgroundColor: style.color }}></div>
-                            <span className="text-[10px] font-bold tracking-wider text-gray-300 truncate" title={tag}>{tag}</span>
-                            <Edit2 size={10} className="ml-auto text-gray-500 opacity-0 group-hover:opacity-100" />
-                        </div>
-                    ))}
+                            <ChevronDown size={12} />
+                            Hide
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1 custom-scrollbar">
+                        {visibleStyles.length === 0 && (
+                            <div className="text-[10px] text-gray-500 italic">No connections yet. Dynamic tags will appear here.</div>
+                        )}
+                        {visibleStyles.map(([tag, style]) => (
+                            <div
+                                key={tag}
+                                onClick={() => setEditingTag(editingTag === tag ? null : tag)}
+                                className={`flex items-center gap-2 cursor-pointer p-1 -ml-1 rounded transition-colors group ${editingTag === tag ? 'bg-cyber-cyan/20 border border-cyber-cyan/50' : 'hover:bg-white/5 border border-transparent'}`}
+                            >
+                                <div className="w-3 h-3 rounded-full border border-black shadow-sm shrink-0" style={{ backgroundColor: style.color }}></div>
+                                <span className="text-[10px] font-bold tracking-wider text-gray-300 truncate" title={tag}>{tag}</span>
+                                <Edit2 size={10} className="ml-auto text-gray-500 opacity-0 group-hover:opacity-100" />
+                            </div>
+                        ))}
+                    </div>
                 </div>
-            </div>
+            ) : (
+                <button
+                    onClick={openRelationshipLegend}
+                    className="absolute bottom-10 right-10 z-40 flex max-w-[min(16rem,calc(100vw-2.5rem))] items-center gap-2 rounded-full border border-cyber-cyan/45 bg-cyber-black/92 px-4 py-2 text-left text-[10px] font-black uppercase tracking-[0.2em] text-cyber-cyan shadow-[0_0_22px_rgba(0,243,255,0.16)] backdrop-blur-md transition-all hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                    title="Show relationship legend"
+                >
+                    <ChevronUp size={14} />
+                    <span className="truncate">Relationships</span>
+                </button>
+            )}
 
-            {editingTag && tagStyles[editingTag] && (
+            {showRelationshipLegend && editingTag && tagStyles[editingTag] && (
                 <div className="absolute bottom-10 right-[320px] w-64 bg-cyber-black/95 border border-cyber-purple p-4 z-50 shadow-[0_0_25px_rgba(188,19,254,0.2)] backdrop-blur-md">
                     <div className="flex justify-between items-center mb-4 border-b border-cyber-purple/30 pb-2">
                         <h3 className="text-cyber-purple text-xs font-black tracking-widest truncate max-w-[150px]">EDIT: {editingTag}</h3>
