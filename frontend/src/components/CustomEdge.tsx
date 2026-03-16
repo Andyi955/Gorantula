@@ -1,9 +1,9 @@
 import React, { useCallback, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 'reactflow';
 import { Pencil, Unlink2 } from 'lucide-react';
+import { BOARD_GRID_SIZE } from './boardGeometry';
 
 const SNAP_THRESHOLD = 18;
-const SNAP_GRID_SIZE = 24;
 const AXIS_LOCK_THRESHOLD = 20;
 
 type RouteMode = 'free' | 'vertical-lock' | 'horizontal-lock' | 'midpoint-offset';
@@ -72,8 +72,8 @@ const buildRouteState = (
     const nearVerticalAxis = Math.abs(routeOffsetX) <= AXIS_LOCK_THRESHOLD;
     const nearHorizontalAxis = Math.abs(routeOffsetY) <= AXIS_LOCK_THRESHOLD;
 
-    if (Math.abs(routeOffsetX) > Math.max(edgeSpanX, SNAP_GRID_SIZE * 3) &&
-        Math.abs(routeOffsetY) > Math.max(edgeSpanY, SNAP_GRID_SIZE * 3)) {
+    if (Math.abs(routeOffsetX) > Math.max(edgeSpanX, BOARD_GRID_SIZE * 3) &&
+        Math.abs(routeOffsetY) > Math.max(edgeSpanY, BOARD_GRID_SIZE * 3)) {
         return {
             routeMode: 'free',
             routeOffsetX: 0,
@@ -200,13 +200,13 @@ export default function CustomEdge({
                         sourceX,
                         targetX,
                         (sourceX + targetX) / 2,
-                        Math.round(nextX / SNAP_GRID_SIZE) * SNAP_GRID_SIZE,
+                        Math.round(nextX / BOARD_GRID_SIZE) * BOARD_GRID_SIZE,
                     ];
                     const yCandidates = [
                         sourceY,
                         targetY,
                         (sourceY + targetY) / 2,
-                        Math.round(nextY / SNAP_GRID_SIZE) * SNAP_GRID_SIZE,
+                        Math.round(nextY / BOARD_GRID_SIZE) * BOARD_GRID_SIZE,
                     ];
 
                     nextX = snapToCandidates(nextX, xCandidates);
