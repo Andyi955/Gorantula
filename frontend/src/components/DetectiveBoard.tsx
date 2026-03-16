@@ -24,7 +24,7 @@ import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3 } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -229,6 +229,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showGrid, setShowGrid] = useState(true);
+    const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -320,7 +321,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     useEffect(() => {
         const needsActions = edges.some((edge) =>
-            edge.data?.onRename !== renameRelationshipEdge || edge.data?.onDelete !== deleteRelationshipEdge
+            edge.data?.onRename !== renameRelationshipEdge ||
+            edge.data?.onDelete !== deleteRelationshipEdge ||
+            edge.data?.snapEnabled !== snapConnectionLabels
         );
 
         if (!needsActions) return;
@@ -331,9 +334,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 ...edge.data,
                 onRename: renameRelationshipEdge,
                 onDelete: deleteRelationshipEdge,
+                snapEnabled: snapConnectionLabels,
             }
         })));
-    }, [deleteRelationshipEdge, edges, renameRelationshipEdge]);
+    }, [deleteRelationshipEdge, edges, renameRelationshipEdge, snapConnectionLabels]);
 
     const lastFocusedRef = useRef<string | null>(null);
 
@@ -395,12 +399,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         } else {
             console.log('[DetectiveBoard] No saved grid preference found. Defaulting to visible grid.');
         }
+
+        const savedSnappingPreference = localStorage.getItem('detective_board_snap_connection_labels');
+        if (savedSnappingPreference !== null) {
+            setSnapConnectionLabels(savedSnappingPreference === 'true');
+        }
     }, []);
 
     useEffect(() => {
         console.log('[DetectiveBoard] Grid visibility changed:', showGrid);
         localStorage.setItem('detective_board_show_grid', String(showGrid));
     }, [showGrid]);
+
+    useEffect(() => {
+        localStorage.setItem('detective_board_snap_connection_labels', String(snapConnectionLabels));
+    }, [snapConnectionLabels]);
 
     useEffect(() => {
         const edgeTags = edges
@@ -463,7 +476,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 }
             }));
             const { edges: finalEdges, handledNodes } = distributeEdges(
-                savedEdges.map((e: Edge) => ({ ...e, type: 'customEdge', updatable: true, interactionWidth: 20 })),
+                savedEdges.map((e: Edge) => ({
+                    ...e,
+                    type: 'customEdge',
+                    updatable: true,
+                    interactionWidth: 20,
+                    data: { ...e.data, snapEnabled: snapConnectionLabels }
+                })),
                 restoredNodes
             );
             setNodes(handledNodes);
@@ -533,12 +552,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     ...edge.data,
                     generatedBy: edge.data?.generatedBy || 'manual',
                     reasoning: edge.data?.reasoning || 'Manual connection',
+                    snapEnabled: snapConnectionLabels,
                 }
             };
         });
 
         syncEdgesToNodes(updatedEdges);
-    }, [syncEdgesToNodes]);
+    }, [snapConnectionLabels, syncEdgesToNodes]);
     const submitRelationshipEditor = useCallback(() => {
         if (!relationshipDraft) return;
 
@@ -558,7 +578,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 updatable: true,
                 interactionWidth: 20,
                 animated: visuals.animated,
-                data: { reasoning: 'Manual connection', color: visuals.color, generatedBy: 'manual' },
+                data: { reasoning: 'Manual connection', color: visuals.color, generatedBy: 'manual', snapEnabled: snapConnectionLabels },
                 style: { stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
                 labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                 labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
@@ -580,6 +600,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         color: visuals.color,
                         reasoning: edge.data?.reasoning || 'Manual connection',
                         generatedBy: edge.data?.generatedBy || 'manual',
+                        snapEnabled: snapConnectionLabels,
                     },
                     style: { ...edge.style, stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
                     labelStyle: { ...edge.labelStyle, fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
@@ -593,7 +614,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         closeRelationshipEditor();
-    }, [buildEdgeVisuals, closeRelationshipEditor, ensureTagStyles, relationshipDraft, relationshipNameInput, syncEdgesToNodes]);
+    }, [buildEdgeVisuals, closeRelationshipEditor, ensureTagStyles, relationshipDraft, relationshipNameInput, snapConnectionLabels, syncEdgesToNodes]);
     const onNodeDragStart = useCallback(() => {
         isDraggingNodeRef.current = true;
         if (persistTimerRef.current) {
@@ -1182,6 +1203,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     >
                         <Grid3X3 size={14} />
                         {showGrid ? 'Hide Grid' : 'Show Grid'}
+                    </button>
+                    <button
+                        onClick={() => setSnapConnectionLabels((current) => !current)}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border font-black shadow-[0_0_15px_rgba(0,243,255,0.12)] transition-all uppercase tracking-widest text-xs ${snapConnectionLabels ? 'border-cyber-cyan text-cyber-cyan hover:bg-cyber-cyan hover:text-black' : 'border-cyber-cyan/30 text-cyber-cyan/70 hover:border-cyber-cyan hover:text-cyber-cyan'}`}
+                    >
+                        <Target size={14} />
+                        {snapConnectionLabels ? 'Snappy Lines On' : 'Snappy Lines Off'}
                     </button>
                     <button
                         onClick={handleReorganize}
