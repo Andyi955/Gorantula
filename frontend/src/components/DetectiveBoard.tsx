@@ -32,6 +32,26 @@ export interface TagStyle {
     pattern: 'solid' | 'dashed' | 'dotted';
 }
 
+const normalizeRelationshipTag = (tag?: string | null) => {
+    const trimmed = (tag || '').trim();
+    return trimmed ? trimmed.toUpperCase() : 'RELATED';
+};
+
+const createTagStyle = (tag: string): TagStyle => {
+    let hash = 0;
+    for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+
+    const r = (Math.abs(hash) % 156) + 100;
+    const g = (Math.abs(hash * 3) % 156) + 100;
+    const b = (Math.abs(hash * 7) % 156) + 100;
+    const patterns: TagStyle['pattern'][] = ['solid', 'dashed', 'dotted'];
+
+    return {
+        color: `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`,
+        pattern: patterns[Math.abs(hash) % 3]
+    };
+};
+
 // Calculate dynamic node dimensions based on content
 const getNodeDimensions = (node: Node): { width: number; height: number } => {
     // Use style dimensions if available, otherwise use defaults
@@ -109,6 +129,10 @@ interface DetectiveBoardProps {
     onNavigateToChild: (id: string) => void;
     focusNodeId?: string | null;
 }
+
+type RelationshipDraft =
+    | { mode: 'create'; connection: Connection; initialValue: string }
+    | { mode: 'rename'; edgeId: string; initialValue: string };
 
 // Memoize nodeTypes and edgeTypes outside to satisfy React Flow optimization
 // Utility components were moved inside DetectiveBoardContent to ensure proper memoization and resolve warnings.
@@ -205,6 +229,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
+    const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
+    const [editingTag, setEditingTag] = useState<string | null>(null);
+    const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
+    const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
@@ -213,6 +241,97 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
+
+    const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
+        setTagStyles(nextStyles);
+        localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+    }, []);
+
+    const ensureTagStyles = useCallback((tags: string[]) => {
+        const normalizedTags = tags.map(tag => normalizeRelationshipTag(tag));
+        const missingTags = normalizedTags.filter(tag => !tagStyles[tag]);
+
+        if (missingTags.length === 0) {
+            return tagStyles;
+        }
+
+        const nextStyles = { ...tagStyles };
+        missingTags.forEach((tag) => {
+            nextStyles[tag] = createTagStyle(tag);
+        });
+
+        persistTagStyles(nextStyles);
+        return nextStyles;
+    }, [persistTagStyles, tagStyles]);
+
+    const buildEdgeVisuals = useCallback((tag: string, styles: Record<string, TagStyle>) => {
+        const normalizedTag = normalizeRelationshipTag(tag);
+        const styleDef = styles[normalizedTag] || createTagStyle(normalizedTag);
+        let strokeDasharray = undefined;
+        let animated = false;
+
+        if (styleDef.pattern === 'dashed') {
+            strokeDasharray = '6,4';
+            animated = true;
+        } else if (styleDef.pattern === 'dotted') {
+            strokeDasharray = '2,4';
+            animated = true;
+        }
+
+        return {
+            tag: normalizedTag,
+            color: styleDef.color,
+            animated,
+            strokeDasharray,
+        };
+    }, []);
+
+    const openRelationshipEditor = useCallback((draft: RelationshipDraft) => {
+        setRelationshipDraft(draft);
+        setRelationshipNameInput(draft.initialValue);
+    }, []);
+
+    const closeRelationshipEditor = useCallback(() => {
+        setRelationshipDraft(null);
+        setRelationshipNameInput('RELATED');
+    }, []);
+
+    const syncEdgesToNodes = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
+        const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
+        setNodes(handledNodes);
+        setEdges(finalEdges);
+    }, []);
+
+    const renameRelationshipEdge = useCallback((edgeId: string) => {
+        const currentEdge = edgesRef.current.find(edge => edge.id === edgeId);
+        if (!currentEdge) return;
+
+        const currentTag = normalizeRelationshipTag(currentEdge.label as string);
+        openRelationshipEditor({ mode: 'rename', edgeId, initialValue: currentTag });
+    }, [openRelationshipEditor]);
+
+    const deleteRelationshipEdge = useCallback((edgeId: string) => {
+        const updatedEdges = edgesRef.current.filter(edge => edge.id !== edgeId);
+        syncEdgesToNodes(updatedEdges);
+        setEdgeReasoning(null);
+    }, [syncEdgesToNodes]);
+
+    useEffect(() => {
+        const needsActions = edges.some((edge) =>
+            edge.data?.onRename !== renameRelationshipEdge || edge.data?.onDelete !== deleteRelationshipEdge
+        );
+
+        if (!needsActions) return;
+
+        setEdges((currentEdges) => currentEdges.map((edge) => ({
+            ...edge,
+            data: {
+                ...edge.data,
+                onRename: renameRelationshipEdge,
+                onDelete: deleteRelationshipEdge,
+            }
+        })));
+    }, [deleteRelationshipEdge, edges, renameRelationshipEdge]);
 
     const lastFocusedRef = useRef<string | null>(null);
 
@@ -244,10 +363,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     // Help distribute edges evenly
 
-    // Dynamic tag styles
-    const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
-    const [editingTag, setEditingTag] = useState<string | null>(null);
-
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as unknown as globalThis.Node)) {
@@ -269,6 +384,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         }
     }, []);
+
+    useEffect(() => {
+        const edgeTags = edges
+            .map((edge) => normalizeRelationshipTag(edge.label as string))
+            .filter(Boolean);
+
+        if (edgeTags.length > 0) {
+            ensureTagStyles(edgeTags);
+        }
+    }, [edges, ensureTagStyles]);
 
     // Effect to update edge styles dynamically when tagStyles change
     useEffect(() => {
@@ -376,14 +501,82 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
         []
     );
-    const onConnect: OnConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge({ ...params, sourceHandle: params.sourceHandle || 'port-right-0', targetHandle: params.targetHandle || 'port-left-0' }, eds)),
-        []
-    );
-    const onReconnect = useCallback(
-        (oldEdge: Edge, newConnection: Connection) => setEdges((els) => reconnectEdge(oldEdge, newConnection, els)),
-        []
-    );
+    const onConnect: OnConnect = useCallback((params: Connection) => {
+        openRelationshipEditor({ mode: 'create', connection: params, initialValue: 'RELATED' });
+    }, [openRelationshipEditor]);
+    const onReconnect = useCallback((oldEdge: Edge, newConnection: Connection) => {
+        const updatedEdges = reconnectEdge(oldEdge, newConnection, edgesRef.current).map((edge) => {
+            if (edge.id !== oldEdge.id) return edge;
+
+            return {
+                ...edge,
+                sourceHandle: newConnection.sourceHandle || 'port-right-0',
+                targetHandle: newConnection.targetHandle || 'port-left-0',
+                data: {
+                    ...edge.data,
+                    generatedBy: edge.data?.generatedBy || 'manual',
+                    reasoning: edge.data?.reasoning || 'Manual connection',
+                }
+            };
+        });
+
+        syncEdgesToNodes(updatedEdges);
+    }, [syncEdgesToNodes]);
+    const submitRelationshipEditor = useCallback(() => {
+        if (!relationshipDraft) return;
+
+        const tag = normalizeRelationshipTag(relationshipNameInput);
+        const nextStyles = ensureTagStyles([tag]);
+        const visuals = buildEdgeVisuals(tag, nextStyles);
+
+        if (relationshipDraft.mode === 'create') {
+            const nextEdge = addEdge({
+                ...relationshipDraft.connection,
+                id: `manual-${relationshipDraft.connection.source}-${relationshipDraft.connection.target}-${Date.now()}`,
+                sourceHandle: relationshipDraft.connection.sourceHandle || 'port-right-0',
+                targetHandle: relationshipDraft.connection.targetHandle || 'port-left-0',
+                type: 'customEdge',
+                label: visuals.tag,
+                zIndex: 10,
+                updatable: true,
+                interactionWidth: 20,
+                animated: visuals.animated,
+                data: { reasoning: 'Manual connection', color: visuals.color, generatedBy: 'manual' },
+                style: { stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
+                labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
+                labelBgPadding: [8, 4] as [number, number],
+                labelBgBorderRadius: 2,
+            }, edgesRef.current) as Edge[];
+
+            syncEdgesToNodes(nextEdge);
+        } else {
+            const updatedEdges = edgesRef.current.map((edge) => {
+                if (edge.id !== relationshipDraft.edgeId) return edge;
+
+                return {
+                    ...edge,
+                    label: visuals.tag,
+                    animated: visuals.animated,
+                    data: {
+                        ...edge.data,
+                        color: visuals.color,
+                        reasoning: edge.data?.reasoning || 'Manual connection',
+                        generatedBy: edge.data?.generatedBy || 'manual',
+                    },
+                    style: { ...edge.style, stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
+                    labelStyle: { ...edge.labelStyle, fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                    labelBgStyle: { ...edge.labelBgStyle, fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
+                    labelBgPadding: [8, 4] as [number, number],
+                    labelBgBorderRadius: 2,
+                };
+            });
+
+            syncEdgesToNodes(updatedEdges);
+        }
+
+        closeRelationshipEditor();
+    }, [buildEdgeVisuals, closeRelationshipEditor, ensureTagStyles, relationshipDraft, relationshipNameInput, syncEdgesToNodes]);
     const onNodeDragStart = useCallback(() => {
         isDraggingNodeRef.current = true;
         if (persistTimerRef.current) {
@@ -417,21 +610,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         let stylesUpdated = false;
 
         validConnections.forEach(c => {
-            const tag = c.tag?.toUpperCase() || 'UNKNOWN';
+            const tag = normalizeRelationshipTag(c.tag);
             if (!nextStyles[tag]) {
-                let hash = 0;
-                for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-
-                const r = (Math.abs(hash) % 156) + 100;
-                const g = (Math.abs(hash * 3) % 156) + 100;
-                const b = (Math.abs(hash * 7) % 156) + 100;
-                const hexColor = `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`;
-
-                const patterns: ('solid' | 'dashed' | 'dotted')[] = ['solid', 'dashed', 'dotted'];
-                nextStyles[tag] = {
-                    color: hexColor,
-                    pattern: patterns[Math.abs(hash) % 3] as any
-                };
+                nextStyles[tag] = createTagStyle(tag);
                 stylesUpdated = true;
             }
         });
@@ -470,7 +651,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 style: { stroke: edgeColor, strokeWidth: 2, strokeDasharray },
                 labelStyle: { fill: edgeColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                 labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: edgeColor, strokeWidth: 1 },
-                labelBgPadding: [8, 4],
+                labelBgPadding: [8, 4] as [number, number],
                 labelBgBorderRadius: 2,
             };
         });
@@ -1021,6 +1202,66 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         <button onClick={() => setEdgeReasoning(null)} className="text-gray-500 hover:text-white text-xs">×</button>
                     </div>
                     <div className="text-white text-[11px] leading-relaxed italic">{edgeReasoning.text}</div>
+                </div>
+            )}
+
+            {relationshipDraft && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+                    <div className="w-full max-w-md border border-cyber-cyan bg-cyber-black/95 p-6 shadow-[0_0_30px_rgba(0,243,255,0.15)]">
+                        <div className="mb-5 flex items-start justify-between gap-4">
+                            <div>
+                                <h3 className="text-sm font-black uppercase tracking-[0.2em] text-cyber-cyan">
+                                    {relationshipDraft.mode === 'create' ? 'Create Relationship' : 'Rename Relationship'}
+                                </h3>
+                                <p className="mt-2 text-xs leading-relaxed text-gray-400">
+                                    {relationshipDraft.mode === 'create'
+                                        ? 'Name this connection so it appears consistently on the board and in the relationship legend.'
+                                        : 'Update the relationship name. The edge styling and legend will update automatically.'}
+                                </p>
+                            </div>
+                            <button
+                                onClick={closeRelationshipEditor}
+                                className="border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-gray-400 hover:border-white/30 hover:text-white"
+                            >
+                                Close
+                            </button>
+                        </div>
+
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400">
+                            Relationship Name
+                        </label>
+                        <input
+                            autoFocus
+                            value={relationshipNameInput}
+                            onChange={(e) => setRelationshipNameInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    submitRelationshipEditor();
+                                } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    closeRelationshipEditor();
+                                }
+                            }}
+                            className="w-full border border-cyber-cyan/40 bg-black px-4 py-3 text-sm font-mono text-white outline-none transition-colors focus:border-cyber-cyan"
+                            placeholder="RELATED"
+                        />
+
+                        <div className="mt-5 flex justify-end gap-3">
+                            <button
+                                onClick={closeRelationshipEditor}
+                                className="border border-white/20 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-gray-300 hover:border-white/40 hover:text-white"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={submitRelationshipEditor}
+                                className="border border-cyber-cyan bg-cyber-cyan/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                            >
+                                Save Relationship
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
