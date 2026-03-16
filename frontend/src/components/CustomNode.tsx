@@ -42,6 +42,7 @@ export interface NodeData {
     onExpand?: (nodeId: string, expanded: boolean) => void;
     onDelete?: (nodeId: string) => void;
     onUpdate?: (nodeId: string, data: any) => void;
+    onResizeCommit?: (nodeId: string, width: number, height: number) => void;
     expanded?: boolean;
     returnVaultId?: string | null;
     currentInvestigationId?: string | null;
@@ -120,6 +121,17 @@ const isStrictPortVisible = (
     visibleSlots: Array<{ id: string }>,
 ) => visibleSlots.some((slot) => slot.id === slotId);
 
+const logNodeResizeDebug = (nodeId: string | undefined, stage: string, payload: Record<string, unknown>) => {
+    if (!import.meta.env.DEV) {
+        return;
+    }
+
+    console.debug(`[CustomNode][Resize:${stage}]`, {
+        nodeId,
+        ...payload,
+    });
+};
+
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
     currentInvestigationId?: string | null, 
@@ -137,6 +149,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const sharedSocket = props.sharedSocket ?? data.sharedSocket;
     const onDeleteNode = props.onDeleteNode ?? data.onDelete;
     const onUpdateNode = props.onUpdateNode ?? data.onUpdate;
+    const onResizeCommit = data.onResizeCommit;
     const isEditing = props.isEditing ?? data.isEditing;
     const onSetEditing = props.onSetEditing ?? data.onSetEditing;
 
@@ -238,10 +251,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         <div
             className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
             style={{
-                width: frameWidth,
-                height: frameHeight,
-                minWidth: frameWidth,
-                minHeight: frameHeight,
+                width: '100%',
+                height: '100%',
+                minWidth: MIN_NODE_WIDTH,
+                minHeight: MIN_NODE_HEIGHT,
             }}
         >
             <NodeResizer
@@ -251,6 +264,37 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 color="#00f3ff"
                 handleStyle={{ width: 16, height: 16, borderRadius: 0, backgroundColor: '#00f3ff', border: '2px solid black' }}
                 lineStyle={{ borderWidth: 2 }}
+                onResizeStart={(_, params) => {
+                    logNodeResizeDebug(data.id, 'start', {
+                        selected,
+                        width: params.width,
+                        height: params.height,
+                        direction: 'direction' in params ? params.direction : undefined,
+                    });
+                }}
+                onResize={(_, params) => {
+                    logNodeResizeDebug(data.id, 'move', {
+                        selected,
+                        width: params.width,
+                        height: params.height,
+                        direction: 'direction' in params ? params.direction : undefined,
+                        renderedWidth: props.width,
+                        renderedHeight: props.height,
+                    });
+                }}
+                onResizeEnd={(_, params) => {
+                    logNodeResizeDebug(data.id, 'end', {
+                        selected,
+                        width: params.width,
+                        height: params.height,
+                        direction: 'direction' in params ? params.direction : undefined,
+                        renderedWidth: props.width,
+                        renderedHeight: props.height,
+                    });
+                    if (data.id && onResizeCommit) {
+                        onResizeCommit(data.id, params.width, params.height);
+                    }
+                }}
             />
             {isImported && (
                 <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
