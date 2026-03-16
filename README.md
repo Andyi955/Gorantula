@@ -1,6 +1,6 @@
 # GORANTULA v2.0 // ARCHITECT
 
-![Dashboard Preview](./public/assets/dashboard.png)
+![Dashboard Preview](./public/assets/dashboard-v3.png)
 ![Timeline Preview](./public/assets/timeline.png)
 
 **Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses supported AI providers to synthesize connections and visualize them on an interactive detective board.
