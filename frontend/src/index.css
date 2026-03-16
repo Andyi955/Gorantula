@@ -151,3 +151,19 @@ body {
 .react-flow__node.selected {
   z-index: 1000 !important;
 }
+
+/* Favor crisp text and edges on the board over blur-heavy post-processing. */
+.react-flow,
+.react-flow__node,
+.react-flow__edge-text,
+.react-flow__controls,
+.react-flow__background {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
+}
+
+.react-flow__node {
+  backface-visibility: visible;
+  transform: none;
+}
