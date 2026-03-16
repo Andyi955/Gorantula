@@ -26,7 +26,7 @@ import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeCenter, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -383,6 +383,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [showBoardControls, setShowBoardControls] = useState(false);
     const [showGrid, setShowGrid] = useState(true);
     const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
@@ -395,6 +396,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const exportMenuRef = useRef<HTMLDivElement>(null);
+    const boardControlsRef = useRef<HTMLDivElement>(null);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
     const isDraggingNodeRef = useRef(false);
@@ -409,6 +411,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setTagStyles(nextStyles);
         localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
     }, []);
+
+    const isBoardBusy = isAnalyzing || isGathering || isReorganizing || isAligningToGrid;
+    const hasNodes = nodes.length > 0;
+    const canConnectDots = !isAnalyzing && !isGathering && !isReorganizing && nodes.length >= 2;
+    const canExport = hasNodes && !isReorganizing;
+    const canArrange = hasNodes && !isBoardBusy;
+    const alignActionLabel = isAligningToGrid
+        ? 'Aligning...'
+        : (boardMode === 'strict-grid' ? 'Align to Grid' : 'Enable Strict Grid');
+    const alignActionHint = boardMode === 'strict-grid'
+        ? 'Snap the current layout back into the strict grid.'
+        : 'Switch this board into strict-grid mode and align cards.';
 
     const ensureTagStyles = useCallback((tags: string[]) => {
         const normalizedTags = tags.map(tag => normalizeRelationshipTag(tag));
@@ -856,6 +870,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         const handleClickOutside = (event: MouseEvent) => {
             if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as unknown as globalThis.Node)) {
                 setShowExportMenu(false);
+            }
+
+            if (boardControlsRef.current && !boardControlsRef.current.contains(event.target as unknown as globalThis.Node)) {
+                setShowBoardControls(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -1731,114 +1749,270 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     return (
         <div className="w-full h-full relative bg-cyber-black" id="detective-board-container">
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
-                <div className="flex gap-2">
+            <div className="absolute top-4 left-1/2 z-20 flex w-[min(1040px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-3 px-2">
+                <div className="flex w-full justify-center">
                     {(isGathering || isReorganizing) && (
-                        <div className="flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black uppercase tracking-widest text-xs animate-pulse shadow-[0_0_15px_rgba(0,243,255,0.3)]">
+                        <div className="flex items-center gap-2 rounded-full border border-cyber-cyan/50 bg-black/85 px-5 py-2 text-[11px] font-black uppercase tracking-[0.24em] text-cyber-cyan shadow-[0_0_20px_rgba(0,243,255,0.14)] backdrop-blur-md animate-pulse">
                             {isReorganizing ? 'Reorganizing Neural Pathways...' : (deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...')} {isReorganizing ? '' : `${nodes.length}/8`}
                         </div>
                     )}
-                    <button
-                        onClick={addManualNode}
-                        className="flex items-center gap-2 px-6 py-2 bg-black border border-cyber-green text-cyber-green font-black shadow-[0_0_15px_rgba(0,255,65,0.2)] transition-all uppercase tracking-widest text-xs hover:bg-cyber-green hover:text-black animate-gloss"
-                    >
-                        <PlusSquare size={14} />
-                        ADD EVIDENCE
-                    </button>
+                </div>
 
-                    <button
-                        id="connect-dots-btn"
-                        onClick={connectTheDots}
-                        disabled={isAnalyzing || nodes.length < 2 || isGathering || isReorganizing}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-purple text-cyber-purple font-black shadow-[0_0_15px_rgba(188,19,254,0.3)] transition-all uppercase tracking-widest text-xs ${(isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-purple hover:text-white'}`}
-                    >
-                        <Zap size={14} className={isAnalyzing ? 'animate-spin' : ''} />
-                        {isAnalyzing ? 'Analyzing Patterns...' : (hasConnectedDots ? 'Reconnect The Dots' : 'Connect The Dots')}
-                    </button>
-
-                    <div className="relative" ref={exportMenuRef}>
+                <div className="flex w-full flex-wrap items-start justify-center gap-3">
+                    <div className="flex max-w-full flex-wrap items-center gap-2 rounded-[1.35rem] border border-white/10 bg-black/78 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
                         <button
-                            onClick={() => setShowExportMenu(!showExportMenu)}
-                            disabled={nodes.length === 0 || isReorganizing}
-                            className={`flex items-center gap-2 px-6 py-2 bg-black border border-white/20 text-white font-black shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white hover:text-black'}`}
+                            onClick={addManualNode}
+                            className="flex min-h-11 items-center gap-2 rounded-xl border border-cyber-green/50 bg-cyber-green/10 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-cyber-green transition-all hover:border-cyber-green hover:bg-cyber-green hover:text-black"
                         >
-                            <Download size={14} />
-                            EXPORT
-                            <ChevronDown size={14} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+                            <PlusSquare size={15} />
+                            Add Evidence
                         </button>
 
-                        {showExportMenu && (
-                            <div className="absolute top-12 left-0 w-48 bg-cyber-black border border-white/20 shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
-                                <button
-                                    onClick={() => handleExport('png')}
-                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-[10px] font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors border-b border-white/5"
-                                >
-                                    <ImageIcon size={14} className="text-cyber-cyan" /> SNAPSHOT (PNG)
-                                </button>
-                                <button
-                                    onClick={() => handleExport('svg')}
-                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-[10px] font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors border-b border-white/5"
-                                >
-                                    <Box size={14} className="text-cyber-green" /> VECTOR (SVG)
-                                </button>
-                                <button
-                                    onClick={() => handleExport('pdf')}
-                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-[10px] font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
-                                >
-                                    <FileText size={14} className="text-cyber-purple" /> FULL REPORT (PDF)
-                                </button>
+                        <button
+                            id="connect-dots-btn"
+                            onClick={connectTheDots}
+                            disabled={!canConnectDots}
+                            className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-black tracking-[0.18em] transition-all ${canConnectDots
+                                ? 'border-cyber-purple/60 bg-cyber-purple/10 text-cyber-purple hover:border-cyber-purple hover:bg-cyber-purple hover:text-white'
+                                : 'cursor-not-allowed border-cyber-purple/20 bg-cyber-purple/5 text-cyber-purple/40'
+                                }`}
+                        >
+                            <Zap size={15} className={isAnalyzing ? 'animate-spin' : ''} />
+                            {isAnalyzing ? 'Analyzing Patterns...' : (hasConnectedDots ? 'Reconnect the Dots' : 'Connect the Dots')}
+                        </button>
+
+                        <div className="relative" ref={exportMenuRef}>
+                            <button
+                                onClick={() => {
+                                    setShowBoardControls(false);
+                                    setShowExportMenu((current) => !current);
+                                }}
+                                disabled={!canExport}
+                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${canExport
+                                    ? 'border-white/15 bg-white/5 text-white hover:border-white/35 hover:bg-white hover:text-black'
+                                    : 'cursor-not-allowed border-white/8 bg-white/5 text-white/35'
+                                    }`}
+                            >
+                                <Download size={15} />
+                                Export
+                                <ChevronDown size={14} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {showExportMenu && (
+                                <div className="absolute left-0 top-[calc(100%+0.75rem)] z-50 w-56 overflow-hidden rounded-2xl border border-white/12 bg-cyber-black/95 shadow-[0_22px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+                                    <button
+                                        onClick={() => handleExport('png')}
+                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <ImageIcon size={14} className="text-cyber-cyan" /> Snapshot (PNG)
+                                    </button>
+                                    <button
+                                        onClick={() => handleExport('svg')}
+                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <Box size={14} className="text-cyber-green" /> Vector (SVG)
+                                    </button>
+                                    <button
+                                        onClick={() => handleExport('pdf')}
+                                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileText size={14} className="text-cyber-purple" /> Full Report (PDF)
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="relative" ref={boardControlsRef}>
+                            <button
+                                onClick={() => {
+                                    setShowExportMenu(false);
+                                    setShowBoardControls((current) => !current);
+                                }}
+                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${showBoardControls
+                                    ? 'border-cyber-cyan/50 bg-cyber-cyan/12 text-cyber-cyan'
+                                    : 'border-white/10 bg-black/72 text-gray-200 hover:border-white/25 hover:text-white'
+                                    }`}
+                            >
+                                <SlidersHorizontal size={15} />
+                                Board Controls
+                                <ChevronDown size={14} className={`transition-transform ${showBoardControls ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {showBoardControls && (
+                                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-[min(26rem,calc(100vw-2rem))] rounded-[1.5rem] border border-white/12 bg-cyber-black/95 p-4 shadow-[0_18px_36px_rgba(0,0,0,0.42)] backdrop-blur-xl">
+                                <div className="mb-4 flex items-start justify-between gap-4 border-b border-white/8 pb-3">
+                                    <div>
+                                        <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white">Board Controls</h3>
+                                        <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                                            Manage visibility, snapping, layout, and maintenance actions without crowding the main board.
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowBoardControls(false)}
+                                        className="rounded-lg border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 transition-colors hover:border-white/30 hover:text-white"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+
+                                <div className="custom-scrollbar max-h-[min(34rem,65vh)] overflow-y-auto pr-1">
+                                    <div className="space-y-4">
+                                    <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                            <Eye size={13} className="text-white/60" />
+                                            View
+                                        </div>
+                                            <button
+                                                onClick={() => setShowGrid((current) => {
+                                                    const next = !current;
+                                                    console.log('[DetectiveBoard] Grid toggle clicked. Next state:', next);
+                                                    return next;
+                                                })}
+                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${showGrid
+                                                    ? 'border-white/20 bg-white/7 text-white hover:border-white/35'
+                                                    : 'border-white/10 bg-black/35 text-gray-300 hover:border-white/25 hover:text-white'
+                                                    }`}
+                                            >
+                                                <div className="flex items-start gap-3">
+                                                    <Grid3X3 size={15} className={`mt-0.5 shrink-0 ${showGrid ? 'text-white' : 'text-gray-500'}`} />
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-[11px] font-semibold">Grid Overlay</div>
+                                                            <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${showGrid ? 'bg-white text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                                {showGrid ? 'On' : 'Off'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">Show the investigation grid behind the board.</div>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                    </section>
+
+                                    <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                            <Target size={13} className="text-cyber-cyan/80" />
+                                            Snapping
+                                        </div>
+                                        <div className="space-y-2">
+                                            <button
+                                                onClick={() => setSnapConnectionLabels((current) => !current)}
+                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapConnectionLabels
+                                                    ? 'border-cyber-cyan/40 bg-cyber-cyan/10 text-cyber-cyan'
+                                                    : 'border-cyber-cyan/18 bg-black/35 text-gray-300 hover:border-cyber-cyan/35 hover:text-white'
+                                                    }`}
+                                            >
+                                                <div className="w-full">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-[11px] font-semibold">Snap Connections</div>
+                                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${snapConnectionLabels ? 'bg-cyber-cyan text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                            {snapConnectionLabels ? 'On' : 'Off'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1 text-xs leading-relaxed text-gray-500">Keep relationship labels aligned while editing the board.</div>
+                                                </div>
+                                            </button>
+
+                                            <button
+                                                onClick={() => setSnapNodes((current) => !current)}
+                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapNodes
+                                                    ? 'border-cyber-green/40 bg-cyber-green/10 text-cyber-green'
+                                                    : 'border-cyber-green/18 bg-black/35 text-gray-300 hover:border-cyber-green/35 hover:text-white'
+                                                    }`}
+                                            >
+                                                <div className="w-full">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-[11px] font-semibold">Snap Nodes</div>
+                                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${snapNodes ? 'bg-cyber-green text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                            {snapNodes ? 'On' : 'Off'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1 text-xs leading-relaxed text-gray-500">Lock cards to the board grid while moving evidence.</div>
+                                                </div>
+                                            </button>
+                                        </div>
+                                    </section>
+
+                                    <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                            <Move size={13} className="text-cyber-green/80" />
+                                            Arrange
+                                        </div>
+                                        <div className="space-y-2">
+                                            <button
+                                                onClick={handleAlignToGrid}
+                                                disabled={!canArrange}
+                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${canArrange
+                                                    ? 'border-cyber-green/30 bg-cyber-green/8 text-cyber-green hover:border-cyber-green/50 hover:bg-cyber-green/12'
+                                                    : 'cursor-not-allowed border-cyber-green/12 bg-cyber-green/5 text-cyber-green/35'
+                                                    }`}
+                                            >
+                                                <div className="flex w-full items-start gap-3">
+                                                    <Grid3X3 size={15} className={`mt-0.5 shrink-0 ${isAligningToGrid ? 'animate-pulse' : ''}`} />
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-[11px] font-semibold">{alignActionLabel}</div>
+                                                            <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-gray-300">
+                                                                {boardMode === 'strict-grid' ? 'Grid' : 'Mode'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">{alignActionHint}</div>
+                                                    </div>
+                                                </div>
+                                            </button>
+
+                                            <button
+                                                onClick={handleReorganize}
+                                                disabled={!canArrange}
+                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${canArrange
+                                                    ? 'border-cyber-cyan/28 bg-cyber-cyan/8 text-cyber-cyan hover:border-cyber-cyan/50 hover:bg-cyber-cyan/12'
+                                                    : 'cursor-not-allowed border-cyber-cyan/12 bg-cyber-cyan/5 text-cyber-cyan/35'
+                                                    }`}
+                                            >
+                                                <div className="flex w-full items-start gap-3">
+                                                    <Edit2 size={15} className={`mt-0.5 shrink-0 ${isReorganizing ? 'animate-bounce' : ''}`} />
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-[11px] font-semibold">{isReorganizing ? 'Tidying...' : 'Tidy Up'}</div>
+                                                            <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-gray-300">
+                                                                Auto
+                                                            </span>
+                                                        </div>
+                                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">Clean up spacing and tighten the current evidence layout.</div>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        </div>
+                                    </section>
+
+                                    <section className="rounded-2xl border border-red-500/20 bg-red-500/[0.03] p-3">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-red-400">
+                                            <Trash2 size={13} />
+                                            Reset
+                                        </div>
+                                        <button
+                                            onClick={clearBoard}
+                                            disabled={!hasNodes}
+                                            className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left transition-all ${hasNodes
+                                                ? 'border-red-500/35 bg-red-500/8 text-red-400 hover:border-red-500/60 hover:bg-red-500/14'
+                                                : 'cursor-not-allowed border-red-500/12 bg-red-500/5 text-red-500/30'
+                                                }`}
+                                        >
+                                            <div>
+                                                <div className="text-[11px] font-semibold">Clear Board</div>
+                                                <div className="mt-1 text-xs text-gray-500">Remove all evidence cards and connections from the active board.</div>
+                                            </div>
+                                            <span className="rounded-full bg-red-500/12 px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-red-400">
+                                                Danger
+                                            </span>
+                                        </button>
+                                    </section>
+
+                                    </div>
+                                </div>
                             </div>
-                        )}
+                            )}
+                        </div>
                     </div>
-                    <button
-                        onClick={() => setShowGrid((current) => {
-                            const next = !current;
-                            console.log('[DetectiveBoard] Grid toggle clicked. Next state:', next);
-                            return next;
-                        })}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border font-black shadow-[0_0_15px_rgba(255,255,255,0.08)] transition-all uppercase tracking-widest text-xs ${showGrid ? 'border-white/40 text-white hover:bg-white hover:text-black' : 'border-white/15 text-gray-400 hover:border-white/40 hover:text-white'}`}
-                    >
-                        <Grid3X3 size={14} />
-                        {showGrid ? 'Hide Grid' : 'Show Grid'}
-                    </button>
-                    <button
-                        onClick={() => setSnapConnectionLabels((current) => !current)}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border font-black shadow-[0_0_15px_rgba(0,243,255,0.12)] transition-all uppercase tracking-widest text-xs ${snapConnectionLabels ? 'border-cyber-cyan text-cyber-cyan hover:bg-cyber-cyan hover:text-black' : 'border-cyber-cyan/30 text-cyber-cyan/70 hover:border-cyber-cyan hover:text-cyber-cyan'}`}
-                    >
-                        <Target size={14} />
-                        {snapConnectionLabels ? 'Snappy Lines On' : 'Snappy Lines Off'}
-                    </button>
-                    <button
-                        onClick={() => setSnapNodes((current) => !current)}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border font-black shadow-[0_0_15px_rgba(0,255,65,0.12)] transition-all uppercase tracking-widest text-xs ${snapNodes ? 'border-cyber-green text-cyber-green hover:bg-cyber-green hover:text-black' : 'border-cyber-green/30 text-cyber-green/70 hover:border-cyber-green hover:text-cyber-green'}`}
-                    >
-                        <Move size={14} />
-                        {snapNodes ? 'Snappy Nodes On' : 'Snappy Nodes Off'}
-                    </button>
-                    <button
-                        onClick={handleAlignToGrid}
-                        disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-green text-cyber-green font-black shadow-[0_0_15px_rgba(0,255,65,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-green hover:text-black'}`}
-                    >
-                        <Grid3X3 size={14} className={isAligningToGrid ? 'animate-pulse' : ''} />
-                        {isAligningToGrid ? 'Aligning...' : (boardMode === 'strict-grid' ? 'Align To Grid' : 'Migrate To Strict Grid')}
-                    </button>
-                    <button
-                        onClick={handleReorganize}
-                        disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black shadow-[0_0_15px_rgba(0,243,255,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-cyan hover:text-white'}`}
-                    >
-                        <Edit2 size={14} className={isReorganizing ? 'animate-bounce' : ''} />
-                        {isReorganizing ? 'Tidying...' : 'Tidy Up'}
-                    </button>
-                    <button
-                        onClick={clearBoard}
-                        disabled={nodes.length === 0}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-red-500 text-red-500 font-black shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all uppercase tracking-widest text-xs ${nodes.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-500 hover:text-white'}`}
-                    >
-                        <Trash2 size={14} />
-                        Clear Board
-                    </button>
                 </div>
             </div>
 
