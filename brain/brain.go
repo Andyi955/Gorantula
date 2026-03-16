@@ -1071,3 +1071,48 @@ func (b *Brain) PullNode(ctx context.Context, sourceVaultID, sourceNodeID, targe
 
 	return nil
 }
+
+// ProcessManualNodeText uses the LLM to identify entities in user-provided text and wrap them in custom tags.
+func (b *Brain) ProcessManualNodeText(ctx context.Context, rawText string) (string, error) {
+	start := time.Now()
+	fmt.Printf("[Brain] READING manual node evidence: %d characters\n", len(rawText))
+	fmt.Printf("[Brain] DETERMINING entity highlights for: %q\n", rawText[:min(len(rawText), 50)])
+
+	currentDate := time.Now().Format("Monday, January 2, 2006")
+	systemInstruction := fmt.Sprintf(`You are an expert intelligence analyst. 
+Today's date is %s.
+Your task is to take the provided text and identify People, Organizations, Locations, and Dates/Times.
+Wrap each identified entity EXACTLY in the corresponding tag:
+- People: [PERSON:Entity Name]
+- Organizations: [ORG:Entity Name]
+- Locations: [LOC:Entity Name]
+- Dates/Times: [DATE:Entity Name]
+
+RULES:
+1. Do not change any other part of the text.
+2. If the text already has tags, preserve them if they are correct, or fix them if not.
+3. Return ONLY the processed text, no explanations or additional formatting.
+4. Be precise. If you are not sure, do not tag it.`, currentDate)
+
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return "", fmt.Errorf("no AI model providers are configured or available")
+	}
+
+	fullPrompt := systemInstruction + "\n\nTEXT TO PROCESS:\n" + rawText
+	processedText, err := provider.GenerateContent(ctx, fullPrompt)
+	if err != nil {
+		fmt.Printf("[Brain Error] Manual node processing failed after %v: %v\n", time.Since(start), err)
+		return "", err
+	}
+
+	fmt.Printf("[Brain] DETERMINATION COMPLETE in %v. Result snippet: %q\n", time.Since(start), processedText[:min(len(processedText), 50)])
+	return strings.TrimSpace(processedText), nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

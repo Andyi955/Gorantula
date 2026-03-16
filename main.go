@@ -258,6 +258,28 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						}
 					}()
 				}
+			case "PROCESS_MANUAL_NODE":
+				log.Println("[WS] Received PROCESS_MANUAL_NODE request")
+				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
+					nodeID, _ := payloadMap["nodeId"].(string)
+					rawText, _ := payloadMap["text"].(string)
+
+					go func() {
+						processedText, err := br.ProcessManualNodeText(context.Background(), rawText)
+						if err != nil {
+							log.Printf("[WS Error] ProcessManualNodeText failed: %v", err)
+							broadcast(models.WSMessage{Type: "ERROR", Payload: "Analysis failed: " + err.Error()})
+							return
+						}
+						broadcast(models.WSMessage{
+							Type: "MANUAL_NODE_PROCESSED",
+							Payload: map[string]interface{}{
+								"nodeId":        nodeID,
+								"processedText": processedText,
+							},
+						})
+					}()
+				}
 			}
 		}
 	}

@@ -8,6 +8,7 @@
   --color-cyber-purple: #bc13fe;
   --font-mono: "Fira Code", "JetBrains Mono", monospace;
   --animate-marquee: marquee 20s linear infinite;
+  --animate-scan: scan 3s linear infinite;
 }
 
 @keyframes marquee {
@@ -30,6 +31,17 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--color-cyber-black);
+}
+
+@keyframes scan {
+  0% { top: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.glow-sm {
+  text-shadow: 0 0 5px rgba(0, 255, 65, 0.4);
 }
 
 * {
@@ -107,4 +119,39 @@ body {
 
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes gloss {
+  0% { transform: translateX(-100%) skewX(-20deg); }
+  50%, 100% { transform: translateX(200%) skewX(-20deg); }
+}
+
+.animate-gloss {
+  position: relative;
+  overflow: hidden;
+}
+
+.animate-gloss::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -50%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  transform: skewX(-20deg);
+  animation: gloss 3s infinite;
+}
+
+.react-flow__node {
+  transition: all 0.3s ease-in-out;
+}
+
+.react-flow__node.selected {
+  z-index: 1000 !important;
 }

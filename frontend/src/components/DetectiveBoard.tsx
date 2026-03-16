@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -23,7 +23,7 @@ import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -195,16 +195,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
 
-    const nodeTypes = React.useMemo(() => ({
-        custom: (props: any) => (
-            <CustomNode
-                {...props}
-                returnVaultId={returnVaultId}
-                currentInvestigationId={investigationId}
-                sharedSocket={sharedSocket}
-            />
-        )
-    }), [returnVaultId, investigationId, sharedSocket]);
     const [selectedContent, setSelectedContent] = useState<string | null>(null);
     const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -213,6 +203,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
 
     // Track node transitions for debugging
@@ -250,7 +241,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
     }, [focusNodeId, nodes, fitView]);
 
-    // NODE_TYPES and EDGE_TYPES are now defined outside the component
+    // Help distribute edges evenly
 
     // Dynamic tag styles
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -323,6 +314,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onReadFull: () => setSelectedContent(n.data.fullText),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string) => onNavigateToChild(id),
+                    onDelete: (id: string) => handleDeleteNode(id),
+                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                     isDeepDiveSource: !!n.data?.isDeepDiveSource
                 }
             }));
@@ -499,6 +492,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onReadFull: () => setSelectedContent(node.fullText),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string) => onNavigateToChild(id),
+                        onDelete: (id: string) => handleDeleteNode(id),
+                        onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                         isDeepDiveSource: false,
                         expanded: false,
                     },
@@ -598,6 +593,33 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setIsGathering(false);
                 setDeepDiveTopic(null);
                 alert(`System Error: ${msg.payload}`);
+            } else if (msg.type === 'MANUAL_NODE_PROCESSED') {
+                const { nodeId, processedText } = msg.payload;
+                console.log(`[Board] Manual node ${nodeId} processing completed:`);
+                console.log(` - Input snippet: "... [see board]"`);
+                console.log(` - Output snippet: "${processedText.slice(0, 80)}..."`);
+                
+                const entities = processedText.match(/\[(?:PERSON|ORG|LOC|DATE|TIME):.*?\]/gi) || [];
+                console.log(` - Highlights determined: ${entities.length > 0 ? entities.join(', ') : 'NONE FOUND'}`);
+
+                setNodes(nds => nds.map(n => {
+                    if (n.id === nodeId) {
+                        // Strip tags for a clean title
+                        const cleanTitle = processedText.replace(/\[(?:PERSON|ORG|LOC|DATE|TIME):(.*?)\]/gi, '$1');
+                        return {
+                            ...n,
+                            data: {
+                                ...n.data,
+                                summary: processedText,
+                                fullText: processedText,
+                                title: n.data.title === 'NEW_EVIDENCE' || !n.data.title ? (cleanTitle.slice(0, 30) + (cleanTitle.length > 30 ? '...' : '')) : n.data.title,
+                                isAnalyzing: false
+                            }
+                        };
+                    }
+                    return n;
+                }));
+                setEditingNodeId(null);
             }
         };
 
@@ -606,7 +628,119 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [sharedSocket, handleNewConnections, onDeepDiveNode, onNavigateToChild, isGathering]);
+    }, [sharedSocket, handleNewConnections, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
+
+    const addManualNode = useCallback(() => {
+        const id = `manual-${Date.now()}`;
+        const newNode: Node = {
+            id,
+            type: 'custom',
+            position: { x: 100, y: 100 },
+            data: {
+                id,
+                title: 'NEW_EVIDENCE',
+                summary: '',
+                fullText: '',
+                onReadFull: () => setSelectedContent(''),
+                onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                onNavigateToChild: (id: string) => onNavigateToChild(id),
+                onDelete: (id: string) => handleDeleteNode(id),
+                onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
+                onSetEditing: (id: string | null) => handleSetEditing(id),
+                onSave: (e: React.MouseEvent, nodeId: string, editTitle: string, editText: string) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    console.log(`[CustomNode] Reading edited node ${nodeId}...`);
+                    console.log(` - Source Input: "${editText.slice(0, 50)}${editText.length > 50 ? '...' : ''}"`);
+                    
+                    if (handleUpdateNode && nodeId) {
+                        handleUpdateNode(nodeId, {
+                            title: editTitle,
+                            summary: editText,
+                            fullText: editText
+                        });
+                    }
+                    if (handleSetEditing) handleSetEditing(null);
+                },
+                isEditing: true,
+                isDeepDiveSource: false,
+                expanded: true,
+            },
+        };
+
+        setNodes(nds => [...nds, newNode]);
+        setEditingNodeId(id);
+    }, [onDeepDiveNode, onNavigateToChild, setNodes, setEditingNodeId]);
+
+    const handleDeleteNode = useCallback((id: string) => {
+        setNodes(nds => nds.filter(n => n.id !== id));
+        setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
+    }, [setNodes, setEdges]);
+
+    const handleUpdateNode = useCallback((id: string, data: any) => {
+        console.log(`[DetectiveBoard] Updating node ${id}`, data);
+        setNodes(nds => nds.map(n => {
+            if (n.id === id) {
+                return { ...n, data: { ...n.data, ...data } };
+            }
+            return n;
+        }));
+
+        // If saving text, trigger LLM processing
+        if (data.fullText && sharedSocket && sharedSocket.readyState === WebSocket.OPEN) {
+            console.log(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
+            
+            // Set analyzing state immediately
+            setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, isAnalyzing: true } } : n));
+
+            sharedSocket.send(JSON.stringify({
+                type: 'PROCESS_MANUAL_NODE',
+                payload: {
+                    nodeId: id,
+                    text: data.fullText
+                }
+            }));
+        } else {
+            console.warn(`[DetectiveBoard] Socket not ready or no fullText for ${id}`);
+        }
+    }, [sharedSocket, setNodes]);
+
+    // Stable nodeTypes definition to prevent re-mounting all nodes on every render
+    const nodeTypes = useMemo(() => ({
+        custom: CustomNode
+    }), []);
+
+    // Helper to toggle editing state on a specific node
+    const handleSetEditing = useCallback((id: string | null) => {
+        console.log(`[DetectiveBoard] Setting active editing node: ${id}`);
+        setEditingNodeId(id);
+        setNodes(nds => nds.map(node => ({
+            ...node,
+            data: {
+                ...node.data,
+                isEditing: node.id === id
+            }
+        })));
+    }, [setNodes]);
+
+    // Enhanced node data that includes all necessary context and stable handlers
+    // We update nodes whenever stable props like sharedSocket or returnVaultId change
+    useEffect(() => {
+        setNodes(nds => nds.map(node => ({
+            ...node,
+            data: {
+                ...node.data,
+                returnVaultId,
+                currentInvestigationId: investigationId,
+                sharedSocket,
+                onDelete: handleDeleteNode,
+                onUpdate: handleUpdateNode,
+                onSetEditing: handleSetEditing,
+                isEditing: node.id === editingNodeId
+            }
+        })));
+    // We only want to sync these onto the nodes when the container state changes
+    }, [returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleUpdateNode, handleSetEditing, editingNodeId]);
 
 
 
@@ -732,6 +866,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
     };
 
+
     return (
         <div className="w-full h-full relative bg-cyber-black" id="detective-board-container">
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
@@ -741,6 +876,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             {isReorganizing ? 'Reorganizing Neural Pathways...' : (deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...')} {isReorganizing ? '' : `${nodes.length}/8`}
                         </div>
                     )}
+                    <button
+                        onClick={addManualNode}
+                        className="flex items-center gap-2 px-6 py-2 bg-black border border-cyber-green text-cyber-green font-black shadow-[0_0_15px_rgba(0,255,65,0.2)] transition-all uppercase tracking-widest text-xs hover:bg-cyber-green hover:text-black animate-gloss"
+                    >
+                        <PlusSquare size={14} />
+                        ADD EVIDENCE
+                    </button>
+
                     <button
                         id="connect-dots-btn"
                         onClick={connectTheDots}

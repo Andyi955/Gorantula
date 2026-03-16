@@ -3,7 +3,7 @@ import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
-import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle } from 'lucide-react';
+import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save } from 'lucide-react';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -37,7 +37,15 @@ export interface NodeData {
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
     onNavigateToChild?: (id: string) => void;
     onExpand?: (nodeId: string, expanded: boolean) => void;
+    onDelete?: (nodeId: string) => void;
+    onUpdate?: (nodeId: string, data: any) => void;
     expanded?: boolean;
+    returnVaultId?: string | null;
+    currentInvestigationId?: string | null;
+    sharedSocket?: WebSocket | null;
+    onSetEditing?: (id: string | null) => void;
+    isEditing?: boolean;
+    isAnalyzing?: boolean;
 }
 
 const escapeHTML = (text: string) => {
@@ -52,12 +60,16 @@ const escapeHTML = (text: string) => {
 const parseHighlightedText = (text: string) => {
     if (!text) return 'Awaiting further analysis...';
     let safeText = escapeHTML(text);
-    let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold">$1</span>');
-    parsed = parsed.replace(/\[PERSON:(.*?)\]/gi, '<span class="text-cyber-purple font-bold bg-cyber-purple/20 px-1 rounded border border-cyber-purple/50">$1</span>');
-    parsed = parsed.replace(/\[ORG:(.*?)\]/gi, '<span class="text-cyber-cyan font-bold bg-cyber-cyan/20 px-1 rounded border border-cyber-cyan/50">$1</span>');
-    parsed = parsed.replace(/\[LOC:(.*?)\]/gi, '<span class="text-orange-400 font-bold bg-orange-400/20 px-1 rounded border border-orange-400/50">$1</span>');
-    parsed = parsed.replace(/\[DATE:(.*?)\]/gi, '<span class="text-yellow-400 font-bold bg-yellow-400/20 px-1 rounded border border-yellow-400/50">$1</span>');
-    parsed = parsed.replace(/\[TIME:(.*?)\]/gi, '<span class="text-yellow-400 font-bold bg-yellow-400/20 px-1 rounded border border-yellow-400/50">$1</span>');
+    // Bold highlights
+    let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold glow-sm">$1</span>');
+    
+    // Entity tags with premium military styling
+    parsed = parsed.replace(/\[PERSON:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-purple/30 px-1.5 py-0.5 rounded border border-cyber-purple/50 shadow-[0_0_8px_rgba(168,85,247,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
+    parsed = parsed.replace(/\[ORG:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-cyan/30 px-1.5 py-0.5 rounded border border-cyber-cyan/50 shadow-[0_0_8px_rgba(0,255,255,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
+    parsed = parsed.replace(/\[LOC:(.*?)\]/gi, '<span class="text-white font-black bg-orange-500/30 px-1.5 py-0.5 rounded border border-orange-500/50 shadow-[0_0_8px_rgba(249,115,22,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
+    parsed = parsed.replace(/\[DATE:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-500/30 px-1.5 py-0.5 rounded border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
+    parsed = parsed.replace(/\[TIME:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-400/30 px-1.5 py-0.5 rounded border border-yellow-400/50 shadow-[0_0_8px_rgba(250,204,21,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
+    
     return parsed;
 };
 
@@ -86,10 +98,30 @@ const calculateCardSize = (summary: string, fullText: string, isExpanded: boolea
     return { width, height };
 };
 
-const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sharedSocket }: NodeProps<NodeData> & { returnVaultId?: string | null, currentInvestigationId?: string | null, sharedSocket?: WebSocket | null }) => {
+const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
+    returnVaultId?: string | null, 
+    currentInvestigationId?: string | null, 
+    sharedSocket?: WebSocket | null,
+    onDeleteNode?: (id: string) => void,
+    onUpdateNode?: (id: string, data: any) => void,
+    isEditing?: boolean,
+    onSetEditing?: (id: string | null) => void
+}) => {
+    // Read from props first (React Flow injection), then fallback to data object
+    const returnVaultId = props.returnVaultId ?? data.returnVaultId;
+    const currentInvestigationId = props.currentInvestigationId ?? data.currentInvestigationId;
+    const sharedSocket = props.sharedSocket ?? data.sharedSocket;
+    const onDeleteNode = props.onDeleteNode ?? data.onDelete;
+    const onUpdateNode = props.onUpdateNode ?? data.onUpdate;
+    const isEditing = props.isEditing ?? data.isEditing;
+    const onSetEditing = props.onSetEditing ?? data.onSetEditing;
+
     const [isExpanded, setIsExpanded] = useState(data.expanded || false);
     const [showChat, setShowChat] = useState(false);
     const [hasPulled, setHasPulled] = useState(false);
+    const [editText, setEditText] = useState(data.fullText || data.summary || '');
+    const [editTitle, setEditTitle] = useState(data.title || '');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
     const chatContentRef = useRef<HTMLDivElement>(null);
 
@@ -107,6 +139,14 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
         el.addEventListener('wheel', handleWheel);
         return () => el.removeEventListener('wheel', handleWheel);
     }, [showChat]);
+
+    // Sync edit state when entering edit mode or data updates
+    useEffect(() => {
+        if (isEditing) {
+            setEditText(data.fullText || data.summary || '');
+            setEditTitle(data.title || '');
+        }
+    }, [isEditing, data.fullText, data.summary, data.title]);
 
     // Calculate size based on content
     const { height } = calculateCardSize(
@@ -126,8 +166,30 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
 
     // Show expanded content when isExpanded is true
     const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
-    const hasFullText = !!data.fullText && data.fullText !== data.summary;
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
+
+    const onSave = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log(`[CustomNode] Saving node ${data.id}`, { editTitle, editText });
+        if (onUpdateNode && data.id) {
+            onUpdateNode(data.id, { 
+                title: editTitle, 
+                fullText: editText,
+                summary: editText 
+            });
+        }
+        if (onSetEditing) onSetEditing(null);
+    };
+
+    const onCancel = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        console.log("[CustomNode] Editor cancel clicked");
+        setEditText(data.fullText || data.summary || '');
+        setEditTitle(data.title || '');
+        if (onSetEditing) onSetEditing(null);
+    };
 
     return (
         <div
@@ -151,6 +213,46 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
             )}
             {data.isDeepDiveSource && (
                 <div className="absolute inset-0 bg-cyber-green/5 animate-pulse pointer-events-none" />
+            )}
+
+            {/* Professional Delete Confirmation Overlay */}
+            {showDeleteConfirm && (
+                <div 
+                    className="absolute inset-0 z-[100] bg-red-950/90 backdrop-blur-md flex flex-col items-center justify-center p-4 border-2 border-red-500 animate-in fade-in zoom-in duration-200 nodrag nowheel"
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                >
+                    <Trash2 size={32} className="text-red-500 mb-2 animate-pulse" />
+                    <h3 className="text-white font-black text-[10px] uppercase tracking-widest mb-4 text-center">Permanently Erase Evidence?</h3>
+                    <div className="flex gap-3">
+                        <button 
+                            type="button"
+                            onClick={(e) => { 
+                                console.log("[CustomNode] Cancel delete clicked");
+                                e.stopPropagation(); 
+                                e.preventDefault();
+                                setShowDeleteConfirm(false); 
+                            }}
+                            className="px-3 py-1.5 border border-white/50 text-white text-[9px] font-black hover:bg-white hover:text-black transition-all uppercase tracking-tighter"
+                        >
+                            CANCEL
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={(e) => { 
+                                console.log("[CustomNode] Confirm delete clicked");
+                                e.stopPropagation();
+                                e.preventDefault(); 
+                                if(onDeleteNode && data.id) {
+                                    onDeleteNode(data.id); 
+                                    setShowDeleteConfirm(false);
+                                }
+                            }}
+                            className="px-3 py-1.5 bg-red-600 text-white text-[9px] font-black hover:bg-red-500 transition-all shadow-[0_0_15px_rgba(220,38,38,0.5)] uppercase tracking-tighter"
+                        >
+                            CONFIRM ERASE
+                        </button>
+                    </div>
+                </div>
             )}
             {/* Dynamic Connection Handles - offset so they don't overlap z-indexes restricting drops */}
 
@@ -194,10 +296,46 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
                 {/* Header with Expand Button */}
                 <div className="flex items-center justify-between border-b border-cyber-cyan/30 pb-2 shrink-0">
                     <div className="text-cyber-cyan font-black text-[10px] uppercase tracking-[0.2em] truncate flex-1 leading-none">
-                        {data.title || 'ARCHIVED_INTEL'}
+                        {isEditing ? (
+                            <input
+                                autoFocus
+                                value={editTitle}
+                                onChange={(e) => setEditTitle(e.target.value)}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                className="bg-black/50 border border-cyber-cyan/30 text-cyber-cyan p-1 w-full outline-none"
+                            />
+                        ) : (data.title || 'ARCHIVED_INTEL')}
                     </div>
-                    {hasFullText && (
-                        <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5 ml-2">
+                        {!isEditing && (
+                            <>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        console.log("[CustomNode] Edit clicked", data.id);
+                                        if (onSetEditing) onSetEditing(data.id || null);
+                                    }}
+                                    className="text-white/40 hover:text-cyber-cyan transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    title="Edit Evidence"
+                                >
+                                    <Edit2 size={12} />
+                                </button>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        console.log("[CustomNode] Delete clicked", data.id);
+                                        setShowDeleteConfirm(true);
+                                    }}
+                                    className="text-white/40 hover:text-red-500 transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    title="Delete Evidence"
+                                >
+                                    <Trash2 size={12} />
+                                </button>
+                            </>
+                        )}
                     {/* Compact Pull Button */}
                     {returnVaultId && currentInvestigationId !== returnVaultId && (
                         <button
@@ -236,21 +374,47 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </button>
                 </div>
-                    )}
-                </div>
+            </div>
 
-                {/* Summary with Auto Flex */}
+            {/* Summary with Auto Flex */}
                 <div
                     ref={contentRef}
-                    className={`relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300 ${isExpanded ? 'overflow-y-auto' : ''}`}
-                    style={{ maxHeight: isExpanded ? '400px' : '200px' }}
+                    className={`relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300 ${isExpanded || isEditing ? 'overflow-y-auto' : ''}`}
+                    style={{ maxHeight: isExpanded || isEditing ? '400px' : '200px' }}
                 >
-                    <div
-                        className="text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar"
-                        dangerouslySetInnerHTML={{
-                            __html: parseHighlightedText(displayContent || '')
-                        }}
-                    />
+                    <div className="flex-1 min-h-0 flex flex-col relative">
+                        {isEditing ? (
+                            <div className="flex flex-col gap-2 h-full">
+                                <textarea
+                                    autoFocus
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    onKeyDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="bg-black/40 border border-cyber-cyan/20 text-white p-3 w-full flex-1 outline-none font-mono text-[11px] custom-scrollbar nodrag nowheel min-h-[200px] focus:border-cyber-cyan/50 transition-colors"
+                                    placeholder="Enter evidence details..."
+                                />
+                            </div>
+                        ) : (
+                            <div className="relative flex-1 flex flex-col min-h-0">
+                                {data.isAnalyzing && (
+                                    <div className="absolute inset-0 bg-black/40 z-10 flex flex-col items-center justify-center gap-3 backdrop-blur-[1px] overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-full h-[2px] bg-cyber-cyan shadow-[0_0_10px_#00f3ff] animate-scan z-20" />
+                                    <div className="flex items-center gap-2 text-cyber-cyan text-[10px] font-black animate-pulse">
+                                            <div className="w-1 h-1 bg-cyber-cyan rounded-full" />
+                                            IDENTIFYING ENTITIES...
+                                        </div>
+                                    </div>
+                                )}
+                                <div
+                                    className={`text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    dangerouslySetInnerHTML={{
+                                        __html: parseHighlightedText(displayContent || '')
+                                    }}
+                                />
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Persona Chat Icon - shows who discussed this card */}
@@ -385,20 +549,40 @@ const CustomNode = ({ data, selected, returnVaultId, currentInvestigationId, sha
                         )}
                     </div>
 
-                    {data.sourceURL && (
-                        <a
-                            href={data.sourceURL?.split(',')[0].trim()}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-gray-600 hover:text-cyber-cyan transition-colors"
-                            title="Verify Source"
-                        >
-                            <ExternalLink size={12} />
-                        </a>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {isEditing && (
+                            <>
+                                <button
+                                    onClick={onCancel}
+                                    className="px-2 py-1 border border-white/20 text-white/50 text-[8px] font-black hover:bg-white/10 hover:text-white transition-all uppercase tracking-tighter"
+                                >
+                                    CANCEL
+                                </button>
+                                <button
+                                    onClick={onSave}
+                                    className="px-2 py-1 bg-cyber-green/20 border border-cyber-green text-cyber-green text-[8px] font-black hover:bg-cyber-green hover:text-white transition-all shadow-[0_0_10px_rgba(0,255,65,0.1)] uppercase tracking-tighter flex items-center gap-1"
+                                >
+                                    <Save size={10} />
+                                    SAVE
+                                </button>
+                            </>
+                        )}
+                        {data.sourceURL && (
+                            <a
+                                href={data.sourceURL?.split(',')[0].trim()}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-gray-600 hover:text-cyber-cyan transition-colors ml-1"
+                                title="Verify Source"
+                            >
+                                <ExternalLink size={12} />
+                            </a>
+                        )}
+                    </div>
                 </div>
             </div>
+
 
             {/* Status Indicator */}
             <div className="absolute -top-2 -right-2 bg-black border border-cyber-cyan px-1 py-0.5 flex items-center gap-1 shadow-lg">
