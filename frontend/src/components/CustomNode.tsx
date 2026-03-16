@@ -64,15 +64,15 @@ const escapeHTML = (text: string) => {
 const parseHighlightedText = (text: string) => {
     if (!text) return 'Awaiting further analysis...';
     let safeText = escapeHTML(text);
-    // Bold highlights
-    let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold glow-sm">$1</span>');
+    // Favor crisp emphasis over heavy glow so highlights stay readable at board zoom levels.
+    let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold">$1</span>');
     
-    // Entity tags with premium military styling
-    parsed = parsed.replace(/\[PERSON:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-purple/30 px-1.5 py-0.5 rounded border border-cyber-purple/50 shadow-[0_0_8px_rgba(168,85,247,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
-    parsed = parsed.replace(/\[ORG:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-cyan/30 px-1.5 py-0.5 rounded border border-cyber-cyan/50 shadow-[0_0_8px_rgba(0,255,255,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
-    parsed = parsed.replace(/\[LOC:(.*?)\]/gi, '<span class="text-white font-black bg-orange-500/30 px-1.5 py-0.5 rounded border border-orange-500/50 shadow-[0_0_8px_rgba(249,115,22,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
-    parsed = parsed.replace(/\[DATE:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-500/30 px-1.5 py-0.5 rounded border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
-    parsed = parsed.replace(/\[TIME:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-400/30 px-1.5 py-0.5 rounded border border-yellow-400/50 shadow-[0_0_8px_rgba(250,204,21,0.2)] text-[10px] uppercase tracking-tighter">$1</span>');
+    // Keep entity chips high-contrast and edge-defined instead of bloom-heavy.
+    parsed = parsed.replace(/\[PERSON:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-purple/22 px-1.5 py-0.5 rounded border border-cyber-purple/55 text-[11px] uppercase tracking-tight">$1</span>');
+    parsed = parsed.replace(/\[ORG:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-cyan/20 px-1.5 py-0.5 rounded border border-cyber-cyan/55 text-[11px] uppercase tracking-tight">$1</span>');
+    parsed = parsed.replace(/\[LOC:(.*?)\]/gi, '<span class="text-white font-black bg-orange-500/20 px-1.5 py-0.5 rounded border border-orange-500/55 text-[11px] uppercase tracking-tight">$1</span>');
+    parsed = parsed.replace(/\[DATE:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-500/20 px-1.5 py-0.5 rounded border border-yellow-500/55 text-[11px] uppercase tracking-tight">$1</span>');
+    parsed = parsed.replace(/\[TIME:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-400/20 px-1.5 py-0.5 rounded border border-yellow-400/55 text-[11px] uppercase tracking-tight">$1</span>');
     
     return parsed;
 };
@@ -236,13 +236,12 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
     return (
         <div
-            className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : (isImported ? 'border-amber-500 shadow-[0_0_20px_#f59e0b55]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]')} rounded-none p-4 transition-colors duration-300 group backdrop-blur-sm relative overflow-visible`}
+            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
             style={{
                 width: frameWidth,
                 height: frameHeight,
                 minWidth: frameWidth,
                 minHeight: frameHeight,
-                willChange: 'transform',
             }}
         >
             <NodeResizer
@@ -254,7 +253,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 lineStyle={{ borderWidth: 2 }}
             />
             {isImported && (
-                <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[8px] font-black px-2 py-0.5 z-50 shadow-lg border border-black/10 uppercase tracking-widest">
+                <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
                     IMPORTED
                 </div>
             )}
@@ -269,7 +268,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                     onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
                 >
                     <Trash2 size={32} className="text-red-500 mb-2 animate-pulse" />
-                    <h3 className="text-white font-black text-[10px] uppercase tracking-widest mb-4 text-center">Permanently Erase Evidence?</h3>
+                    <h3 className="text-white font-black text-[11px] uppercase tracking-[0.18em] mb-4 text-center">Permanently Erase Evidence?</h3>
                     <div className="flex gap-3">
                         <button 
                             type="button"
@@ -393,8 +392,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
             <div className="flex flex-col flex-1 gap-2 min-h-0">
                 {/* Header with Expand Button */}
-                <div className="flex items-center justify-between border-b border-cyber-cyan/30 pb-2 shrink-0">
-                    <div className="text-cyber-cyan font-black text-[10px] uppercase tracking-[0.2em] truncate flex-1 leading-none">
+                <div className="flex items-center justify-between border-b border-cyber-cyan/35 pb-2 shrink-0">
+                    <div className="text-cyber-cyan font-black text-[11px] uppercase tracking-[0.18em] truncate flex-1 leading-none">
                         {isEditing ? (
                             <input
                                 autoFocus
@@ -402,7 +401,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 onChange={(e) => setEditTitle(e.target.value)}
                                 onKeyDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
-                                className="bg-black/50 border border-cyber-cyan/30 text-cyber-cyan p-1 w-full outline-none"
+                                className="bg-black/60 border border-cyber-cyan/35 text-cyber-cyan p-1.5 w-full outline-none text-[12px]"
                             />
                         ) : (data.title || 'ARCHIVED_INTEL')}
                     </div>
@@ -416,7 +415,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         console.log("[CustomNode] Edit clicked", data.id);
                                         if (onSetEditing) onSetEditing(data.id || null);
                                     }}
-                                    className="text-white/40 hover:text-cyber-cyan transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    className="text-white/45 hover:text-cyber-cyan transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
                                     title="Edit Evidence"
                                 >
                                     <Edit2 size={12} />
@@ -428,7 +427,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         console.log("[CustomNode] Delete clicked", data.id);
                                         setShowDeleteConfirm(true);
                                     }}
-                                    className="text-white/40 hover:text-red-500 transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    className="text-white/45 hover:text-red-500 transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
                                     title="Delete Evidence"
                                 >
                                     <Trash2 size={12} />
@@ -490,23 +489,23 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     onChange={(e) => setEditText(e.target.value)}
                                     onKeyDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="bg-black/40 border border-cyber-cyan/20 text-white p-3 w-full flex-1 outline-none font-mono text-[11px] custom-scrollbar nodrag nowheel min-h-[200px] focus:border-cyber-cyan/50 transition-colors"
+                                    className="bg-black/55 border border-cyber-cyan/20 text-white p-3 w-full flex-1 outline-none font-mono text-[12px] custom-scrollbar nodrag nowheel min-h-[200px] focus:border-cyber-cyan/50 transition-colors"
                                     placeholder="Enter evidence details..."
                                 />
                             </div>
                         ) : (
                             <div className="relative flex-1 flex flex-col min-h-0">
                                 {data.isAnalyzing && (
-                                    <div className="absolute inset-0 bg-black/40 z-10 flex flex-col items-center justify-center gap-3 backdrop-blur-[1px] overflow-hidden">
-                                    <div className="absolute top-0 left-0 w-full h-[2px] bg-cyber-cyan shadow-[0_0_10px_#00f3ff] animate-scan z-20" />
-                                    <div className="flex items-center gap-2 text-cyber-cyan text-[10px] font-black animate-pulse">
+                                    <div className="absolute inset-0 bg-black/58 z-10 flex flex-col items-center justify-center gap-3 overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-full h-[2px] bg-cyber-cyan animate-scan z-20" />
+                                    <div className="flex items-center gap-2 text-cyber-cyan text-[11px] font-black animate-pulse">
                                             <div className="w-1 h-1 bg-cyber-cyan rounded-full" />
                                             IDENTIFYING ENTITIES...
                                         </div>
                                     </div>
                                 )}
                                 <div
-                                    className={`text-white text-[11px] leading-relaxed font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    className={`text-white text-[12px] leading-[1.65] font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                     dangerouslySetInnerHTML={{
                                         __html: parseHighlightedText(displayContent || '')
                                     }}
@@ -523,7 +522,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                             e.stopPropagation();
                             setShowChat(true);
                         }}
-                        className="mt-1 w-5 h-5 flex items-center justify-center bg-amber-500/10 border border-amber-500/30 text-amber-500 hover:bg-amber-500/50 hover:text-amber-200 transition-all duration-300 shadow-[0_0_8px_rgba(245,158,11,0.1)] group/insight"
+                        className="mt-1 w-5 h-5 flex items-center justify-center bg-amber-500/10 border border-amber-500/30 text-amber-500 hover:bg-amber-500/40 hover:text-amber-200 transition-all duration-300 group/insight"
                         title="Review Specialist Insights"
                     >
                         <MessageCircle className="w-3 h-3 group-hover/insight:scale-110 transition-transform" />
@@ -611,7 +610,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 e.stopPropagation();
                                 data.onReadFull();
                             }}
-                            className="flex items-center gap-1.5 text-[9px] font-black text-cyber-purple hover:text-white transition-all uppercase tracking-tighter"
+                            className="flex items-center gap-1.5 text-[10px] font-black text-cyber-purple hover:text-white transition-all uppercase tracking-tight"
                             title="Open Dossier"
                         >
                             <BookOpen size={12} />
@@ -624,7 +623,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     e.stopPropagation();
                                     if (data.onNavigateToChild) data.onNavigateToChild(data.linkedInvestigationId!);
                                 }}
-                                className="flex items-center gap-1.5 text-[9px] font-black text-cyber-cyan hover:text-white transition-all uppercase tracking-tighter bg-cyber-cyan/10 px-2 py-1 rounded"
+                                className="flex items-center gap-1.5 text-[10px] font-black text-cyber-cyan hover:text-white transition-all uppercase tracking-tight bg-cyber-cyan/10 px-2 py-1 rounded"
                                 title="Go to detailed canvas"
                             >
                                 <ArrowRight size={12} />
@@ -639,7 +638,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     }
                                 }}
                                 disabled={data.isDeepDiveSource}
-                                className={`flex items-center gap-1.5 text-[9px] font-black ${data.isDeepDiveSource ? 'text-gray-500' : 'text-cyber-green hover:text-white'} transition-all uppercase tracking-tighter`}
+                                className={`flex items-center gap-1.5 text-[10px] font-black ${data.isDeepDiveSource ? 'text-gray-500' : 'text-cyber-green hover:text-white'} transition-all uppercase tracking-tight`}
                                 title="Begin Deep Dive in New Canvas"
                             >
                                 <Search size={12} />
@@ -653,13 +652,13 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                             <>
                                 <button
                                     onClick={onCancel}
-                                    className="px-2 py-1 border border-white/20 text-white/50 text-[8px] font-black hover:bg-white/10 hover:text-white transition-all uppercase tracking-tighter"
+                                    className="px-2 py-1 border border-white/20 text-white/50 text-[9px] font-black hover:bg-white/10 hover:text-white transition-all uppercase tracking-tight"
                                 >
                                     CANCEL
                                 </button>
                                 <button
                                     onClick={onSave}
-                                    className="px-2 py-1 bg-cyber-green/20 border border-cyber-green text-cyber-green text-[8px] font-black hover:bg-cyber-green hover:text-white transition-all shadow-[0_0_10px_rgba(0,255,65,0.1)] uppercase tracking-tighter flex items-center gap-1"
+                                    className="px-2 py-1 bg-cyber-green/18 border border-cyber-green text-cyber-green text-[9px] font-black hover:bg-cyber-green hover:text-white transition-all uppercase tracking-tight flex items-center gap-1"
                                 >
                                     <Save size={10} />
                                     SAVE
@@ -684,9 +683,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
 
             {/* Status Indicator */}
-            <div className="absolute -top-2 -right-2 bg-black border border-cyber-cyan px-1 py-0.5 flex items-center gap-1 shadow-lg">
+            <div className="absolute -top-2 -right-2 bg-black border border-cyber-cyan px-1 py-0.5 flex items-center gap-1">
                 <div className="w-1 h-1 rounded-full bg-cyber-green animate-pulse" />
-                <span className="text-[7px] text-cyber-cyan font-bold">VERIFIED</span>
+                <span className="text-[8px] text-cyber-cyan font-bold tracking-[0.14em]">VERIFIED</span>
             </div>
         </div>
     );

@@ -326,6 +326,9 @@ const EDGE_TYPES = {
     customEdge: CustomEdge,
 };
 
+const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
+const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
+
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId }) => {
     const { fitView } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
@@ -800,7 +803,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setSelectedContent(null);
 
                 // Center and zoom in slightly on the node
-                fitView({ nodes: [{ id: focusNodeId }], duration: 800, padding: 0.5 });
+                fitView({ nodes: [{ id: focusNodeId }], duration: 800, padding: 0.32, minZoom: 1, maxZoom: 1.12 });
 
                 // Visually select it
                 setNodes(nds => nds.map(n => ({
@@ -1249,7 +1252,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             window.requestAnimationFrame(() => {
                 const layoutedNodes = getStrictGridLayoutedNodes(currentNodes, combinedEdges);
                 syncStrictGridEdgesToNodes(combinedEdges, layoutedNodes);
-                setTimeout(() => fitView({ duration: 800 }), 100);
+                setTimeout(() => fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS }), 100);
             });
 
             setHasConnectedDots(true);
@@ -1269,7 +1272,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                 // Update edges synchronously (outside setNodes if possible, but for simplicity here we return nodes and set edges separately)
                 setEdges(finalEdges);
-                setTimeout(() => fitView({ duration: 800 }), 100);
+                setTimeout(() => fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS }), 100);
                 return layoutedNodes;
             });
 
@@ -1570,7 +1573,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     const normalizedNodes = getStrictGridLayoutedNodes(nodes, edges);
                     syncStrictGridEdgesToNodes(edges, normalizedNodes);
                     setTimeout(() => {
-                        fitView({ duration: 800, padding: 0.2 });
+                        fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
                         setTimeout(() => {
                             setIsReorganizing(false);
                             console.log('[TidyUp] Reorganization cycle complete.');
@@ -1596,7 +1599,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 // Wait for the SLIDE transition to complete (0.8s) before fitting view
                 setTimeout(() => {
                     console.log('[TidyUp] Triggering fitView...');
-                    fitView({ duration: 800, padding: 0.2 });
+                    fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
 
                     // Final finish after animation
                     setTimeout(() => {
@@ -1919,11 +1922,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     snapToGrid={boardMode === 'strict-grid' || snapNodes}
                     snapGrid={[BOARD_GRID_SIZE, BOARD_GRID_SIZE]}
                     fitView
+                    fitViewOptions={BOARD_FIT_VIEW_OPTIONS}
+                    defaultViewport={BOARD_DEFAULT_VIEWPORT}
+                    minZoom={0.68}
+                    maxZoom={1.75}
                 >
                     {showGrid && (
                         <Background
                             variant={BackgroundVariant.Lines}
-                            color="rgba(120, 140, 160, 0.22)"
+                            color="rgba(126, 145, 165, 0.34)"
                             gap={BOARD_GRID_SIZE}
                             size={1}
                         />
