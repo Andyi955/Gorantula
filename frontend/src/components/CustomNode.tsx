@@ -272,15 +272,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                         direction: 'direction' in params ? params.direction : undefined,
                     });
                 }}
-                onResize={(_, params) => {
-                    logNodeResizeDebug(data.id, 'move', {
-                        selected,
-                        width: params.width,
-                        height: params.height,
-                        direction: 'direction' in params ? params.direction : undefined,
-                        renderedWidth: props.width,
-                        renderedHeight: props.height,
-                    });
+                onResize={() => {
+                    // Skip high-frequency move logging so devtools do not make resizing feel laggy.
                 }}
                 onResizeEnd={(_, params) => {
                     logNodeResizeDebug(data.id, 'end', {

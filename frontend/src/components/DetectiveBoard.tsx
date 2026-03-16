@@ -579,16 +579,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         logResizePipelineDebug('strict-sync-all', {
             nodeCount: finalizedNodes.length,
             edgeCount: finalizedStrictEdges.length,
-            dimensions: finalizedNodes.map((node) => {
-                const dimensions = getNodeDimensions(node);
-                return {
-                    id: node.id,
-                    width: dimensions.width,
-                    height: dimensions.height,
-                    styleWidth: node.style?.width,
-                    styleHeight: node.style?.height,
-                };
-            }),
         });
 
         setBoardMode('strict-grid');
@@ -665,18 +655,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         logResizePipelineDebug('strict-sync-subset', {
             changedNodeIds,
-            dimensions: finalizedNodes
-                .filter((node) => changedNodeIdSet.has(node.id))
-                .map((node) => {
-                    const dimensions = getNodeDimensions(node);
-                    return {
-                        id: node.id,
-                        width: dimensions.width,
-                        height: dimensions.height,
-                        styleWidth: node.style?.width,
-                        styleHeight: node.style?.height,
-                    };
-                }),
+            changedCount: changedNodeIds.length,
         });
 
         setBoardMode('strict-grid');
@@ -1209,6 +1188,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             dimensionChanges.map((change) => change.id),
                             nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current
                         );
+                    });
+                } else if (dimensionChanges.length > 0) {
+                    logResizePipelineDebug('onNodesChange:awaiting-commit', {
+                        resizedNodeIds: dimensionChanges.map((change) => change.id),
                     });
                 } else {
                     window.requestAnimationFrame(() => {
