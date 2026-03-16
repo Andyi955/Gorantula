@@ -1,5 +1,6 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 'reactflow';
+import { Pencil, Unlink2 } from 'lucide-react';
 
 export default function CustomEdge({
     id,
@@ -18,6 +19,7 @@ export default function CustomEdge({
     interactionWidth,
 }: any) {
     const { setEdges, getViewport } = useReactFlow();
+    const [isHovered, setIsHovered] = useState(false);
 
     const [edgePath, labelX, labelY] = getSmoothStepPath({
         sourceX,
@@ -98,6 +100,16 @@ export default function CustomEdge({
         );
     };
 
+    const onRename = (evt: React.MouseEvent) => {
+        evt.stopPropagation();
+        data?.onRename?.(id);
+    };
+
+    const onDelete = (evt: React.MouseEvent) => {
+        evt.stopPropagation();
+        data?.onDelete?.(id);
+    };
+
     return (
         <>
             {/* The main connecting line */}
@@ -130,10 +142,42 @@ export default function CustomEdge({
                         }}
                         onMouseDown={onMouseDown}
                         onDoubleClick={onDoubleClick}
+                        onMouseEnter={() => setIsHovered(true)}
+                        onMouseLeave={() => setIsHovered(false)}
                         className="transition-all hover:bg-[#111] hover:scale-110 active:scale-95 active:cursor-grabbing"
-                        title="Drag to reroute line. Double-click to reset."
+                        title="Drag to reroute line. Double-click to reset label position."
                     >
-                        {label}
+                        <div className="flex items-center gap-2">
+                            <span>{label}</span>
+                            {isHovered && (
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        type="button"
+                                        onMouseDown={(evt) => {
+                                            evt.stopPropagation();
+                                            evt.preventDefault();
+                                        }}
+                                        onClick={onRename}
+                                        className="flex h-4 w-4 items-center justify-center rounded border border-current/30 hover:bg-white/10"
+                                        title="Rename relationship"
+                                    >
+                                        <Pencil size={10} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onMouseDown={(evt) => {
+                                            evt.stopPropagation();
+                                            evt.preventDefault();
+                                        }}
+                                        onClick={onDelete}
+                                        className="flex h-4 w-4 items-center justify-center rounded border border-current/30 hover:bg-red-500/20"
+                                        title="Detach connection"
+                                    >
+                                        <Unlink2 size={10} />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </EdgeLabelRenderer>
