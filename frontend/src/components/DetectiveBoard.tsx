@@ -23,6 +23,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
+import { BOARD_GRID_SIZE, calculateNodeFrame, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move } from 'lucide-react';
 import dagre from 'dagre';
@@ -59,7 +60,60 @@ const getNodeDimensions = (node: Node): { width: number; height: number } => {
     const style = node.style || {};
     const width = (style.width as number) || 320;
     const height = (style.height as number) || 180;
-    return { width, height };
+    return normalizeNodeFrame(width, height);
+};
+
+const getNodeCenter = (node: Node) => {
+    const { width, height } = getNodeDimensions(node);
+
+    return {
+        x: node.position.x + width / 2,
+        y: node.position.y + height / 2,
+    };
+};
+
+const clearStaleAlignedRoute = (edge: Edge, nodeMap: Map<string, Node>) => {
+    const edgeData = edge.data || {};
+    const routeMode = edgeData.routeMode;
+    const hasCustomPosition = typeof edgeData.customX === 'number' && typeof edgeData.customY === 'number';
+
+    if (!hasCustomPosition || (routeMode && routeMode !== 'free')) {
+        return edge;
+    }
+
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+
+    if (!sourceNode || !targetNode) {
+        return edge;
+    }
+
+    const sourceCenter = getNodeCenter(sourceNode);
+    const targetCenter = getNodeCenter(targetNode);
+    const midpointX = (sourceCenter.x + targetCenter.x) / 2;
+    const midpointY = (sourceCenter.y + targetCenter.y) / 2;
+    const edgeSpanX = Math.abs(targetCenter.x - sourceCenter.x);
+    const edgeSpanY = Math.abs(targetCenter.y - sourceCenter.y);
+    const distanceFromMidpointX = Math.abs(edgeData.customX - midpointX);
+    const distanceFromMidpointY = Math.abs(edgeData.customY - midpointY);
+    const allowedDistanceX = Math.max(edgeSpanX, BOARD_GRID_SIZE * 4);
+    const allowedDistanceY = Math.max(edgeSpanY, BOARD_GRID_SIZE * 4);
+
+    if (distanceFromMidpointX <= allowedDistanceX && distanceFromMidpointY <= allowedDistanceY) {
+        return edge;
+    }
+
+    const nextData = { ...edgeData };
+    delete nextData.routeMode;
+    delete nextData.routeOffsetX;
+    delete nextData.routeOffsetY;
+    delete nextData.customX;
+    delete nextData.customY;
+
+    return {
+        ...edge,
+        data: nextData,
+    };
 };
 
 // Enhanced layout function with smart rectangle formation
@@ -231,6 +285,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [showGrid, setShowGrid] = useState(true);
     const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
+    const [isAligningToGrid, setIsAligningToGrid] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -305,6 +360,87 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setNodes(handledNodes);
         setEdges(finalEdges);
     }, []);
+
+    const handleDeleteNode = useCallback((id: string) => {
+        setNodes(nds => nds.filter(n => n.id !== id));
+        setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
+    }, [setNodes, setEdges]);
+
+    const handleNodeExpand = useCallback((id: string, expanded: boolean) => {
+        setNodes((nds) => nds.map((node) => {
+            if (node.id !== id) {
+                return node;
+            }
+
+            const nextFrame = calculateNodeFrame(
+                node.data.summary || '',
+                node.data.fullText || '',
+                expanded
+            );
+
+            return {
+                ...node,
+                data: {
+                    ...node.data,
+                    expanded,
+                },
+                style: {
+                    ...node.style,
+                    ...nextFrame,
+                }
+            };
+        }));
+    }, []);
+
+    const handleUpdateNode = useCallback((id: string, data: any) => {
+        console.log(`[DetectiveBoard] Updating node ${id}`, data);
+        setNodes(nds => nds.map(n => {
+            if (n.id === id) {
+                const nextSummary = data.summary ?? n.data.summary ?? '';
+                const nextFullText = data.fullText ?? n.data.fullText ?? '';
+                const isExpanded = Boolean(n.data.expanded);
+                const nextFrame = calculateNodeFrame(nextSummary, nextFullText, isExpanded);
+
+                return {
+                    ...n,
+                    data: { ...n.data, ...data },
+                    style: {
+                        ...n.style,
+                        ...nextFrame,
+                    }
+                };
+            }
+            return n;
+        }));
+
+        if (data.fullText && sharedSocket && sharedSocket.readyState === WebSocket.OPEN) {
+            console.log(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
+
+            setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, isAnalyzing: true } } : n));
+
+            sharedSocket.send(JSON.stringify({
+                type: 'PROCESS_MANUAL_NODE',
+                payload: {
+                    nodeId: id,
+                    text: data.fullText
+                }
+            }));
+        } else {
+            console.warn(`[DetectiveBoard] Socket not ready or no fullText for ${id}`);
+        }
+    }, [sharedSocket, setNodes]);
+
+    const handleSetEditing = useCallback((id: string | null) => {
+        console.log(`[DetectiveBoard] Setting active editing node: ${id}`);
+        setEditingNodeId(id);
+        setNodes(nds => nds.map(node => ({
+            ...node,
+            data: {
+                ...node.data,
+                isEditing: node.id === id
+            }
+        })));
+    }, [setNodes]);
 
     const renameRelationshipEdge = useCallback((edgeId: string) => {
         const currentEdge = edgesRef.current.find(edge => edge.id === edgeId);
@@ -474,12 +610,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const { nodes: savedNodes, edges: savedEdges } = JSON.parse(saved);
             const restoredNodes = savedNodes.map((n: Node) => ({
                 ...n,
-                style: { width: 288, height: 160, ...n.style },
+                style: {
+                    ...n.style,
+                    ...normalizeNodeFrame(
+                        typeof n.style?.width === 'number' ? n.style.width : 288,
+                        typeof n.style?.height === 'number' ? n.style.height : 192
+                    ),
+                },
                 data: {
                     ...n.data,
                     onReadFull: () => setSelectedContent(n.data.fullText),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string) => onNavigateToChild(id),
+                    onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
                     onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                     isDeepDiveSource: !!n.data?.isDeepDiveSource
@@ -504,7 +647,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             setHasConnectedDots(false);
         }
         setLoadedInvestigationId(investigationId);
-    }, [investigationId]); // Only run when investigationId changes
+    }, [handleDeleteNode, handleNodeExpand, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, snapConnectionLabels]); // Only run when investigationId changes
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -738,32 +881,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
             if (msg.type === 'MEMORY_NODE_GATHERED') {
                 const { node, vaultId } = msg.payload;
-
-                // Calculate dimensions based on content length
-                const summary = node.summary || '';
-                const fullText = node.fullText || '';
-                const charCount = Math.max(summary.length, fullText.length);
-
-                let width = 320;
-                let height = 180;
-
-                // Width grows for longer content
-                if (charCount > 300) {
-                    width = Math.min(500, 320 + Math.min(charCount - 300, 180));
-                }
-                // Height grows with content
-                const estimatedLines = Math.ceil(charCount / 40);
-                height = Math.max(180, 100 + Math.min(estimatedLines, 12) * 18);
+                const frame = calculateNodeFrame(node.summary || '', node.fullText || '', false);
 
                 const newNode: Node = {
                     id: node.id,
                     type: 'custom',
-                    style: { width, height },
+                    style: frame,
                     data: {
                         ...node,
                         onReadFull: () => setSelectedContent(node.fullText),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string) => onNavigateToChild(id),
+                        onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                         onDelete: (id: string) => handleDeleteNode(id),
                         onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                         isDeepDiveSource: false,
@@ -900,14 +1029,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [sharedSocket, handleNewConnections, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
+    }, [sharedSocket, handleNewConnections, handleDeleteNode, handleNodeExpand, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
+        const frame = calculateNodeFrame('', '', true);
         const newNode: Node = {
             id,
             type: 'custom',
-            position: { x: 100, y: 100 },
+            position: { x: snapCoordinateToGrid(96), y: snapCoordinateToGrid(96) },
+            style: frame,
             data: {
                 id,
                 title: 'NEW_EVIDENCE',
@@ -916,6 +1047,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onReadFull: () => setSelectedContent(''),
                 onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                 onNavigateToChild: (id: string) => onNavigateToChild(id),
+                onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
                 onDelete: (id: string) => handleDeleteNode(id),
                 onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
                 onSetEditing: (id: string | null) => handleSetEditing(id),
@@ -942,58 +1074,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [onDeepDiveNode, onNavigateToChild, setNodes, setEditingNodeId]);
-
-    const handleDeleteNode = useCallback((id: string) => {
-        setNodes(nds => nds.filter(n => n.id !== id));
-        setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
-    }, [setNodes, setEdges]);
-
-    const handleUpdateNode = useCallback((id: string, data: any) => {
-        console.log(`[DetectiveBoard] Updating node ${id}`, data);
-        setNodes(nds => nds.map(n => {
-            if (n.id === id) {
-                return { ...n, data: { ...n.data, ...data } };
-            }
-            return n;
-        }));
-
-        // If saving text, trigger LLM processing
-        if (data.fullText && sharedSocket && sharedSocket.readyState === WebSocket.OPEN) {
-            console.log(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
-            
-            // Set analyzing state immediately
-            setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, isAnalyzing: true } } : n));
-
-            sharedSocket.send(JSON.stringify({
-                type: 'PROCESS_MANUAL_NODE',
-                payload: {
-                    nodeId: id,
-                    text: data.fullText
-                }
-            }));
-        } else {
-            console.warn(`[DetectiveBoard] Socket not ready or no fullText for ${id}`);
-        }
-    }, [sharedSocket, setNodes]);
+    }, [handleDeleteNode, handleNodeExpand, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, setNodes, setEditingNodeId]);
 
     // Stable nodeTypes definition to prevent re-mounting all nodes on every render
     const nodeTypes = useMemo(() => ({
         custom: CustomNode
     }), []);
-
-    // Helper to toggle editing state on a specific node
-    const handleSetEditing = useCallback((id: string | null) => {
-        console.log(`[DetectiveBoard] Setting active editing node: ${id}`);
-        setEditingNodeId(id);
-        setNodes(nds => nds.map(node => ({
-            ...node,
-            data: {
-                ...node.data,
-                isEditing: node.id === id
-            }
-        })));
-    }, [setNodes]);
 
     // Enhanced node data that includes all necessary context and stable handlers
     // We update nodes whenever stable props like sharedSocket or returnVaultId change
@@ -1005,6 +1091,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 returnVaultId,
                 currentInvestigationId: investigationId,
                 sharedSocket,
+                onExpand: handleNodeExpand,
                 onDelete: handleDeleteNode,
                 onUpdate: handleUpdateNode,
                 onSetEditing: handleSetEditing,
@@ -1012,7 +1099,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         })));
     // We only want to sync these onto the nodes when the container state changes
-    }, [returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleUpdateNode, handleSetEditing, editingNodeId]);
+    }, [returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleSetEditing, editingNodeId]);
 
 
 
@@ -1097,6 +1184,50 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         }, 100);
     }, [nodes, edges, fitView]);
+
+    const handleAlignToGrid = useCallback(() => {
+        console.log('[AlignToGrid] Clicked. Current nodes:', nodes.length, 'Current edges:', edges.length);
+        if (nodes.length === 0) {
+            console.log('[AlignToGrid] No nodes to align.');
+            return;
+        }
+
+        setIsAligningToGrid(true);
+
+        setTimeout(() => {
+            try {
+                const alignedNodes = nodes.map((node) => ({
+                    ...node,
+                    style: {
+                        ...node.style,
+                        ...normalizeNodeFrame(
+                            typeof node.style?.width === 'number' ? node.style.width : getNodeDimensions(node).width,
+                            typeof node.style?.height === 'number' ? node.style.height : getNodeDimensions(node).height
+                        ),
+                    },
+                    position: {
+                        x: snapCoordinateToGrid(node.position.x),
+                        y: snapCoordinateToGrid(node.position.y),
+                    }
+                }));
+
+                const nodeMap = new Map(alignedNodes.map((node) => [node.id, node]));
+                const cleanedEdges = edges.map((edge) => clearStaleAlignedRoute(edge, nodeMap));
+                const { edges: finalEdges, handledNodes } = distributeEdges(cleanedEdges, alignedNodes);
+
+                setNodes(handledNodes);
+                setEdges(finalEdges);
+
+                setTimeout(() => {
+                    setIsAligningToGrid(false);
+                    console.log('[AlignToGrid] Alignment complete.');
+                }, 150);
+            } catch (err) {
+                console.error('[AlignToGrid] Error during alignment:', err);
+                setIsAligningToGrid(false);
+            }
+        }, 50);
+    }, [edges, nodes]);
 
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
@@ -1229,9 +1360,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         {snapNodes ? 'Snappy Nodes On' : 'Snappy Nodes Off'}
                     </button>
                     <button
+                        onClick={handleAlignToGrid}
+                        disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-green text-cyber-green font-black shadow-[0_0_15px_rgba(0,255,65,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-green hover:text-black'}`}
+                    >
+                        <Grid3X3 size={14} className={isAligningToGrid ? 'animate-pulse' : ''} />
+                        {isAligningToGrid ? 'Aligning...' : 'Align To Grid'}
+                    </button>
+                    <button
                         onClick={handleReorganize}
-                        disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing}
-                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black shadow-[0_0_15px_rgba(0,243,255,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-cyan hover:text-white'}`}
+                        disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black shadow-[0_0_15px_rgba(0,243,255,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing || isAligningToGrid) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-cyan hover:text-white'}`}
                     >
                         <Edit2 size={14} className={isReorganizing ? 'animate-bounce' : ''} />
                         {isReorganizing ? 'Tidying...' : 'Tidy Up'}
@@ -1262,14 +1401,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     edgeTypes={EDGE_TYPES}
                     connectionMode={ConnectionMode.Loose}
                     snapToGrid={snapNodes}
-                    snapGrid={[24, 24]}
+                    snapGrid={[BOARD_GRID_SIZE, BOARD_GRID_SIZE]}
                     fitView
                 >
                     {showGrid && (
                         <Background
                             variant={BackgroundVariant.Lines}
                             color="rgba(120, 140, 160, 0.22)"
-                            gap={24}
+                            gap={BOARD_GRID_SIZE}
                             size={1}
                         />
                     )}

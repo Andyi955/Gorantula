@@ -4,6 +4,7 @@ import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
 import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save } from 'lucide-react';
+import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, calculateNodeFrame } from './boardGeometry';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -73,29 +74,28 @@ const parseHighlightedText = (text: string) => {
     return parsed;
 };
 
-// Calculate appropriate card size based on content
-const calculateCardSize = (summary: string, fullText: string, isExpanded: boolean) => {
-    const content = isExpanded ? (fullText || summary) : summary;
-    const charCount = content.length;
+const getGridAlignedHandleOffsets = (count: number, length: number) => {
+    const safeCount = Math.max(1, count);
+    const center = Math.round((length / 2) / BOARD_GRID_SIZE) * BOARD_GRID_SIZE;
+    const offsets: number[] = [];
+    let stepIndex = 0;
 
-    // Base dimensions
-    let width = 320;
-    let height = 180;
-
-    // Calculate based on content length
-    // Roughly 40 chars per line, ~20 lines max before expansion
-    const lines = Math.ceil(charCount / 40);
-    const estimatedLines = Math.min(lines, isExpanded ? 30 : 8);
-
-    // Height grows with content, but capped
-    height = Math.max(180, 100 + estimatedLines * 18);
-
-    // Width grows for longer content (horizontal extension)
-    if (charCount > 300) {
-        width = Math.min(500, 320 + Math.min(charCount - 300, 180));
+    if (safeCount % 2 === 1) {
+        offsets.push(center);
     }
 
-    return { width, height };
+    while (offsets.length < safeCount) {
+        stepIndex += 1;
+        offsets.push(center - (stepIndex * BOARD_GRID_SIZE));
+
+        if (offsets.length < safeCount) {
+            offsets.push(center + (stepIndex * BOARD_GRID_SIZE));
+        }
+    }
+
+    return offsets
+        .sort((a, b) => a - b)
+        .map((offset) => Math.max(BOARD_GRID_SIZE, Math.min(length - BOARD_GRID_SIZE, offset)));
 };
 
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
@@ -105,7 +105,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     onDeleteNode?: (id: string) => void,
     onUpdateNode?: (id: string, data: any) => void,
     isEditing?: boolean,
-    onSetEditing?: (id: string | null) => void
+    onSetEditing?: (id: string | null) => void,
+    width?: number,
+    height?: number,
 }) => {
     // Read from props first (React Flow injection), then fallback to data object
     const returnVaultId = props.returnVaultId ?? data.returnVaultId;
@@ -148,12 +150,17 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         }
     }, [isEditing, data.fullText, data.summary, data.title]);
 
-    // Calculate size based on content
-    const { height } = calculateCardSize(
+    const fallbackFrame = calculateNodeFrame(
         data.summary || '',
         data.fullText || '',
         isExpanded
     );
+    const frameWidth = typeof props.width === 'number' ? props.width : fallbackFrame.width;
+    const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
+    const topHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.top || 0, frameWidth);
+    const bottomHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.bottom || 0, frameWidth);
+    const leftHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.left || 0, frameHeight);
+    const rightHandleOffsets = getGridAlignedHandleOffsets(data.handleCounts?.right || 0, frameHeight);
 
     const handleExpand = () => {
         const newExpanded = !isExpanded;
@@ -195,13 +202,16 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         <div
             className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : (isImported ? 'border-amber-500 shadow-[0_0_20px_#f59e0b55]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]')} rounded-none p-4 transition-colors duration-300 group backdrop-blur-sm relative overflow-visible`}
             style={{
-                minHeight: height,
+                width: frameWidth,
+                height: frameHeight,
+                minWidth: frameWidth,
+                minHeight: frameHeight,
                 willChange: 'transform',
             }}
         >
             <NodeResizer
-                minWidth={288}
-                minHeight={160}
+                minWidth={MIN_NODE_WIDTH}
+                minHeight={MIN_NODE_HEIGHT}
                 isVisible={selected}
                 color="#00f3ff"
                 handleStyle={{ width: 16, height: 16, borderRadius: 0, backgroundColor: '#00f3ff', border: '2px solid black' }}
@@ -258,34 +268,30 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             {/* Dynamic Connection Handles - offset so they don't overlap z-indexes restricting drops */}
 
             {/* Top Handles */}
-            {Array.from({ length: Math.max(1, data.handleCounts?.top || 0) }).map((_, i, arr) => {
-                const percent = ((i + 1) * 100) / (arr.length + 1);
+            {topHandleOffsets.map((offset, i) => {
                 return (
-                    <Handle key={`top-${i}`} type="source" id={`port-top-${i}`} position={Position.Top} style={{ left: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Handle key={`top-${i}`} type="source" id={`port-top-${i}`} position={Position.Top} style={{ left: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
                 );
             })}
 
             {/* Bottom Handles */}
-            {Array.from({ length: Math.max(1, data.handleCounts?.bottom || 0) }).map((_, i, arr) => {
-                const percent = ((i + 1) * 100) / (arr.length + 1);
+            {bottomHandleOffsets.map((offset, i) => {
                 return (
-                    <Handle key={`bot-${i}`} type="source" id={`port-bot-${i}`} position={Position.Bottom} style={{ left: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Handle key={`bot-${i}`} type="source" id={`port-bot-${i}`} position={Position.Bottom} style={{ left: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
                 );
             })}
 
             {/* Left Handles */}
-            {Array.from({ length: Math.max(1, data.handleCounts?.left || 0) }).map((_, i, arr) => {
-                const percent = ((i + 1) * 100) / (arr.length + 1);
+            {leftHandleOffsets.map((offset, i) => {
                 return (
-                    <Handle key={`left-${i}`} type="source" id={`port-left-${i}`} position={Position.Left} style={{ top: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Handle key={`left-${i}`} type="source" id={`port-left-${i}`} position={Position.Left} style={{ top: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
                 );
             })}
 
             {/* Right Handles */}
-            {Array.from({ length: Math.max(1, data.handleCounts?.right || 0) }).map((_, i, arr) => {
-                const percent = ((i + 1) * 100) / (arr.length + 1);
+            {rightHandleOffsets.map((offset, i) => {
                 return (
-                    <Handle key={`right-${i}`} type="source" id={`port-right-${i}`} position={Position.Right} style={{ top: `${percent}%` }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
+                    <Handle key={`right-${i}`} type="source" id={`port-right-${i}`} position={Position.Right} style={{ top: offset }} className="!bg-cyber-purple w-3 h-3 border-2 border-black !rounded-none transition-transform hover:scale-[2] z-50 cursor-crosshair" />
                 );
             })}
 
