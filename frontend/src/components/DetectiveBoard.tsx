@@ -24,7 +24,7 @@ import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -229,6 +229,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showGrid, setShowGrid] = useState(true);
+    const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
@@ -404,6 +405,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         if (savedSnappingPreference !== null) {
             setSnapConnectionLabels(savedSnappingPreference === 'true');
         }
+
+        const savedNodeSnappingPreference = localStorage.getItem('detective_board_snap_nodes');
+        if (savedNodeSnappingPreference !== null) {
+            setSnapNodes(savedNodeSnappingPreference === 'true');
+        }
     }, []);
 
     useEffect(() => {
@@ -414,6 +420,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     useEffect(() => {
         localStorage.setItem('detective_board_snap_connection_labels', String(snapConnectionLabels));
     }, [snapConnectionLabels]);
+
+    useEffect(() => {
+        localStorage.setItem('detective_board_snap_nodes', String(snapNodes));
+    }, [snapNodes]);
 
     useEffect(() => {
         const edgeTags = edges
@@ -1212,6 +1222,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         {snapConnectionLabels ? 'Snappy Lines On' : 'Snappy Lines Off'}
                     </button>
                     <button
+                        onClick={() => setSnapNodes((current) => !current)}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border font-black shadow-[0_0_15px_rgba(0,255,65,0.12)] transition-all uppercase tracking-widest text-xs ${snapNodes ? 'border-cyber-green text-cyber-green hover:bg-cyber-green hover:text-black' : 'border-cyber-green/30 text-cyber-green/70 hover:border-cyber-green hover:text-cyber-green'}`}
+                    >
+                        <Move size={14} />
+                        {snapNodes ? 'Snappy Nodes On' : 'Snappy Nodes Off'}
+                    </button>
+                    <button
                         onClick={handleReorganize}
                         disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing}
                         className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black shadow-[0_0_15px_rgba(0,243,255,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-cyan hover:text-white'}`}
@@ -1244,6 +1261,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     nodeTypes={nodeTypes}
                     edgeTypes={EDGE_TYPES}
                     connectionMode={ConnectionMode.Loose}
+                    snapToGrid={snapNodes}
+                    snapGrid={[24, 24]}
                     fitView
                 >
                     {showGrid && (

@@ -3,7 +3,7 @@
 ![Dashboard Preview](./public/assets/dashboard.png)
 ![Timeline Preview](./public/assets/timeline.png)
 
-**Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses Gemini 3 Flash or MiniMax to synthesize connections and visualize them on an interactive detective board.
+**Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses supported AI providers to synthesize connections and visualize them on an interactive detective board.
 
 ---
 
@@ -12,7 +12,7 @@
 - **Concurrent Crawling**: Deploys 8 parallel scraping workers (Legs) to gather information from disparate sources simultaneously.
 - **Cross-Case Synthesis Engine**: The "Grand Unified Theory" background engine silently analyzes incoming evidence against your entire historical archive of past investigations using a persistent, $O(1)$ Inverted Entity Index. It automatically alerts you via floating UI notifications if a person, organization, or location from today's case was previously discovered months ago in an unrelated investigation.
 - **RAG Vault Chatbot**: Interrogate your archived investigations natively. Select multiple historical case files from the interactive Checklist UI and ask the AI specific questions; it dynamically enforces strict constraints to answer *only* based on the provided evidence.
-- **Audio/Video Media Transcription**: Send YouTube, Vimeo, or standard audio/video URLs (.mp4, .mp3, etc.) straight into the crawler. If the currently routed AI provider supports multimodal parsing (like Gemini 1.5 Pro), it physically rips the media and extracts the intelligence. If not, a Graceful Fallback dynamically intercepts the payload without crashing the investigation.
+- **Audio/Video Media Transcription**: Send YouTube, Vimeo, or standard audio/video URLs (.mp4, .mp3, etc.) straight into the crawler. If the currently routed AI provider supports multimodal parsing, it physically rips the media and extracts the intelligence. If not, a Graceful Fallback dynamically intercepts the payload without crashing the investigation.
 - **Date-Aware AI**: The central Brain contextually limits searches and connects data via chronological relation to the absolute exact current date, ensuring modern timeline accuracy.
 - **Robust Multi-Byte Parsing**: Advanced `rune` UTF-8 token handling ensures foreign languages (Chinese, Japanese) parsing is pristine without bytes-truncation corruption.
 - **3D WebGL Spider View**: Next-gen visually stunning React Three Fiber data pipeline flow, visualizing live task delegation to parallel worker legs.

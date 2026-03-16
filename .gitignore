@@ -23,4 +23,7 @@ build/
 # Project Specific
 abdomen_vault/
 
+# Agent Configuration (Private)
 .agents/
+.agents/*
+**/ .agents/**
