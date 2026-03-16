@@ -148,10 +148,6 @@ body {
   animation: gloss 3s infinite;
 }
 
-.react-flow__node {
-  transition: all 0.3s ease-in-out;
-}
-
 .react-flow__node.selected {
   z-index: 1000 !important;
 }

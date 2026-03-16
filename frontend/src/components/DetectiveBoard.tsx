@@ -206,20 +206,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const exportMenuRef = useRef<HTMLDivElement>(null);
+    const nodesRef = useRef<Node[]>([]);
+    const edgesRef = useRef<Edge[]>([]);
+    const isDraggingNodeRef = useRef(false);
+    const persistTimerRef = useRef<number | null>(null);
 
-    // Track node transitions for debugging
-    useEffect(() => {
-        if (nodes.length > 0) {
-            console.log('[Board] Nodes state sync. First node:', nodes[0].id, 'pos:', nodes[0].position);
-        }
-    }, [nodes]);
+    nodesRef.current = nodes;
+    edgesRef.current = edges;
 
     const lastFocusedRef = useRef<string | null>(null);
 
     // Handle node focusing from props (e.g. from Timeline)
     useEffect(() => {
-        if (focusNodeId && focusNodeId !== lastFocusedRef.current && nodes.length > 0) {
-            const nodeExists = nodes.some(n => n.id === focusNodeId);
+        if (focusNodeId && focusNodeId !== lastFocusedRef.current) {
+            const nodeExists = nodesRef.current.some(n => n.id === focusNodeId);
 
             if (nodeExists) {
                 console.log('[Board] Focusing node:', focusNodeId);
@@ -240,7 +240,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         } else if (!focusNodeId) {
             lastFocusedRef.current = null;
         }
-    }, [focusNodeId, nodes, fitView]);
+    }, [focusNodeId, fitView]);
 
     // Help distribute edges evenly
 
@@ -338,8 +338,35 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
         if (nodes.length === 0 && edges.length === 0) return;
-        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ nodes, edges }));
+        if (isDraggingNodeRef.current) return;
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+        }
+
+        persistTimerRef.current = window.setTimeout(() => {
+            localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ nodes, edges }));
+            persistTimerRef.current = null;
+        }, 250);
+
+        return () => {
+            if (persistTimerRef.current) {
+                window.clearTimeout(persistTimerRef.current);
+                persistTimerRef.current = null;
+            }
+        };
     }, [nodes, edges, investigationId, loadedInvestigationId]);
+
+    const persistBoardNow = useCallback(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId) return;
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+
+        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ nodes: nodesRef.current, edges: edgesRef.current }));
+    }, [investigationId, loadedInvestigationId]);
 
     const onNodesChange: OnNodesChange = useCallback(
         (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -357,6 +384,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         (oldEdge: Edge, newConnection: Connection) => setEdges((els) => reconnectEdge(oldEdge, newConnection, els)),
         []
     );
+    const onNodeDragStart = useCallback(() => {
+        isDraggingNodeRef.current = true;
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+    }, []);
+    const onNodeDragStop = useCallback(() => {
+        isDraggingNodeRef.current = false;
+        persistBoardNow();
+    }, [persistBoardNow]);
 
     const handleNewConnections = useCallback((connections: any[]) => {
         console.log('[Board] Received connections:', connections);
@@ -961,6 +999,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     edges={edges}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDragStop={onNodeDragStop}
                     onConnect={onConnect}
                     onReconnect={onReconnect}
                     onEdgeClick={onEdgeClick}

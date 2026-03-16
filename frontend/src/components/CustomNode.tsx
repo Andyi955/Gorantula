@@ -193,9 +193,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
     return (
         <div
-            className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : (isImported ? 'border-amber-500 shadow-[0_0_20px_#f59e0b55]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]')} rounded-none p-4 transition-all duration-300 group backdrop-blur-sm relative overflow-visible`}
+            className={`bg-cyber-gray/95 border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_0_30px_#10b98155]' : (isImported ? 'border-amber-500 shadow-[0_0_20px_#f59e0b55]' : 'border-cyber-cyan shadow-[0_0_25px_rgba(0,243,255,0.15)]')} rounded-none p-4 transition-colors duration-300 group backdrop-blur-sm relative overflow-visible`}
             style={{
                 minHeight: height,
+                willChange: 'transform',
             }}
         >
             <NodeResizer
