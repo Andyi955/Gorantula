@@ -4,6 +4,9 @@ import { Pencil, Unlink2 } from 'lucide-react';
 
 const SNAP_THRESHOLD = 18;
 const SNAP_GRID_SIZE = 24;
+const AXIS_LOCK_THRESHOLD = 20;
+
+type RouteMode = 'free' | 'vertical-lock' | 'horizontal-lock' | 'midpoint-offset';
 
 const snapToCandidates = (value: number, candidates: number[]) => {
     let snappedValue = value;
@@ -18,6 +21,111 @@ const snapToCandidates = (value: number, candidates: number[]) => {
     });
 
     return bestDistance <= SNAP_THRESHOLD ? snappedValue : value;
+};
+
+const getMidpoint = (sourceX: number, sourceY: number, targetX: number, targetY: number) => ({
+    x: (sourceX + targetX) / 2,
+    y: (sourceY + targetY) / 2,
+});
+
+const resolveRoutePoint = (
+    routeMode: RouteMode | undefined,
+    routeOffsetX: number,
+    routeOffsetY: number,
+    sourceX: number,
+    sourceY: number,
+    targetX: number,
+    targetY: number,
+    fallbackX: number,
+    fallbackY: number,
+) => {
+    const midpoint = getMidpoint(sourceX, sourceY, targetX, targetY);
+
+    switch (routeMode) {
+        case 'vertical-lock':
+            return { x: midpoint.x, y: midpoint.y + routeOffsetY };
+        case 'horizontal-lock':
+            return { x: midpoint.x + routeOffsetX, y: midpoint.y };
+        case 'midpoint-offset':
+            return { x: midpoint.x + routeOffsetX, y: midpoint.y + routeOffsetY };
+        case 'free':
+            return { x: fallbackX, y: fallbackY };
+        default:
+            return { x: fallbackX, y: fallbackY };
+    }
+};
+
+const buildRouteState = (
+    nextX: number,
+    nextY: number,
+    sourceX: number,
+    sourceY: number,
+    targetX: number,
+    targetY: number,
+): { routeMode: RouteMode; routeOffsetX: number; routeOffsetY: number; customX?: number; customY?: number } => {
+    const midpoint = getMidpoint(sourceX, sourceY, targetX, targetY);
+    const routeOffsetX = nextX - midpoint.x;
+    const routeOffsetY = nextY - midpoint.y;
+    const edgeSpanX = Math.abs(targetX - sourceX);
+    const edgeSpanY = Math.abs(targetY - sourceY);
+
+    const nearVerticalAxis = Math.abs(routeOffsetX) <= AXIS_LOCK_THRESHOLD;
+    const nearHorizontalAxis = Math.abs(routeOffsetY) <= AXIS_LOCK_THRESHOLD;
+
+    if (Math.abs(routeOffsetX) > Math.max(edgeSpanX, SNAP_GRID_SIZE * 3) &&
+        Math.abs(routeOffsetY) > Math.max(edgeSpanY, SNAP_GRID_SIZE * 3)) {
+        return {
+            routeMode: 'free',
+            routeOffsetX: 0,
+            routeOffsetY: 0,
+            customX: nextX,
+            customY: nextY,
+        };
+    }
+
+    if (nearVerticalAxis && Math.abs(routeOffsetY) >= Math.abs(routeOffsetX)) {
+        return {
+            routeMode: 'vertical-lock',
+            routeOffsetX: 0,
+            routeOffsetY,
+        };
+    }
+
+    if (nearHorizontalAxis && Math.abs(routeOffsetX) >= Math.abs(routeOffsetY)) {
+        return {
+            routeMode: 'horizontal-lock',
+            routeOffsetX,
+            routeOffsetY: 0,
+        };
+    }
+
+    return {
+        routeMode: 'midpoint-offset',
+        routeOffsetX,
+        routeOffsetY,
+    };
+};
+
+const buildRoutePath = (
+    routeMode: RouteMode | undefined,
+    currentX: number,
+    currentY: number,
+    sourceX: number,
+    sourceY: number,
+    targetX: number,
+    targetY: number,
+) => {
+    switch (routeMode) {
+        case 'vertical-lock':
+            return `M ${sourceX} ${sourceY} L ${currentX} ${sourceY} L ${currentX} ${currentY} L ${currentX} ${targetY} L ${targetX} ${targetY}`;
+        case 'horizontal-lock':
+            return `M ${sourceX} ${sourceY} L ${sourceX} ${currentY} L ${currentX} ${currentY} L ${targetX} ${currentY} L ${targetX} ${targetY}`;
+        case 'midpoint-offset':
+        case 'free':
+            return `M ${sourceX} ${sourceY} L ${currentX} ${currentY} L ${targetX} ${targetY}`;
+        default:
+            return null;
+    }
 };
 
 export default function CustomEdge({
@@ -50,15 +158,26 @@ export default function CustomEdge({
     });
 
     const hasCustomPosition = data?.customX !== undefined && data?.customY !== undefined;
-    const currentX = hasCustomPosition ? data.customX : labelX;
-    const currentY = hasCustomPosition ? data.customY : labelY;
+    const routeMode = data?.routeMode as RouteMode | undefined;
+    const routeOffsetX = typeof data?.routeOffsetX === 'number' ? data.routeOffsetX : 0;
+    const routeOffsetY = typeof data?.routeOffsetY === 'number' ? data.routeOffsetY : 0;
+    const { x: currentX, y: currentY } = resolveRoutePoint(
+        routeMode,
+        routeOffsetX,
+        routeOffsetY,
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        hasCustomPosition ? data.customX : labelX,
+        hasCustomPosition ? data.customY : labelY,
+    );
 
     // Calculate dynamic paths that visually adjust to the dragged label
     let finalPath = edgePath;
-    if (hasCustomPosition) {
-        // Draw a neat bent path that explicitly passes right behind the current label
-        // Using straight lines for explicit user-directed routing
-        finalPath = `M ${sourceX} ${sourceY} L ${currentX} ${currentY} L ${targetX} ${targetY}`;
+    const routedPath = buildRoutePath(routeMode, currentX, currentY, sourceX, sourceY, targetX, targetY);
+    if (routedPath) {
+        finalPath = routedPath;
     }
 
     const onMouseDown = useCallback(
@@ -97,10 +216,12 @@ export default function CustomEdge({
                 setEdges((eds) =>
                     eds.map((e) => {
                         if (e.id === id) {
+                            const routeState = buildRouteState(nextX, nextY, sourceX, sourceY, targetX, targetY);
                             return {
                                 ...e,
                                 data: {
                                     ...e.data,
+                                    ...routeState,
                                     customX: nextX,
                                     customY: nextY,
                                 },
@@ -129,6 +250,9 @@ export default function CustomEdge({
             eds.map((e) => {
                 if (e.id === id) {
                     const newData = { ...e.data };
+                    delete newData.routeMode;
+                    delete newData.routeOffsetX;
+                    delete newData.routeOffsetY;
                     delete newData.customX;
                     delete newData.customY;
                     return { ...e, data: newData };
@@ -183,7 +307,7 @@ export default function CustomEdge({
                         onMouseEnter={() => setIsHovered(true)}
                         onMouseLeave={() => setIsHovered(false)}
                         className="transition-all hover:bg-[#111] hover:scale-110 active:scale-95 active:cursor-grabbing"
-                        title={data?.snapEnabled ? "Drag to reroute line with snapping. Double-click to reset label position." : "Drag to reroute line. Double-click to reset label position."}
+                        title={data?.snapEnabled ? "Drag to reroute line with snapping and smart routing. Double-click to reset label position." : "Drag to reroute line with smart routing. Double-click to reset label position."}
                     >
                         <div className="flex items-center gap-2">
                             <span>{label}</span>
