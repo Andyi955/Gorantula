@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import ReactFlow, {
     Background,
+    BackgroundVariant,
     Controls,
     applyEdgeChanges,
     applyNodeChanges,
@@ -23,7 +24,7 @@ import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3 } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -227,6 +228,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [showGrid, setShowGrid] = useState(true);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -384,6 +386,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         }
     }, []);
+
+    useEffect(() => {
+        const savedGridPreference = localStorage.getItem('detective_board_show_grid');
+        if (savedGridPreference !== null) {
+            console.log('[DetectiveBoard] Loaded grid preference:', savedGridPreference);
+            setShowGrid(savedGridPreference === 'true');
+        } else {
+            console.log('[DetectiveBoard] No saved grid preference found. Defaulting to visible grid.');
+        }
+    }, []);
+
+    useEffect(() => {
+        console.log('[DetectiveBoard] Grid visibility changed:', showGrid);
+        localStorage.setItem('detective_board_show_grid', String(showGrid));
+    }, [showGrid]);
 
     useEffect(() => {
         const edgeTags = edges
@@ -1156,6 +1173,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         )}
                     </div>
                     <button
+                        onClick={() => setShowGrid((current) => {
+                            const next = !current;
+                            console.log('[DetectiveBoard] Grid toggle clicked. Next state:', next);
+                            return next;
+                        })}
+                        className={`flex items-center gap-2 px-6 py-2 bg-black border font-black shadow-[0_0_15px_rgba(255,255,255,0.08)] transition-all uppercase tracking-widest text-xs ${showGrid ? 'border-white/40 text-white hover:bg-white hover:text-black' : 'border-white/15 text-gray-400 hover:border-white/40 hover:text-white'}`}
+                    >
+                        <Grid3X3 size={14} />
+                        {showGrid ? 'Hide Grid' : 'Show Grid'}
+                    </button>
+                    <button
                         onClick={handleReorganize}
                         disabled={nodes.length === 0 || isAnalyzing || isGathering || isReorganizing}
                         className={`flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black shadow-[0_0_15px_rgba(0,243,255,0.2)] transition-all uppercase tracking-widest text-xs ${(nodes.length === 0 || isAnalyzing || isGathering || isReorganizing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-cyber-cyan hover:text-white'}`}
@@ -1190,7 +1218,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     connectionMode={ConnectionMode.Loose}
                     fitView
                 >
-                    <Background color="#111" gap={15} />
+                    {showGrid && (
+                        <Background
+                            variant={BackgroundVariant.Lines}
+                            color="rgba(120, 140, 160, 0.22)"
+                            gap={24}
+                            size={1}
+                        />
+                    )}
                     <Controls />
                 </ReactFlow>
             </div>
