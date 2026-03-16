@@ -23,7 +23,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
-import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeCenter, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
+import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye } from 'lucide-react';
@@ -86,50 +86,6 @@ const normalizeStrictGridNodes = (nodes: Node[]) => nodes.map((node) => {
         }
     };
 });
-
-const clearStaleAlignedRoute = (edge: Edge, nodeMap: Map<string, Node>) => {
-    const edgeData = edge.data || {};
-    const routeMode = edgeData.routeMode;
-    const hasCustomPosition = typeof edgeData.customX === 'number' && typeof edgeData.customY === 'number';
-
-    if (!hasCustomPosition || (routeMode && routeMode !== 'free')) {
-        return edge;
-    }
-
-    const sourceNode = nodeMap.get(edge.source);
-    const targetNode = nodeMap.get(edge.target);
-
-    if (!sourceNode || !targetNode) {
-        return edge;
-    }
-
-    const sourceCenter = getNodeCenter(sourceNode);
-    const targetCenter = getNodeCenter(targetNode);
-    const midpointX = (sourceCenter.x + targetCenter.x) / 2;
-    const midpointY = (sourceCenter.y + targetCenter.y) / 2;
-    const edgeSpanX = Math.abs(targetCenter.x - sourceCenter.x);
-    const edgeSpanY = Math.abs(targetCenter.y - sourceCenter.y);
-    const distanceFromMidpointX = Math.abs(edgeData.customX - midpointX);
-    const distanceFromMidpointY = Math.abs(edgeData.customY - midpointY);
-    const allowedDistanceX = Math.max(edgeSpanX, BOARD_GRID_SIZE * 4);
-    const allowedDistanceY = Math.max(edgeSpanY, BOARD_GRID_SIZE * 4);
-
-    if (distanceFromMidpointX <= allowedDistanceX && distanceFromMidpointY <= allowedDistanceY) {
-        return edge;
-    }
-
-    const nextData = { ...edgeData };
-    delete nextData.routeMode;
-    delete nextData.routeOffsetX;
-    delete nextData.routeOffsetY;
-    delete nextData.customX;
-    delete nextData.customY;
-
-    return {
-        ...edge,
-        data: nextData,
-    };
-};
 
 const parsePersistedBoardState = (raw: string | null): PersistedBoardState | null => {
     if (!raw) {
@@ -388,7 +344,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
     const [boardMode, setBoardMode] = useState<BoardMode>('strict-grid');
-    const [isAligningToGrid, setIsAligningToGrid] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -412,17 +367,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
     }, []);
 
-    const isBoardBusy = isAnalyzing || isGathering || isReorganizing || isAligningToGrid;
+    const isBoardBusy = isAnalyzing || isGathering || isReorganizing;
     const hasNodes = nodes.length > 0;
     const canConnectDots = !isAnalyzing && !isGathering && !isReorganizing && nodes.length >= 2;
     const canExport = hasNodes && !isReorganizing;
     const canArrange = hasNodes && !isBoardBusy;
-    const alignActionLabel = isAligningToGrid
-        ? 'Aligning...'
-        : (boardMode === 'strict-grid' ? 'Align to Grid' : 'Enable Strict Grid');
-    const alignActionHint = boardMode === 'strict-grid'
-        ? 'Snap the current layout back into the strict grid.'
-        : 'Switch this board into strict-grid mode and align cards.';
 
     const ensureTagStyles = useCallback((tags: string[]) => {
         const normalizedTags = tags.map(tag => normalizeRelationshipTag(tag));
@@ -1662,47 +1611,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }, 100);
     }, [boardMode, edges, fitView, nodes, syncStrictGridEdgesToNodes]);
 
-    const handleAlignToGrid = useCallback(() => {
-        console.log('[AlignToGrid] Clicked. Current nodes:', nodes.length, 'Current edges:', edges.length);
-        if (nodes.length === 0) {
-            console.log('[AlignToGrid] No nodes to align.');
-            return;
-        }
-
-        setIsAligningToGrid(true);
-
-        setTimeout(() => {
-            try {
-                const alignedNodes = nodes.map((node) => ({
-                    ...normalizeStrictGridNodes([node])[0]
-                }));
-
-                if (boardMode === 'strict-grid') {
-                    syncStrictGridEdgesToNodes(edges, alignedNodes);
-                } else {
-                    const nodeMap = new Map(alignedNodes.map((node) => [node.id, node]));
-                    const cleanedEdges = edges.map((edge) => clearStaleAlignedRoute(edge, nodeMap)).map((edge) => ({
-                        ...edge,
-                        data: {
-                            ...edge.data,
-                            boardMode: 'strict-grid' as BoardMode,
-                        }
-                    }));
-
-                    syncStrictGridEdgesToNodes(cleanedEdges, alignedNodes);
-                }
-
-                setTimeout(() => {
-                    setIsAligningToGrid(false);
-                    console.log('[AlignToGrid] Alignment complete.');
-                }, 150);
-            } catch (err) {
-                console.error('[AlignToGrid] Error during alignment:', err);
-                setIsAligningToGrid(false);
-            }
-        }, 50);
-    }, [boardMode, edges, nodes, syncStrictGridEdgesToNodes]);
-
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
             setEdgeReasoning({ tag: edge.label as string, text: edge.data.reasoning, color: edge.data.color || '#bc13fe' });
@@ -1938,28 +1846,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                             Arrange
                                         </div>
                                         <div className="space-y-2">
-                                            <button
-                                                onClick={handleAlignToGrid}
-                                                disabled={!canArrange}
-                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${canArrange
-                                                    ? 'border-cyber-green/30 bg-cyber-green/8 text-cyber-green hover:border-cyber-green/50 hover:bg-cyber-green/12'
-                                                    : 'cursor-not-allowed border-cyber-green/12 bg-cyber-green/5 text-cyber-green/35'
-                                                    }`}
-                                            >
-                                                <div className="flex w-full items-start gap-3">
-                                                    <Grid3X3 size={15} className={`mt-0.5 shrink-0 ${isAligningToGrid ? 'animate-pulse' : ''}`} />
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="text-[11px] font-semibold">{alignActionLabel}</div>
-                                                            <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-gray-300">
-                                                                {boardMode === 'strict-grid' ? 'Grid' : 'Mode'}
-                                                            </span>
-                                                        </div>
-                                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">{alignActionHint}</div>
-                                                    </div>
-                                                </div>
-                                            </button>
-
                                             <button
                                                 onClick={handleReorganize}
                                                 disabled={!canArrange}
