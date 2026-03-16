@@ -2,6 +2,24 @@ import React, { useCallback, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 'reactflow';
 import { Pencil, Unlink2 } from 'lucide-react';
 
+const SNAP_THRESHOLD = 18;
+const SNAP_GRID_SIZE = 24;
+
+const snapToCandidates = (value: number, candidates: number[]) => {
+    let snappedValue = value;
+    let bestDistance = SNAP_THRESHOLD + 1;
+
+    candidates.forEach((candidate) => {
+        const distance = Math.abs(value - candidate);
+        if (distance < bestDistance) {
+            snappedValue = candidate;
+            bestDistance = distance;
+        }
+    });
+
+    return bestDistance <= SNAP_THRESHOLD ? snappedValue : value;
+};
+
 export default function CustomEdge({
     id,
     sourceX,
@@ -55,6 +73,26 @@ export default function CustomEdge({
                 const { zoom } = getViewport();
                 const dx = (moveEvt.clientX - startX) / zoom;
                 const dy = (moveEvt.clientY - startY) / zoom;
+                let nextX = initialLabelX + dx;
+                let nextY = initialLabelY + dy;
+
+                if (data?.snapEnabled) {
+                    const xCandidates = [
+                        sourceX,
+                        targetX,
+                        (sourceX + targetX) / 2,
+                        Math.round(nextX / SNAP_GRID_SIZE) * SNAP_GRID_SIZE,
+                    ];
+                    const yCandidates = [
+                        sourceY,
+                        targetY,
+                        (sourceY + targetY) / 2,
+                        Math.round(nextY / SNAP_GRID_SIZE) * SNAP_GRID_SIZE,
+                    ];
+
+                    nextX = snapToCandidates(nextX, xCandidates);
+                    nextY = snapToCandidates(nextY, yCandidates);
+                }
 
                 setEdges((eds) =>
                     eds.map((e) => {
@@ -63,8 +101,8 @@ export default function CustomEdge({
                                 ...e,
                                 data: {
                                     ...e.data,
-                                    customX: initialLabelX + dx,
-                                    customY: initialLabelY + dy,
+                                    customX: nextX,
+                                    customY: nextY,
                                 },
                             };
                         }
@@ -81,7 +119,7 @@ export default function CustomEdge({
             window.addEventListener('mousemove', onMouseMove);
             window.addEventListener('mouseup', onMouseUp);
         },
-        [id, currentX, currentY, getViewport, setEdges]
+        [id, currentX, currentY, data?.snapEnabled, getViewport, setEdges, sourceX, sourceY, targetX, targetY]
     );
 
     const onDoubleClick = (evt: React.MouseEvent) => {
@@ -145,7 +183,7 @@ export default function CustomEdge({
                         onMouseEnter={() => setIsHovered(true)}
                         onMouseLeave={() => setIsHovered(false)}
                         className="transition-all hover:bg-[#111] hover:scale-110 active:scale-95 active:cursor-grabbing"
-                        title="Drag to reroute line. Double-click to reset label position."
+                        title={data?.snapEnabled ? "Drag to reroute line with snapping. Double-click to reset label position." : "Drag to reroute line. Double-click to reset label position."}
                     >
                         <div className="flex items-center gap-2">
                             <span>{label}</span>
