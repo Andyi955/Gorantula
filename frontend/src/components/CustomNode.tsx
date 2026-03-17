@@ -255,7 +255,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
     return (
         <div
-            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]'))} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
+            data-testid="custom-node-shell"
+            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]'))} ${selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_0_2px_rgba(0,243,255,0.28),0_0_26px_rgba(0,243,255,0.22)]' : ''} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
             style={{
                 width: '100%',
                 height: '100%',

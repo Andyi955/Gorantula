@@ -43,4 +43,28 @@ describe('CustomNode', () => {
     expect(onExpand).toHaveBeenCalledWith('node-1', true)
     expect(onReadFull).toHaveBeenCalled()
   })
+
+  it('shows a visible selected highlight when the node is selected', () => {
+    render(
+      <CustomNode
+        id="node-2"
+        type="custom"
+        selected
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-2',
+          title: 'Selected Node',
+          summary: 'Selected summary',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('custom-node-shell').className).toContain('ring-2')
+    expect(screen.getByTestId('custom-node-shell').className).toContain('ring-cyber-cyan')
+  })
 })

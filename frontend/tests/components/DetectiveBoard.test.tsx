@@ -1,12 +1,18 @@
 import * as React from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 
 vi.mock('reactflow', () => {
   return {
     __esModule: true,
-    default: ({ children }: { children?: React.ReactNode }) => React.createElement('div', { 'data-testid': 'reactflow' }, children),
+    default: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement(
+        'div',
+        { 'data-testid': 'reactflow' },
+        React.createElement('div', { className: 'react-flow__pane', 'data-testid': 'reactflow-pane' }),
+        children,
+      ),
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
     Background: () => null,
     Controls: () => null,
@@ -15,7 +21,10 @@ vi.mock('reactflow', () => {
     applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
     addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
     reconnectEdge: (_oldEdge: unknown, _newConnection: unknown, edges: unknown[]) => edges,
-    useReactFlow: () => ({ fitView: vi.fn() }),
+    useReactFlow: () => ({
+      fitView: vi.fn(),
+      screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
+    }),
     BackgroundVariant: { Lines: 'lines' },
     ConnectionMode: { Loose: 'Loose', Strict: 'Strict' },
     Position: { Left: 'Left', Right: 'Right', Top: 'Top', Bottom: 'Bottom' },
@@ -182,6 +191,35 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(JSON.parse(localStorage.getItem('board_tag_styles') || '{}')).toEqual({
       RELATED: { color: '#bc13fe', pattern: 'solid', shape: 'staggered' },
+    })
+  })
+
+  it('shows and clears a ctrl-drag marquee on empty pane space', async () => {
+    renderBoard()
+
+    const flow = screen.getByTestId('reactflow').parentElement as HTMLDivElement
+    const pane = screen.getByTestId('reactflow-pane')
+    vi.spyOn(flow, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 600,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(pane, { ctrlKey: true, clientX: 100, clientY: 100, pointerId: 1 })
+    expect(screen.getByTestId('marquee-selection')).toBeInTheDocument()
+
+    fireEvent.pointerMove(flow, { ctrlKey: true, clientX: 180, clientY: 170, pointerId: 1 })
+    expect(screen.getByTestId('marquee-selection')).toHaveStyle({ width: '80px', height: '70px' })
+
+    fireEvent.pointerUp(flow, { ctrlKey: true, clientX: 180, clientY: 170, pointerId: 1 })
+    await waitFor(() => {
+      expect(screen.queryByTestId('marquee-selection')).not.toBeInTheDocument()
     })
   })
 })
