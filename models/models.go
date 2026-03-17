@@ -81,3 +81,30 @@ type Investigation struct {
 	Nodes []MemoryNode      `json:"nodes"`
 	Edges []BoardConnection `json:"edges"`
 }
+
+type MergedNode struct {
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	Summary          string `json:"summary"`
+	FullText         string `json:"fullText"`
+	SourceURL        string `json:"sourceURL"`
+	SourceVaultID    string `json:"sourceVaultId"`
+	SourceNodeID     string `json:"sourceNodeId"`
+	DerivedFromMerge bool   `json:"derivedFromMerge"`
+}
+
+type MergedEdge struct {
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	Tag       string `json:"tag"`
+	Reasoning string `json:"reasoning"`
+}
+
+type MergeInvestigationsPayload struct {
+	ChildVaultID string       `json:"childVaultId"`
+	ChildTopic   string       `json:"childTopic"`
+	ParentIDs    []string     `json:"parentIds"`
+	Nodes        []MergedNode `json:"nodes"`
+	Edges        []MergedEdge `json:"edges"`
+}

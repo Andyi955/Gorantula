@@ -5,12 +5,18 @@ import SettingsDashboard from './components/SettingsDashboard'
 import TimelineView from './components/TimelineView'
 import VaultChatbot from './components/VaultChatbot'
 import SynthesisPanel from './components/SynthesisPanel'
+import type { MergeCandidateNode } from './components/SynthesisPanel'
 import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare } from 'lucide-react'
-
-interface Investigation {
-  id: string
-  topic: string
-}
+import {
+  buildSidebarInvestigationRows,
+  createRootInvestigation,
+  INVESTIGATIONS_STORAGE_KEY,
+  normalizeInvestigations,
+  registerMergedChildInvestigation,
+  removeInvestigationRecord,
+  type InvestigationRecord,
+} from './utils/investigations'
+import { createMergedChildBoard, parsePersistedBoardState } from './utils/hierarchicalCanvas'
 
 function App() {
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
@@ -18,7 +24,7 @@ function App() {
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
-  const [investigations, setInvestigations] = useState<Investigation[]>([])
+  const [investigations, setInvestigations] = useState<InvestigationRecord[]>([])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
@@ -26,6 +32,13 @@ function App() {
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const isUnmounted = useRef(false);
+  const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
+  const sidebarRows = buildSidebarInvestigationRows(investigations);
+
+  const persistInvestigations = useCallback((nextInvestigations: InvestigationRecord[]) => {
+    setInvestigations(nextInvestigations);
+    localStorage.setItem(INVESTIGATIONS_STORAGE_KEY, JSON.stringify(nextInvestigations));
+  }, []);
 
   const connect = () => {
     console.log('[App] Connecting to WebSocket...');
@@ -37,11 +50,11 @@ function App() {
       console.log('[App] WebSocket Connected');
       setSocketConfig({ socket: s, ready: true });
       
-      const saved = localStorage.getItem('gorantula_investigations');
+      const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY);
       if (saved) {
         try {
-          const data = JSON.parse(saved);
-          const ids = data.map((inv: Investigation) => inv.id);
+          const data = normalizeInvestigations(JSON.parse(saved));
+          const ids = data.map((inv) => inv.id);
           s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
         } catch (e) {
           console.error('[App] Failed to parse investigations for sync', e);
@@ -68,9 +81,9 @@ function App() {
     connect();
 
     // Load list from local storage if any
-    const saved = localStorage.getItem('gorantula_investigations')
+    const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY)
     if (saved) {
-      const data = JSON.parse(saved)
+      const data = normalizeInvestigations(JSON.parse(saved))
       setInvestigations(data)
       if (data.length > 0) setCurrentInvestigationId(data[0].id)
     }
@@ -96,12 +109,10 @@ function App() {
         displayTopic = `Local: ${parts[parts.length - 1] || labelToUse}`;
       }
 
-      const newInv = { id, topic: displayTopic }
-
+      const newInv = createRootInvestigation(id, displayTopic)
       const updated = [newInv, ...investigations]
-      setInvestigations(updated)
+      persistInvestigations(updated)
       setCurrentInvestigationId(id)
-      localStorage.setItem('gorantula_investigations', JSON.stringify(updated))
 
       socketConfig.socket.send(JSON.stringify({ type: modeToUse === 'local' ? 'CRAWL_LOCAL' : 'CRAWL', payload: textToRun }))
       if (!customPrompt) setPrompt('')
@@ -119,16 +130,21 @@ function App() {
       // Update original board to link to this new investigation
       const saved = localStorage.getItem(`inv_data_${currentInvestigationId}`);
       if (saved) {
-        const { nodes, edges } = JSON.parse(saved);
+        const savedState = parsePersistedBoardState(saved);
+        if (!savedState) {
+          return;
+        }
+        const { nodes, edges, mode } = savedState;
         const updatedNodes = nodes.map((n: any) =>
           n.id === sourceNodeId ? { ...n, data: { ...n.data, linkedInvestigationId: newInvId, isDeepDiveSource: false } } : n
         );
-        localStorage.setItem(`inv_data_${currentInvestigationId}`, JSON.stringify({ nodes: updatedNodes, edges }));
+        localStorage.setItem(`inv_data_${currentInvestigationId}`, JSON.stringify({ mode, nodes: updatedNodes, edges }));
       }
     }
   }, [currentInvestigationId, runSpider]);
 
-  const handleNavigateToChild = useCallback((id: string) => {
+  const handleNavigateToChild = useCallback((id: string, parentId?: string) => {
+    setReturnVaultId(parentId || null);
     setCurrentInvestigationId(id);
     setActiveTab('board');
   }, []);
@@ -147,13 +163,103 @@ function App() {
     }
   }, [currentInvestigationId, returnVaultId]);
 
+  const handleMergeInvestigations = useCallback((entity: string, connectedCases: string[], relevantNodes: MergeCandidateNode[]) => {
+    const parentIds = Array.from(new Set(connectedCases)).filter((id) => investigations.some((investigation) => investigation.id === id));
+    if (parentIds.length < 2) {
+      alert('Need at least two persisted investigations to create a merged canvas.');
+      return;
+    }
+
+    const filteredRelevantNodes = relevantNodes.filter((node) => parentIds.includes(node.vaultId));
+    if (filteredRelevantNodes.length < 2) {
+      alert('This overlap does not have enough relevant node context to create a merged canvas yet.');
+      return;
+    }
+
+    const primaryParentId = parentIds.includes(currentInvestigationId || '') ? currentInvestigationId! : parentIds[0];
+    const parentBoards = parentIds.map((parentId) => {
+      const investigation = investigations.find((entry) => entry.id === parentId);
+      const board = parsePersistedBoardState(localStorage.getItem(`inv_data_${parentId}`));
+      return investigation && board ? { investigation, board } : null;
+    }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    if (parentBoards.length < 2) {
+      alert('Both investigations need saved board state before they can be merged.');
+      return;
+    }
+
+    const childId = `merge-${Date.now()}`;
+    const childTopic = `Merged: ${entity}`;
+    const { childBoard, updatedParentBoards, payloadNodes, payloadEdges } = createMergedChildBoard(
+      childId,
+      childTopic,
+      parentBoards,
+      primaryParentId,
+      entity,
+      filteredRelevantNodes,
+    );
+
+    const updatedInvestigations = registerMergedChildInvestigation(investigations, {
+      childId,
+      childTopic,
+      parentIds,
+      primaryParentId,
+    });
+
+    Object.entries(updatedParentBoards).forEach(([parentId, board]) => {
+      localStorage.setItem(`inv_data_${parentId}`, JSON.stringify(board));
+    });
+    localStorage.setItem(`inv_data_${childId}`, JSON.stringify(childBoard));
+    persistInvestigations(updatedInvestigations);
+
+    if (socketConfig.socket && socketConfig.ready) {
+      socketConfig.socket.send(JSON.stringify({
+        type: 'MERGE_INVESTIGATIONS',
+        payload: {
+          childVaultId: childId,
+          childTopic,
+          parentIds,
+          nodes: payloadNodes,
+          edges: payloadEdges,
+        },
+      }));
+    }
+
+    setCurrentInvestigationId(childId);
+    setReturnVaultId(primaryParentId);
+    setActiveTab('board');
+  }, [currentInvestigationId, investigations, persistInvestigations, socketConfig.ready, socketConfig.socket]);
+
+  const handleReturnToParent = useCallback(() => {
+    if (!returnVaultId) {
+      return;
+    }
+
+    setCurrentInvestigationId(returnVaultId);
+    setReturnVaultId(null);
+    setActiveTab('board');
+  }, [returnVaultId]);
+
   const deleteInvestigation = (e: React.MouseEvent, idToRemove: string) => {
     e.stopPropagation()
-    // Instantly delete without blocking browser popup
-    const updated = investigations.filter(inv => inv.id !== idToRemove)
-    setInvestigations(updated)
-    localStorage.setItem('gorantula_investigations', JSON.stringify(updated))
-    localStorage.removeItem(`inv_data_${idToRemove}`)
+    const removal = removeInvestigationRecord(investigations, idToRemove)
+    persistInvestigations(removal.investigations)
+    removal.removedIds.forEach((removedId) => {
+      localStorage.removeItem(`inv_data_${removedId}`)
+      localStorage.removeItem(`vault_result_${removedId}`)
+    })
+
+    removal.investigations.forEach((investigation) => {
+      const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigation.id}`))
+      if (!savedState) {
+        return
+      }
+
+      const cleanedNodes = savedState.nodes.filter((node) => !node.data?.portalKind || !removal.removedIds.includes(node.data?.linkedInvestigationId))
+      if (cleanedNodes.length !== savedState.nodes.length) {
+        localStorage.setItem(`inv_data_${investigation.id}`, JSON.stringify({ ...savedState, nodes: cleanedNodes }))
+      }
+    })
 
     let vaultPathToRemove = "";
     const vaultResultStr = localStorage.getItem(`vault_result_${idToRemove}`);
@@ -163,8 +269,6 @@ function App() {
         vaultPathToRemove = vaultResult.vaultPath || "";
       } catch (err) {}
     }
-    localStorage.removeItem(`vault_result_${idToRemove}`)
-
     if (socketConfig.socket && socketConfig.ready) {
       socketConfig.socket.send(JSON.stringify({ 
         type: 'DELETE_VAULT', 
@@ -173,8 +277,12 @@ function App() {
       }))
     }
 
-    if (currentInvestigationId === idToRemove) {
-      setCurrentInvestigationId(updated.length > 0 ? updated[0].id : null)
+    if (currentInvestigationId && removal.removedIds.includes(currentInvestigationId)) {
+      setCurrentInvestigationId(removal.investigations[0]?.id || null)
+      setReturnVaultId(null)
+    } else if (returnVaultId && removal.removedIds.includes(returnVaultId)) {
+      const survivingCurrent = removal.investigations.find((investigation) => investigation.id === currentInvestigationId)
+      setReturnVaultId(survivingCurrent?.primaryParentId || null)
     }
   }
 
@@ -236,22 +344,26 @@ function App() {
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {investigations.map((inv) => (
-              <div key={inv.id} className="group relative">
+            {sidebarRows.map(({ investigation, depth }) => (
+              <div key={investigation.id} className="group relative">
                 <button
                   onClick={() => {
-                    setCurrentInvestigationId(inv.id);
-                    setReturnVaultId(null);
+                    setCurrentInvestigationId(investigation.id);
+                    setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
                   }}
-                  className={`w-full text-left p-4 border-b border-cyber-gray/30 flex items-start gap-3 transition-colors ${currentInvestigationId === inv.id ? 'bg-cyber-green/10 border-l-2 border-l-cyber-green' : 'hover:bg-cyber-gray/20 text-gray-400'}`}
+                  className={`w-full text-left p-4 border-b border-cyber-gray/30 flex items-start gap-3 transition-colors ${currentInvestigationId === investigation.id ? 'bg-cyber-green/10 border-l-2 border-l-cyber-green' : 'hover:bg-cyber-gray/20 text-gray-400'}`}
+                  style={{ paddingLeft: `${16 + (depth * 18)}px` }}
                 >
-                  <Folder size={16} className={currentInvestigationId === inv.id ? 'text-cyber-green' : 'text-gray-600'} />
-                  <span className={`text-xs truncate max-w-[150px] ${currentInvestigationId === inv.id ? 'text-white font-bold' : ''}`}>
-                    {inv.topic}
+                  <Folder size={16} className={currentInvestigationId === investigation.id ? 'text-cyber-green' : 'text-gray-600'} />
+                  <span className={`text-xs truncate max-w-[150px] ${currentInvestigationId === investigation.id ? 'text-white font-bold' : ''}`}>
+                    {investigation.displayTopic}
+                    {investigation.kind === 'merged-child' && (
+                      <span className="ml-2 text-[9px] uppercase tracking-[0.16em] text-cyber-cyan/70">Merged</span>
+                    )}
                   </span>
                 </button>
                 <button
-                  onClick={(e) => deleteInvestigation(e, inv.id)}
+                  onClick={(e) => deleteInvestigation(e, investigation.id)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Delete Investigation"
                 >
@@ -270,6 +382,7 @@ function App() {
             onNavigateVault={handleNavigateSynthesis}
             returnVaultId={returnVaultId}
             investigations={investigations}
+            onMergeInvestigations={handleMergeInvestigations}
           />
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
@@ -345,6 +458,8 @@ function App() {
               onDeepDiveNode={handleDeepDiveNode}
               onNavigateToChild={handleNavigateToChild}
               focusNodeId={focusedNodeId}
+              onReturnToParent={handleReturnToParent}
+              isMergedChild={currentInvestigation?.kind === 'merged-child'}
             />
           </div>
 
@@ -381,7 +496,7 @@ function App() {
           <div className="absolute whitespace-nowrap animate-marquee flex items-center gap-2 text-cyber-cyan">
             <span className="font-bold opacity-50 shrink-0">CURRENT INVESTIGATION:</span>
             <span className="font-black tracking-widest uppercase truncate max-w-none">
-              {investigations.find(i => i.id === currentInvestigationId)?.topic || 'NONE'}
+              {currentInvestigation?.displayTopic || 'NONE'}
             </span>
           </div>
         </div>

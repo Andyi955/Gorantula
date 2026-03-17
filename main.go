@@ -280,6 +280,22 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						})
 					}()
 				}
+			case "MERGE_INVESTIGATIONS":
+				log.Println("[WS] Received MERGE_INVESTIGATIONS request")
+				payloadBytes, _ := json.Marshal(msg["payload"])
+				var payload models.MergeInvestigationsPayload
+				if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+					log.Printf("[WS Error] Failed to unmarshal MERGE_INVESTIGATIONS payload: %v", err)
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid merge payload"})
+					continue
+				}
+
+				go func() {
+					if err := br.CreateMergedInvestigation(context.Background(), payload); err != nil {
+						log.Printf("[WS Error] CreateMergedInvestigation failed: %v", err)
+						broadcast(models.WSMessage{Type: "ERROR", Payload: "Merge investigation failed: " + err.Error()})
+					}
+				}()
 			}
 		}
 	}

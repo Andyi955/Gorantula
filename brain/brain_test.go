@@ -2,7 +2,11 @@ package brain
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"spider-agent/models"
 )
 
 // MockProvider implements ModelProvider for testing
@@ -113,5 +117,52 @@ func TestValidateSubQueries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCreateMergedInvestigation(t *testing.T) {
+	tempDir := t.TempDir()
+	if err := os.MkdirAll("abdomen_vault", 0755); err != nil {
+		t.Fatalf("failed to create abdomen_vault: %v", err)
+	}
+
+	engine := NewSynthesisEngine(tempDir, make(chan SynthesisAlert, 1))
+	brain := &Brain{Synthesis: engine}
+
+	payload := models.MergeInvestigationsPayload{
+		ChildVaultID: "merge-vault",
+		ChildTopic:   "Merged Vault",
+		ParentIDs:    []string{"vault-a", "vault-b"},
+		Nodes: []models.MergedNode{
+			{
+				ID:               "merged-node-1",
+				Title:            "Merged Intel",
+				Summary:          "[PERSON:Alice] is linked.",
+				FullText:         "[PERSON:Alice] is linked.",
+				SourceVaultID:    "vault-a",
+				SourceNodeID:     "node-a",
+				DerivedFromMerge: true,
+			},
+		},
+		Edges: []models.MergedEdge{
+			{ID: "edge-1", Source: "merged-node-1", Target: "merged-node-1", Tag: "RELATED", Reasoning: "loopback"},
+		},
+	}
+
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join("abdomen_vault", payload.ChildVaultID))
+	})
+
+	if err := brain.CreateMergedInvestigation(context.Background(), payload); err != nil {
+		t.Fatalf("CreateMergedInvestigation failed: %v", err)
+	}
+
+	metadataPath := filepath.Join("abdomen_vault", payload.ChildVaultID, "metadata.json")
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Fatalf("expected metadata.json to exist: %v", err)
+	}
+
+	if _, exists := brain.Synthesis.Index.NodeArchive[payload.ChildVaultID]["merged-node-1"]; !exists {
+		t.Fatalf("expected merged node to be archived in synthesis engine")
 	}
 }

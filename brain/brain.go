@@ -625,6 +625,16 @@ func saveVaultMemory(prompt, rawData, summary string) (string, error) {
 	return filepath, err
 }
 
+type mergedVaultMetadata struct {
+	ChildVaultID string   `json:"childVaultId"`
+	ChildTopic   string   `json:"childTopic"`
+	ParentIDs    []string `json:"parentIds"`
+	NodeCount    int      `json:"nodeCount"`
+	EdgeCount    int      `json:"edgeCount"`
+	CreatedAt    string   `json:"createdAt"`
+	Derived      bool     `json:"derived"`
+}
+
 func (b *Brain) summarizeNode(ctx context.Context, content string) (string, string, error) {
 	provider := b.GetSearchProvider()
 	if provider == nil {
@@ -1067,6 +1077,82 @@ func (b *Brain) PullNode(ctx context.Context, sourceVaultID, sourceNodeID, targe
 		nodeJSON, _ := json.MarshalIndent(importedNode, "", "  ")
 		fileName := fmt.Sprintf("node_%s.json", importedNode.ID)
 		os.WriteFile(filepath.Join(targetDir, fileName), nodeJSON, 0644)
+	}
+
+	return nil
+}
+
+func (b *Brain) CreateMergedInvestigation(_ context.Context, payload models.MergeInvestigationsPayload) error {
+	if payload.ChildVaultID == "" || filepath.Base(payload.ChildVaultID) != payload.ChildVaultID {
+		return fmt.Errorf("invalid child vault id")
+	}
+
+	if len(payload.ParentIDs) < 2 {
+		return fmt.Errorf("merge requires at least two parent vaults")
+	}
+
+	targetDir := filepath.Join("abdomen_vault", payload.ChildVaultID)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+
+	metadata := mergedVaultMetadata{
+		ChildVaultID: payload.ChildVaultID,
+		ChildTopic:   payload.ChildTopic,
+		ParentIDs:    append([]string(nil), payload.ParentIDs...),
+		NodeCount:    len(payload.Nodes),
+		EdgeCount:    len(payload.Edges),
+		CreatedAt:    time.Now().Format(time.RFC3339),
+		Derived:      true,
+	}
+
+	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "metadata.json"), metadataJSON, 0644); err != nil {
+		return err
+	}
+
+	memoryNodes := make([]models.MemoryNode, 0, len(payload.Nodes))
+	for _, node := range payload.Nodes {
+		memoryNode := models.MemoryNode{
+			ID:        node.ID,
+			Title:     node.Title,
+			Summary:   node.Summary,
+			FullText:  node.FullText,
+			SourceURL: node.SourceURL,
+		}
+		memoryNodes = append(memoryNodes, memoryNode)
+
+		nodeJSON, err := json.MarshalIndent(node, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(targetDir, fmt.Sprintf("node_%s.json", node.ID)), nodeJSON, 0644); err != nil {
+			return err
+		}
+	}
+
+	if len(payload.Edges) > 0 {
+		edgeJSON, err := json.MarshalIndent(payload.Edges, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(targetDir, "edges.json"), edgeJSON, 0644); err != nil {
+			return err
+		}
+	}
+
+	if b.Synthesis != nil {
+		b.Synthesis.RegisterDerivedVault(payload.ChildVaultID, payload.ParentIDs, memoryNodes)
+	}
+
+	if b.NS != nil && b.NS.Broadcast != nil {
+		b.NS.Broadcast(models.WSMessage{
+			Type:    "SYSTEM_LOG",
+			Payload: fmt.Sprintf("Merged child investigation %q registered with %d copied nodes.", payload.ChildTopic, len(payload.Nodes)),
+		})
 	}
 
 	return nil
