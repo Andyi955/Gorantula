@@ -1151,6 +1151,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const onNodesChange: OnNodesChange = useCallback(
         (changes) => {
             let nextNodesSnapshot: Node[] = [];
+            const hasSelectChange = changes.some((change) => change.type === 'select');
             const dimensionChanges = changes
                 .flatMap((change) => {
                     if (change.type !== 'dimensions' || !('id' in change) || !('dimensions' in change) || !change.dimensions) {
@@ -1175,7 +1176,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
             setNodes((nds) => {
                 let nextNodes = applyResizeDimensionsToStyles(applyNodeChanges(changes, nds), changes);
-                if (marqueeSelectedIdsRef.current.size > 0) {
+                if (marquee && !hasSelectChange && marqueeSelectedIdsRef.current.size > 0) {
                     nextNodes = nextNodes.map((node) => ({
                         ...node,
                         selected: marqueeSelectedIdsRef.current.has(node.id),
@@ -1197,6 +1198,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                 return nextNodes;
             });
+
+            if (hasSelectChange) {
+                const currentSnapshot = nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current;
+                marqueeSelectedIdsRef.current = new Set(
+                    currentSnapshot
+                        .filter((node) => node.selected)
+                        .map((node) => node.id)
+                );
+            }
 
             const hasNonSelectionChange = changes.some((change) => change.type !== 'select');
             const hasDragPositionChange = changes.some((change) => change.type === 'position');
@@ -1243,7 +1253,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 }
             }
         },
-        [boardMode, syncStrictGridEdgesToNodes, updateStrictGridDragRoutes]
+        [boardMode, marquee, syncStrictGridEdgesToNodes, updateStrictGridDragRoutes]
     );
     const onEdgesChange: OnEdgesChange = useCallback(
         (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -1398,11 +1408,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             .filter((node) => doesNodeIntersectRect(node, rect))
             .map((node) => node.id);
 
-        marqueeSelectedIdsRef.current = new Set(selectedIds);
+        const selectedIdsSet = new Set(selectedIds);
+        marqueeSelectedIdsRef.current = selectedIdsSet;
         setMarquee(nextMarquee);
         setNodes((currentNodes) => currentNodes.map((node) => ({
             ...node,
-            selected: selectedIds.includes(node.id),
+            selected: selectedIdsSet.has(node.id),
         })));
     }, []);
 
@@ -1423,6 +1434,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         event.preventDefault();
         event.stopPropagation();
+        if ('setPointerCapture' in event.currentTarget) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+        }
 
         const start = screenToFlowPosition({ x: event.clientX, y: event.clientY });
         const wrapperRect = flowWrapperRef.current?.getBoundingClientRect();
@@ -1453,6 +1467,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         event.preventDefault();
         event.stopPropagation();
+        if ('hasPointerCapture' in event.currentTarget && 'releasePointerCapture' in event.currentTarget && event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        }
         finalizeMarqueeSelection();
     }, [finalizeMarqueeSelection, marquee]);
 
