@@ -58,11 +58,13 @@ func TestSynthesisEngine(t *testing.T) {
 
 			// Drain channel to count alerts
 			alertsReceived := 0
+			var receivedAlerts []SynthesisAlert
 			done := false
 			for !done {
 				select {
-				case <-alertChan:
+				case alert := <-alertChan:
 					alertsReceived++
+					receivedAlerts = append(receivedAlerts, alert)
 				default:
 					done = true
 				}
@@ -70,6 +72,11 @@ func TestSynthesisEngine(t *testing.T) {
 
 			if alertsReceived != tt.expectAlerts {
 				t.Errorf("Expected %d alerts, got %d", tt.expectAlerts, alertsReceived)
+			}
+			for _, alert := range receivedAlerts {
+				if alert.CurrentVaultID != tt.vaultID {
+					t.Errorf("Expected alert CurrentVaultID %q, got %q", tt.vaultID, alert.CurrentVaultID)
+				}
 			}
 		})
 	}
