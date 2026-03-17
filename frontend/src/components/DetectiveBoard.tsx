@@ -26,34 +26,21 @@ import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
+import {
+    createTagStyle,
+    getRelationshipEdgeVisuals,
+    sanitizeTagStyles,
+    SUPPORTED_RELATIONSHIP_PATTERNS,
+} from '../utils/relationshipStyles';
+import type { RelationshipPattern, TagStyle } from '../utils/relationshipStyles';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
-export interface TagStyle {
-    color: string;
-    pattern: 'solid' | 'dashed' | 'dotted';
-}
-
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
-};
-
-const createTagStyle = (tag: string): TagStyle => {
-    let hash = 0;
-    for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-
-    const r = (Math.abs(hash) % 156) + 100;
-    const g = (Math.abs(hash * 3) % 156) + 100;
-    const b = (Math.abs(hash * 7) % 156) + 100;
-    const patterns: TagStyle['pattern'][] = ['solid', 'dashed', 'dotted'];
-
-    return {
-        color: `#${(1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1)}`,
-        pattern: patterns[Math.abs(hash) % 3]
-    };
 };
 
 const STRICT_GRID_EDGE_Z_INDEX = 0;
@@ -449,22 +436,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const buildEdgeVisuals = useCallback((tag: string, styles: Record<string, TagStyle>) => {
         const normalizedTag = normalizeRelationshipTag(tag);
         const styleDef = styles[normalizedTag] || createTagStyle(normalizedTag);
-        let strokeDasharray = undefined;
-        let animated = false;
-
-        if (styleDef.pattern === 'dashed') {
-            strokeDasharray = '6,4';
-            animated = true;
-        } else if (styleDef.pattern === 'dotted') {
-            strokeDasharray = '2,4';
-            animated = true;
-        }
+        const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern);
 
         return {
             tag: normalizedTag,
             color: styleDef.color,
-            animated,
-            strokeDasharray,
+            pattern: styleDef.pattern,
+            ...edgeVisuals,
         };
     }, []);
 
@@ -936,7 +914,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         const saved = localStorage.getItem('board_tag_styles');
         if (saved) {
             try {
-                setTagStyles(JSON.parse(saved));
+                setTagStyles(sanitizeTagStyles(JSON.parse(saved)));
             } catch (e) {
                 console.error("Failed to parse tag styles", e);
             }
@@ -993,26 +971,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     // Effect to update edge styles dynamically when tagStyles change
     useEffect(() => {
         setEdges(eds => eds.map(e => {
-            const tag = (e.label as string)?.toUpperCase() || 'UNKNOWN';
+            const tag = normalizeRelationshipTag(typeof e.label === 'string' ? e.label : e.data?.tag);
             const styleDef = tagStyles[tag];
             if (!styleDef) return e;
-
-            let strokeDasharray = undefined;
-            let animated = false;
-            if (styleDef.pattern === 'dashed') {
-                strokeDasharray = '6,4';
-                animated = true;
-            } else if (styleDef.pattern === 'dotted') {
-                strokeDasharray = '2,4';
-                animated = true;
-            }
+            const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern);
 
             return {
                 ...e,
                 type: 'customEdge',
-                style: { ...e.style, stroke: styleDef.color, strokeDasharray },
-                animated,
-                data: { ...e.data, color: styleDef.color },
+                style: {
+                    ...e.style,
+                    stroke: styleDef.color,
+                    strokeDasharray: edgeVisuals.strokeDasharray,
+                    strokeLinecap: edgeVisuals.strokeLinecap,
+                    strokeWidth: edgeVisuals.strokeWidth ?? e.style?.strokeWidth,
+                },
+                animated: edgeVisuals.animated,
+                data: { ...e.data, color: styleDef.color, pattern: styleDef.pattern },
                 labelStyle: { ...e.labelStyle, fill: styleDef.color },
                 labelBgStyle: { ...e.labelBgStyle, stroke: styleDef.color },
             };
@@ -1250,8 +1225,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 updatable: true,
                 interactionWidth: 20,
                 animated: visuals.animated,
-                data: { reasoning: 'Manual connection', color: visuals.color, generatedBy: 'manual', snapEnabled: snapConnectionLabels, boardMode },
-                style: { stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
+                data: {
+                    reasoning: 'Manual connection',
+                    color: visuals.color,
+                    pattern: visuals.pattern,
+                    generatedBy: 'manual',
+                    snapEnabled: snapConnectionLabels,
+                    boardMode
+                },
+                style: {
+                    stroke: visuals.color,
+                    strokeWidth: visuals.strokeWidth ?? 2,
+                    strokeDasharray: visuals.strokeDasharray,
+                    strokeLinecap: visuals.strokeLinecap,
+                },
                 labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                 labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
                 labelBgPadding: [8, 4] as [number, number],
@@ -1274,12 +1261,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     data: {
                         ...edge.data,
                         color: visuals.color,
+                        pattern: visuals.pattern,
                         reasoning: edge.data?.reasoning || 'Manual connection',
                         generatedBy: edge.data?.generatedBy || 'manual',
                         snapEnabled: snapConnectionLabels,
                         boardMode,
                     },
-                    style: { ...edge.style, stroke: visuals.color, strokeWidth: 2, strokeDasharray: visuals.strokeDasharray },
+                    style: {
+                        ...edge.style,
+                        stroke: visuals.color,
+                        strokeWidth: visuals.strokeWidth ?? 2,
+                        strokeDasharray: visuals.strokeDasharray,
+                        strokeLinecap: visuals.strokeLinecap,
+                    },
                     labelStyle: { ...edge.labelStyle, fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
                     labelBgStyle: { ...edge.labelBgStyle, fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
                     labelBgPadding: [8, 4] as [number, number],
@@ -1356,39 +1350,38 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         });
 
         if (stylesUpdated) {
-            setTagStyles(nextStyles);
-            localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+            persistTagStyles(nextStyles);
         }
 
         const newEdges: Edge[] = validConnections.map((c: any) => {
-            const tag = c.tag?.toUpperCase() || 'UNKNOWN';
-            const styleDef = nextStyles[tag] || { color: '#bc13fe', pattern: 'solid' };
-            const edgeColor = styleDef.color;
-            let strokeDasharray = undefined;
-            let animated = false;
-
-            if (styleDef.pattern === 'dashed') {
-                strokeDasharray = '6,4';
-                animated = true;
-            } else if (styleDef.pattern === 'dotted') {
-                strokeDasharray = '2,4';
-                animated = true;
-            }
+            const visuals = buildEdgeVisuals(c.tag, nextStyles);
 
             return {
                 id: `e-${c.source}-${c.target}-${c.tag}`,
                 source: c.source,
                 target: c.target,
                 type: 'customEdge',
-                label: tag,
+                label: visuals.tag,
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 updatable: true,
                 interactionWidth: 20,
-                animated,
-                data: { reasoning: c.reasoning, color: edgeColor, generatedBy: 'connectTheDots', snapEnabled: snapConnectionLabels, boardMode },
-                style: { stroke: edgeColor, strokeWidth: 2, strokeDasharray },
-                labelStyle: { fill: edgeColor, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
-                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: edgeColor, strokeWidth: 1 },
+                animated: visuals.animated,
+                data: {
+                    reasoning: c.reasoning,
+                    color: visuals.color,
+                    pattern: visuals.pattern,
+                    generatedBy: 'connectTheDots',
+                    snapEnabled: snapConnectionLabels,
+                    boardMode
+                },
+                style: {
+                    stroke: visuals.color,
+                    strokeWidth: visuals.strokeWidth ?? 2,
+                    strokeDasharray: visuals.strokeDasharray,
+                    strokeLinecap: visuals.strokeLinecap,
+                },
+                labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
                 labelBgPadding: [8, 4] as [number, number],
                 labelBgBorderRadius: 2,
             };
@@ -1434,7 +1427,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         });
         setHasConnectedDots(true);
         setIsAnalyzing(false);
-    }, [boardMode, fitView, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
+    }, [boardMode, buildEdgeVisuals, fitView, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -2227,8 +2220,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                 value={tagStyles[editingTag].color || '#bc13fe'}
                                 onChange={(e) => {
                                     const newStyles = { ...tagStyles, [editingTag]: { ...tagStyles[editingTag], color: e.target.value } };
-                                    setTagStyles(newStyles);
-                                    localStorage.setItem('board_tag_styles', JSON.stringify(newStyles));
+                                    persistTagStyles(newStyles);
                                 }}
                                 className="w-full h-8 bg-black border border-gray-700 cursor-pointer"
                             />
@@ -2236,16 +2228,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                         <div>
                             <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">LINE PATTERN</label>
-                            <div className="flex gap-2 text-[10px]">
-                                {['solid', 'dashed', 'dotted'].map(pat => (
+                            <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                {SUPPORTED_RELATIONSHIP_PATTERNS.map((pat) => (
                                     <button
                                         key={pat}
                                         onClick={() => {
-                                            const newStyles = { ...tagStyles, [editingTag]: { ...tagStyles[editingTag], pattern: pat as any } };
-                                            setTagStyles(newStyles);
-                                            localStorage.setItem('board_tag_styles', JSON.stringify(newStyles));
+                                            const newStyles = {
+                                                ...tagStyles,
+                                                [editingTag]: { ...tagStyles[editingTag], pattern: pat as RelationshipPattern }
+                                            };
+                                            persistTagStyles(newStyles);
                                         }}
-                                        className={`flex-1 py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].pattern === pat ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                                        className={`py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].pattern === pat ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
                                     >
                                         {pat}
                                     </button>

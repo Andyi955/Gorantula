@@ -130,4 +130,31 @@ describe('DetectiveBoard relationship legend', () => {
     })
     expect(screen.queryByText('EDIT: RELATED')).not.toBeInTheDocument()
   })
+
+  it('persists expanded line pattern selections from the legend editor', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'board_tag_styles',
+      JSON.stringify({
+        RELATED: { color: '#bc13fe', pattern: 'solid' },
+      }),
+    )
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [],
+        edges: [{ id: 'edge-1', source: 'a', target: 'b', label: 'RELATED', data: {} }],
+      }),
+    )
+
+    renderBoard()
+
+    await user.click(await screen.findByText('RELATED'))
+    await user.click(screen.getByRole('button', { name: 'dash-dot' }))
+
+    expect(JSON.parse(localStorage.getItem('board_tag_styles') || '{}')).toEqual({
+      RELATED: { color: '#bc13fe', pattern: 'dash-dot' },
+    })
+  })
 })

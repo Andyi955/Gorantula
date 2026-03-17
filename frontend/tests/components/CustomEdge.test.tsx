@@ -4,7 +4,13 @@ import CustomEdge from '../../src/components/CustomEdge'
 const setEdges = vi.fn()
 
 vi.mock('reactflow', () => ({
-  BaseEdge: () => <path data-testid="base-edge" />,
+  BaseEdge: ({ style }: { style?: React.CSSProperties }) => (
+    <path
+      data-testid="base-edge"
+      data-stroke-dasharray={style?.strokeDasharray}
+      data-stroke-linecap={style?.strokeLinecap}
+    />
+  ),
   EdgeLabelRenderer: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   getSmoothStepPath: () => ['M 0 0 L 100 100', 50, 50],
   useReactFlow: () => ({
@@ -38,5 +44,25 @@ describe('CustomEdge', () => {
 
     expect(screen.getByTestId('base-edge')).toBeInTheDocument()
     expect(setEdges).toHaveBeenCalled()
+  })
+
+  it('applies shared relationship pattern visuals from edge data', () => {
+    render(
+      <CustomEdge
+        id="edge-2"
+        sourceX={0}
+        sourceY={0}
+        targetX={100}
+        targetY={100}
+        sourcePosition="Right"
+        targetPosition="Left"
+        label="FUNDED_BY"
+        data={{ pattern: 'dash-dot', color: '#00ffaa' }}
+      />,
+    )
+
+    const edge = screen.getByTestId('base-edge')
+    expect(edge).toHaveAttribute('data-stroke-dasharray', '10 4 2 4')
+    expect(edge).toHaveAttribute('data-stroke-linecap', 'round')
   })
 })
