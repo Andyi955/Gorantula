@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,12 @@ type SynthesisIndex struct {
 	Vaults      map[string]bool                            `json:"vaults"`
 	EntityMap   map[string]map[string][]NodeContextPayload `json:"entityMap"`
 	NodeArchive map[string]map[string]models.MemoryNode    `json:"nodeArchive"` // VaultID -> NodeID -> Full Node
+	Derived     map[string]DerivedVaultRecord              `json:"derived"`
+}
+
+type DerivedVaultRecord struct {
+	ParentVaultIDs []string `json:"parentVaultIds"`
+	CreatedAt      string   `json:"createdAt"`
 }
 
 // SynthesisAlert represents the payload sent to the frontend when a connection is found.
@@ -60,6 +67,7 @@ func NewSynthesisEngine(vaultDir string, alertChan chan SynthesisAlert) *Synthes
 			Vaults:      make(map[string]bool),
 			EntityMap:   make(map[string]map[string][]NodeContextPayload),
 			NodeArchive: make(map[string]map[string]models.MemoryNode),
+			Derived:     make(map[string]DerivedVaultRecord),
 		},
 		activeChan: alertChan,
 	}
@@ -86,6 +94,7 @@ func (s *SynthesisEngine) loadIndex() {
 			Vaults:      make(map[string]bool),
 			EntityMap:   make(map[string]map[string][]NodeContextPayload),
 			NodeArchive: make(map[string]map[string]models.MemoryNode),
+			Derived:     make(map[string]DerivedVaultRecord),
 		}
 	}
 	if s.Index.Vaults == nil {
@@ -96,6 +105,9 @@ func (s *SynthesisEngine) loadIndex() {
 	}
 	if s.Index.NodeArchive == nil {
 		s.Index.NodeArchive = make(map[string]map[string]models.MemoryNode)
+	}
+	if s.Index.Derived == nil {
+		s.Index.Derived = make(map[string]DerivedVaultRecord)
 	}
 }
 
@@ -141,6 +153,7 @@ func (s *SynthesisEngine) PurgeVault(vaultID string) {
 
 	// 3. Remove from NodeArchive
 	delete(s.Index.NodeArchive, vaultID)
+	delete(s.Index.Derived, vaultID)
 
 	// 4. Save index
 	s.saveIndexLocked()
@@ -161,6 +174,7 @@ func (s *SynthesisEngine) PurgeOrphans(activeVaults map[string]bool) {
 	for _, vaultID := range orphans {
 		delete(s.Index.Vaults, vaultID)
 		delete(s.Index.NodeArchive, vaultID)
+		delete(s.Index.Derived, vaultID)
 		for entity, contextsMap := range s.Index.EntityMap {
 			delete(contextsMap, vaultID)
 			if len(contextsMap) == 0 {
@@ -263,6 +277,74 @@ func (s *SynthesisEngine) computeIDF(entity string) float64 {
 		df = 1
 	}
 	return math.Log10((total + 1.5) / (df + 0.5)) // smooth
+}
+
+var taggedEntityPattern = regexp.MustCompile(`\[(?:PERSON|ORG|LOC|DATE|TIME):([^\]]+)\]`)
+
+func extractTaggedEntities(nodes []models.MemoryNode) map[string][]NodeContextPayload {
+	entityContexts := make(map[string][]NodeContextPayload)
+
+	for _, node := range nodes {
+		matches := taggedEntityPattern.FindAllStringSubmatch(strings.Join([]string{node.Title, node.Summary, node.FullText}, "\n"), -1)
+		seen := make(map[string]bool)
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+
+			entity := strings.ToLower(strings.TrimSpace(match[1]))
+			if entity == "" || seen[entity] {
+				continue
+			}
+			seen[entity] = true
+
+			entityContexts[entity] = append(entityContexts[entity], NodeContextPayload{
+				VaultID:   "",
+				NodeID:    node.ID,
+				Title:     node.Title,
+				Summary:   node.Summary,
+				FullText:  node.FullText,
+				SourceURL: node.SourceURL,
+			})
+		}
+	}
+
+	return entityContexts
+}
+
+func (s *SynthesisEngine) RegisterDerivedVault(vaultID string, parentIDs []string, nodes []models.MemoryNode) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Index.Vaults[vaultID] = true
+	s.Index.Derived[vaultID] = DerivedVaultRecord{
+		ParentVaultIDs: append([]string(nil), parentIDs...),
+		CreatedAt:      time.Now().Format(time.RFC3339),
+	}
+
+	if s.Index.NodeArchive[vaultID] == nil {
+		s.Index.NodeArchive[vaultID] = make(map[string]models.MemoryNode)
+	}
+
+	for _, node := range nodes {
+		s.Index.NodeArchive[vaultID][node.ID] = node
+	}
+
+	for entity, contexts := range extractTaggedEntities(nodes) {
+		if s.Index.EntityMap[entity] == nil {
+			s.Index.EntityMap[entity] = make(map[string][]NodeContextPayload)
+		}
+
+		withVaultIDs := make([]NodeContextPayload, 0, len(contexts))
+		for _, context := range contexts {
+			context.VaultID = vaultID
+			withVaultIDs = append(withVaultIDs, context)
+		}
+
+		s.Index.EntityMap[entity][vaultID] = withVaultIDs
+	}
+
+	s.saveIndexLocked()
 }
 
 type OverlapAnalysis struct {

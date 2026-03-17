@@ -226,3 +226,39 @@ func TestNodeArchive(t *testing.T) {
 		t.Errorf("NodeArchive entry for vault was not purged")
 	}
 }
+
+func TestRegisterDerivedVault(t *testing.T) {
+	tempDir := t.TempDir()
+	alertChan := make(chan SynthesisAlert, 10)
+	engine := NewSynthesisEngine(tempDir, alertChan)
+
+	nodes := []models.MemoryNode{
+		{
+			ID:       "merged-node-1",
+			Title:    "Merged Intel",
+			Summary:  "Linked to [PERSON:Alice] and [ORG:Beta Corp].",
+			FullText: "Linked to [PERSON:Alice] and [ORG:Beta Corp].",
+		},
+	}
+
+	engine.RegisterDerivedVault("merge-vault", []string{"vault-a", "vault-b"}, nodes)
+
+	engine.mu.RLock()
+	defer engine.mu.RUnlock()
+
+	if !engine.Index.Vaults["merge-vault"] {
+		t.Fatalf("expected merge-vault to be tracked as an active vault")
+	}
+
+	if _, exists := engine.Index.Derived["merge-vault"]; !exists {
+		t.Fatalf("expected merge-vault to be tracked as derived")
+	}
+
+	if archive := engine.Index.NodeArchive["merge-vault"]; len(archive) != 1 {
+		t.Fatalf("expected merge-vault archive to contain 1 node, got %d", len(archive))
+	}
+
+	if contexts := engine.Index.EntityMap["alice"]["merge-vault"]; len(contexts) != 1 {
+		t.Fatalf("expected alice to be indexed for merge-vault, got %d contexts", len(contexts))
+	}
+}

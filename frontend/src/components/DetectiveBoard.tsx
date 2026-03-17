@@ -25,8 +25,9 @@ import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
+import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -55,12 +56,6 @@ const createTagStyle = (tag: string): TagStyle => {
     };
 };
 
-interface PersistedBoardState {
-    mode?: BoardMode;
-    nodes: Node[];
-    edges: Edge[];
-}
-
 const STRICT_GRID_EDGE_Z_INDEX = 0;
 const STRICT_GRID_NODE_Z_INDEX = 100;
 const STRICT_GRID_ROW_GAP = BOARD_GRID_SIZE * 6;
@@ -86,27 +81,6 @@ const normalizeStrictGridNodes = (nodes: Node[]) => nodes.map((node) => {
         }
     };
 });
-
-const parsePersistedBoardState = (raw: string | null): PersistedBoardState | null => {
-    if (!raw) {
-        return null;
-    }
-
-    try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed?.nodes) && Array.isArray(parsed?.edges)) {
-            return {
-                mode: parsed.mode === 'strict-grid' ? 'strict-grid' : 'legacy',
-                nodes: parsed.nodes,
-                edges: parsed.edges,
-            };
-        }
-    } catch (error) {
-        console.error('[DetectiveBoard] Failed to parse persisted board state:', error);
-    }
-
-    return null;
-};
 
 // Enhanced layout function with smart rectangle formation
 const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
@@ -238,8 +212,10 @@ interface DetectiveBoardProps {
     returnVaultId?: string | null;
     sharedSocket: WebSocket | null;
     onDeepDiveNode: (prompt: string, titleStr: string, sourceNodeId: string) => void;
-    onNavigateToChild: (id: string) => void;
+    onNavigateToChild: (id: string, parentId?: string) => void;
     focusNodeId?: string | null;
+    onReturnToParent?: () => void;
+    isMergedChild?: boolean;
 }
 
 type RelationshipDraft =
@@ -389,7 +365,7 @@ const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 
-const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId }) => {
+const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId, onReturnToParent, isMergedChild }) => {
     const { fitView } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
@@ -1066,7 +1042,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     ...n.data,
                     onReadFull: () => setSelectedContent(n.data.fullText),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
-                    onNavigateToChild: (id: string) => onNavigateToChild(id),
+                    onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
                     onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
@@ -1480,7 +1456,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         ...node,
                         onReadFull: () => setSelectedContent(node.fullText),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
-                        onNavigateToChild: (id: string) => onNavigateToChild(id),
+                        onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                         onDelete: (id: string) => handleDeleteNode(id),
                         onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
@@ -1634,7 +1610,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 fullText: '',
                 onReadFull: () => setSelectedContent(''),
                 onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
-                onNavigateToChild: (id: string) => onNavigateToChild(id),
+                onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
                 onDelete: (id: string) => handleDeleteNode(id),
                 onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
@@ -1867,6 +1843,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             <Zap size={15} className={isAnalyzing ? 'animate-spin' : ''} />
                             {isAnalyzing ? 'Analyzing Patterns...' : (hasConnectedDots ? 'Reconnect the Dots' : 'Connect the Dots')}
                         </button>
+
+                        {isMergedChild && returnVaultId && onReturnToParent && (
+                            <button
+                                onClick={onReturnToParent}
+                                className="flex min-h-11 items-center gap-2 rounded-xl border border-fuchsia-400/50 bg-fuchsia-500/10 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-fuchsia-200 transition-all hover:border-fuchsia-300 hover:bg-fuchsia-400 hover:text-black"
+                            >
+                                <ArrowLeft size={15} />
+                                Return To Parent
+                            </button>
+                        )}
 
                         <div className="relative" ref={exportMenuRef}>
                             <button

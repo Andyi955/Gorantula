@@ -28,6 +28,11 @@ export interface NodeData {
     sourceURL?: string;
     isDeepDiveSource?: boolean;
     linkedInvestigationId?: string;
+    portalKind?: 'merged-child';
+    parentInvestigationId?: string;
+    sourceVaultId?: string;
+    sourceNodeId?: string;
+    derivedFromMerge?: boolean;
     personaInsights?: PersonaInsight[]; // Full insight objects
     handleCounts?: {
         left: number;
@@ -38,7 +43,7 @@ export interface NodeData {
     activePortIds?: string[];
     onReadFull: () => void;
     onDeepDive?: (prompt: string, titleStr: string, sourceId: string) => void;
-    onNavigateToChild?: (id: string) => void;
+    onNavigateToChild?: (id: string, parentId?: string) => void;
     onExpand?: (nodeId: string, expanded: boolean) => void;
     onDelete?: (nodeId: string) => void;
     onUpdate?: (nodeId: string, data: any) => void;
@@ -223,6 +228,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     // Show expanded content when isExpanded is true
     const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
+    const isPortalNode = data.portalKind === 'merged-child';
 
     const onSave = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -249,7 +255,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
     return (
         <div
-            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
+            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]'))} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
             style={{
                 width: '100%',
                 height: '100%',
@@ -292,6 +298,11 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             {isImported && (
                 <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
                     IMPORTED
+                </div>
+            )}
+            {isPortalNode && (
+                <div className="absolute -top-2 -left-2 bg-fuchsia-400 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
+                    PORTAL
                 </div>
             )}
             {data.isDeepDiveSource && (
@@ -443,7 +454,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                         ) : (data.title || 'ARCHIVED_INTEL')}
                     </div>
                     <div className="flex items-center gap-1.5 ml-2">
-                        {!isEditing && (
+                        {!isEditing && !isPortalNode && (
                             <>
                                 <button
                                     onClick={(e) => {
@@ -642,29 +653,31 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 {/* Actions Footer */}
                 <div className="flex items-center justify-between mt-auto pt-3 border-t border-white/5 shrink-0">
                     <div className="flex gap-2 flex-wrap">
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                data.onReadFull();
-                            }}
-                            className="flex items-center gap-1.5 text-[10px] font-black text-cyber-purple hover:text-white transition-all uppercase tracking-tight"
-                            title="Open Dossier"
-                        >
-                            <BookOpen size={12} />
-                            DOSSIER
-                        </button>
+                        {!isPortalNode && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    data.onReadFull();
+                                }}
+                                className="flex items-center gap-1.5 text-[10px] font-black text-cyber-purple hover:text-white transition-all uppercase tracking-tight"
+                                title="Open Dossier"
+                            >
+                                <BookOpen size={12} />
+                                DOSSIER
+                            </button>
+                        )}
 
                         {data.linkedInvestigationId ? (
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (data.onNavigateToChild) data.onNavigateToChild(data.linkedInvestigationId!);
+                                    if (data.onNavigateToChild) data.onNavigateToChild(data.linkedInvestigationId!, data.parentInvestigationId);
                                 }}
-                                className="flex items-center gap-1.5 text-[10px] font-black text-cyber-cyan hover:text-white transition-all uppercase tracking-tight bg-cyber-cyan/10 px-2 py-1 rounded"
-                                title="Go to detailed canvas"
+                                className={`flex items-center gap-1.5 text-[10px] font-black transition-all uppercase tracking-tight px-2 py-1 rounded ${isPortalNode ? 'text-fuchsia-300 hover:text-white bg-fuchsia-500/10' : 'text-cyber-cyan hover:text-white bg-cyber-cyan/10'}`}
+                                title={isPortalNode ? 'Go to merged child canvas' : 'Go to detailed canvas'}
                             >
                                 <ArrowRight size={12} />
-                                OPEN SUB-FILE
+                                {isPortalNode ? 'OPEN CHILD CANVAS' : 'OPEN SUB-FILE'}
                             </button>
                         ) : (
                             <button
@@ -702,7 +715,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 </button>
                             </>
                         )}
-                        {data.sourceURL && (
+                        {!isPortalNode && data.sourceURL && (
                             <a
                                 href={data.sourceURL?.split(',')[0].trim()}
                                 target="_blank"

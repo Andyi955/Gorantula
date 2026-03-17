@@ -7,6 +7,11 @@ interface NodeContextPayload {
     summary: string;
 }
 
+export interface MergeCandidateNode {
+    vaultId: string;
+    nodeId: string;
+}
+
 interface SynthesisAlert {
     type: string;
     entity: string;
@@ -22,10 +27,11 @@ interface SynthesisPanelProps {
     currentInvestigationId: string | null;
     onNavigateVault?: (id: string, nodeId?: string) => void;
     returnVaultId: string | null;
-    investigations?: { id: string; topic: string }[];
+    investigations?: { id: string; topic: string; displayTopic?: string }[];
+    onMergeInvestigations?: (entity: string, connectedCases: string[], relevantNodes: MergeCandidateNode[]) => void;
 }
 
-export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [] }: SynthesisPanelProps) {
+export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations }: SynthesisPanelProps) {
     const [alerts, setAlerts] = useState<SynthesisAlert[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const [hasUnread, setHasUnread] = useState(false);
@@ -159,6 +165,19 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                 <p className="text-gray-300 text-xs leading-relaxed">
                                     {alert.analysis}
                                 </p>
+                                {alert.connectedCases.length >= 2 && onMergeInvestigations && (
+                                    <button
+                                        onClick={() => onMergeInvestigations(
+                                            alert.entity,
+                                            alert.connectedCases,
+                                            alert.nodes.map((node) => ({ vaultId: node.vaultId, nodeId: node.nodeId })),
+                                        )}
+                                        className="mt-3 inline-flex items-center gap-2 rounded border border-cyber-cyan/40 bg-cyber-cyan/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                                    >
+                                        <Network size={12} />
+                                        Merge Investigation
+                                    </button>
+                                )}
                             </div>
 
                             <div className="mt-4 pt-3 border-t border-cyber-purple/20">
@@ -175,7 +194,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                             <div key={cIdx} className="bg-cyber-gray/20 text-gray-300 p-2 text-xs rounded border border-cyber-gray/30 flex flex-col gap-2">
                                                 <div className="flex justify-between items-center">
                                                     <span className="font-mono text-[10px] text-cyber-cyan truncate max-w-[200px]" title={caseId}>
-                                                        {investigations.find(inv => inv.id === caseId)?.topic || caseId}
+                                                        {investigations.find(inv => inv.id === caseId)?.displayTopic || investigations.find(inv => inv.id === caseId)?.topic || caseId}
                                                         {caseId === currentInvestigationId && ' (CURRENT)'}
                                                     </span>
                                                     {caseId !== currentInvestigationId && (
