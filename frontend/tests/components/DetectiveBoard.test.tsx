@@ -99,7 +99,7 @@ describe('DetectiveBoard relationship legend', () => {
     localStorage.setItem(
       'board_tag_styles',
       JSON.stringify({
-        RELATED: { color: '#bc13fe', pattern: 'solid' },
+        RELATED: { color: '#bc13fe', pattern: 'solid', shape: 'none' },
       }),
     )
     localStorage.setItem(
@@ -154,7 +154,34 @@ describe('DetectiveBoard relationship legend', () => {
     await user.click(screen.getByRole('button', { name: 'dash-dot' }))
 
     expect(JSON.parse(localStorage.getItem('board_tag_styles') || '{}')).toEqual({
-      RELATED: { color: '#bc13fe', pattern: 'dash-dot' },
+      RELATED: { color: '#bc13fe', pattern: 'dash-dot', shape: 'none' },
+    })
+  })
+
+  it('persists line shape selections from the legend editor', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'board_tag_styles',
+      JSON.stringify({
+        RELATED: { color: '#bc13fe', pattern: 'solid', shape: 'none' },
+      }),
+    )
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [],
+        edges: [{ id: 'edge-1', source: 'a', target: 'b', label: 'RELATED', data: {} }],
+      }),
+    )
+
+    renderBoard()
+
+    await user.click(await screen.findByText('RELATED'))
+    await user.click(screen.getByRole('button', { name: 'staggered' }))
+
+    expect(JSON.parse(localStorage.getItem('board_tag_styles') || '{}')).toEqual({
+      RELATED: { color: '#bc13fe', pattern: 'solid', shape: 'staggered' },
     })
   })
 })

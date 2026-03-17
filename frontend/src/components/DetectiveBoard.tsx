@@ -31,8 +31,9 @@ import {
     getRelationshipEdgeVisuals,
     sanitizeTagStyles,
     SUPPORTED_RELATIONSHIP_PATTERNS,
+    SUPPORTED_RELATIONSHIP_SHAPES,
 } from '../utils/relationshipStyles';
-import type { RelationshipPattern, TagStyle } from '../utils/relationshipStyles';
+import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft } from 'lucide-react';
 import dagre from 'dagre';
@@ -436,12 +437,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const buildEdgeVisuals = useCallback((tag: string, styles: Record<string, TagStyle>) => {
         const normalizedTag = normalizeRelationshipTag(tag);
         const styleDef = styles[normalizedTag] || createTagStyle(normalizedTag);
-        const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern);
+        const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern, styleDef.shape);
 
         return {
             tag: normalizedTag,
             color: styleDef.color,
             pattern: styleDef.pattern,
+            shape: styleDef.shape,
             ...edgeVisuals,
         };
     }, []);
@@ -974,7 +976,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const tag = normalizeRelationshipTag(typeof e.label === 'string' ? e.label : e.data?.tag);
             const styleDef = tagStyles[tag];
             if (!styleDef) return e;
-            const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern);
+            const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern, styleDef.shape);
 
             return {
                 ...e,
@@ -987,7 +989,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     strokeWidth: edgeVisuals.strokeWidth ?? e.style?.strokeWidth,
                 },
                 animated: edgeVisuals.animated,
-                data: { ...e.data, color: styleDef.color, pattern: styleDef.pattern },
+                data: { ...e.data, color: styleDef.color, pattern: styleDef.pattern, shape: styleDef.shape },
                 labelStyle: { ...e.labelStyle, fill: styleDef.color },
                 labelBgStyle: { ...e.labelBgStyle, stroke: styleDef.color },
             };
@@ -1229,6 +1231,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     reasoning: 'Manual connection',
                     color: visuals.color,
                     pattern: visuals.pattern,
+                    shape: visuals.shape,
                     generatedBy: 'manual',
                     snapEnabled: snapConnectionLabels,
                     boardMode
@@ -1262,6 +1265,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         ...edge.data,
                         color: visuals.color,
                         pattern: visuals.pattern,
+                        shape: visuals.shape,
                         reasoning: edge.data?.reasoning || 'Manual connection',
                         generatedBy: edge.data?.generatedBy || 'manual',
                         snapEnabled: snapConnectionLabels,
@@ -1370,6 +1374,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     reasoning: c.reasoning,
                     color: visuals.color,
                     pattern: visuals.pattern,
+                    shape: visuals.shape,
                     generatedBy: 'connectTheDots',
                     snapEnabled: snapConnectionLabels,
                     boardMode
@@ -2242,6 +2247,27 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                         className={`py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].pattern === pat ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
                                     >
                                         {pat}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">LINE SHAPE</label>
+                            <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                {SUPPORTED_RELATIONSHIP_SHAPES.map((shape) => (
+                                    <button
+                                        key={shape}
+                                        onClick={() => {
+                                            const newStyles = {
+                                                ...tagStyles,
+                                                [editingTag]: { ...tagStyles[editingTag], shape: shape as RelationshipShape }
+                                            };
+                                            persistTagStyles(newStyles);
+                                        }}
+                                        className={`py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].shape === shape ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                                    >
+                                        {shape}
                                     </button>
                                 ))}
                             </div>
