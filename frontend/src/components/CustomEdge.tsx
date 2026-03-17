@@ -3,7 +3,7 @@ import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 're
 import { Pencil, Unlink2 } from 'lucide-react';
 import { BOARD_GRID_SIZE, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode, PortSide, StrictGridPoint } from './boardGeometry';
-import { getRelationshipEdgeVisuals, normalizeRelationshipPattern } from '../utils/relationshipStyles';
+import { getRelationshipEdgeVisuals, normalizeRelationshipPattern, normalizeRelationshipShape } from '../utils/relationshipStyles';
 
 const SNAP_THRESHOLD = 18;
 const AXIS_LOCK_THRESHOLD = 20;
@@ -341,7 +341,8 @@ export default function CustomEdge({
     const currentLabelPoint = isStrictGrid ? strictRoute.labelPoint : legacyLabelPoint;
     const resolvedEdgeStyle = useMemo(() => {
         const pattern = normalizeRelationshipPattern(data?.pattern);
-        const visuals = getRelationshipEdgeVisuals(pattern);
+        const shape = normalizeRelationshipShape(data?.shape);
+        const visuals = getRelationshipEdgeVisuals(pattern, shape);
 
         return {
             ...style,
@@ -350,7 +351,7 @@ export default function CustomEdge({
             strokeLinecap: visuals.strokeLinecap ?? style?.strokeLinecap,
             strokeWidth: visuals.strokeWidth ?? style?.strokeWidth,
         };
-    }, [data?.color, data?.pattern, style]);
+    }, [data?.color, data?.pattern, data?.shape, style]);
 
     const onMouseDown = useCallback(
         (evt: React.MouseEvent) => {

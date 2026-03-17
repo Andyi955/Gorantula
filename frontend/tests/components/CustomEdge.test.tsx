@@ -65,4 +65,24 @@ describe('CustomEdge', () => {
     expect(edge).toHaveAttribute('data-stroke-dasharray', '10 4 2 4')
     expect(edge).toHaveAttribute('data-stroke-linecap', 'round')
   })
+
+  it('uses the selected line shape to change dash geometry rather than rendering markers', () => {
+    render(
+      <CustomEdge
+        id="edge-3"
+        sourceX={0}
+        sourceY={0}
+        targetX={100}
+        targetY={100}
+        sourcePosition="Right"
+        targetPosition="Left"
+        label="SEEN_WITH"
+        data={{ pattern: 'dotted', shape: 'square', color: '#00ffaa' }}
+      />,
+    )
+
+    const edge = screen.getByTestId('base-edge')
+    expect(edge).toHaveAttribute('data-stroke-dasharray', '1 7')
+    expect(edge).toHaveAttribute('data-stroke-linecap', 'square')
+  })
 })
