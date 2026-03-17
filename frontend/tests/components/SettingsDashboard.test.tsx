@@ -9,6 +9,7 @@ describe('SettingsDashboard', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('loads settings and saves updated values', async () => {

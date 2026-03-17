@@ -9,6 +9,7 @@ describe('VaultChatbot', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('loads vault files and sends a chat request with selected files', async () => {

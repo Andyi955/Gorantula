@@ -1,10 +1,9 @@
+import * as React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 
 vi.mock('reactflow', () => {
-  const React = require('react')
-
   return {
     __esModule: true,
     default: ({ children }: { children?: React.ReactNode }) => React.createElement('div', { 'data-testid': 'reactflow' }, children),
