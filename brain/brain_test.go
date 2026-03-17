@@ -122,6 +122,17 @@ func TestValidateSubQueries(t *testing.T) {
 
 func TestCreateMergedInvestigation(t *testing.T) {
 	tempDir := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origWD)
+	})
+
 	if err := os.MkdirAll("abdomen_vault", 0755); err != nil {
 		t.Fatalf("failed to create abdomen_vault: %v", err)
 	}

@@ -635,6 +635,16 @@ type mergedVaultMetadata struct {
 	Derived      bool     `json:"derived"`
 }
 
+func safeNodeFilename(id string) (string, error) {
+	if id == "" {
+		return "", fmt.Errorf("invalid node id: empty")
+	}
+	if filepath.Base(id) != id || strings.ContainsAny(id, `/\`) {
+		return "", fmt.Errorf("invalid node id: contains path separators")
+	}
+	return fmt.Sprintf("node_%s.json", id), nil
+}
+
 func (b *Brain) summarizeNode(ctx context.Context, content string) (string, string, error) {
 	provider := b.GetSearchProvider()
 	if provider == nil {
@@ -1075,8 +1085,10 @@ func (b *Brain) PullNode(ctx context.Context, sourceVaultID, sourceNodeID, targe
 	targetDir := filepath.Join("abdomen_vault", targetVaultID)
 	if err := os.MkdirAll(targetDir, 0755); err == nil {
 		nodeJSON, _ := json.MarshalIndent(importedNode, "", "  ")
-		fileName := fmt.Sprintf("node_%s.json", importedNode.ID)
-		os.WriteFile(filepath.Join(targetDir, fileName), nodeJSON, 0644)
+		fileName, fileErr := safeNodeFilename(importedNode.ID)
+		if fileErr == nil {
+			os.WriteFile(filepath.Join(targetDir, fileName), nodeJSON, 0644)
+		}
 	}
 
 	return nil
@@ -1129,7 +1141,11 @@ func (b *Brain) CreateMergedInvestigation(_ context.Context, payload models.Merg
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(targetDir, fmt.Sprintf("node_%s.json", node.ID)), nodeJSON, 0644); err != nil {
+		fileName, err := safeNodeFilename(node.ID)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(targetDir, fileName), nodeJSON, 0644); err != nil {
 			return err
 		}
 	}
