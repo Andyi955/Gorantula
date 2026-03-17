@@ -3,6 +3,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 
+const fitViewMock = vi.fn()
+const setCenterMock = vi.fn()
+const getZoomMock = vi.fn(() => 0.82)
+
 vi.mock('reactflow', () => {
   return {
     __esModule: true,
@@ -16,15 +20,21 @@ vi.mock('reactflow', () => {
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
     Background: () => null,
     Controls: () => null,
-    MiniMap: (props: React.HTMLAttributes<HTMLDivElement>) => React.createElement('div', props),
+    MiniMap: ({ onClick, ...props }: React.HTMLAttributes<HTMLDivElement> & { onClick?: (event: React.MouseEvent, position: { x: number; y: number }) => void }) =>
+      React.createElement('div', {
+        ...props,
+        onClick: (event: React.MouseEvent) => onClick?.(event, { x: 420, y: 310 }),
+      }),
     Handle: () => null,
     applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
     applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
     addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
     reconnectEdge: (_oldEdge: unknown, _newConnection: unknown, edges: unknown[]) => edges,
     useReactFlow: () => ({
-      fitView: vi.fn(),
+      fitView: fitViewMock,
       screenToFlowPosition: ({ x, y }: { x: number; y: number }) => ({ x, y }),
+      setCenter: setCenterMock,
+      getZoom: getZoomMock,
     }),
     BackgroundVariant: { Lines: 'lines' },
     ConnectionMode: { Loose: 'Loose', Strict: 'Strict' },
@@ -63,6 +73,10 @@ const renderBoard = (investigationId = 'investigation-1') =>
 describe('DetectiveBoard relationship legend', () => {
   beforeEach(() => {
     localStorage.clear()
+    fitViewMock.mockReset()
+    setCenterMock.mockReset()
+    getZoomMock.mockReset()
+    getZoomMock.mockReturnValue(0.82)
     vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -246,5 +260,17 @@ describe('DetectiveBoard relationship legend', () => {
 
     await user.click(screen.getByRole('button', { name: /shrink minimap/i }))
     expect(minimap).toHaveStyle({ width: '168px', height: '168px' })
+  })
+
+  it('recenters the board when the minimap is clicked without changing board zoom', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+
+    await user.click(screen.getByTestId('reactflow-minimap'))
+
+    expect(setCenterMock).toHaveBeenCalledWith(420, 310, {
+      zoom: 0.82,
+      duration: 180,
+    })
   })
 })

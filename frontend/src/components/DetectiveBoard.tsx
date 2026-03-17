@@ -402,6 +402,7 @@ const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const MINIMAP_NODE_STROKE = '#06080b';
+const MINIMAP_MASK_STROKE = 'rgba(120, 255, 255, 0.95)';
 const MINIMAP_PANEL_DIMENSIONS = {
     compact: { width: 168, height: 168 },
     expanded: { width: 256, height: 232 },
@@ -424,7 +425,7 @@ const getMiniMapNodeColor = (node: Node) => {
 };
 
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId, onReturnToParent, isMergedChild }) => {
-    const { fitView, screenToFlowPosition } = useReactFlow();
+    const { fitView, screenToFlowPosition, setCenter, getZoom } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
 
@@ -529,6 +530,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             ...edgeVisuals,
         };
     }, []);
+
+    const handleMiniMapClick = useCallback((_: React.MouseEvent, position: XYPosition) => {
+        setCenter(position.x, position.y, {
+            zoom: getZoom(),
+            duration: 180,
+        });
+    }, [getZoom, setCenter]);
 
     const decorateStrictGridEdges = useCallback((nextEdges: Edge[], nextNodes: Node[]) => {
         const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
@@ -2292,11 +2300,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     )}
                     <MiniMap
                         position="top-left"
+                        onClick={handleMiniMapClick}
                         pannable
-                        zoomable
+                        zoomable={false}
+                        maskStrokeColor={MINIMAP_MASK_STROKE}
+                        maskStrokeWidth={4}
                         nodeColor={getMiniMapNodeColor}
                         nodeStrokeColor={MINIMAP_NODE_STROKE}
-                        maskColor="rgba(3, 8, 12, 0.46)"
+                        nodeStrokeWidth={2}
+                        nodeBorderRadius={6}
+                        maskColor="rgba(7, 20, 28, 0.22)"
+                        offsetScale={6}
                         data-testid="reactflow-minimap"
                         style={{
                             width: minimapDimensions.width,
@@ -2306,7 +2320,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             background: 'rgba(4, 8, 12, 0.96)',
                             border: '1px solid rgba(0, 243, 255, 0.18)',
                             borderRadius: 10,
-                            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 16px rgba(0,243,255,0.08)',
+                            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 16px rgba(0,243,255,0.08), 0 0 0 1px rgba(120,255,255,0.08)',
                         }}
                     />
                     <Controls />
