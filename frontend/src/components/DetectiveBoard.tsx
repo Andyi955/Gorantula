@@ -18,7 +18,8 @@ import type {
     OnNodesChange,
     OnEdgesChange,
     Connection,
-    OnConnect
+    OnConnect,
+    XYPosition,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
@@ -206,6 +207,53 @@ interface DetectiveBoardProps {
     isMergedChild?: boolean;
 }
 
+interface MarqueeState {
+    active: boolean;
+    start: XYPosition;
+    current: XYPosition;
+    screenStart: XYPosition;
+    screenCurrent: XYPosition;
+}
+
+const getMarqueeRect = (start: XYPosition, current: XYPosition) => ({
+    x: Math.min(start.x, current.x),
+    y: Math.min(start.y, current.y),
+    width: Math.abs(current.x - start.x),
+    height: Math.abs(current.y - start.y),
+});
+
+const doesNodeIntersectRect = (node: Node, rect: ReturnType<typeof getMarqueeRect>) => {
+    const measuredNode = node as Node & { measured?: { width?: number; height?: number } };
+    const width = typeof node.width === 'number'
+        ? node.width
+        : typeof measuredNode.measured?.width === 'number'
+            ? measuredNode.measured.width
+            : typeof node.style?.width === 'number'
+                ? node.style.width
+                : 288;
+    const height = typeof node.height === 'number'
+        ? node.height
+        : typeof measuredNode.measured?.height === 'number'
+            ? measuredNode.measured.height
+            : typeof node.style?.height === 'number'
+                ? node.style.height
+                : 192;
+
+    const nodeLeft = node.position.x;
+    const nodeRight = node.position.x + width;
+    const nodeTop = node.position.y;
+    const nodeBottom = node.position.y + height;
+    const rectRight = rect.x + rect.width;
+    const rectBottom = rect.y + rect.height;
+
+    return !(
+        nodeRight < rect.x ||
+        nodeLeft > rectRight ||
+        nodeBottom < rect.y ||
+        nodeTop > rectBottom
+    );
+};
+
 type RelationshipDraft =
     | { mode: 'create'; connection: Connection; initialValue: string }
     | { mode: 'rename'; edgeId: string; initialValue: string };
@@ -354,7 +402,7 @@ const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId, onReturnToParent, isMergedChild }) => {
-    const { fitView } = useReactFlow();
+    const { fitView, screenToFlowPosition } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
 
@@ -385,14 +433,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
+    const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const boardControlsRef = useRef<HTMLDivElement>(null);
+    const flowWrapperRef = useRef<HTMLDivElement>(null);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
     const dragRouteFrameRef = useRef<number | null>(null);
     const persistTimerRef = useRef<number | null>(null);
+    const marqueePointerIdRef = useRef<number | null>(null);
+    const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -400,6 +452,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
         localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+    }, []);
+
+    const clearMarqueeSelection = useCallback(() => {
+        setMarquee(null);
+        marqueeSelectedIdsRef.current.clear();
+        marqueePointerIdRef.current = null;
     }, []);
 
     const closeRelationshipLegend = useCallback(() => {
@@ -948,6 +1006,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, []);
 
     useEffect(() => {
+        clearMarqueeSelection();
+    }, [clearMarqueeSelection, investigationId]);
+
+    useEffect(() => {
         console.log('[DetectiveBoard] Grid visibility changed:', showGrid);
         localStorage.setItem('detective_board_show_grid', String(showGrid));
     }, [showGrid]);
@@ -1112,7 +1174,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
 
             setNodes((nds) => {
-                const nextNodes = applyResizeDimensionsToStyles(applyNodeChanges(changes, nds), changes);
+                let nextNodes = applyResizeDimensionsToStyles(applyNodeChanges(changes, nds), changes);
+                if (marqueeSelectedIdsRef.current.size > 0) {
+                    nextNodes = nextNodes.map((node) => ({
+                        ...node,
+                        selected: marqueeSelectedIdsRef.current.has(node.id),
+                    }));
+                }
                 nextNodesSnapshot = nextNodes;
 
                 if (dimensionChanges.length > 0) {
@@ -1323,6 +1391,85 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
         persistBoardNow();
     }, [boardMode, persistBoardNow, syncStrictGridEdgesToNodes, syncStrictGridSubset]);
+
+    const updateMarqueeSelection = useCallback((nextMarquee: MarqueeState) => {
+        const rect = getMarqueeRect(nextMarquee.start, nextMarquee.current);
+        const selectedIds = nodesRef.current
+            .filter((node) => doesNodeIntersectRect(node, rect))
+            .map((node) => node.id);
+
+        marqueeSelectedIdsRef.current = new Set(selectedIds);
+        setMarquee(nextMarquee);
+        setNodes((currentNodes) => currentNodes.map((node) => ({
+            ...node,
+            selected: selectedIds.includes(node.id),
+        })));
+    }, []);
+
+    const finalizeMarqueeSelection = useCallback(() => {
+        setMarquee(null);
+        marqueePointerIdRef.current = null;
+    }, []);
+
+    const onPanePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (!event.ctrlKey || isDraggingNodeRef.current || relationshipDraft) {
+            return;
+        }
+
+        const target = event.target as HTMLElement | null;
+        if (!target?.closest('.react-flow__pane')) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const start = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        const wrapperRect = flowWrapperRef.current?.getBoundingClientRect();
+        const screenStart = wrapperRect
+            ? { x: event.clientX - wrapperRect.left, y: event.clientY - wrapperRect.top }
+            : start;
+        marqueePointerIdRef.current = event.pointerId;
+        updateMarqueeSelection({ active: true, start, current: start, screenStart, screenCurrent: screenStart });
+    }, [relationshipDraft, screenToFlowPosition, updateMarqueeSelection]);
+
+    const onPanePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (!marquee || marqueePointerIdRef.current !== event.pointerId) {
+            return;
+        }
+
+        const current = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        const wrapperRect = flowWrapperRef.current?.getBoundingClientRect();
+        const screenCurrent = wrapperRect
+            ? { x: event.clientX - wrapperRect.left, y: event.clientY - wrapperRect.top }
+            : current;
+        updateMarqueeSelection({ ...marquee, current, screenCurrent });
+    }, [marquee, screenToFlowPosition, updateMarqueeSelection]);
+
+    const onPanePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (!marquee || marqueePointerIdRef.current !== event.pointerId) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        finalizeMarqueeSelection();
+    }, [finalizeMarqueeSelection, marquee]);
+
+    useEffect(() => {
+        if (!marquee) {
+            return;
+        }
+
+        const handleKeyUp = (event: KeyboardEvent) => {
+            if (event.key === 'Control') {
+                finalizeMarqueeSelection();
+            }
+        };
+
+        window.addEventListener('keyup', handleKeyUp);
+        return () => window.removeEventListener('keyup', handleKeyUp);
+    }, [finalizeMarqueeSelection, marquee]);
 
     const handleNewConnections = useCallback((connections: any[]) => {
         console.log('[Board] Received connections:', connections);
@@ -2065,7 +2212,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 </div>
             </div>
 
-            <div className="w-full h-full" id="detective-board-flow">
+            <div
+                ref={flowWrapperRef}
+                className="relative w-full h-full"
+                id="detective-board-flow"
+                onPointerDown={onPanePointerDown}
+                onPointerMove={onPanePointerMove}
+                onPointerUp={onPanePointerUp}
+            >
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
@@ -2097,6 +2251,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     )}
                     <Controls />
                 </ReactFlow>
+                {marquee && (
+                    <div
+                        data-testid="marquee-selection"
+                        className="pointer-events-none absolute z-20 border-2 border-cyber-cyan/90 bg-cyber-cyan/5 shadow-[0_0_0_1px_rgba(0,243,255,0.2)]"
+                        style={{
+                            left: getMarqueeRect(marquee.screenStart, marquee.screenCurrent).x,
+                            top: getMarqueeRect(marquee.screenStart, marquee.screenCurrent).y,
+                            width: getMarqueeRect(marquee.screenStart, marquee.screenCurrent).width,
+                            height: getMarqueeRect(marquee.screenStart, marquee.screenCurrent).height,
+                        }}
+                    />
+                )}
             </div>
 
             {edgeReasoning && (
