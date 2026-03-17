@@ -3,6 +3,7 @@ import ReactFlow, {
     Background,
     BackgroundVariant,
     Controls,
+    MiniMap,
     applyEdgeChanges,
     applyNodeChanges,
     addEdge,
@@ -36,7 +37,7 @@ import {
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2 } from 'lucide-react';
 import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
@@ -400,6 +401,27 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
+const MINIMAP_NODE_STROKE = '#06080b';
+const MINIMAP_PANEL_DIMENSIONS = {
+    compact: { width: 168, height: 168 },
+    expanded: { width: 256, height: 232 },
+} as const;
+
+const getMiniMapNodeColor = (node: Node) => {
+    if (node.data?.portalKind === 'merged-child') {
+        return '#d946ef';
+    }
+
+    if (node.data?.isDeepDiveSource) {
+        return '#10b981';
+    }
+
+    if (typeof node.data?.title === 'string' && (node.data.title.includes('[IMPORTED]') || node.id.startsWith('imported-'))) {
+        return '#f59e0b';
+    }
+
+    return '#00f3ff';
+};
 
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId, onReturnToParent, isMergedChild }) => {
     const { fitView, screenToFlowPosition } = useReactFlow();
@@ -434,6 +456,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+    const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const boardControlsRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
@@ -474,6 +497,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const canConnectDots = !isAnalyzing && !isGathering && !isReorganizing && nodes.length >= 2;
     const canExport = hasNodes && !isReorganizing;
     const canArrange = hasNodes && !isBoardBusy;
+    const minimapDimensions = isMiniMapExpanded ? MINIMAP_PANEL_DIMENSIONS.expanded : MINIMAP_PANEL_DIMENSIONS.compact;
 
     const ensureTagStyles = useCallback((tags: string[]) => {
         const normalizedTags = tags.map(tag => normalizeRelationshipTag(tag));
@@ -1428,7 +1452,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         const target = event.target as HTMLElement | null;
-        if (!target?.closest('.react-flow__pane')) {
+        if (target !== event.currentTarget && !target?.closest('.react-flow__pane')) {
             return;
         }
 
@@ -2266,8 +2290,46 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             size={1}
                         />
                     )}
+                    <MiniMap
+                        position="top-left"
+                        pannable
+                        zoomable
+                        nodeColor={getMiniMapNodeColor}
+                        nodeStrokeColor={MINIMAP_NODE_STROKE}
+                        maskColor="rgba(3, 8, 12, 0.46)"
+                        data-testid="reactflow-minimap"
+                        style={{
+                            width: minimapDimensions.width,
+                            height: minimapDimensions.height,
+                            marginTop: 16,
+                            marginLeft: 16,
+                            background: 'rgba(4, 8, 12, 0.96)',
+                            border: '1px solid rgba(0, 243, 255, 0.18)',
+                            borderRadius: 10,
+                            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 16px rgba(0,243,255,0.08)',
+                        }}
+                    />
                     <Controls />
                 </ReactFlow>
+                <div
+                    data-testid="minimap-panel"
+                    className="pointer-events-none absolute left-4 top-4 z-20"
+                    style={{ width: minimapDimensions.width }}
+                >
+                    <div className="relative">
+                        <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-[rgba(3,7,10,0.74)] px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-cyber-cyan/70 backdrop-blur-sm">
+                            Navigator
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setIsMiniMapExpanded((current) => !current)}
+                            aria-label={isMiniMapExpanded ? 'Shrink minimap' : 'Enlarge minimap'}
+                            className="pointer-events-auto absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-cyber-cyan/25 bg-[rgba(3,7,10,0.88)] text-cyber-cyan/80 transition-colors hover:border-cyber-cyan/55 hover:bg-[rgba(8,18,24,0.95)] hover:text-cyber-cyan"
+                        >
+                            {isMiniMapExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                        </button>
+                    </div>
+                </div>
                 {marquee && (
                     <div
                         data-testid="marquee-selection"

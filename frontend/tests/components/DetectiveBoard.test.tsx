@@ -16,6 +16,7 @@ vi.mock('reactflow', () => {
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
     Background: () => null,
     Controls: () => null,
+    MiniMap: (props: React.HTMLAttributes<HTMLDivElement>) => React.createElement('div', props),
     Handle: () => null,
     applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
     applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
@@ -221,5 +222,29 @@ describe('DetectiveBoard relationship legend', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('marquee-selection')).not.toBeInTheDocument()
     })
+  })
+
+  it('renders the minimap navigation panel alongside existing board chrome', () => {
+    renderBoard()
+
+    expect(screen.getByText('Navigator')).toBeInTheDocument()
+    expect(screen.getByTestId('reactflow-minimap')).toBeInTheDocument()
+    expect(screen.getByTestId('minimap-panel')).toBeInTheDocument()
+    expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
+  })
+
+  it('toggles the minimap size from the expand control', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+
+    const minimap = screen.getByTestId('reactflow-minimap')
+    expect(minimap).toHaveStyle({ width: '168px', height: '168px' })
+
+    await user.click(screen.getByRole('button', { name: /enlarge minimap/i }))
+    expect(minimap).toHaveStyle({ width: '256px', height: '232px' })
+
+    await user.click(screen.getByRole('button', { name: /shrink minimap/i }))
+    expect(minimap).toHaveStyle({ width: '168px', height: '168px' })
   })
 })
