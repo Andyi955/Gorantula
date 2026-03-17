@@ -15,12 +15,88 @@ export interface MergeCandidateNode {
 interface SynthesisAlert {
     type: string;
     entity: string;
+    currentVaultId: string;
     connectedCases: string[];
     nodes: NodeContextPayload[];
     analysis: string;
     timestamp: string;
     score?: number;
 }
+
+type AlertBuckets = Record<string, SynthesisAlert[]>;
+
+const LEGACY_ALERTS_KEY = 'gorantula_synthesis_alerts';
+const ALERT_BUCKETS_KEY = 'gorantula_synthesis_alerts_by_investigation';
+
+const parseAlertBuckets = (raw: string | null): AlertBuckets => {
+    if (!raw) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return {};
+        }
+
+        return Object.entries(parsed).reduce<AlertBuckets>((acc, [investigationId, alerts]) => {
+            if (!Array.isArray(alerts)) {
+                return acc;
+            }
+
+            acc[investigationId] = alerts.filter((alert): alert is SynthesisAlert => {
+                return Boolean(
+                    alert &&
+                    typeof alert === 'object' &&
+                    typeof (alert as SynthesisAlert).entity === 'string' &&
+                    typeof (alert as SynthesisAlert).currentVaultId === 'string',
+                );
+            });
+            return acc;
+        }, {});
+    } catch {
+        return {};
+    }
+};
+
+const migrateLegacyAlerts = (): AlertBuckets => {
+    const migrated = parseAlertBuckets(localStorage.getItem(ALERT_BUCKETS_KEY));
+    if (Object.keys(migrated).length > 0) {
+        return migrated;
+    }
+
+    const legacyRaw = localStorage.getItem(LEGACY_ALERTS_KEY);
+    if (!legacyRaw) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(legacyRaw);
+        if (!Array.isArray(parsed)) {
+            localStorage.removeItem(LEGACY_ALERTS_KEY);
+            return {};
+        }
+
+        const buckets = parsed.reduce<AlertBuckets>((acc, alert) => {
+            if (
+                alert &&
+                typeof alert === 'object' &&
+                typeof alert.currentVaultId === 'string'
+            ) {
+                const current = acc[alert.currentVaultId] || [];
+                acc[alert.currentVaultId] = [...current, alert as SynthesisAlert].slice(0, 50);
+            }
+            return acc;
+        }, {});
+
+        localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(buckets));
+        localStorage.removeItem(LEGACY_ALERTS_KEY);
+        return buckets;
+    } catch {
+        localStorage.removeItem(LEGACY_ALERTS_KEY);
+        return {};
+    }
+};
 
 interface SynthesisPanelProps {
     sharedSocket: WebSocket | null;
@@ -32,19 +108,15 @@ interface SynthesisPanelProps {
 }
 
 export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations }: SynthesisPanelProps) {
-    const [alerts, setAlerts] = useState<SynthesisAlert[]>([]);
+    const [alertsByInvestigation, setAlertsByInvestigation] = useState<AlertBuckets>({});
     const [isOpen, setIsOpen] = useState(false);
-    const [hasUnread, setHasUnread] = useState(false);
+    const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
     const [pulledNodeId, setPulledNodeId] = useState<string | null>(null);
+    const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] || []) : [];
+    const hasUnread = currentInvestigationId ? Boolean(unreadByInvestigation[currentInvestigationId]) : false;
 
     useEffect(() => {
-        // Load from local storage
-        const saved = localStorage.getItem('gorantula_synthesis_alerts');
-        if (saved) {
-            try {
-                setAlerts(JSON.parse(saved));
-            } catch (e) { }
-        }
+        setAlertsByInvestigation(migrateLegacyAlerts());
     }, []);
 
     useEffect(() => {
@@ -55,29 +127,59 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'SYNTHESIS_ALERT') {
                     const newAlert = msg.payload as SynthesisAlert;
-                    setAlerts(prev => {
-                        const updated = [newAlert, ...prev];
-                        localStorage.setItem('gorantula_synthesis_alerts', JSON.stringify(updated.slice(0, 50))); // Keep last 50
+                    if (!newAlert.currentVaultId) {
+                        return;
+                    }
+                    setAlertsByInvestigation(prev => {
+                        const currentAlertsForVault = prev[newAlert.currentVaultId] || [];
+                        const updatedBucket = [newAlert, ...currentAlertsForVault].slice(0, 50);
+                        const updated = {
+                            ...prev,
+                            [newAlert.currentVaultId]: updatedBucket,
+                        };
+                        localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(updated));
                         return updated;
                     });
-                    setHasUnread(true);
-                    setIsOpen(true); // Auto-open the panel on new alert
+                    setUnreadByInvestigation(prev => ({
+                        ...prev,
+                        [newAlert.currentVaultId]: true,
+                    }));
+                    if (currentInvestigationId === newAlert.currentVaultId) {
+                        setIsOpen(true);
+                    }
                 }
             } catch (err) { }
         };
 
         sharedSocket.addEventListener('message', handleMessage);
         return () => sharedSocket.removeEventListener('message', handleMessage);
-    }, [sharedSocket]);
+    }, [currentInvestigationId, sharedSocket]);
 
     const togglePanel = () => {
         setIsOpen(!isOpen);
-        if (!isOpen) setHasUnread(false);
+        if (!isOpen && currentInvestigationId) {
+            setUnreadByInvestigation(prev => ({
+                ...prev,
+                [currentInvestigationId]: false,
+            }));
+        }
     };
 
     const clearAlerts = () => {
-        setAlerts([]);
-        localStorage.removeItem('gorantula_synthesis_alerts');
+        if (!currentInvestigationId) {
+            return;
+        }
+
+        setAlertsByInvestigation(prev => {
+            const updated = { ...prev };
+            delete updated[currentInvestigationId];
+            localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(updated));
+            return updated;
+        });
+        setUnreadByInvestigation(prev => ({
+            ...prev,
+            [currentInvestigationId]: false,
+        }));
     };
 
     const handleJump = (vaultId: string, nodeId?: string) => {
@@ -91,7 +193,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     };
 
     // The toggle button that floats on the right side if closed, or is hidden if empty
-    if (alerts.length === 0) return null;
+    if (!currentInvestigationId || currentAlerts.length === 0) return null;
 
     return (
         <>
@@ -142,7 +244,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {alerts.map((alert, idx) => (
+                    {currentAlerts.map((alert, idx) => (
                         <div key={idx} className="bg-black border border-cyber-purple/30 p-4 rounded-sm relative group hover:border-cyber-purple transition-colors">
                             <div className="absolute top-0 right-0 p-2 opacity-10">
                                 <Network size={40} />

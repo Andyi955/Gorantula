@@ -44,6 +44,7 @@ type DerivedVaultRecord struct {
 type SynthesisAlert struct {
 	Type           string               `json:"type"`
 	Entity         string               `json:"entity"`
+	CurrentVaultID string               `json:"currentVaultId"`
 	ConnectedCases []string             `json:"connectedCases"`
 	Nodes          []NodeContextPayload `json:"nodes"`
 	Analysis       string               `json:"analysis"`
@@ -513,6 +514,7 @@ func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[st
 		alert := SynthesisAlert{
 			Type:           "synthesis_alert",
 			Entity:         entity,
+			CurrentVaultID: currentVaultID,
 			ConnectedCases: allCases,
 			Nodes:          nodesList,
 			Analysis:       analysisText,

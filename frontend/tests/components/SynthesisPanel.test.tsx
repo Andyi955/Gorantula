@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SynthesisPanel from '../../src/components/SynthesisPanel'
 
@@ -22,17 +22,20 @@ describe('SynthesisPanel', () => {
   it('loads saved alerts and can clear them', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
-      'gorantula_synthesis_alerts',
-      JSON.stringify([
-        {
-          type: 'overlap',
-          entity: 'ACME',
-          connectedCases: ['inv-1'],
-          nodes: [],
-          analysis: 'Linked across cases',
-          timestamp: '2026-03-17',
-        },
-      ]),
+      'gorantula_synthesis_alerts_by_investigation',
+      JSON.stringify({
+        'inv-1': [
+          {
+            type: 'overlap',
+            entity: 'ACME',
+            currentVaultId: 'inv-1',
+            connectedCases: ['inv-1'],
+            nodes: [],
+            analysis: 'Linked across cases',
+            timestamp: '2026-03-17',
+          },
+        ],
+      }),
     )
 
     render(
@@ -43,13 +46,10 @@ describe('SynthesisPanel', () => {
       />,
     )
 
-    await user.click(screen.getAllByRole('button')[0])
-
-    expect(screen.getByText('GRAND UNIFIED THEORY')).toBeInTheDocument()
-    expect(screen.getByText('ACME')).toBeInTheDocument()
-
+    expect(await screen.findByText('ACME')).toBeInTheDocument()
     await user.click(screen.getByText('CLEAR'))
-
-    expect(localStorage.getItem('gorantula_synthesis_alerts')).toBeNull()
+    await waitFor(() => {
+      expect(localStorage.getItem('gorantula_synthesis_alerts_by_investigation')).toBe('{}')
+    })
   })
 })
