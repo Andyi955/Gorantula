@@ -137,6 +137,15 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					for _, insight := range insights {
 						log.Printf("[WS] Persona %s: nodeIDs=%v, keyFindings=%d", insight.PersonaName, insight.NodeIDs, len(insight.KeyFindings))
 					}
+
+					if vaultID == "" && len(nodes) > 0 {
+						parts := strings.Split(nodes[0].ID, "-")
+						vaultID = "case-" + time.Now().Format("2006-01-02-150405")
+						if len(parts) >= 2 {
+							vaultID = "case-" + parts[1]
+						}
+					}
+
 					// Broadcast insights to frontend
 					broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
 
@@ -150,14 +159,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 					log.Printf("[Synthesis] Triggering overlaps check with %d entities for %d nodes", len(entities), len(nodes))
 					if len(entities) > 0 && len(nodes) > 0 {
-						if vaultID == "" {
-							// Fallback: Create a unique case ID based on the node timestamp piece if not provided
-							parts := strings.Split(nodes[0].ID, "-")
-							vaultID = "case-" + time.Now().Format("2006-01-02-150405")
-							if len(parts) >= 2 {
-								vaultID = "case-" + parts[1]
-							}
-						}
 						go br.Synthesis.AnalyzeOverlap(context.Background(), entities, vaultID, nodes, br)
 					}
 
@@ -172,6 +173,28 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 					log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
 					broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+
+					// Discovery review is intentionally decoupled from the main connect-the-dots
+					// path so speculative discovery work never changes or blocks the core graph.
+					nodesSnapshot := append([]models.MemoryNode(nil), nodes...)
+					insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
+					go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
+						candidateDiscoveries, err := br.SynthesizeDiscoveries(context.Background(), vaultID, nodes, insights)
+						if err != nil {
+							log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
+							return
+						}
+
+						discoveries, err := br.ReviewDiscoveryCandidates(context.Background(), candidateDiscoveries, nodes)
+						if err != nil {
+							log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
+							return
+						}
+
+						if len(discoveries) > 0 {
+							broadcast(models.WSMessage{Type: "DISCOVERIES_FOUND", Payload: discoveries})
+						}
+					}(vaultID, nodesSnapshot, insightsSnapshot)
 				}()
 			case "CHAT_RAG":
 				log.Println("[WS] Received CHAT_RAG request")

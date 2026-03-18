@@ -1098,8 +1098,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
         if (savedState) {
             const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
-            const savedNodes = savedState.nodes;
-            const savedEdges = savedState.edges;
+            const savedNodes = savedState.nodes.filter((node: Node) => node.data?.nodeKind !== 'discovery');
+            const savedEdges = savedState.edges.filter((edge: Edge) => edge.data?.generatedBy !== 'discovery');
             const restoredNodes = savedNodes.map((n: Node) => ({
                 ...n,
                 style: {
@@ -1865,7 +1865,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
 
     const connectTheDots = () => {
-        if (nodes.length < 2) {
+        const evidenceNodes = nodes.filter((node) => node.data?.nodeKind !== 'discovery');
+
+        if (evidenceNodes.length < 2) {
             alert("Need at least 2 nodes!");
             return;
         }
@@ -1877,8 +1879,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         console.log('[Board] Dispatching CONNECT_DOTS...');
         setIsAnalyzing(true);
         setEdgeReasoning(null);
-        setEdges((eds) => eds.filter(e => e.data?.generatedBy !== 'connectTheDots'));
-        const nodeData = nodes.map(n => ({
+        setNodes((nds) => nds.filter(node => node.data?.nodeKind !== 'discovery'));
+        setEdges((eds) => eds.filter(e => e.data?.generatedBy !== 'connectTheDots' && e.data?.generatedBy !== 'discovery'));
+        if (investigationId) {
+            window.dispatchEvent(new CustomEvent('gorantula:clear-discoveries', { detail: { vaultId: investigationId } }));
+        }
+
+        const nodeData = evidenceNodes.map(n => ({
             id: n.id,
             title: n.data.title,
             summary: n.data.summary,

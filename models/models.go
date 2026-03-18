@@ -74,6 +74,35 @@ type BoardConnection struct {
 	Reasoning string `json:"reasoning"` // Detailed explanation
 }
 
+// Discovery represents a derived breakthrough identified from linked evidence.
+type Discovery struct {
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Claim         string   `json:"claim"`
+	Impact        string   `json:"impact"`
+	Confidence    float32  `json:"confidence"`
+	SourceNodeIDs []string `json:"sourceNodeIDs"`
+	SourceVaultID string   `json:"sourceVaultID"`
+	CreatedAt     string   `json:"createdAt"`
+	NodeKind      string   `json:"nodeKind"`
+	Status        string   `json:"status,omitempty"`
+	Topic         string   `json:"topic,omitempty"`
+}
+
+// DiscoveryReview captures an internal temporary expert review for one candidate discovery.
+type DiscoveryReview struct {
+	Reviewer               string  `json:"reviewer"`
+	Verdict                string  `json:"verdict"`
+	Confidence             float32 `json:"confidence"`
+	Rationale              string  `json:"rationale"`
+	FlagsCriticalIssue     bool    `json:"flagsCriticalIssue"`
+	FlagsUnsupportedClaims bool    `json:"flagsUnsupportedClaims"`
+	FlagsOverclaim         bool    `json:"flagsOverclaim"`
+	RevisedTitle           string  `json:"revisedTitle,omitempty"`
+	RevisedClaim           string  `json:"revisedClaim,omitempty"`
+	RevisedImpact          string  `json:"revisedImpact,omitempty"`
+}
+
 // Investigation represents a session folder
 type Investigation struct {
 	ID    string            `json:"id"`

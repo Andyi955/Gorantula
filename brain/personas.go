@@ -35,7 +35,7 @@ type PersonaInsight struct {
 	TimelineEvents []TimelineEvent `json:"timelineEvents"` // Chronological events extracted
 }
 
-// GetDefaultPersonas returns a set of 6 distinct personas for multi-agent collaboration
+// GetDefaultPersonas returns a set of distinct personas for multi-agent collaboration
 func GetDefaultPersonas() []Persona {
 	prefModel := os.Getenv("DEFAULT_PERSONA_MODEL")
 
@@ -96,6 +96,14 @@ func GetDefaultPersonas() []Persona {
 			Questions:    "What happens next? What are the implications? What could go wrong or right?",
 			ModelPref:    defaultMiniMax,
 			SystemPrompt: "You are an implications analyst. Your role is to evaluate consequences, predict potential outcomes, and assess the broader implications of the findings.",
+		},
+		{
+			Name:         "Discovery",
+			Expertise:    "Breakthrough Detection",
+			Perspective:  "Identifies only the most novel, consequential, and strongly supported discoveries hiding across the evidence",
+			Questions:    "What conclusion here is genuinely new? Why would it matter if true? Which exact evidence nodes make it compelling enough to act on?",
+			ModelPref:    defaultGemini,
+			SystemPrompt: "You are a breakthrough discovery analyst. Your role is to identify only high-signal discoveries or compelling hypotheses that are strongly grounded in the evidence. Reject generic summaries, obvious restatements, and weak speculation.",
 		},
 	}
 }

@@ -5,6 +5,7 @@ import SettingsDashboard from './components/SettingsDashboard'
 import TimelineView from './components/TimelineView'
 import VaultChatbot from './components/VaultChatbot'
 import SynthesisPanel from './components/SynthesisPanel'
+import DiscoveryPanel from './components/DiscoveryPanel'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
 import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare } from 'lucide-react'
 import {
@@ -18,6 +19,20 @@ import {
 } from './utils/investigations'
 import { createMergedChildBoard, parsePersistedBoardState } from './utils/hierarchicalCanvas'
 
+export interface DiscoveryRecord {
+  id: string
+  title: string
+  claim: string
+  impact: string
+  confidence: number
+  sourceNodeIDs: string[]
+  sourceVaultID: string
+  createdAt: string
+  nodeKind: string
+}
+
+const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
+
 function App() {
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
@@ -28,6 +43,8 @@ function App() {
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
+  const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
+  const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -88,11 +105,91 @@ function App() {
       if (data.length > 0) setCurrentInvestigationId(data[0].id)
     }
 
+    const savedDiscoveries = localStorage.getItem(DISCOVERIES_STORAGE_KEY)
+    if (savedDiscoveries) {
+      try {
+        const parsed = JSON.parse(savedDiscoveries)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          setDiscoveriesByInvestigation(parsed)
+        }
+      } catch (error) {
+        console.error('[App] Failed to parse saved discoveries', error)
+      }
+    }
+
     return () => {
       isUnmounted.current = true;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (socketRef.current) socketRef.current.close();
     }
+  }, [])
+
+  useEffect(() => {
+    if (!socketConfig.socket) {
+      return
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const msg = JSON.parse(event.data)
+        if (msg.type !== 'DISCOVERIES_FOUND' || !Array.isArray(msg.payload)) {
+          return
+        }
+
+        const incoming = msg.payload as DiscoveryRecord[]
+        const vaultId = incoming[0]?.sourceVaultID
+        if (!vaultId) {
+          return
+        }
+
+        setDiscoveriesByInvestigation(prev => {
+          const next = {
+            ...prev,
+            [vaultId]: incoming,
+          }
+          localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+          return next
+        })
+
+        if (currentInvestigationId !== vaultId) {
+          setUnreadDiscoveriesByInvestigation(prev => ({
+            ...prev,
+            [vaultId]: true,
+          }))
+        }
+      } catch (error) {
+        console.error('[App] Failed to parse discovery websocket message', error)
+      }
+    }
+
+    socketConfig.socket.addEventListener('message', handleMessage)
+    return () => socketConfig.socket?.removeEventListener('message', handleMessage)
+  }, [currentInvestigationId, socketConfig.socket])
+
+  useEffect(() => {
+    const handleClearDiscoveries = (event: Event) => {
+      const customEvent = event as CustomEvent<{ vaultId?: string }>
+      const vaultId = customEvent.detail?.vaultId
+      if (!vaultId) {
+        return
+      }
+
+      setDiscoveriesByInvestigation(prev => {
+        const next = {
+          ...prev,
+          [vaultId]: [],
+        }
+        localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+        return next
+      })
+      setUnreadDiscoveriesByInvestigation(prev => ({
+        ...prev,
+        [vaultId]: false,
+      }))
+    }
+
+    window.addEventListener('gorantula:clear-discoveries', handleClearDiscoveries as EventListener)
+    return () => window.removeEventListener('gorantula:clear-discoveries', handleClearDiscoveries as EventListener)
   }, [])
 
   const runSpider = (customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
@@ -162,6 +259,19 @@ function App() {
       setTimeout(() => setFocusedNodeId(null), 1000);
     }
   }, [currentInvestigationId, returnVaultId]);
+
+  const handleNavigateDiscovery = useCallback((investigationId: string, nodeId?: string) => {
+    setCurrentInvestigationId(investigationId)
+    setActiveTab('board')
+    setUnreadDiscoveriesByInvestigation(prev => ({
+      ...prev,
+      [investigationId]: false,
+    }))
+    if (nodeId) {
+      setFocusedNodeId(nodeId)
+      setTimeout(() => setFocusedNodeId(null), 1000)
+    }
+  }, [])
 
   const handleMergeInvestigations = useCallback((entity: string, connectedCases: string[], relevantNodes: MergeCandidateNode[]) => {
     const parentIds = Array.from(new Set(connectedCases)).filter((id) => investigations.some((investigation) => investigation.id === id));
@@ -376,6 +486,35 @@ function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 relative">
+          <DiscoveryPanel
+            currentInvestigationId={currentInvestigationId}
+            discoveries={currentInvestigationId ? (discoveriesByInvestigation[currentInvestigationId] || []) : []}
+            hasUnread={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
+            onOpenDiscovery={(nodeId?: string) => {
+              if (!currentInvestigationId) return
+              handleNavigateDiscovery(currentInvestigationId, nodeId)
+            }}
+            onClear={() => {
+              if (!currentInvestigationId) return
+
+              setDiscoveriesByInvestigation(prev => {
+                const next = { ...prev, [currentInvestigationId]: [] }
+                localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+                return next
+              })
+              setUnreadDiscoveriesByInvestigation(prev => ({
+                ...prev,
+                [currentInvestigationId]: false,
+              }))
+            }}
+            onMarkRead={() => {
+              if (!currentInvestigationId) return
+              setUnreadDiscoveriesByInvestigation(prev => ({
+                ...prev,
+                [currentInvestigationId]: false,
+              }))
+            }}
+          />
           <SynthesisPanel
             sharedSocket={socketConfig.socket}
             currentInvestigationId={currentInvestigationId}

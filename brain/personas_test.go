@@ -8,7 +8,7 @@ import (
 func TestGetDefaultPersonas(t *testing.T) {
 	personas := GetDefaultPersonas()
 
-	expectedCount := 6
+	expectedCount := 7
 	if len(personas) != expectedCount {
 		t.Errorf("GetDefaultPersonas() returned %d personas; want %d", len(personas), expectedCount)
 	}
@@ -49,6 +49,7 @@ func TestBuildPersonaPrompt(t *testing.T) {
 		{"Contains Perspective", "Testing things"},
 		{"Contains Questions", "Does it work?"},
 		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your prompt."},
+		{"Contains Exact Node ID Rule", "CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings"},
 	}
 
 	for _, tt := range tests {
