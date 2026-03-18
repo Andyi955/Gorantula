@@ -26,6 +26,10 @@ vi.mock('../src/components/SynthesisPanel', () => ({
   default: () => <div>SynthesisPanel</div>,
 }))
 
+vi.mock('../src/components/DiscoveryPanel', () => ({
+  default: () => <div>DiscoveryPanel</div>,
+}))
+
 class WebSocketMock {
   static instances: WebSocketMock[] = []
 

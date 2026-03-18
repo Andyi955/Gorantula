@@ -168,6 +168,13 @@ func (g *GeminiProvider) SupportsMedia() bool {
 }
 
 func (g *GeminiProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
+	g.brain.modelMu.Lock()
+	defer g.brain.modelMu.Unlock()
+
+	return g.generateContentLocked(ctx, prompt)
+}
+
+func (g *GeminiProvider) generateContentLocked(ctx context.Context, prompt string) (string, error) {
 	resp, err := g.brain.Model.GenerateContent(ctx, genai.Text(prompt))
 	if err != nil {
 		return "", err
@@ -179,10 +186,13 @@ func (g *GeminiProvider) GenerateContent(ctx context.Context, prompt string) (st
 }
 
 func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string, response interface{}) error {
+	g.brain.modelMu.Lock()
+	defer g.brain.modelMu.Unlock()
+
 	g.brain.Model.ResponseMIMEType = "application/json"
 	defer func() { g.brain.Model.ResponseMIMEType = "text/plain" }()
 
-	content, err := g.GenerateContent(ctx, prompt)
+	content, err := g.generateContentLocked(ctx, prompt)
 	if err != nil {
 		return err
 	}
