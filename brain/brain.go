@@ -37,6 +37,7 @@ type Brain struct {
 	Abdomen     *models.Abdomen
 	ModelRouter map[string]ModelProvider
 	routerMu    sync.RWMutex
+	modelMu     sync.Mutex
 	Synthesis   *SynthesisEngine
 }
 
