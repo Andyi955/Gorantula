@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { vi } from 'vitest'
 import SynthesisPanel from '../src/components/SynthesisPanel'
 
 class SocketMock {
@@ -138,5 +139,80 @@ describe('SynthesisPanel', () => {
     )
 
     expect(screen.getByText('alice')).toBeInTheDocument()
+  })
+
+  it('does not auto-open when a new alert arrives for the current investigation', () => {
+    const socket = new SocketMock() as unknown as WebSocket
+
+    render(
+      <SynthesisPanel
+        sharedSocket={socket}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-a', topic: 'Investigation A' },
+        ]}
+      />,
+    )
+
+    act(() => {
+      ;(socket as unknown as SocketMock).emit('message', {
+        type: 'SYNTHESIS_ALERT',
+        payload: {
+          type: 'synthesis_alert',
+          entity: 'alice',
+          currentVaultId: 'inv-a',
+          connectedCases: ['inv-a'],
+          nodes: [{ vaultId: 'inv-a', nodeId: 'node-a', summary: 'Alice mention' }],
+          analysis: 'Alert A',
+          timestamp: '12:10:00',
+        },
+      })
+    })
+
+    return waitFor(() => {
+      const panel = screen.getByText('GRAND UNIFIED THEORY').closest('.translate-x-full')
+      expect(panel).not.toBeNull()
+      expect(screen.getAllByRole('button').length).toBeGreaterThan(0)
+    })
+  })
+
+  it('does not crash when localStorage quota is exceeded', () => {
+    const socket = new SocketMock() as unknown as WebSocket
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError')
+    })
+
+    render(
+      <SynthesisPanel
+        sharedSocket={socket}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-a', topic: 'Investigation A' },
+        ]}
+      />,
+    )
+
+    expect(() => {
+      act(() => {
+        ;(socket as unknown as SocketMock).emit('message', {
+          type: 'SYNTHESIS_ALERT',
+          payload: {
+            type: 'synthesis_alert',
+            entity: 'alice',
+            currentVaultId: 'inv-a',
+            connectedCases: ['inv-a'],
+            nodes: [{ vaultId: 'inv-a', nodeId: 'node-a', summary: 'Alice mention' }],
+            analysis: 'Alert A',
+            timestamp: '12:10:00',
+          },
+        })
+      })
+    }).not.toThrow()
+
+    expect(screen.getByText('alice')).toBeInTheDocument()
+
+    setItemSpy.mockRestore()
   })
 })

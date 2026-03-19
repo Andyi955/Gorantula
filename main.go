@@ -115,6 +115,14 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					continue
 				}
 
+				if vaultID == "" && len(nodes) > 0 {
+					parts := strings.Split(nodes[0].ID, "-")
+					vaultID = "case-" + time.Now().Format("2006-01-02-150405")
+					if len(parts) >= 2 {
+						vaultID = "case-" + parts[1]
+					}
+				}
+
 				log.Printf("[WS] Dispatching multi-agent persona analysis for %d nodes...", len(nodes))
 				go func() {
 					// Step 1: Run persona analysis
@@ -128,7 +136,8 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						if fallbackErr != nil {
 							broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + fallbackErr.Error()})
 						} else {
-							broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+							validatedConnections, _ := br.ValidateFallbackConnections(vaultID, nodes, connections)
+							broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: validatedConnections})
 						}
 						return
 					}
@@ -136,14 +145,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					// Debug: Log insights before broadcasting
 					for _, insight := range insights {
 						log.Printf("[WS] Persona %s: nodeIDs=%v, keyFindings=%d", insight.PersonaName, insight.NodeIDs, len(insight.KeyFindings))
-					}
-
-					if vaultID == "" && len(nodes) > 0 {
-						parts := strings.Split(nodes[0].ID, "-")
-						vaultID = "case-" + time.Now().Format("2006-01-02-150405")
-						if len(parts) >= 2 {
-							vaultID = "case-" + parts[1]
-						}
 					}
 
 					// Broadcast insights to frontend
@@ -164,9 +165,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 					// Step 2: Synthesize insights into final connections
 					broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
-					connections, err := br.SynthesizePersonaInsights(context.Background(), nodes, insights)
+					connections, _, err := br.RunRelationshipWorkflow(context.Background(), vaultID, nodes, insights)
 					if err != nil {
-						log.Printf("[WS Error] SynthesizePersonaInsights failed: %v", err)
+						log.Printf("[WS Error] RunRelationshipWorkflow failed: %v", err)
 						broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
 						return
 					}

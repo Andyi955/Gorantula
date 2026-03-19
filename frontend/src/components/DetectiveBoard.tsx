@@ -430,7 +430,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [edges, setEdges] = useState<Edge[]>([]);
 
     const [selectedContent, setSelectedContent] = useState<string | null>(null);
-    const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string } | null>(null);
+    const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
     const [isReorganizing, setIsReorganizing] = useState(false);
@@ -1571,6 +1571,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     color: visuals.color,
                     pattern: visuals.pattern,
                     shape: visuals.shape,
+                    confidence: c.confidence,
+                    qualityScore: c.qualityScore,
+                    supportingPersonas: c.supportingPersonas || [],
+                    evidenceNodeIDs: c.evidenceNodeIDs || [],
+                    validationStatus: c.validationStatus,
+                    candidateSources: c.candidateSources || [],
                     generatedBy: 'connectTheDots',
                     snapEnabled: snapConnectionLabels,
                     boardMode
@@ -1693,10 +1699,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     perspective: string;
                     keyFindings: string[];
                     connections: string[];
+                    observations?: string[];
+                    hypotheses?: string[];
                     questions: string[];
                     confidence: number;
                     fullAnalysis: string;
                     nodeIDs: string[];
+                    proposedConnections?: Array<{
+                        source: string;
+                        target: string;
+                        tag: string;
+                        reasoning: string;
+                        evidenceNodeIDs: string[];
+                        confidence: number;
+                    }>;
                 }>;
                 console.log('[PERSONA_INSIGHTS] Received insights:', insights);
                 if (insights && Array.isArray(insights)) {
@@ -1969,7 +1985,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
-            setEdgeReasoning({ tag: edge.label as string, text: edge.data.reasoning, color: edge.data.color || '#bc13fe' });
+            setEdgeReasoning({
+                tag: edge.label as string,
+                text: edge.data.reasoning,
+                color: edge.data.color || '#bc13fe',
+                personas: edge.data.supportingPersonas || [],
+                qualityScore: edge.data.qualityScore,
+                evidenceNodeIDs: edge.data.evidenceNodeIDs || [],
+            });
         }
     };
 
@@ -2372,6 +2395,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         <button onClick={() => setEdgeReasoning(null)} className="text-gray-500 hover:text-white text-xs">×</button>
                     </div>
                     <div className="text-white text-[11px] leading-relaxed italic">{edgeReasoning.text}</div>
+                    {typeof edgeReasoning.qualityScore === 'number' && (
+                        <div className="mt-3 text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: edgeReasoning.color }}>
+                            Quality Score: {Math.round(edgeReasoning.qualityScore * 100)}%
+                        </div>
+                    )}
+                    {edgeReasoning.personas && edgeReasoning.personas.length > 0 && (
+                        <div className="mt-3 text-[10px] leading-relaxed text-gray-300">
+                            Personas: {edgeReasoning.personas.join(', ')}
+                        </div>
+                    )}
+                    {edgeReasoning.evidenceNodeIDs && edgeReasoning.evidenceNodeIDs.length > 0 && (
+                        <div className="mt-2 text-[10px] leading-relaxed text-gray-400">
+                            Evidence Nodes: {edgeReasoning.evidenceNodeIDs.join(', ')}
+                        </div>
+                    )}
                 </div>
             )}
 
