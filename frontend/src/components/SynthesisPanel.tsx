@@ -27,6 +27,10 @@ type AlertBuckets = Record<string, SynthesisAlert[]>;
 
 const LEGACY_ALERTS_KEY = 'gorantula_synthesis_alerts';
 const ALERT_BUCKETS_KEY = 'gorantula_synthesis_alerts_by_investigation';
+const MAX_ALERTS_PER_INVESTIGATION = 20;
+const MAX_TOTAL_ALERTS = 80;
+const MAX_ANALYSIS_LENGTH = 700;
+const MAX_NODE_SUMMARY_LENGTH = 220;
 
 const parseAlertBuckets = (raw: string | null): AlertBuckets => {
     if (!raw) {
@@ -44,18 +48,77 @@ const parseAlertBuckets = (raw: string | null): AlertBuckets => {
                 return acc;
             }
 
-            acc[investigationId] = alerts.filter((alert): alert is SynthesisAlert => {
-                return Boolean(
-                    alert &&
-                    typeof alert === 'object' &&
-                    typeof (alert as SynthesisAlert).entity === 'string' &&
-                    typeof (alert as SynthesisAlert).currentVaultId === 'string',
-                );
-            });
+            acc[investigationId] = alerts
+                .filter((alert): alert is SynthesisAlert => {
+                    return Boolean(
+                        alert &&
+                        typeof alert === 'object' &&
+                        typeof (alert as SynthesisAlert).entity === 'string' &&
+                        typeof (alert as SynthesisAlert).currentVaultId === 'string',
+                    );
+                })
+                .map(normalizeAlert)
+                .slice(0, MAX_ALERTS_PER_INVESTIGATION);
             return acc;
         }, {});
     } catch {
         return {};
+    }
+};
+
+const trimText = (value: string, maxLength: number): string => {
+    const normalized = value.trim();
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+    return `${normalized.slice(0, maxLength - 3)}...`;
+};
+
+const normalizeAlert = (alert: SynthesisAlert): SynthesisAlert => ({
+    ...alert,
+    entity: trimText(alert.entity || 'unknown', 80),
+    analysis: trimText(alert.analysis || '', MAX_ANALYSIS_LENGTH),
+    connectedCases: Array.isArray(alert.connectedCases) ? alert.connectedCases.slice(0, 8) : [],
+    nodes: Array.isArray(alert.nodes)
+        ? alert.nodes.slice(0, 8).map((node) => ({
+            vaultId: node.vaultId,
+            nodeId: node.nodeId,
+            summary: trimText(node.summary || '', MAX_NODE_SUMMARY_LENGTH),
+        }))
+        : [],
+});
+
+const pruneBucketsForStorage = (buckets: AlertBuckets): AlertBuckets => {
+    const orderedEntries = Object.entries(buckets).map(([investigationId, alerts]) => [
+        investigationId,
+        alerts.map(normalizeAlert).slice(0, MAX_ALERTS_PER_INVESTIGATION),
+    ] as const);
+
+    let runningCount = 0;
+    const pruned: AlertBuckets = {};
+    for (const [investigationId, alerts] of orderedEntries) {
+        if (runningCount >= MAX_TOTAL_ALERTS) {
+            break;
+        }
+        const remaining = MAX_TOTAL_ALERTS - runningCount;
+        const trimmedAlerts = alerts.slice(0, remaining);
+        if (trimmedAlerts.length === 0) {
+            continue;
+        }
+        pruned[investigationId] = trimmedAlerts;
+        runningCount += trimmedAlerts.length;
+    }
+    return pruned;
+};
+
+const persistAlertBuckets = (buckets: AlertBuckets): AlertBuckets => {
+    const pruned = pruneBucketsForStorage(buckets);
+    try {
+        localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(pruned));
+        return pruned;
+    } catch (error) {
+        console.warn('[SynthesisPanel] Failed to persist synthesis alerts; continuing in-memory only.', error);
+        return pruned;
     }
 };
 
@@ -84,14 +147,14 @@ const migrateLegacyAlerts = (): AlertBuckets => {
                 typeof alert.currentVaultId === 'string'
             ) {
                 const current = acc[alert.currentVaultId] || [];
-                acc[alert.currentVaultId] = [...current, alert as SynthesisAlert].slice(0, 50);
+                acc[alert.currentVaultId] = [...current, normalizeAlert(alert as SynthesisAlert)].slice(0, MAX_ALERTS_PER_INVESTIGATION);
             }
             return acc;
         }, {});
 
-        localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(buckets));
+        const persisted = persistAlertBuckets(buckets);
         localStorage.removeItem(LEGACY_ALERTS_KEY);
-        return buckets;
+        return persisted;
     } catch {
         localStorage.removeItem(LEGACY_ALERTS_KEY);
         return {};
@@ -126,27 +189,23 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             try {
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'SYNTHESIS_ALERT') {
-                    const newAlert = msg.payload as SynthesisAlert;
+                    const newAlert = normalizeAlert(msg.payload as SynthesisAlert);
                     if (!newAlert.currentVaultId) {
                         return;
                     }
                     setAlertsByInvestigation(prev => {
                         const currentAlertsForVault = prev[newAlert.currentVaultId] || [];
-                        const updatedBucket = [newAlert, ...currentAlertsForVault].slice(0, 50);
-                        const updated = {
+                        const updatedBucket = [newAlert, ...currentAlertsForVault].slice(0, MAX_ALERTS_PER_INVESTIGATION);
+                        const updated = persistAlertBuckets({
                             ...prev,
                             [newAlert.currentVaultId]: updatedBucket,
-                        };
-                        localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(updated));
+                        });
                         return updated;
                     });
                     setUnreadByInvestigation(prev => ({
                         ...prev,
                         [newAlert.currentVaultId]: true,
                     }));
-                    if (currentInvestigationId === newAlert.currentVaultId) {
-                        setIsOpen(true);
-                    }
                 }
             } catch (err) { }
         };
@@ -173,8 +232,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         setAlertsByInvestigation(prev => {
             const updated = { ...prev };
             delete updated[currentInvestigationId];
-            localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(updated));
-            return updated;
+            return persistAlertBuckets(updated);
         });
         setUnreadByInvestigation(prev => ({
             ...prev,

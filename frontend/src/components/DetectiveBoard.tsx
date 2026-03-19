@@ -25,6 +25,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
+import RelationshipDebugPanel, { type RelationshipDebugRun } from './RelationshipDebugPanel';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
@@ -401,6 +402,7 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
+const RELATIONSHIP_DEBUG_STORAGE_KEY = 'gorantula_relationship_debug';
 const MINIMAP_NODE_STROKE = '#06080b';
 const MINIMAP_MASK_STROKE = 'rgba(120, 255, 255, 0.95)';
 const MINIMAP_PANEL_DIMENSIONS = {
@@ -430,7 +432,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [edges, setEdges] = useState<Edge[]>([]);
 
     const [selectedContent, setSelectedContent] = useState<string | null>(null);
-    const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string } | null>(null);
+    const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
     const [isReorganizing, setIsReorganizing] = useState(false);
@@ -458,6 +460,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
+    const [relationshipDebugRun, setRelationshipDebugRun] = useState<RelationshipDebugRun | null>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const boardControlsRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
@@ -1148,6 +1151,26 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [handleDeleteNode, handleNodeExpand, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
 
     useEffect(() => {
+        if (!investigationId) {
+            setRelationshipDebugRun(null);
+            return;
+        }
+
+        const saved = localStorage.getItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`);
+        if (!saved) {
+            setRelationshipDebugRun(null);
+            return;
+        }
+
+        try {
+            setRelationshipDebugRun(JSON.parse(saved));
+        } catch (error) {
+            console.error('[DetectiveBoard] Failed to parse relationship debug run', error);
+            setRelationshipDebugRun(null);
+        }
+    }, [investigationId]);
+
+    useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
         if (nodes.length === 0 && edges.length === 0) return;
         if (isDraggingNodeRef.current) return;
@@ -1571,6 +1594,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     color: visuals.color,
                     pattern: visuals.pattern,
                     shape: visuals.shape,
+                    confidence: c.confidence,
+                    qualityScore: c.qualityScore,
+                    supportingPersonas: c.supportingPersonas || [],
+                    evidenceNodeIDs: c.evidenceNodeIDs || [],
+                    validationStatus: c.validationStatus,
+                    candidateSources: c.candidateSources || [],
                     generatedBy: 'connectTheDots',
                     snapEnabled: snapConnectionLabels,
                     boardMode
@@ -1693,10 +1722,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     perspective: string;
                     keyFindings: string[];
                     connections: string[];
+                    observations?: string[];
+                    hypotheses?: string[];
                     questions: string[];
                     confidence: number;
                     fullAnalysis: string;
                     nodeIDs: string[];
+                    proposedConnections?: Array<{
+                        source: string;
+                        target: string;
+                        tag: string;
+                        reasoning: string;
+                        evidenceNodeIDs: string[];
+                        confidence: number;
+                    }>;
                 }>;
                 console.log('[PERSONA_INSIGHTS] Received insights:', insights);
                 if (insights && Array.isArray(insights)) {
@@ -1720,6 +1759,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 }
                 // Stop gathering when persona insights are complete
                 setIsGathering(false);
+            } else if (msg.type === 'RELATIONSHIP_DEBUG') {
+                const debugRun = msg.payload as RelationshipDebugRun;
+                setRelationshipDebugRun(debugRun);
+                if (investigationId) {
+                    localStorage.setItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`, JSON.stringify(debugRun));
+                }
             } else if (msg.type === 'CONNECTIONS_FOUND') {
                 handleNewConnections(msg.payload);
                 // Also stop gathering/analyzing when connections are actually found and displayed
@@ -1879,10 +1924,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         console.log('[Board] Dispatching CONNECT_DOTS...');
         setIsAnalyzing(true);
         setEdgeReasoning(null);
+        setRelationshipDebugRun(null);
         setNodes((nds) => nds.filter(node => node.data?.nodeKind !== 'discovery'));
         setEdges((eds) => eds.filter(e => e.data?.generatedBy !== 'connectTheDots' && e.data?.generatedBy !== 'discovery'));
         if (investigationId) {
             window.dispatchEvent(new CustomEvent('gorantula:clear-discoveries', { detail: { vaultId: investigationId } }));
+            localStorage.removeItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`);
         }
 
         const nodeData = evidenceNodes.map(n => ({
@@ -1905,8 +1952,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             setNodes([]);
             setEdges([]);
             setEdgeReasoning(null);
+            setRelationshipDebugRun(null);
             setSelectedContent(null);
             setHasConnectedDots(false);
+            if (investigationId) {
+                localStorage.removeItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`);
+            }
         }
     };
 
@@ -1969,7 +2020,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
-            setEdgeReasoning({ tag: edge.label as string, text: edge.data.reasoning, color: edge.data.color || '#bc13fe' });
+            setEdgeReasoning({
+                tag: edge.label as string,
+                text: edge.data.reasoning,
+                color: edge.data.color || '#bc13fe',
+                personas: edge.data.supportingPersonas || [],
+                qualityScore: edge.data.qualityScore,
+                evidenceNodeIDs: edge.data.evidenceNodeIDs || [],
+            });
         }
     };
 
@@ -2365,6 +2423,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 )}
             </div>
 
+            <RelationshipDebugPanel
+                investigationId={investigationId}
+                debugRun={relationshipDebugRun}
+            />
+
             {edgeReasoning && (
                 <div className="absolute bottom-10 left-10 w-80 bg-cyber-black/90 border p-4 z-40 shadow-2xl backdrop-blur-md" style={{ borderColor: edgeReasoning.color, boxShadow: `0 0 20px ${edgeReasoning.color}33` }}>
                     <div className="flex items-center justify-between mb-2">
@@ -2372,6 +2435,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         <button onClick={() => setEdgeReasoning(null)} className="text-gray-500 hover:text-white text-xs">×</button>
                     </div>
                     <div className="text-white text-[11px] leading-relaxed italic">{edgeReasoning.text}</div>
+                    {typeof edgeReasoning.qualityScore === 'number' && (
+                        <div className="mt-3 text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: edgeReasoning.color }}>
+                            Quality Score: {Math.round(edgeReasoning.qualityScore * 100)}%
+                        </div>
+                    )}
+                    {edgeReasoning.personas && edgeReasoning.personas.length > 0 && (
+                        <div className="mt-3 text-[10px] leading-relaxed text-gray-300">
+                            Personas: {edgeReasoning.personas.join(', ')}
+                        </div>
+                    )}
+                    {edgeReasoning.evidenceNodeIDs && edgeReasoning.evidenceNodeIDs.length > 0 && (
+                        <div className="mt-2 text-[10px] leading-relaxed text-gray-400">
+                            Evidence Nodes: {edgeReasoning.evidenceNodeIDs.join(', ')}
+                        </div>
+                    )}
                 </div>
             )}
 

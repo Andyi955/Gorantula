@@ -68,10 +68,63 @@ type MemoryNode struct {
 
 // BoardConnection represents an edge between two nodes with its reasoning
 type BoardConnection struct {
-	Source    string `json:"source"`
-	Target    string `json:"target"`
-	Tag       string `json:"tag"`       // Short relationship tag (e.g., "INTEGRATION")
-	Reasoning string `json:"reasoning"` // Detailed explanation
+	Source             string   `json:"source"`
+	Target             string   `json:"target"`
+	Tag                string   `json:"tag"`       // Short relationship tag (e.g., "INTEGRATION")
+	Reasoning          string   `json:"reasoning"` // Detailed explanation
+	Confidence         float32  `json:"confidence,omitempty"`
+	QualityScore       float32  `json:"qualityScore,omitempty"`
+	SupportingPersonas []string `json:"supportingPersonas,omitempty"`
+	EvidenceNodeIDs    []string `json:"evidenceNodeIDs,omitempty"`
+	ValidationStatus   string   `json:"validationStatus,omitempty"`
+	RejectionReason    string   `json:"rejectionReason,omitempty"`
+	CandidateSources   []string `json:"candidateSources,omitempty"`
+}
+
+type RelationshipCandidate struct {
+	Source             string   `json:"source"`
+	Target             string   `json:"target"`
+	Tag                string   `json:"tag"`
+	Reasoning          string   `json:"reasoning"`
+	Confidence         float32  `json:"confidence"`
+	EvidenceNodeIDs    []string `json:"evidenceNodeIDs"`
+	SupportingPersonas []string `json:"supportingPersonas,omitempty"`
+	CandidateSource    string   `json:"candidateSource,omitempty"`
+	AgreementScore     float32  `json:"agreementScore,omitempty"`
+	EvidenceScore      float32  `json:"evidenceScore,omitempty"`
+	SpecificityScore   float32  `json:"specificityScore,omitempty"`
+	GroundingScore     float32  `json:"groundingScore,omitempty"`
+	QualityScore       float32  `json:"qualityScore,omitempty"`
+	ValidationStatus   string   `json:"validationStatus,omitempty"`
+	RejectionReason    string   `json:"rejectionReason,omitempty"`
+}
+
+type RelationshipDebugNode struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Summary  string `json:"summary"`
+	FullText string `json:"fullText,omitempty"`
+}
+
+type RelationshipDebugPersona struct {
+	PersonaName         string                  `json:"personaName"`
+	Confidence          float32                 `json:"confidence"`
+	NodeIDs             []string                `json:"nodeIDs"`
+	KeyFindings         []string                `json:"keyFindings"`
+	Connections         []string                `json:"connections"`
+	Questions           []string                `json:"questions"`
+	ProposedConnections []RelationshipCandidate `json:"proposedConnections,omitempty"`
+}
+
+type RelationshipDebugRun struct {
+	VaultID          string                   `json:"vaultId"`
+	CreatedAt        string                   `json:"createdAt"`
+	Stage            string                   `json:"stage"`
+	InputNodes       []RelationshipDebugNode  `json:"inputNodes"`
+	PersonaSummaries []RelationshipDebugPersona `json:"personaSummaries"`
+	Candidates       []RelationshipCandidate  `json:"candidates"`
+	FinalConnections []BoardConnection        `json:"finalConnections"`
+	Notes            []string                 `json:"notes,omitempty"`
 }
 
 // Discovery represents a derived breakthrough identified from linked evidence.
