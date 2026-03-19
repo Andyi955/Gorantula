@@ -27,6 +27,7 @@ import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
+import { getLayoutedElements } from './detectiveBoardLayout';
 import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
 import {
     createTagStyle,
@@ -38,7 +39,6 @@ import {
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2 } from 'lucide-react';
-import dagre from 'dagre';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -72,67 +72,6 @@ const normalizeStrictGridNodes = (nodes: Node[]) => nodes.map((node) => {
     };
 });
 
-// Enhanced layout function with smart rectangle formation
-const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
-    console.log('[Layout] Executing Dagre with', nodes.length, 'nodes and', edges.length, 'edges');
-    const dagreGraph = new dagre.graphlib.Graph();
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-    // Prefer lateral layouts for investigation boards; only fall back to
-    // top-to-bottom when the graph is both large and very dense.
-    const edgeToNodeRatio = nodes.length > 0 ? edges.length / nodes.length : 0;
-    const isVeryDenseGraph = edgeToNodeRatio > 2.25;
-    const rankdir = nodes.length >= 8 && isVeryDenseGraph ? 'TB' : 'LR';
-
-    dagreGraph.setGraph({
-        rankdir,
-        nodesep: 100,
-        ranksep: 200,
-        marginx: 50,
-        marginy: 50
-    });
-
-    nodes.forEach((node) => {
-        const dim = getNodeDimensions(node);
-        dagreGraph.setNode(node.id, { width: dim.width, height: dim.height });
-    });
-
-    edges.forEach((edge) => {
-        dagreGraph.setEdge(edge.source, edge.target);
-    });
-
-    dagre.layout(dagreGraph);
-
-    const layoutedNodes = nodes.map((node) => {
-        const nodeWithPosition = dagreGraph.node(node.id);
-        const dim = getNodeDimensions(node);
-
-        const newPos = {
-            x: nodeWithPosition.x - dim.width / 2,
-            y: nodeWithPosition.y - dim.height / 2,
-        };
-
-        console.log(`[Layout] Node ${node.id}: (${Math.round(node.position.x)}, ${Math.round(node.position.y)}) -> (${Math.round(newPos.x)}, ${Math.round(newPos.y)})`);
-
-        return {
-            ...node,
-            position: newPos,
-            targetPosition: rankdir === 'LR' ? Position.Left : Position.Top,
-            sourcePosition: rankdir === 'LR' ? Position.Right : Position.Bottom,
-            style: {
-                ...node.style,
-                width: dim.width,
-                height: dim.height
-            }
-        };
-    });
-
-    return {
-        nodes: layoutedNodes.map(n => ({ ...n, position: { ...n.position } })),
-        edges: [...edges]
-    };
-};
-
 const getStrictGridBoardOrderedNodes = (nodes: Node[], edges: Edge[]) => {
     const { nodes: layoutedNodes } = getLayoutedElements(nodes, edges);
 
@@ -146,14 +85,26 @@ const getStrictGridBoardOrderedNodes = (nodes: Node[], edges: Edge[]) => {
     });
 };
 
-const getStrictGridLayoutedNodes = (nodes: Node[], edges: Edge[]) => {
-    const orderedNodes = getStrictGridBoardOrderedNodes(nodes, edges);
-    const columnCount = Math.max(2, Math.ceil(Math.sqrt(Math.max(orderedNodes.length, 1))));
+const buildStrictGridRows = (orderedNodes: Node[], columnCount: number) => {
     const rows: Node[][] = [];
 
     for (let index = 0; index < orderedNodes.length; index += columnCount) {
         rows.push(orderedNodes.slice(index, index + columnCount));
     }
+
+    return rows;
+};
+
+const getStrictGridLayoutedNodes = (nodes: Node[], edges: Edge[]) => {
+    const orderedNodes = getStrictGridBoardOrderedNodes(nodes, edges);
+    const columnCount = Math.max(2, Math.ceil(Math.sqrt(Math.max(orderedNodes.length, 1))));
+    const connectedNodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+    const disconnectedNodes = orderedNodes.filter((node) => !connectedNodeIds.has(node.id));
+    const connectedNodes = orderedNodes.filter((node) => connectedNodeIds.has(node.id));
+    const rows = [
+        ...buildStrictGridRows(disconnectedNodes, columnCount),
+        ...buildStrictGridRows(connectedNodes, columnCount),
+    ];
 
     const rowWidths = rows.map((row) =>
         row.reduce((width, node, index) => {
@@ -195,6 +146,10 @@ const getStrictGridLayoutedNodes = (nodes: Node[], edges: Edge[]) => {
     });
 
     return normalizeStrictGridNodes(boardNodes);
+};
+
+export const detectiveBoardTestUtils = {
+    getStrictGridLayoutedNodes,
 };
 
 interface DetectiveBoardProps {
