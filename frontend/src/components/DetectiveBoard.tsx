@@ -98,7 +98,12 @@ const buildStrictGridRows = (orderedNodes: Node[], columnCount: number) => {
 const getStrictGridLayoutedNodes = (nodes: Node[], edges: Edge[]) => {
     const orderedNodes = getStrictGridBoardOrderedNodes(nodes, edges);
     const columnCount = Math.max(2, Math.ceil(Math.sqrt(Math.max(orderedNodes.length, 1))));
-    const connectedNodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+    const orderedNodeIds = new Set(orderedNodes.map((node) => node.id));
+    const connectedNodeIds = new Set(
+        edges
+            .filter((edge) => orderedNodeIds.has(edge.source) && orderedNodeIds.has(edge.target))
+            .flatMap((edge) => [edge.source, edge.target])
+    );
     const disconnectedNodes = orderedNodes.filter((node) => !connectedNodeIds.has(node.id));
     const connectedNodes = orderedNodes.filter((node) => connectedNodeIds.has(node.id));
     const rows = [

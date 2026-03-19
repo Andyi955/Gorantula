@@ -29,9 +29,11 @@ const getRankDirection = (nodeCount: number, edgeCount: number): 'LR' | 'TB' => 
 };
 
 const partitionLayoutNodes = (nodes: Node[], edges: Edge[]): LayoutPartition => {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const connectedEdges = edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
   const connectedNodeIds = new Set<string>();
 
-  edges.forEach((edge) => {
+  connectedEdges.forEach((edge) => {
     connectedNodeIds.add(edge.source);
     connectedNodeIds.add(edge.target);
   });
@@ -51,7 +53,7 @@ const partitionLayoutNodes = (nodes: Node[], edges: Edge[]): LayoutPartition => 
   return {
     connectedNodes,
     disconnectedNodes,
-    connectedEdges: edges.filter((edge) => connectedNodeIds.has(edge.source) && connectedNodeIds.has(edge.target)),
+    connectedEdges,
   };
 };
 

@@ -84,4 +84,13 @@ describe('detective board layout', () => {
 
     expect(second).toEqual(first)
   })
+
+  it('ignores dangling edges when deciding whether a node is disconnected', () => {
+    const nodes = [createNode('a'), createNode('b')]
+    const edges = [createEdge('a', 'missing')]
+
+    const { nodes: layoutedNodes } = detectiveBoardLayoutTestUtils.getLayoutedElements(nodes, edges)
+
+    expect(new Set(layoutedNodes.map((node) => node.position.y)).size).toBe(1)
+  })
 })
