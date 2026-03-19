@@ -326,6 +326,51 @@ func TestValidateAndRankRelationshipCandidatesRejectsSamePairFamilyDuplicates(t 
 	}
 }
 
+func TestValidateAndRankRelationshipCandidatesPrefersHigherQualityCandidateOverConfidenceOrder(t *testing.T) {
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "LoRA", Summary: "LoRA reduces adapter latency.", FullText: "LoRA introduces no additional inference latency compared to adapter-based methods."},
+		{ID: "node-2", Title: "Adapters", Summary: "Adapters add latency.", FullText: "AdapterH and AdapterL introduce additional sequential inference latency."},
+	}
+
+	finalConnections, candidates, _ := validateAndRankRelationshipCandidates(nodes, []models.RelationshipCandidate{
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "EFFICIENCY_VALIDATION",
+			Reasoning:          "LoRA validates efficiency improvements over adapter-based methods.",
+			Confidence:         0.96,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Context Provider"},
+		},
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "REDUCES_LATENCY",
+			Reasoning:          "LoRA removes the additional inference latency introduced by sequential adapter modules.",
+			Confidence:         0.74,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Discovery", "Implications Mapper"},
+		},
+	})
+
+	if len(finalConnections) != 1 {
+		t.Fatalf("expected one winning same-pair edge, got %d", len(finalConnections))
+	}
+	if finalConnections[0].Tag != "REDUCES_LATENCY" {
+		t.Fatalf("expected higher-quality edge to survive, got %q", finalConnections[0].Tag)
+	}
+
+	var sawOverlapRejection bool
+	for _, candidate := range candidates {
+		if candidate.Tag == "EFFICIENCY_VALIDATION" && candidate.RejectionReason == "overlapping_pair_relationship" {
+			sawOverlapRejection = true
+		}
+	}
+	if !sawOverlapRejection {
+		t.Fatalf("expected lower-quality overlapping edge to be rejected after quality sorting")
+	}
+}
+
 func TestRunRelationshipWorkflowWritesDebugTrace(t *testing.T) {
 	tempDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -470,5 +515,47 @@ func TestValidateAndRankRelationshipCandidatesAppliesBoardReadabilityBudget(t *t
 
 	if !strings.Contains(strings.Join(notes, " "), "board_readability_budget=pruned_connections:") {
 		t.Fatalf("expected readability budget notes to be recorded")
+	}
+}
+
+func TestPruneConnectionsForBoardReadabilityEnforcesPerNodeCapBelowGlobalLimit(t *testing.T) {
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "One", Summary: "One summary", FullText: "One full text."},
+		{ID: "node-2", Title: "Two", Summary: "Two summary", FullText: "Two full text."},
+		{ID: "node-3", Title: "Three", Summary: "Three summary", FullText: "Three full text."},
+		{ID: "node-4", Title: "Four", Summary: "Four summary", FullText: "Four full text."},
+		{ID: "node-5", Title: "Five", Summary: "Five summary", FullText: "Five full text."},
+		{ID: "node-6", Title: "Six", Summary: "Six summary", FullText: "Six full text."},
+		{ID: "node-7", Title: "Seven", Summary: "Seven summary", FullText: "Seven full text."},
+	}
+
+	connections := []models.BoardConnection{
+		{Source: "node-1", Target: "node-2", Tag: "USES", QualityScore: 0.95},
+		{Source: "node-1", Target: "node-3", Tag: "IMPLEMENTS", QualityScore: 0.94},
+		{Source: "node-1", Target: "node-4", Tag: "OUTPERFORMS", QualityScore: 0.93},
+	}
+
+	pruned, notes, prunedKeys := pruneConnectionsForBoardReadability(nodes, connections)
+	if len(pruned) != 2 {
+		t.Fatalf("expected per-node budget to prune one connection, got %d", len(pruned))
+	}
+	if len(prunedKeys) != 1 {
+		t.Fatalf("expected one pruned key, got %d", len(prunedKeys))
+	}
+	if !strings.Contains(strings.Join(notes, " "), "board_readability_budget=pruned_connections:1") {
+		t.Fatalf("expected prune note for per-node cap, got %v", notes)
+	}
+}
+
+func TestBuildCandidateSourcesSplitsSourcesAndNormalizesPersonas(t *testing.T) {
+	sources := buildCandidateSources("synthesis|fallback|persona:Connector", []string{"Connector", " Discovery "})
+	expected := []string{"fallback", "persona:Connector", "persona:Discovery", "synthesis"}
+	if len(sources) != len(expected) {
+		t.Fatalf("expected %d sources, got %d: %v", len(expected), len(sources), sources)
+	}
+	for idx, source := range expected {
+		if sources[idx] != source {
+			t.Fatalf("expected source %q at index %d, got %q", source, idx, sources[idx])
+		}
 	}
 }

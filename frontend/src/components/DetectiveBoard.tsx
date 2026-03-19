@@ -25,7 +25,6 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
-import RelationshipDebugPanel, { type RelationshipDebugRun } from './RelationshipDebugPanel';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
@@ -402,7 +401,6 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
-const RELATIONSHIP_DEBUG_STORAGE_KEY = 'gorantula_relationship_debug';
 const MINIMAP_NODE_STROKE = '#06080b';
 const MINIMAP_MASK_STROKE = 'rgba(120, 255, 255, 0.95)';
 const MINIMAP_PANEL_DIMENSIONS = {
@@ -460,7 +458,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
-    const [relationshipDebugRun, setRelationshipDebugRun] = useState<RelationshipDebugRun | null>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const boardControlsRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
@@ -1151,26 +1148,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [handleDeleteNode, handleNodeExpand, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
 
     useEffect(() => {
-        if (!investigationId) {
-            setRelationshipDebugRun(null);
-            return;
-        }
-
-        const saved = localStorage.getItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`);
-        if (!saved) {
-            setRelationshipDebugRun(null);
-            return;
-        }
-
-        try {
-            setRelationshipDebugRun(JSON.parse(saved));
-        } catch (error) {
-            console.error('[DetectiveBoard] Failed to parse relationship debug run', error);
-            setRelationshipDebugRun(null);
-        }
-    }, [investigationId]);
-
-    useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
         if (nodes.length === 0 && edges.length === 0) return;
         if (isDraggingNodeRef.current) return;
@@ -1759,12 +1736,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 }
                 // Stop gathering when persona insights are complete
                 setIsGathering(false);
-            } else if (msg.type === 'RELATIONSHIP_DEBUG') {
-                const debugRun = msg.payload as RelationshipDebugRun;
-                setRelationshipDebugRun(debugRun);
-                if (investigationId) {
-                    localStorage.setItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`, JSON.stringify(debugRun));
-                }
             } else if (msg.type === 'CONNECTIONS_FOUND') {
                 handleNewConnections(msg.payload);
                 // Also stop gathering/analyzing when connections are actually found and displayed
@@ -1924,12 +1895,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         console.log('[Board] Dispatching CONNECT_DOTS...');
         setIsAnalyzing(true);
         setEdgeReasoning(null);
-        setRelationshipDebugRun(null);
         setNodes((nds) => nds.filter(node => node.data?.nodeKind !== 'discovery'));
         setEdges((eds) => eds.filter(e => e.data?.generatedBy !== 'connectTheDots' && e.data?.generatedBy !== 'discovery'));
         if (investigationId) {
             window.dispatchEvent(new CustomEvent('gorantula:clear-discoveries', { detail: { vaultId: investigationId } }));
-            localStorage.removeItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`);
         }
 
         const nodeData = evidenceNodes.map(n => ({
@@ -1952,12 +1921,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             setNodes([]);
             setEdges([]);
             setEdgeReasoning(null);
-            setRelationshipDebugRun(null);
             setSelectedContent(null);
             setHasConnectedDots(false);
-            if (investigationId) {
-                localStorage.removeItem(`${RELATIONSHIP_DEBUG_STORAGE_KEY}_${investigationId}`);
-            }
         }
     };
 
@@ -2422,11 +2387,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     />
                 )}
             </div>
-
-            <RelationshipDebugPanel
-                investigationId={investigationId}
-                debugRun={relationshipDebugRun}
-            />
 
             {edgeReasoning && (
                 <div className="absolute bottom-10 left-10 w-80 bg-cyber-black/90 border p-4 z-40 shadow-2xl backdrop-blur-md" style={{ borderColor: edgeReasoning.color, boxShadow: `0 0 20px ${edgeReasoning.color}33` }}>

@@ -246,10 +246,6 @@ func validateAndRankRelationshipCandidates(nodes []models.MemoryNode, candidates
 		nodeLookup[node.ID] = node
 	}
 
-	seenAccepted := make(map[string]bool)
-	seenAcceptedPairs := make(map[string]models.RelationshipCandidate)
-	seenMirror := make(map[string]bool)
-	finalConnections := make([]models.BoardConnection, 0, len(candidates))
 	scoredCandidates := make([]models.RelationshipCandidate, 0, len(candidates))
 	notes := []string{}
 
@@ -323,57 +319,65 @@ func validateAndRankRelationshipCandidates(nodes []models.MemoryNode, candidates
 			reason = "quality_below_threshold"
 		}
 
-		key := relationshipCandidateKey(normalized)
-		pairKey := relationshipPairKey(normalized)
-		mirrorKey := relationshipMirrorKey(normalized)
-		if status == "accepted" && seenAccepted[key] {
-			status = "rejected"
-			reason = "duplicate_relationship"
-		}
-		if status == "accepted" {
-			if existing, ok := seenAcceptedPairs[pairKey]; ok {
-				if relationshipsAreSemanticallyOverlapping(existing, normalized) {
-					status = "rejected"
-					reason = "overlapping_pair_relationship"
-				}
-			}
-		}
-		if status == "accepted" && seenMirror[mirrorKey] {
-			status = "rejected"
-			reason = "mirrored_duplicate"
-		}
-
 		normalized.ValidationStatus = status
 		normalized.RejectionReason = reason
 		scoredCandidates = append(scoredCandidates, normalized)
+	}
 
-		if status != "accepted" {
+	sort.SliceStable(scoredCandidates, func(i, j int) bool {
+		if scoredCandidates[i].QualityScore == scoredCandidates[j].QualityScore {
+			return relationshipCandidateKey(scoredCandidates[i]) < relationshipCandidateKey(scoredCandidates[j])
+		}
+		return scoredCandidates[i].QualityScore > scoredCandidates[j].QualityScore
+	})
+
+	seenAccepted := make(map[string]bool)
+	seenAcceptedPairs := make(map[string]models.RelationshipCandidate)
+	seenMirror := make(map[string]bool)
+	finalConnections := make([]models.BoardConnection, 0, len(candidates))
+
+	for idx := range scoredCandidates {
+		candidate := scoredCandidates[idx]
+		if candidate.ValidationStatus != "accepted" {
+			continue
+		}
+
+		key := relationshipCandidateKey(candidate)
+		pairKey := relationshipPairKey(candidate)
+		mirrorKey := relationshipMirrorKey(candidate)
+
+		if seenAccepted[key] {
+			scoredCandidates[idx].ValidationStatus = "rejected"
+			scoredCandidates[idx].RejectionReason = "duplicate_relationship"
+			continue
+		}
+		if existing, ok := seenAcceptedPairs[pairKey]; ok && relationshipsAreSemanticallyOverlapping(existing, candidate) {
+			scoredCandidates[idx].ValidationStatus = "rejected"
+			scoredCandidates[idx].RejectionReason = "overlapping_pair_relationship"
+			continue
+		}
+		if seenMirror[mirrorKey] {
+			scoredCandidates[idx].ValidationStatus = "rejected"
+			scoredCandidates[idx].RejectionReason = "mirrored_duplicate"
 			continue
 		}
 
 		seenAccepted[key] = true
-		seenAcceptedPairs[pairKey] = normalized
+		seenAcceptedPairs[pairKey] = candidate
 		seenMirror[mirrorKey] = true
 		finalConnections = append(finalConnections, models.BoardConnection{
-			Source:             normalized.Source,
-			Target:             normalized.Target,
-			Tag:                normalized.Tag,
-			Reasoning:          normalized.Reasoning,
-			Confidence:         normalized.Confidence,
-			QualityScore:       normalized.QualityScore,
-			SupportingPersonas: append([]string(nil), normalized.SupportingPersonas...),
-			EvidenceNodeIDs:    append([]string(nil), normalized.EvidenceNodeIDs...),
-			ValidationStatus:   normalized.ValidationStatus,
-			CandidateSources:   stringsToUniqueList(append([]string{normalized.CandidateSource}, normalized.SupportingPersonas...)),
+			Source:             candidate.Source,
+			Target:             candidate.Target,
+			Tag:                candidate.Tag,
+			Reasoning:          candidate.Reasoning,
+			Confidence:         candidate.Confidence,
+			QualityScore:       candidate.QualityScore,
+			SupportingPersonas: append([]string(nil), candidate.SupportingPersonas...),
+			EvidenceNodeIDs:    append([]string(nil), candidate.EvidenceNodeIDs...),
+			ValidationStatus:   candidate.ValidationStatus,
+			CandidateSources:   buildCandidateSources(candidate.CandidateSource, candidate.SupportingPersonas),
 		})
 	}
-
-	sort.SliceStable(finalConnections, func(i, j int) bool {
-		if finalConnections[i].QualityScore == finalConnections[j].QualityScore {
-			return finalConnections[i].Tag < finalConnections[j].Tag
-		}
-		return finalConnections[i].QualityScore > finalConnections[j].QualityScore
-	})
 
 	prunedConnections, budgetNotes, prunedKeys := pruneConnectionsForBoardReadability(nodes, finalConnections)
 	if len(prunedKeys) > 0 {
@@ -410,7 +414,7 @@ func pruneConnectionsForBoardReadability(nodes []models.MemoryNode, connections 
 
 	maxConnections := maxBoardConnections(len(nodes))
 	maxPerNode := maxConnectionsPerNode(len(nodes))
-	if len(connections) <= maxConnections {
+	if len(connections) <= maxConnections && !exceedsPerNodeBudget(connections, maxPerNode) {
 		return connections, []string{
 			fmt.Sprintf("board_readability_budget=max_connections:%d", maxConnections),
 			fmt.Sprintf("board_readability_budget=max_connections_per_node:%d", maxPerNode),
@@ -478,7 +482,8 @@ func writeRelationshipDebugTrace(debugRun models.RelationshipDebugRun) error {
 		return err
 	}
 
-	filename := fmt.Sprintf("%s-%s.txt", sanitizeRelationshipLogSlug(debugRun.VaultID), time.Now().Format("20060102-150405"))
+	now := time.Now()
+	filename := fmt.Sprintf("%s-%s-%d.txt", sanitizeRelationshipLogSlug(debugRun.VaultID), now.Format("20060102-150405"), now.UnixNano())
 	logPath := filepath.Join(logDir, filename)
 
 	var builder strings.Builder
@@ -979,6 +984,40 @@ func sanitizeRelationshipReasoning(reasoning string) string {
 	}
 	reasoning = strings.Join(strings.Fields(reasoning), " ")
 	return reasoning
+}
+
+func buildCandidateSources(candidateSource string, supportingPersonas []string) []string {
+	sources := make([]string, 0, len(supportingPersonas)+1)
+	for _, part := range strings.Split(candidateSource, "|") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		sources = append(sources, part)
+	}
+	for _, persona := range supportingPersonas {
+		persona = strings.TrimSpace(persona)
+		if persona == "" {
+			continue
+		}
+		sources = append(sources, "persona:"+persona)
+	}
+	return stringsToUniqueList(sources)
+}
+
+func exceedsPerNodeBudget(connections []models.BoardConnection, maxPerNode int) bool {
+	nodeDegree := make(map[string]int)
+	for _, connection := range connections {
+		nodeDegree[connection.Source]++
+		if nodeDegree[connection.Source] > maxPerNode {
+			return true
+		}
+		nodeDegree[connection.Target]++
+		if nodeDegree[connection.Target] > maxPerNode {
+			return true
+		}
+	}
+	return false
 }
 
 func stringsToUniqueList(values []string) []string {
