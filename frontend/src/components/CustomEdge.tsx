@@ -1,14 +1,29 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 'reactflow';
 import { Pencil, Unlink2 } from 'lucide-react';
-import { BOARD_GRID_SIZE, snapCoordinateToGrid } from './boardGeometry';
+import { BOARD_GRID_SIZE, getNodeDimensions, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode, PortSide, StrictGridPoint } from './boardGeometry';
 import { getRelationshipEdgeVisuals, normalizeRelationshipPattern, normalizeRelationshipShape } from '../utils/relationshipStyles';
 
 const SNAP_THRESHOLD = 18;
 const AXIS_LOCK_THRESHOLD = 20;
+const LABEL_HORIZONTAL_PADDING = 8;
+const LABEL_VERTICAL_PADDING = 4;
+const LABEL_MIN_WIDTH = 48;
+const LABEL_MIN_HEIGHT = 24;
+const LABEL_CLEARANCE = 12;
 
 type RouteMode = 'free' | 'vertical-lock' | 'horizontal-lock' | 'midpoint-offset';
+type LabelPoint = { x: number; y: number };
+type LabelRect = { left: number; right: number; top: number; bottom: number };
+
+interface BoardNodeRect {
+    id: string;
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+}
 
 const snapToCandidates = (value: number, candidates: number[]) => {
     let snappedValue = value;
@@ -29,6 +44,145 @@ const getMidpoint = (sourceX: number, sourceY: number, targetX: number, targetY:
     x: (sourceX + targetX) / 2,
     y: (sourceY + targetY) / 2,
 });
+
+const estimateLabelSize = (label: unknown, labelStyle: any) => {
+    const labelText = typeof label === 'string' ? label : '';
+    const fontSize = typeof labelStyle?.fontSize === 'number'
+        ? labelStyle.fontSize
+        : Number.parseFloat(labelStyle?.fontSize || '') || 10;
+    const width = Math.max(
+        LABEL_MIN_WIDTH,
+        (labelText.length * fontSize * 0.7) + (LABEL_HORIZONTAL_PADDING * 2)
+    );
+    const height = Math.max(
+        LABEL_MIN_HEIGHT,
+        (fontSize * 1.6) + (LABEL_VERTICAL_PADDING * 2)
+    );
+
+    return { width, height };
+};
+
+const toLabelRect = (point: LabelPoint, width: number, height: number): LabelRect => ({
+    left: point.x - (width / 2),
+    right: point.x + (width / 2),
+    top: point.y - (height / 2),
+    bottom: point.y + (height / 2),
+});
+
+const rectsOverlap = (left: LabelRect, right: LabelRect) =>
+    left.left < right.right &&
+    left.right > right.left &&
+    left.top < right.bottom &&
+    left.bottom > right.top;
+
+const getBoardNodeRect = (node: any): BoardNodeRect | null => {
+    if (!node?.position || typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
+        return null;
+    }
+
+    const { width, height } = getNodeDimensions(node);
+
+    return {
+        id: node.id,
+        left: node.position.x,
+        right: node.position.x + width,
+        top: node.position.y,
+        bottom: node.position.y + height,
+    };
+};
+
+const getNodeRects = (nodes: any[], excludedNodeIds: Set<string>) =>
+    nodes
+        .map((node) => {
+            if (excludedNodeIds.has(node.id)) {
+                return null;
+            }
+
+            return getBoardNodeRect(node);
+        })
+        .filter((rect): rect is BoardNodeRect => rect !== null);
+
+const getLabelCollisionCount = (point: LabelPoint, labelWidth: number, labelHeight: number, nodeRects: BoardNodeRect[]) => {
+    const labelRect = toLabelRect(point, labelWidth + (LABEL_CLEARANCE * 2), labelHeight + (LABEL_CLEARANCE * 2));
+
+    return nodeRects.reduce((count, nodeRect) => {
+        const expandedNodeRect = {
+            left: nodeRect.left - LABEL_CLEARANCE,
+            right: nodeRect.right + LABEL_CLEARANCE,
+            top: nodeRect.top - LABEL_CLEARANCE,
+            bottom: nodeRect.bottom + LABEL_CLEARANCE,
+        };
+
+        return count + (rectsOverlap(labelRect, expandedNodeRect) ? 1 : 0);
+    }, 0);
+};
+
+const dedupeLabelPoints = (points: LabelPoint[]) => {
+    const seen = new Set<string>();
+
+    return points.filter((point) => {
+        const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
+        if (seen.has(key)) {
+            return false;
+        }
+
+        seen.add(key);
+        return true;
+    });
+};
+
+const getLabelCandidates = (basePoint: LabelPoint, routePoints: StrictGridPoint[]) => {
+    const offset = BOARD_GRID_SIZE * 2;
+    const segmentCandidates = routePoints.length >= 2
+        ? routePoints.slice(1).map((point, index) => getSegmentMidpoint(routePoints[index], point))
+        : [];
+
+    return dedupeLabelPoints([
+        basePoint,
+        ...segmentCandidates,
+        { x: basePoint.x, y: basePoint.y - offset },
+        { x: basePoint.x, y: basePoint.y + offset },
+        { x: basePoint.x - offset, y: basePoint.y },
+        { x: basePoint.x + offset, y: basePoint.y },
+        { x: basePoint.x - offset, y: basePoint.y - offset },
+        { x: basePoint.x + offset, y: basePoint.y - offset },
+        { x: basePoint.x - offset, y: basePoint.y + offset },
+        { x: basePoint.x + offset, y: basePoint.y + offset },
+        { x: basePoint.x, y: basePoint.y - (offset * 2) },
+        { x: basePoint.x, y: basePoint.y + (offset * 2) },
+    ]);
+};
+
+const getVisibleLabelPoint = (
+    basePoint: LabelPoint,
+    routePoints: StrictGridPoint[],
+    label: unknown,
+    labelStyle: any,
+    nodeRects: BoardNodeRect[],
+) => {
+    if (nodeRects.length === 0) {
+        return basePoint;
+    }
+
+    const { width, height } = estimateLabelSize(label, labelStyle);
+    const candidates = getLabelCandidates(basePoint, routePoints);
+
+    const scoredCandidates = candidates.map((candidate) => ({
+        point: candidate,
+        collisions: getLabelCollisionCount(candidate, width, height, nodeRects),
+        distance: Math.abs(candidate.x - basePoint.x) + Math.abs(candidate.y - basePoint.y),
+    }));
+
+    scoredCandidates.sort((left, right) => {
+        if (left.collisions !== right.collisions) {
+            return left.collisions - right.collisions;
+        }
+
+        return left.distance - right.distance;
+    });
+
+    return scoredCandidates[0]?.point || basePoint;
+};
 
 const resolveRoutePoint = (
     routeMode: RouteMode | undefined,
@@ -287,6 +441,8 @@ const getStrictRouteData = (data: any, sourceX: number, sourceY: number, targetX
 
 export default function CustomEdge({
     id,
+    source,
+    target,
     sourceX,
     sourceY,
     targetX,
@@ -301,7 +457,7 @@ export default function CustomEdge({
     labelBgStyle,
     interactionWidth,
 }: any) {
-    const { setEdges, getViewport } = useReactFlow();
+    const { setEdges, getViewport, getNodes } = useReactFlow();
     const [isHovered, setIsHovered] = useState(false);
     const boardMode = data?.boardMode as BoardMode | undefined;
     const isStrictGrid = boardMode === 'strict-grid';
@@ -325,6 +481,15 @@ export default function CustomEdge({
     const routeMode = data?.routeMode as RouteMode | undefined;
     const routeOffsetX = typeof data?.routeOffsetX === 'number' ? data.routeOffsetX : 0;
     const routeOffsetY = typeof data?.routeOffsetY === 'number' ? data.routeOffsetY : 0;
+    const hasManualStrictLabelPlacement = (
+        typeof data?.labelX === 'number' &&
+        typeof data?.labelY === 'number'
+    ) || (
+        typeof data?.routeAnchorX === 'number' &&
+        typeof data?.routeAnchorY === 'number'
+    );
+    const hasManualLegacyLabelPlacement = hasCustomPosition || routeMode !== undefined;
+    const hasManualLabelPlacement = isStrictGrid ? hasManualStrictLabelPlacement : hasManualLegacyLabelPlacement;
     const legacyLabelPoint = resolveRoutePoint(
         routeMode,
         routeOffsetX,
@@ -338,7 +503,22 @@ export default function CustomEdge({
     );
 
     const edgePath = isStrictGrid ? strictRoute.edgePath : (buildLegacyRoutePath(routeMode, legacyLabelPoint.x, legacyLabelPoint.y, sourceX, sourceY, targetX, targetY) || smoothPath);
-    const currentLabelPoint = isStrictGrid ? strictRoute.labelPoint : legacyLabelPoint;
+    const defaultLabelPoint = isStrictGrid ? strictRoute.labelPoint : legacyLabelPoint;
+    const routePoints = isStrictGrid
+        ? strictRoute.pathPoints
+        : [
+            { x: sourceX, y: sourceY },
+            defaultLabelPoint,
+            { x: targetX, y: targetY },
+        ];
+    const currentLabelPoint = useMemo(() => {
+        if (hasManualLabelPlacement) {
+            return defaultLabelPoint;
+        }
+
+        const nodeRects = getNodeRects(getNodes(), new Set([source, target]));
+        return getVisibleLabelPoint(defaultLabelPoint, routePoints, label, labelStyle, nodeRects);
+    }, [defaultLabelPoint, getNodes, hasManualLabelPlacement, label, labelStyle, routePoints, source, target]);
     const resolvedEdgeStyle = useMemo(() => {
         const pattern = normalizeRelationshipPattern(data?.pattern);
         const shape = normalizeRelationshipShape(data?.shape);
@@ -473,6 +653,7 @@ export default function CustomEdge({
 
             <EdgeLabelRenderer>
                 <div
+                    data-testid={`edge-label-${id}`}
                     style={{
                         position: 'absolute',
                         transform: `translate(-50%, -50%) translate(${currentLabelPoint.x}px, ${currentLabelPoint.y}px)`,
