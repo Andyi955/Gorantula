@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 'reactflow';
 import { Pencil, Unlink2 } from 'lucide-react';
-import { BOARD_GRID_SIZE, snapCoordinateToGrid } from './boardGeometry';
+import { BOARD_GRID_SIZE, getNodeDimensions, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode, PortSide, StrictGridPoint } from './boardGeometry';
 import { getRelationshipEdgeVisuals, normalizeRelationshipPattern, normalizeRelationshipShape } from '../utils/relationshipStyles';
 
@@ -80,20 +80,7 @@ const getBoardNodeRect = (node: any): BoardNodeRect | null => {
         return null;
     }
 
-    const width = typeof node.width === 'number'
-        ? node.width
-        : typeof node.measured?.width === 'number'
-            ? node.measured.width
-            : typeof node.style?.width === 'number'
-                ? node.style.width
-                : 320;
-    const height = typeof node.height === 'number'
-        ? node.height
-        : typeof node.measured?.height === 'number'
-            ? node.measured.height
-            : typeof node.style?.height === 'number'
-                ? node.style.height
-                : 180;
+    const { width, height } = getNodeDimensions(node);
 
     return {
         id: node.id,
@@ -494,7 +481,13 @@ export default function CustomEdge({
     const routeMode = data?.routeMode as RouteMode | undefined;
     const routeOffsetX = typeof data?.routeOffsetX === 'number' ? data.routeOffsetX : 0;
     const routeOffsetY = typeof data?.routeOffsetY === 'number' ? data.routeOffsetY : 0;
-    const hasManualStrictLabelPlacement = typeof data?.labelX === 'number' || typeof data?.labelY === 'number' || typeof data?.routeAnchorX === 'number' || typeof data?.routeAnchorY === 'number';
+    const hasManualStrictLabelPlacement = (
+        typeof data?.labelX === 'number' &&
+        typeof data?.labelY === 'number'
+    ) || (
+        typeof data?.routeAnchorX === 'number' &&
+        typeof data?.routeAnchorY === 'number'
+    );
     const hasManualLegacyLabelPlacement = hasCustomPosition || routeMode !== undefined;
     const hasManualLabelPlacement = isStrictGrid ? hasManualStrictLabelPlacement : hasManualLegacyLabelPlacement;
     const legacyLabelPoint = resolveRoutePoint(
