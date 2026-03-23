@@ -413,6 +413,8 @@ const MINIMAP_PANEL_DIMENSIONS = {
     compact: { width: 168, height: 168 },
     expanded: { width: 256, height: 232 },
 } as const;
+const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
+const BOARD_CONTROLS_PANEL_MARGIN = 16;
 
 const getMiniMapNodeColor = (node: Node) => {
     if (node.data?.portalKind === 'merged-child') {
@@ -444,6 +446,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showBoardControls, setShowBoardControls] = useState(false);
+    const [boardControlsPosition, setBoardControlsPosition] = useState<{ top: number; left: number; width: number }>({
+        top: 0,
+        left: 0,
+        width: BOARD_CONTROLS_PANEL_MAX_WIDTH,
+    });
     const [showRelationshipLegend, setShowRelationshipLegend] = useState<boolean>(() => {
         if (typeof window === 'undefined') {
             return true;
@@ -467,8 +474,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
+    const boardContainerRef = useRef<HTMLDivElement>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
-    const boardControlsRef = useRef<HTMLDivElement>(null);
+    const boardControlsButtonRef = useRef<HTMLButtonElement>(null);
+    const boardControlsPanelRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
@@ -1042,13 +1051,55 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setShowExportMenu(false);
             }
 
-            if (boardControlsRef.current && !boardControlsRef.current.contains(event.target as unknown as globalThis.Node)) {
+            const targetNode = event.target as unknown as globalThis.Node;
+            const clickedBoardControlsButton = boardControlsButtonRef.current?.contains(targetNode);
+            const clickedBoardControlsPanel = boardControlsPanelRef.current?.contains(targetNode);
+            if (!clickedBoardControlsButton && !clickedBoardControlsPanel) {
                 setShowBoardControls(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    const updateBoardControlsPosition = useCallback(() => {
+        const container = boardContainerRef.current;
+        const button = boardControlsButtonRef.current;
+        if (!container || !button) {
+            return;
+        }
+
+        const containerRect = container.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        const availableWidth = Math.max(280, Math.min(BOARD_CONTROLS_PANEL_MAX_WIDTH, containerRect.width - (BOARD_CONTROLS_PANEL_MARGIN * 2)));
+        const unclampedLeft = buttonRect.right - containerRect.left - availableWidth;
+        const maxLeft = Math.max(BOARD_CONTROLS_PANEL_MARGIN, containerRect.width - availableWidth - BOARD_CONTROLS_PANEL_MARGIN);
+        const nextLeft = Math.min(Math.max(unclampedLeft - 85, BOARD_CONTROLS_PANEL_MARGIN), maxLeft);
+        const nextTop = buttonRect.bottom - containerRect.top + 12;
+
+        setBoardControlsPosition({
+            top: nextTop,
+            left: nextLeft,
+            width: availableWidth,
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!showBoardControls) {
+            return;
+        }
+
+        updateBoardControlsPosition();
+
+        const handleViewportChange = () => updateBoardControlsPosition();
+        window.addEventListener('resize', handleViewportChange);
+        window.addEventListener('scroll', handleViewportChange, true);
+
+        return () => {
+            window.removeEventListener('resize', handleViewportChange);
+            window.removeEventListener('scroll', handleViewportChange, true);
+        };
+    }, [showBoardControls, updateBoardControlsPosition]);
 
     // Load tag styles on mount
     useEffect(() => {
@@ -1856,7 +1907,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 console.log(`[Board] Manual node ${nodeId} processing completed:`);
                 console.log(` - Input snippet: "... [see board]"`);
                 console.log(` - Output snippet: "${processedText.slice(0, 80)}..."`);
-                
+
                 const entities = processedText.match(/\[(?:PERSON|ORG|LOC|DATE|TIME):.*?\]/gi) || [];
                 console.log(` - Highlights determined: ${entities.length > 0 ? entities.join(', ') : 'NONE FOUND'}`);
 
@@ -1915,7 +1966,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     e.preventDefault();
                     console.log(`[CustomNode] Reading edited node ${nodeId}...`);
                     console.log(` - Source Input: "${editText.slice(0, 50)}${editText.length > 50 ? '...' : ''}"`);
-                    
+
                     if (handleUpdateNode && nodeId) {
                         handleUpdateNode(nodeId, {
                             title: editTitle,
@@ -1960,7 +2011,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 isEditing: node.id === editingNodeId
             }
         })));
-    // We only want to sync these onto the nodes when the container state changes
+        // We only want to sync these onto the nodes when the container state changes
     }, [boardMode, returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleNodeResizeCommit, handleSetEditing, editingNodeId]);
 
 
@@ -2146,7 +2197,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
 
     return (
-        <div className="w-full h-full relative bg-cyber-black" id="detective-board-container">
+        <div ref={boardContainerRef} className="w-full h-full relative bg-cyber-black" id="detective-board-container">
             <div className="absolute top-4 left-1/2 z-20 flex w-[min(1040px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-3 px-2">
                 <div className="flex w-full justify-center">
                     {(isGathering || isReorganizing) && (
@@ -2157,7 +2208,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 </div>
 
                 <div className="flex w-full justify-center">
-                    <div className="flex w-full max-w-full items-center gap-2 overflow-x-auto rounded-[1.35rem] border border-white/10 bg-black/78 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-22rem)]">
+                    <div data-testid="board-action-bar" className="flex w-full max-w-full items-center gap-2 overflow-x-auto rounded-[1.35rem] border border-white/10 bg-black/78 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-22rem)]">
                         <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-cyber-cyan/18 bg-black/55 px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
                             <Search size={15} className="text-cyber-cyan/80" />
                             <input
@@ -2262,10 +2313,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             )}
                         </div>
 
-                        <div className="relative" ref={boardControlsRef}>
+                        <div className="relative">
                             <button
+                                ref={boardControlsButtonRef}
                                 onClick={() => {
                                     setShowExportMenu(false);
+                                    updateBoardControlsPosition();
                                     setShowBoardControls((current) => !current);
                                 }}
                                 className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${showBoardControls
@@ -2277,161 +2330,171 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                 Board Controls
                                 <ChevronDown size={14} className={`transition-transform ${showBoardControls ? 'rotate-180' : ''}`} />
                             </button>
-
-                            {showBoardControls && (
-                                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-[min(26rem,calc(100vw-2rem))] rounded-[1.5rem] border border-white/12 bg-cyber-black/95 p-4 shadow-[0_18px_36px_rgba(0,0,0,0.42)] backdrop-blur-xl">
-                                <div className="mb-4 flex items-start justify-between gap-4 border-b border-white/8 pb-3">
-                                    <div>
-                                        <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white">Board Controls</h3>
-                                        <p className="mt-1 text-xs leading-relaxed text-gray-400">
-                                            Manage visibility, snapping, layout, and maintenance actions without crowding the main board.
-                                        </p>
-                                    </div>
-                                    <button
-                                        onClick={() => setShowBoardControls(false)}
-                                        className="rounded-lg border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 transition-colors hover:border-white/30 hover:text-white"
-                                    >
-                                        Close
-                                    </button>
-                                </div>
-
-                                <div className="custom-scrollbar max-h-[min(34rem,65vh)] overflow-y-auto pr-1">
-                                    <div className="space-y-4">
-                                    <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
-                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-                                            <Eye size={13} className="text-white/60" />
-                                            View
-                                        </div>
-                                            <button
-                                                onClick={() => setShowGrid((current) => {
-                                                    const next = !current;
-                                                    console.log('[DetectiveBoard] Grid toggle clicked. Next state:', next);
-                                                    return next;
-                                                })}
-                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${showGrid
-                                                    ? 'border-white/20 bg-white/7 text-white hover:border-white/35'
-                                                    : 'border-white/10 bg-black/35 text-gray-300 hover:border-white/25 hover:text-white'
-                                                    }`}
-                                            >
-                                                <div className="flex items-start gap-3">
-                                                    <Grid3X3 size={15} className={`mt-0.5 shrink-0 ${showGrid ? 'text-white' : 'text-gray-500'}`} />
-                                                    <div className="min-w-0">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="text-[11px] font-semibold">Grid Overlay</div>
-                                                            <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${showGrid ? 'bg-white text-black' : 'bg-white/8 text-gray-300'}`}>
-                                                                {showGrid ? 'On' : 'Off'}
-                                                            </span>
-                                                        </div>
-                                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">Show the investigation grid behind the board.</div>
-                                                    </div>
-                                                </div>
-                                            </button>
-                                    </section>
-
-                                    <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
-                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-                                            <Target size={13} className="text-cyber-cyan/80" />
-                                            Snapping
-                                        </div>
-                                        <div className="space-y-2">
-                                            <button
-                                                onClick={() => setSnapConnectionLabels((current) => !current)}
-                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapConnectionLabels
-                                                    ? 'border-cyber-cyan/40 bg-cyber-cyan/10 text-cyber-cyan'
-                                                    : 'border-cyber-cyan/18 bg-black/35 text-gray-300 hover:border-cyber-cyan/35 hover:text-white'
-                                                    }`}
-                                            >
-                                                <div className="w-full">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-[11px] font-semibold">Snap Connections</div>
-                                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${snapConnectionLabels ? 'bg-cyber-cyan text-black' : 'bg-white/8 text-gray-300'}`}>
-                                                            {snapConnectionLabels ? 'On' : 'Off'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="mt-1 text-xs leading-relaxed text-gray-500">Keep relationship labels aligned while editing the board.</div>
-                                                </div>
-                                            </button>
-
-                                            <button
-                                                onClick={() => setSnapNodes((current) => !current)}
-                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapNodes
-                                                    ? 'border-cyber-green/40 bg-cyber-green/10 text-cyber-green'
-                                                    : 'border-cyber-green/18 bg-black/35 text-gray-300 hover:border-cyber-green/35 hover:text-white'
-                                                    }`}
-                                            >
-                                                <div className="w-full">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-[11px] font-semibold">Snap Nodes</div>
-                                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${snapNodes ? 'bg-cyber-green text-black' : 'bg-white/8 text-gray-300'}`}>
-                                                            {snapNodes ? 'On' : 'Off'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="mt-1 text-xs leading-relaxed text-gray-500">Lock cards to the board grid while moving evidence.</div>
-                                                </div>
-                                            </button>
-                                        </div>
-                                    </section>
-
-                                    <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
-                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-                                            <Move size={13} className="text-cyber-green/80" />
-                                            Arrange
-                                        </div>
-                                        <div className="space-y-2">
-                                            <button
-                                                onClick={handleReorganize}
-                                                disabled={!canArrange}
-                                                className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${canArrange
-                                                    ? 'border-cyber-cyan/28 bg-cyber-cyan/8 text-cyber-cyan hover:border-cyber-cyan/50 hover:bg-cyber-cyan/12'
-                                                    : 'cursor-not-allowed border-cyber-cyan/12 bg-cyber-cyan/5 text-cyber-cyan/35'
-                                                    }`}
-                                            >
-                                                <div className="flex w-full items-start gap-3">
-                                                    <Edit2 size={15} className={`mt-0.5 shrink-0 ${isReorganizing ? 'animate-bounce' : ''}`} />
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="text-[11px] font-semibold">{isReorganizing ? 'Tidying...' : 'Tidy Up'}</div>
-                                                            <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-gray-300">
-                                                                Auto
-                                                            </span>
-                                                        </div>
-                                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">Clean up spacing and tighten the current evidence layout.</div>
-                                                    </div>
-                                                </div>
-                                            </button>
-                                        </div>
-                                    </section>
-
-                                    <section className="rounded-2xl border border-red-500/20 bg-red-500/[0.03] p-3">
-                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-red-400">
-                                            <Trash2 size={13} />
-                                            Reset
-                                        </div>
-                                        <button
-                                            onClick={clearBoard}
-                                            disabled={!hasNodes}
-                                            className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left transition-all ${hasNodes
-                                                ? 'border-red-500/35 bg-red-500/8 text-red-400 hover:border-red-500/60 hover:bg-red-500/14'
-                                                : 'cursor-not-allowed border-red-500/12 bg-red-500/5 text-red-500/30'
-                                                }`}
-                                        >
-                                            <div>
-                                                <div className="text-[11px] font-semibold">Clear Board</div>
-                                                <div className="mt-1 text-xs text-gray-500">Remove all evidence cards and connections from the active board.</div>
-                                            </div>
-                                            <span className="rounded-full bg-red-500/12 px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-red-400">
-                                                Danger
-                                            </span>
-                                        </button>
-                                    </section>
-
-                                    </div>
-                                </div>
-                            </div>
-                            )}
                         </div>
                     </div>
                 </div>
+
+                {showBoardControls && (
+                    <div
+                        ref={boardControlsPanelRef}
+                        data-testid="board-controls-overlay"
+                        className="absolute z-30 rounded-[1.5rem] border border-white/12 bg-cyber-black/95 p-4 shadow-[0_18px_36px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+                        style={{
+                            top: `${boardControlsPosition.top}px`,
+                            left: `${boardControlsPosition.left}px`,
+                            width: `${boardControlsPosition.width}px`,
+                            maxWidth: `calc(100vw - ${BOARD_CONTROLS_PANEL_MARGIN * 2}px)`,
+                        }}
+                    >
+                        <div className="mb-4 flex items-start justify-between gap-4 border-b border-white/8 pb-3">
+                            <div>
+                                <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white">Board Controls</h3>
+                                <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                                    Manage visibility, snapping, layout, and maintenance actions without crowding the main board.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowBoardControls(false)}
+                                className="rounded-lg border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 transition-colors hover:border-white/30 hover:text-white"
+                            >
+                                Close
+                            </button>
+                        </div>
+
+                        <div className="custom-scrollbar max-h-[min(34rem,65vh)] overflow-y-auto pr-1">
+                            <div className="space-y-4">
+                                <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                        <Eye size={13} className="text-white/60" />
+                                        View
+                                    </div>
+                                    <button
+                                        onClick={() => setShowGrid((current) => {
+                                            const next = !current;
+                                            console.log('[DetectiveBoard] Grid toggle clicked. Next state:', next);
+                                            return next;
+                                        })}
+                                        className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${showGrid
+                                            ? 'border-white/20 bg-white/7 text-white hover:border-white/35'
+                                            : 'border-white/10 bg-black/35 text-gray-300 hover:border-white/25 hover:text-white'
+                                            }`}
+                                    >
+                                        <div className="flex items-start gap-3">
+                                            <Grid3X3 size={15} className={`mt-0.5 shrink-0 ${showGrid ? 'text-white' : 'text-gray-500'}`} />
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-[11px] font-semibold">Grid Overlay</div>
+                                                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${showGrid ? 'bg-white text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                        {showGrid ? 'On' : 'Off'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 text-xs leading-relaxed text-gray-500">Show the investigation grid behind the board.</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                </section>
+
+                                <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                        <Target size={13} className="text-cyber-cyan/80" />
+                                        Snapping
+                                    </div>
+                                    <div className="space-y-2">
+                                        <button
+                                            onClick={() => setSnapConnectionLabels((current) => !current)}
+                                            className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapConnectionLabels
+                                                ? 'border-cyber-cyan/40 bg-cyber-cyan/10 text-cyber-cyan'
+                                                : 'border-cyber-cyan/18 bg-black/35 text-gray-300 hover:border-cyber-cyan/35 hover:text-white'
+                                                }`}
+                                        >
+                                            <div className="w-full">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-[11px] font-semibold">Snap Connections</div>
+                                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${snapConnectionLabels ? 'bg-cyber-cyan text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                        {snapConnectionLabels ? 'On' : 'Off'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 text-xs leading-relaxed text-gray-500">Keep relationship labels aligned while editing the board.</div>
+                                            </div>
+                                        </button>
+
+                                        <button
+                                            onClick={() => setSnapNodes((current) => !current)}
+                                            className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapNodes
+                                                ? 'border-cyber-green/40 bg-cyber-green/10 text-cyber-green'
+                                                : 'border-cyber-green/18 bg-black/35 text-gray-300 hover:border-cyber-green/35 hover:text-white'
+                                                }`}
+                                        >
+                                            <div className="w-full">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-[11px] font-semibold">Snap Nodes</div>
+                                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${snapNodes ? 'bg-cyber-green text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                        {snapNodes ? 'On' : 'Off'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 text-xs leading-relaxed text-gray-500">Lock cards to the board grid while moving evidence.</div>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </section>
+
+                                <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                        <Move size={13} className="text-cyber-green/80" />
+                                        Arrange
+                                    </div>
+                                    <div className="space-y-2">
+                                        <button
+                                            onClick={handleReorganize}
+                                            disabled={!canArrange}
+                                            className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${canArrange
+                                                ? 'border-cyber-cyan/28 bg-cyber-cyan/8 text-cyber-cyan hover:border-cyber-cyan/50 hover:bg-cyber-cyan/12'
+                                                : 'cursor-not-allowed border-cyber-cyan/12 bg-cyber-cyan/5 text-cyber-cyan/35'
+                                                }`}
+                                        >
+                                            <div className="flex w-full items-start gap-3">
+                                                <Edit2 size={15} className={`mt-0.5 shrink-0 ${isReorganizing ? 'animate-bounce' : ''}`} />
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-[11px] font-semibold">{isReorganizing ? 'Tidying...' : 'Tidy Up'}</div>
+                                                        <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-gray-300">
+                                                            Auto
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1 text-xs leading-relaxed text-gray-500">Clean up spacing and tighten the current evidence layout.</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </section>
+
+                                <section className="rounded-2xl border border-red-500/20 bg-red-500/[0.03] p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-red-400">
+                                        <Trash2 size={13} />
+                                        Reset
+                                    </div>
+                                    <button
+                                        onClick={clearBoard}
+                                        disabled={!hasNodes}
+                                        className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left transition-all ${hasNodes
+                                            ? 'border-red-500/35 bg-red-500/8 text-red-400 hover:border-red-500/60 hover:bg-red-500/14'
+                                            : 'cursor-not-allowed border-red-500/12 bg-red-500/5 text-red-500/30'
+                                            }`}
+                                    >
+                                        <div>
+                                            <div className="text-[11px] font-semibold">Clear Board</div>
+                                            <div className="mt-1 text-xs text-gray-500">Remove all evidence cards and connections from the active board.</div>
+                                        </div>
+                                        <span className="rounded-full bg-red-500/12 px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-red-400">
+                                            Danger
+                                        </span>
+                                    </button>
+                                </section>
+
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div
