@@ -7,6 +7,7 @@ export interface PersistedBoardState {
   mode?: BoardMode;
   nodes: Node[];
   edges: Edge[];
+  pendingIntegrationNodeIds?: string[];
 }
 
 export interface MergeSourceBoard {
@@ -64,6 +65,9 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
         mode: parsed.mode === 'legacy' ? 'legacy' : 'strict-grid',
         nodes: parsed.nodes,
         edges: parsed.edges,
+        pendingIntegrationNodeIds: Array.isArray(parsed.pendingIntegrationNodeIds)
+          ? parsed.pendingIntegrationNodeIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
+          : [],
       };
     }
   } catch (error) {

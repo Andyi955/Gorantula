@@ -132,8 +132,22 @@ func (b *Brain) GetSearchProvider() ModelProvider {
 	return provider
 }
 
-// ProcessPrompt runs the entire lifecycle for a given user prompt
+// ProcessPrompt runs the entire lifecycle for a given user prompt.
 func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error) {
+	return b.processPrompt(ctx, prompt, "", false)
+}
+
+// ProcessPromptForVault runs a new investigation crawl while targeting a specific investigation vault ID.
+func (b *Brain) ProcessPromptForVault(ctx context.Context, prompt, vaultID string) (string, error) {
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), false)
+}
+
+// ProcessPromptIntoVault appends a web crawl into an existing investigation vault.
+func (b *Brain) ProcessPromptIntoVault(ctx context.Context, prompt, vaultID string) (string, error) {
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true)
+}
+
+func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool) (string, error) {
 	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
 		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
 	} else {
@@ -279,8 +293,10 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 					b.NS.Broadcast(models.WSMessage{
 						Type: "MEMORY_NODE_GATHERED",
 						Payload: map[string]interface{}{
-							"node":  node,
-							"total": len(b.Abdomen.MemoryContext),
+							"node":   node,
+							"total":  len(b.Abdomen.MemoryContext),
+							"vaultId": vaultID,
+							"append": isAppend,
 						},
 					})
 				}
@@ -343,7 +359,7 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 	}
 
 	// Save to Vault
-	vaultPath, err := saveVaultMemory(prompt, contextText, finalSynthesis)
+	vaultPath, err := saveVaultMemory(prompt, contextText, finalSynthesis, vaultID, isAppend)
 	if err != nil {
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
 	}
@@ -356,8 +372,11 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 		b.NS.Broadcast(models.WSMessage{
 			Type: "SYNTHESIS_COMPLETE",
 			Payload: map[string]interface{}{
-				"result":    finalSynthesis,
-				"vaultPath": vaultPath,
+				"result":     finalSynthesis,
+				"vaultPath":  vaultPath,
+				"vaultId":    vaultID,
+				"append":     isAppend,
+				"prompt":     prompt,
 			},
 		})
 	}
@@ -570,7 +589,7 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 	} else {
 		vaultPrefix = "local_files_multiple"
 	}
-	vaultPath, err := saveVaultMemory(vaultPrefix, contextText, finalSynthesis)
+	vaultPath, err := saveVaultMemory(vaultPrefix, contextText, finalSynthesis, "", false)
 	if err != nil {
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
 	}
@@ -593,10 +612,17 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 }
 
 // saveVaultMemory writes the memory to a properly formatted, timestamped vault file
-func saveVaultMemory(prompt, rawData, summary string) (string, error) {
+func saveVaultMemory(prompt, rawData, summary, vaultID string, isAppend bool) (string, error) {
 	now := time.Now()
-	dateDir := fmt.Sprintf("./abdomen_vault/%s", now.Format("2006-01-02"))
-	if err := os.MkdirAll(dateDir, 0755); err != nil {
+
+	targetDir := ""
+	if vaultID != "" && filepath.Base(vaultID) == vaultID && !strings.ContainsAny(vaultID, `/\`) {
+		targetDir = filepath.Join("abdomen_vault", vaultID)
+	} else {
+		targetDir = fmt.Sprintf("./abdomen_vault/%s", now.Format("2006-01-02"))
+	}
+
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return "", err
 	}
 
@@ -618,8 +644,12 @@ func saveVaultMemory(prompt, rawData, summary string) (string, error) {
 		}
 	}
 
-	filename := fmt.Sprintf("%s_%s.md", now.Format("15-04-05"), string(topicRunes))
-	filepath := dateDir + "/" + filename
+	filePrefix := "crawl"
+	if isAppend {
+		filePrefix = "append"
+	}
+	filename := fmt.Sprintf("%s_%s_%s.md", filePrefix, now.Format("2006-01-02_15-04-05"), string(topicRunes))
+	filepath := filepath.Join(targetDir, filename)
 
 	content := fmt.Sprintf("# Crawler Result Vault\n\n## Final Summary\n%s\n\n## Raw Digested Facts\n%s\n", summary, rawData)
 	err := os.WriteFile(filepath, []byte(content), 0644)
@@ -786,10 +816,75 @@ func (b *Brain) AnalyzeWithPersonas(ctx context.Context, nodes []models.MemoryNo
 	return insights, nil
 }
 
+func buildIncrementalPersonaFindings(nodes []models.MemoryNode, pendingNodeIDs []string) (string, string, []string) {
+	pendingNodeIDSet := make(map[string]struct{}, len(pendingNodeIDs))
+	for _, nodeID := range pendingNodeIDs {
+		pendingNodeIDSet[nodeID] = struct{}{}
+	}
+
+	var pendingBuilder strings.Builder
+	var contextBuilder strings.Builder
+	validPendingNodeIDs := make([]string, 0, len(pendingNodeIDs))
+
+	for _, node := range nodes {
+		if _, ok := pendingNodeIDSet[node.ID]; ok {
+			validPendingNodeIDs = append(validPendingNodeIDs, node.ID)
+			pendingBuilder.WriteString(fmt.Sprintf("[NodeID: %s]\nSource: %s\nTitle: %s\nSummary: %s\nFull Text: %s\n\n",
+				node.ID, node.SourceURL, node.Title, node.Summary, node.FullText))
+			continue
+		}
+
+		contextBuilder.WriteString(fmt.Sprintf("[ContextNodeID: %s]\nTitle: %s\nSummary: %s\n\n",
+			node.ID, node.Title, node.Summary))
+	}
+
+	return pendingBuilder.String(), contextBuilder.String(), validPendingNodeIDs
+}
+
+func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, nodes []models.MemoryNode, pendingNodeIDs []string) ([]PersonaInsight, error) {
+	fmt.Printf("[Brain] Running incremental persona analysis with %d personas across %d nodes (%d pending)...\n", len(GetDefaultPersonas()), len(nodes), len(pendingNodeIDs))
+
+	pendingFindings, contextFindings, validPendingNodeIDs := buildIncrementalPersonaFindings(nodes, pendingNodeIDs)
+	if len(validPendingNodeIDs) == 0 {
+		return nil, fmt.Errorf("incremental persona analysis requires at least one valid pending node")
+	}
+
+	personas := GetDefaultPersonas()
+	insightsChan := make(chan PersonaInsight, len(personas))
+
+	for _, persona := range personas {
+		go func(p Persona) {
+			prompt := BuildIncrementalPersonaPrompt(p, pendingFindings, contextFindings, validPendingNodeIDs)
+			insight, err := b.runPersonaAnalysisWithPrompt(ctx, p, prompt)
+			if err != nil {
+				fmt.Printf("[Brain] Incremental persona %s failed: %v\n", p.Name, err)
+				insightsChan <- PersonaInsight{PersonaName: p.Name, Confidence: 0}
+				return
+			}
+			insightsChan <- insight
+		}(persona)
+	}
+
+	insights := make([]PersonaInsight, 0, len(personas))
+	for i := 0; i < len(personas); i++ {
+		insight := <-insightsChan
+		if insight.Confidence > 0 {
+			insights = append(insights, insight)
+			fmt.Printf("[Brain] Incremental persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
+		}
+	}
+
+	fmt.Printf("[Brain] Incremental multi-agent analysis complete. Generated %d valid persona insights.\n", len(insights))
+	return insights, nil
+}
+
 // runPersonaAnalysis executes a single persona's analysis
 func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, findings string) (PersonaInsight, error) {
 	prompt := BuildPersonaPrompt(persona, findings)
+	return b.runPersonaAnalysisWithPrompt(ctx, persona, prompt)
+}
 
+func (b *Brain) runPersonaAnalysisWithPrompt(ctx context.Context, persona Persona, prompt string) (PersonaInsight, error) {
 	// Get the appropriate model provider
 	provider, ok := b.GetRouter(persona.ModelPref)
 	if !ok {

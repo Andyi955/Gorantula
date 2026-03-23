@@ -38,7 +38,7 @@ import {
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2 } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search } from 'lucide-react';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -152,6 +152,52 @@ const getStrictGridLayoutedNodes = (nodes: Node[], edges: Edge[]) => {
 
     return normalizeStrictGridNodes(boardNodes);
 };
+
+const mergeEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[]) => {
+    const persistedEdges = currentEdges.filter((edge) => edge.data?.generatedBy !== 'discovery');
+    const persistedEdgeIds = new Set(persistedEdges.map((edge) => edge.id));
+    const incomingById = new Map(incomingEdges.map((edge) => [edge.id, edge]));
+
+    const mergedEdges = persistedEdges.map((edge) => incomingById.get(edge.id) || edge);
+    incomingEdges.forEach((edge) => {
+        if (!persistedEdgeIds.has(edge.id)) {
+            mergedEdges.push(edge);
+        }
+    });
+
+    return mergedEdges;
+};
+
+const edgeTouchesPendingNode = (edge: Edge, pendingNodeIdSet: Set<string>) =>
+    pendingNodeIdSet.has(edge.source) || pendingNodeIdSet.has(edge.target);
+
+const mergeIncrementalEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[], pendingNodeIds: string[]) => {
+    const pendingNodeIdSet = new Set(pendingNodeIds);
+    const preservedEdges = currentEdges.filter((edge) => {
+        if (edge.data?.generatedBy === 'discovery') {
+            return false;
+        }
+
+        if (edge.data?.generatedBy !== 'connectTheDots') {
+            return true;
+        }
+
+        return !edgeTouchesPendingNode(edge, pendingNodeIdSet);
+    });
+
+    const preservedEdgeIds = new Set(preservedEdges.map((edge) => edge.id));
+    const mergedEdges = [...preservedEdges];
+
+    incomingEdges.forEach((edge) => {
+        if (!preservedEdgeIds.has(edge.id)) {
+            mergedEdges.push(edge);
+        }
+    });
+
+    return mergedEdges;
+};
+
+type AnalysisMode = 'full' | 'incremental' | null;
 
 export const detectiveBoardTestUtils = {
     getStrictGridLayoutedNodes,
@@ -410,6 +456,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [snapNodes, setSnapNodes] = useState(false);
     const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
     const [boardMode, setBoardMode] = useState<BoardMode>('strict-grid');
+    const [appendSearchPrompt, setAppendSearchPrompt] = useState('');
+    const [pendingIntegrationNodeIds, setPendingIntegrationNodeIds] = useState<string[]>([]);
+    const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(null);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
@@ -423,6 +472,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const flowWrapperRef = useRef<HTMLDivElement>(null);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
+    const pendingIntegrationNodeIdsRef = useRef<string[]>([]);
+    const analysisModeRef = useRef<AnalysisMode>(null);
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
     const dragRouteFrameRef = useRef<number | null>(null);
@@ -432,6 +483,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
+    pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds;
+    analysisModeRef.current = analysisMode;
 
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
@@ -458,6 +511,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const canConnectDots = !isAnalyzing && !isGathering && !isReorganizing && nodes.length >= 2;
     const canExport = hasNodes && !isReorganizing;
     const canArrange = hasNodes && !isBoardBusy;
+    const canAppendSearch = !!investigationId && !isBoardBusy && appendSearchPrompt.trim().length > 0;
+    const hasPendingEvidenceIntegration = pendingIntegrationNodeIds.length > 0;
     const minimapDimensions = isMiniMapExpanded ? MINIMAP_PANEL_DIMENSIONS.expanded : MINIMAP_PANEL_DIMENSIONS.compact;
 
     const ensureTagStyles = useCallback((tags: string[]) => {
@@ -743,6 +798,39 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setRelationshipNameInput('RELATED');
     }, []);
 
+    const appendSearchToInvestigation = useCallback(() => {
+        const prompt = appendSearchPrompt.trim();
+        if (!prompt) {
+            return;
+        }
+        if (!investigationId) {
+            alert('Select an investigation before appending more search.');
+            return;
+        }
+        if (!sharedSocket || sharedSocket.readyState !== WebSocket.OPEN) {
+            alert('Connection lost. Please wait for reconnect.');
+            return;
+        }
+
+        setIsGathering(true);
+        setAppendSearchPrompt('');
+        sharedSocket.send(JSON.stringify({
+            type: 'APPEND_CRAWL',
+            payload: prompt,
+            vaultId: investigationId,
+        }));
+    }, [appendSearchPrompt, investigationId, sharedSocket]);
+
+    const addPendingIntegrationNodeId = useCallback((nodeId: string) => {
+        setPendingIntegrationNodeIds((currentIds) => (
+            currentIds.includes(nodeId) ? currentIds : [...currentIds, nodeId]
+        ));
+    }, []);
+
+    const clearPendingIntegrationNodeIds = useCallback(() => {
+        setPendingIntegrationNodeIds([]);
+    }, []);
+
     const syncEdgesToNodes = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
         if (boardMode === 'strict-grid') {
             syncStrictGridEdgesToNodes(nextEdges, nextNodes);
@@ -757,6 +845,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const handleDeleteNode = useCallback((id: string) => {
         setNodes(nds => nds.filter(n => n.id !== id));
         setEdges(eds => eds.filter(e => e.source !== id && e.target !== id));
+        setPendingIntegrationNodeIds((currentIds) => currentIds.filter((nodeId) => nodeId !== id));
     }, [setNodes, setEdges]);
 
     const handleNodeExpand = useCallback((id: string, expanded: boolean) => {
@@ -1002,6 +1091,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [clearMarqueeSelection, investigationId]);
 
     useEffect(() => {
+        setAppendSearchPrompt('');
+        setPendingIntegrationNodeIds([]);
+        setAnalysisMode(null);
+    }, [investigationId]);
+
+    useEffect(() => {
         console.log('[DetectiveBoard] Grid visibility changed:', showGrid);
         localStorage.setItem('detective_board_show_grid', String(showGrid));
     }, [showGrid]);
@@ -1060,6 +1155,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
             const savedNodes = savedState.nodes.filter((node: Node) => node.data?.nodeKind !== 'discovery');
             const savedEdges = savedState.edges.filter((edge: Edge) => edge.data?.generatedBy !== 'discovery');
+            const savedNodeIdSet = new Set(savedNodes.map((node: Node) => node.id));
+            const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
+                .filter((nodeId) => savedNodeIdSet.has(nodeId));
             const restoredNodes = savedNodes.map((n: Node) => ({
                 ...n,
                 style: {
@@ -1097,11 +1195,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setNodes(handledNodes);
                 setEdges(finalEdges);
             }
+            setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
             setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
         } else {
             setBoardMode('strict-grid');
             setNodes([]);
             setEdges([]);
+            setPendingIntegrationNodeIds([]);
             setHasConnectedDots(false);
         }
         setLoadedInvestigationId(investigationId);
@@ -1117,7 +1217,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         persistTimerRef.current = window.setTimeout(() => {
-            localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes, edges }));
+            localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes, edges, pendingIntegrationNodeIds }));
             persistTimerRef.current = null;
         }, 250);
 
@@ -1127,7 +1227,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 persistTimerRef.current = null;
             }
         };
-    }, [boardMode, nodes, edges, investigationId, loadedInvestigationId]);
+    }, [boardMode, nodes, edges, investigationId, loadedInvestigationId, pendingIntegrationNodeIds]);
 
     const persistBoardNow = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -1137,7 +1237,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             persistTimerRef.current = null;
         }
 
-        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes: nodesRef.current, edges: edgesRef.current }));
+        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes: nodesRef.current, edges: edgesRef.current, pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current }));
     }, [boardMode, investigationId, loadedInvestigationId]);
 
     const onNodesChange: OnNodesChange = useCallback(
@@ -1483,6 +1583,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const handleNewConnections = useCallback((connections: any[]) => {
         console.log('[Board] Received connections:', connections);
         const currentNodes = nodesRef.current;
+        const activeAnalysisMode = analysisModeRef.current;
+        const activePendingNodeIds = pendingIntegrationNodeIdsRef.current;
         console.log('[Board] Current nodes:', currentNodes.map(n => ({ id: n.id, title: n.data.title })));
 
         // Filter connections to only include those where source and target exist
@@ -1555,10 +1657,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         });
 
         if (boardMode === 'strict-grid') {
-            const preservedEdges = edgesRef.current.filter(e => e.data?.generatedBy !== 'connectTheDots');
-            const existingIds = new Set(preservedEdges.map(e => e.id));
-            const filteredNew = newEdges.filter(e => !existingIds.has(e.id));
-            const combinedEdges = [...preservedEdges, ...filteredNew];
+            const combinedEdges = activeAnalysisMode === 'incremental'
+                ? mergeIncrementalEvidenceEdges(edgesRef.current, newEdges, activePendingNodeIds)
+                : mergeEvidenceEdges(edgesRef.current, newEdges);
 
             window.requestAnimationFrame(() => {
                 const layoutedNodes = getStrictGridLayoutedNodes(currentNodes, combinedEdges);
@@ -1566,16 +1667,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setTimeout(() => fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS }), 100);
             });
 
+            if (activeAnalysisMode === 'incremental') {
+                clearPendingIntegrationNodeIds();
+            }
             setHasConnectedDots(true);
             setIsAnalyzing(false);
+            setAnalysisMode(null);
             return;
         }
 
         setEdges((eds) => {
-            const preservedEdges = eds.filter(e => e.data?.generatedBy !== 'connectTheDots');
-            const existingIds = new Set(preservedEdges.map(e => e.id));
-            const filteredNew = newEdges.filter(e => !existingIds.has(e.id));
-            const combinedEdges = [...preservedEdges, ...filteredNew];
+            const combinedEdges = activeAnalysisMode === 'incremental'
+                ? mergeIncrementalEvidenceEdges(eds, newEdges, activePendingNodeIds)
+                : mergeEvidenceEdges(eds, newEdges);
 
             setNodes((currentNodes) => {
                 const { edges: finalEdges, handledNodes } = distributeEdges(combinedEdges, currentNodes);
@@ -1592,9 +1696,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             // For edges state, we need to return the final array independently avoiding stale node reads
             return combinedEdges; // Temporary fallback. The node queue recalculates the real edges.
         });
+        if (activeAnalysisMode === 'incremental') {
+            clearPendingIntegrationNodeIds();
+        }
         setHasConnectedDots(true);
         setIsAnalyzing(false);
-    }, [boardMode, buildEdgeVisuals, fitView, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
+        setAnalysisMode(null);
+    }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -1604,7 +1712,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             console.log('[Board] Received:', msg.type);
 
             if (msg.type === 'MEMORY_NODE_GATHERED') {
-                const { node, vaultId } = msg.payload;
+                const { node, vaultId, append } = msg.payload;
                 const frame = calculateNodeFrame(node.summary || '', node.fullText || '', false);
 
                 const newNode: Node = {
@@ -1636,12 +1744,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 if (vaultId && vaultId !== investigationId) {
                     console.log(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
                     const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
-                    let vaultData: PersistedBoardState = savedState || { mode: boardMode, nodes: [], edges: [] };
+                    let vaultData: PersistedBoardState = savedState || { mode: boardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
 
                     const nodeExists = (vaultData.nodes || []).some((n: any) => n.id === node.id);
                     if (!nodeExists) {
                         vaultData.nodes = [...(vaultData.nodes || []), newNode];
                         vaultData.mode = vaultData.mode || boardMode;
+                        if (append) {
+                            const currentIds = vaultData.pendingIntegrationNodeIds || [];
+                            vaultData.pendingIntegrationNodeIds = currentIds.includes(node.id) ? currentIds : [...currentIds, node.id];
+                        }
                         localStorage.setItem(`inv_data_${vaultId}`, JSON.stringify(vaultData));
                         console.log(`[Board] Node ${node.id} successfully persisted to target vault ${vaultId}`);
                     }
@@ -1652,6 +1764,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     if (nds.find(n => n.id === node.id)) return nds;
                     return [...nds, newNode];
                 });
+                if (append && vaultId === investigationId) {
+                    addPendingIntegrationNodeId(node.id);
+                }
             } else if (msg.type === 'PERSONA_INSIGHTS') {
                 // Handle full persona insights with chat data
                 const insights = msg.payload as Array<{
@@ -1711,11 +1826,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     setIsGathering(true);
                 }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
+                const vaultId = typeof msg.payload?.vaultId === 'string' && msg.payload.vaultId
+                    ? msg.payload.vaultId
+                    : investigationId;
+                const isAppendResult = Boolean(msg.payload?.append);
+
                 setIsGathering(false);
                 setDeepDiveTopic(null);
-                // Save synthesis result for reporting
-                localStorage.setItem(`vault_result_${investigationId}`, JSON.stringify(msg.payload));
-                // Trigger auto connect dots
+                if (vaultId) {
+                    localStorage.setItem(`vault_result_${vaultId}`, JSON.stringify(msg.payload));
+                }
+                if (isAppendResult && vaultId === investigationId) {
+                    return;
+                }
+                // Trigger auto connect dots for full new-investigation crawls
                 setTimeout(() => {
                     const btn = document.getElementById('connect-dots-btn');
                     if (btn) btn.click();
@@ -1724,6 +1848,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 console.error('[Board] System Error:', msg.payload);
                 setIsAnalyzing(false);
                 setIsGathering(false);
+                setAnalysisMode(null);
                 setDeepDiveTopic(null);
                 alert(`System Error: ${msg.payload}`);
             } else if (msg.type === 'MANUAL_NODE_PROCESSED') {
@@ -1842,6 +1967,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     const connectTheDots = () => {
         const evidenceNodes = nodes.filter((node) => node.data?.nodeKind !== 'discovery');
+        const incrementalNodeIds = pendingIntegrationNodeIds.filter((nodeId) => evidenceNodes.some((node) => node.id === nodeId));
 
         if (evidenceNodes.length < 2) {
             alert("Need at least 2 nodes!");
@@ -1854,9 +1980,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         console.log('[Board] Dispatching CONNECT_DOTS...');
         setIsAnalyzing(true);
+        setAnalysisMode(incrementalNodeIds.length > 0 ? 'incremental' : 'full');
         setEdgeReasoning(null);
         setNodes((nds) => nds.filter(node => node.data?.nodeKind !== 'discovery'));
-        setEdges((eds) => eds.filter(e => e.data?.generatedBy !== 'connectTheDots' && e.data?.generatedBy !== 'discovery'));
+        setEdges((eds) => eds.filter((edge) => {
+            if (edge.data?.generatedBy === 'discovery') {
+                return false;
+            }
+
+            if (incrementalNodeIds.length === 0 && edge.data?.generatedBy === 'connectTheDots') {
+                return false;
+            }
+
+            return true;
+        }));
         if (investigationId) {
             window.dispatchEvent(new CustomEvent('gorantula:clear-discoveries', { detail: { vaultId: investigationId } }));
         }
@@ -1868,8 +2005,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             fullText: n.data.fullText
         }));
 
-        sharedSocket.send(JSON.stringify({ 
-            type: 'CONNECT_DOTS', 
+        if (incrementalNodeIds.length > 0) {
+            sharedSocket.send(JSON.stringify({
+                type: 'CONNECT_DOTS_INCREMENTAL',
+                payload: {
+                    allNodes: nodeData,
+                    pendingNodeIds: incrementalNodeIds,
+                },
+                vaultId: investigationId
+            }));
+            return;
+        }
+
+        sharedSocket.send(JSON.stringify({
+            type: 'CONNECT_DOTS',
             payload: nodeData,
             vaultId: investigationId
         }));
@@ -1878,6 +2027,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const clearBoard = () => {
         if (window.confirm("Clear board?")) {
             setBoardMode('strict-grid');
+            setPendingIntegrationNodeIds([]);
+            setAnalysisMode(null);
             setNodes([]);
             setEdges([]);
             setEdgeReasoning(null);
@@ -2005,8 +2156,36 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     )}
                 </div>
 
-                <div className="flex w-full flex-wrap items-start justify-center gap-3">
-                    <div className="flex max-w-full flex-wrap items-center gap-2 rounded-[1.35rem] border border-white/10 bg-black/78 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                <div className="flex w-full justify-center">
+                    <div className="flex w-full max-w-full items-center gap-2 overflow-x-auto rounded-[1.35rem] border border-white/10 bg-black/78 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-22rem)]">
+                        <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-cyber-cyan/18 bg-black/55 px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
+                            <Search size={15} className="text-cyber-cyan/80" />
+                            <input
+                                type="text"
+                                value={appendSearchPrompt}
+                                onChange={(event) => setAppendSearchPrompt(event.target.value)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                        appendSearchToInvestigation();
+                                    }
+                                }}
+                                disabled={!investigationId || isBoardBusy}
+                                placeholder={investigationId ? 'Search more in this investigation...' : 'Select an investigation to append search'}
+                                className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-cyber-cyan outline-none placeholder:text-gray-500 disabled:cursor-not-allowed disabled:text-gray-500"
+                            />
+                            <button
+                                type="button"
+                                onClick={appendSearchToInvestigation}
+                                disabled={!canAppendSearch}
+                                className={`shrink-0 rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-all ${canAppendSearch
+                                    ? 'border-cyber-cyan/55 bg-cyber-cyan/10 text-cyber-cyan hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black'
+                                    : 'cursor-not-allowed border-cyber-cyan/15 bg-cyber-cyan/5 text-cyber-cyan/35'
+                                    }`}
+                            >
+                                Search More
+                            </button>
+                        </div>
+
                         <button
                             onClick={addManualNode}
                             className="flex min-h-11 items-center gap-2 rounded-xl border border-cyber-green/50 bg-cyber-green/10 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-cyber-green transition-all hover:border-cyber-green hover:bg-cyber-green hover:text-black"
@@ -2025,7 +2204,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                 }`}
                         >
                             <Zap size={15} className={isAnalyzing ? 'animate-spin' : ''} />
-                            {isAnalyzing ? 'Analyzing Patterns...' : (hasConnectedDots ? 'Reconnect the Dots' : 'Connect the Dots')}
+                            {isAnalyzing
+                                ? (analysisMode === 'incremental' ? 'Integrating New Evidence...' : 'Analyzing Patterns...')
+                                : hasPendingEvidenceIntegration
+                                    ? 'Integrate New Evidence'
+                                    : (hasConnectedDots ? 'Reconnect the Dots' : 'Connect the Dots')}
                         </button>
 
                         {isMergedChild && returnVaultId && onReturnToParent && (

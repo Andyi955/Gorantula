@@ -284,6 +284,37 @@ func TestValidateAndRankRelationshipCandidatesDemotesBroadSupportEdges(t *testin
 	}
 }
 
+func TestRelationshipTouchesPendingNode(t *testing.T) {
+	pendingNodeIDs := map[string]struct{}{
+		"node-pending": {},
+	}
+
+	if !relationshipTouchesPendingNode("node-pending", "node-other", pendingNodeIDs) {
+		t.Fatalf("expected source pending node to count as touched")
+	}
+	if !relationshipTouchesPendingNode("node-other", "node-pending", pendingNodeIDs) {
+		t.Fatalf("expected target pending node to count as touched")
+	}
+	if relationshipTouchesPendingNode("node-a", "node-b", pendingNodeIDs) {
+		t.Fatalf("expected unrelated relationship to be filtered out")
+	}
+}
+
+func TestGenerateIncrementalRelationshipCandidatesRequiresPendingNode(t *testing.T) {
+	br := &Brain{}
+	nodes := []models.MemoryNode{
+		{ID: "node-a", Title: "A", Summary: "A", FullText: "A"},
+	}
+
+	_, err := br.GenerateIncrementalRelationshipCandidates(context.Background(), nodes, []string{"node-missing"}, nil)
+	if err == nil {
+		t.Fatalf("expected missing pending node selection to fail")
+	}
+	if !strings.Contains(err.Error(), "requires at least one valid pending node") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestValidateAndRankRelationshipCandidatesRejectsSamePairFamilyDuplicates(t *testing.T) {
 	nodes := []models.MemoryNode{
 		{ID: "node-1", Title: "RAG paper", Summary: "RAG uses FAISS indexing.", FullText: "RAG uses FAISS indexing over Wikipedia to support retrieval during generation."},

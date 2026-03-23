@@ -81,6 +81,11 @@ type BoardConnection struct {
 	CandidateSources   []string `json:"candidateSources,omitempty"`
 }
 
+type IncrementalConnectDotsPayload struct {
+	AllNodes       []MemoryNode `json:"allNodes"`
+	PendingNodeIDs []string     `json:"pendingNodeIds"`
+}
+
 type RelationshipCandidate struct {
 	Source             string   `json:"source"`
 	Target             string   `json:"target"`

@@ -3,6 +3,7 @@ package brain
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Persona represents an AI agent with a specific perspective for analyzing investigation findings
@@ -167,6 +168,67 @@ CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the [Nod
 CRITICAL: Every proposed connection MUST use exact source/target node IDs and exact evidenceNodeIDs. If you cannot ground a relationship directly in the evidence, omit it.
 CRITICAL: Separate direct observations from hypotheses. Do not frame speculation as fact. Avoid strategic or future-looking claims unless they are explicitly present in the node text.
 Respond ONLY with the JSON.`, persona.SystemPrompt, findings, persona.Expertise, persona.Perspective, persona.Questions)
+}
+
+func BuildIncrementalPersonaPrompt(persona Persona, pendingFindings string, contextFindings string, pendingNodeIDs []string) string {
+	return fmt.Sprintf(`%s
+
+You are analyzing new evidence that must be integrated into an existing investigation board.
+
+PENDING NODE IDS:
+%s
+
+NEW EVIDENCE (full detail):
+---
+%s
+---
+
+EXISTING BOARD CONTEXT (compact summaries only):
+---
+%s
+---
+
+Your expertise: %s
+Your perspective: %s
+
+Specifically, consider these questions:
+%s
+
+Provide your analysis in JSON format with the following structure:
+{
+  "keyFindings": ["list of short strings answering your prompt. IF you are Entity Hunter, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
+  "observations": ["direct evidence-grounded observations tied to exact node IDs"],
+  "hypotheses": ["optional grounded hypotheses or interpretations; omit weak speculation"],
+  "connections": ["connections you identify between facts"],
+  "proposedConnections": [
+    {
+      "source": "exact node id",
+      "target": "exact node id",
+      "tag": "UPPERCASE_TAG",
+      "reasoning": "one sober sentence grounded in evidence",
+      "evidenceNodeIDs": ["exact-node-id-1", "exact-node-id-2"],
+      "confidence": 0.0
+    }
+  ],
+  "questions": ["follow-up questions this raises"],
+  "confidence": 0.0-1.0,
+  "fullAnalysis": "Your detailed analysis (2-3 paragraphs)",
+  "nodeIDs": ["list of node IDs (e.g., 'node-12345') that this analysis directly relates to"],
+  "timelineEvents": [
+    {
+      "timestamp": "extracted date/time (e.g. 2026-02-24, 2025, or Unknown)",
+      "event": "description of what happened",
+      "sourceNodeId": "the EXACT node ID where this event was found"
+    }
+  ]
+}
+
+CRITICAL: Every proposed connection MUST include at least one node from the pending node ID list.
+CRITICAL: Focus on relationships between pending nodes and the existing board, plus pending-to-pending links.
+CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the input above. Do NOT use titles, entity names, or make up IDs.
+CRITICAL: Every proposed connection MUST use exact source/target node IDs and exact evidenceNodeIDs. If you cannot ground a relationship directly in the evidence, omit it.
+CRITICAL: Separate direct observations from hypotheses. Do not frame speculation as fact. Avoid strategic or future-looking claims unless they are explicitly present in the node text.
+Respond ONLY with the JSON.`, persona.SystemPrompt, strings.Join(pendingNodeIDs, ", "), pendingFindings, contextFindings, persona.Expertise, persona.Perspective, persona.Questions)
 }
 
 // PersonaJSONResponse represents the expected JSON structure from persona analysis
