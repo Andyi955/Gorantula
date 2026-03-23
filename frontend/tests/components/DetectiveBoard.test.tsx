@@ -301,6 +301,59 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('renders board controls in an overlay outside the action bar', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /board controls/i }))
+
+    const overlay = screen.getByTestId('board-controls-overlay')
+    const actionBar = screen.getByTestId('board-action-bar')
+
+    expect(overlay).toBeInTheDocument()
+    expect(actionBar.contains(overlay)).toBe(false)
+    expect(screen.getByRole('button', { name: /add evidence/i })).toBeInTheDocument()
+  })
+
+  it('closes board controls when clicking outside the overlay', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /board controls/i }))
+    expect(screen.getByTestId('board-controls-overlay')).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('board-controls-overlay')).not.toBeInTheDocument()
+    })
+  })
+
+  it('closes board controls when export is opened', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /board controls/i }))
+    expect(screen.getByTestId('board-controls-overlay')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /export/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('board-controls-overlay')).not.toBeInTheDocument()
+    })
+  })
+
   it('sends an append crawl request for the active investigation from the board action bar', async () => {
     const user = userEvent.setup()
     const socket = new MockSocket()
