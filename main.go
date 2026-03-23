@@ -74,12 +74,28 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 		// Support both legacy {"prompt": "..."} and new {"type": "CRAWL", "payload": "..."}
 		if prompt, ok := msg["prompt"].(string); ok {
-			triggerCrawl(br, prompt)
+			triggerCrawl(br, prompt, "", false)
 		} else if msgType, ok := msg["type"].(string); ok {
 			switch msgType {
 			case "CRAWL":
 				if prompt, ok := msg["payload"].(string); ok {
-					triggerCrawl(br, prompt)
+					vaultID := ""
+					if rawVaultID, ok := msg["vaultId"].(string); ok {
+						vaultID = strings.TrimSpace(rawVaultID)
+					}
+					triggerCrawl(br, prompt, vaultID, false)
+				}
+			case "APPEND_CRAWL":
+				if prompt, ok := msg["payload"].(string); ok {
+					vaultID := ""
+					if rawVaultID, ok := msg["vaultId"].(string); ok {
+						vaultID = strings.TrimSpace(rawVaultID)
+					}
+					if vaultID == "" {
+						broadcast(models.WSMessage{Type: "ERROR", Payload: "Append crawl requires a target investigation."})
+						continue
+					}
+					triggerCrawl(br, prompt, vaultID, true)
 				}
 			case "CRAWL_LOCAL":
 				if payload, ok := msg["payload"].(string); ok {
@@ -123,80 +139,51 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}
 				}
 
-				log.Printf("[WS] Dispatching multi-agent persona analysis for %d nodes...", len(nodes))
-				go func() {
-					// Step 1: Run persona analysis
-					broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Running multi-agent persona analysis..."})
-					insights, err := br.AnalyzeWithPersonas(context.Background(), nodes)
-					if err != nil {
-						log.Printf("[WS Error] AnalyzeWithPersonas failed: %v", err)
-						broadcast(models.WSMessage{Type: "ERROR", Payload: "Persona analysis failed: " + err.Error()})
-						// Fall back to standard analysis
-						connections, fallbackErr := br.AnalyzeConnections(context.Background(), nodes)
-						if fallbackErr != nil {
-							broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + fallbackErr.Error()})
-						} else {
-							validatedConnections, _ := br.ValidateFallbackConnections(vaultID, nodes, connections)
-							broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: validatedConnections})
-						}
-						return
+				triggerConnectDotsAnalysis(br, vaultID, nodes, nil)
+			case "CONNECT_DOTS_INCREMENTAL":
+				log.Println("[WS] Received CONNECT_DOTS_INCREMENTAL request")
+
+				vaultID := ""
+				if vId, ok := msg["vaultId"].(string); ok {
+					vaultID = strings.TrimSpace(vId)
+				}
+
+				payloadBytes, _ := json.Marshal(msg["payload"])
+				var payload models.IncrementalConnectDotsPayload
+				if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+					log.Printf("[WS Error] Failed to unmarshal CONNECT_DOTS_INCREMENTAL payload: %v", err)
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid incremental node data sent for analysis"})
+					continue
+				}
+
+				pendingNodeIDs := make([]string, 0, len(payload.PendingNodeIDs))
+				seenPendingNodeIDs := make(map[string]struct{}, len(payload.PendingNodeIDs))
+				for _, nodeID := range payload.PendingNodeIDs {
+					nodeID = strings.TrimSpace(nodeID)
+					if nodeID == "" {
+						continue
 					}
-
-					// Debug: Log insights before broadcasting
-					for _, insight := range insights {
-						log.Printf("[WS] Persona %s: nodeIDs=%v, keyFindings=%d", insight.PersonaName, insight.NodeIDs, len(insight.KeyFindings))
+					if _, seen := seenPendingNodeIDs[nodeID]; seen {
+						continue
 					}
+					seenPendingNodeIDs[nodeID] = struct{}{}
+					pendingNodeIDs = append(pendingNodeIDs, nodeID)
+				}
 
-					// Broadcast insights to frontend
-					broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
+				if len(pendingNodeIDs) == 0 {
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "Incremental integration requires at least one pending node."})
+					continue
+				}
 
-					// Trigger Cross-Case Synthesis using Entity Hunter extracted entities
-					var entities []string
-					for _, insight := range insights {
-						if insight.PersonaName == "Entity Hunter" {
-							entities = append(entities, insight.KeyFindings...)
-						}
+				if vaultID == "" && len(payload.AllNodes) > 0 {
+					parts := strings.Split(payload.AllNodes[0].ID, "-")
+					vaultID = "case-" + time.Now().Format("2006-01-02-150405")
+					if len(parts) >= 2 {
+						vaultID = "case-" + parts[1]
 					}
+				}
 
-					log.Printf("[Synthesis] Triggering overlaps check with %d entities for %d nodes", len(entities), len(nodes))
-					if len(entities) > 0 && len(nodes) > 0 {
-						go br.Synthesis.AnalyzeOverlap(context.Background(), entities, vaultID, nodes, br)
-					}
-
-					// Step 2: Synthesize insights into final connections
-					broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
-					connections, _, err := br.RunRelationshipWorkflow(context.Background(), vaultID, nodes, insights)
-					if err != nil {
-						log.Printf("[WS Error] RunRelationshipWorkflow failed: %v", err)
-						broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
-						return
-					}
-
-					log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
-					broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
-
-					// Discovery review is intentionally decoupled from the main connect-the-dots
-					// path so speculative discovery work never changes or blocks the core graph.
-					nodesSnapshot := append([]models.MemoryNode(nil), nodes...)
-					insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
-					go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
-						candidateDiscoveries, err := br.SynthesizeDiscoveries(context.Background(), vaultID, nodes, insights)
-						if err != nil {
-							log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
-							return
-						}
-
-						discoveries, err := br.ReviewDiscoveryCandidates(context.Background(), candidateDiscoveries, nodes)
-						if err != nil {
-							log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
-							return
-						}
-
-						if len(discoveries) > 0 {
-							broadcast(models.WSMessage{Type: "DISCOVERIES_FOUND", Payload: discoveries})
-						}
-					}(vaultID, nodesSnapshot, insightsSnapshot)
-				}()
+				triggerConnectDotsAnalysis(br, vaultID, payload.AllNodes, pendingNodeIDs)
 			case "CHAT_RAG":
 				log.Println("[WS] Received CHAT_RAG request")
 				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
@@ -330,15 +317,146 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 	}
 }
 
-func triggerCrawl(br *brain.Brain, prompt string) {
+func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool) {
 	go func() {
-		_, err := br.ProcessPrompt(context.Background(), prompt)
+		var err error
+		if appendToVault {
+			_, err = br.ProcessPromptIntoVault(context.Background(), prompt, vaultID)
+		} else if strings.TrimSpace(vaultID) != "" {
+			_, err = br.ProcessPromptForVault(context.Background(), prompt, vaultID)
+		} else {
+			_, err = br.ProcessPrompt(context.Background(), prompt)
+		}
 		if err != nil {
 			broadcast(models.WSMessage{
 				Type:    "ERROR",
 				Payload: err.Error(),
 			})
 		}
+	}()
+}
+
+func filterConnectionsByPendingNodeIDs(connections []models.BoardConnection, pendingNodeIDs []string) []models.BoardConnection {
+	if len(pendingNodeIDs) == 0 {
+		return connections
+	}
+
+	pendingNodeIDSet := make(map[string]struct{}, len(pendingNodeIDs))
+	for _, nodeID := range pendingNodeIDs {
+		pendingNodeIDSet[nodeID] = struct{}{}
+	}
+
+	filtered := make([]models.BoardConnection, 0, len(connections))
+	for _, connection := range connections {
+		if _, ok := pendingNodeIDSet[connection.Source]; ok {
+			filtered = append(filtered, connection)
+			continue
+		}
+		if _, ok := pendingNodeIDSet[connection.Target]; ok {
+			filtered = append(filtered, connection)
+		}
+	}
+
+	return filtered
+}
+
+func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string) {
+	go func() {
+		isIncremental := len(pendingNodeIDs) > 0
+		if isIncremental {
+			log.Printf("[WS] Dispatching incremental persona analysis for %d nodes with %d pending nodes...", len(nodes), len(pendingNodeIDs))
+		} else {
+			log.Printf("[WS] Dispatching multi-agent persona analysis for %d nodes...", len(nodes))
+		}
+
+		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Running multi-agent persona analysis..."})
+
+		var (
+			insights []brain.PersonaInsight
+			err      error
+		)
+		if isIncremental {
+			insights, err = br.AnalyzeIncrementalWithPersonas(context.Background(), nodes, pendingNodeIDs)
+		} else {
+			insights, err = br.AnalyzeWithPersonas(context.Background(), nodes)
+		}
+		if err != nil {
+			log.Printf("[WS Error] Persona analysis failed: %v", err)
+			broadcast(models.WSMessage{Type: "ERROR", Payload: "Persona analysis failed: " + err.Error()})
+
+			connections, fallbackErr := br.AnalyzeConnections(context.Background(), nodes)
+			if fallbackErr != nil {
+				broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + fallbackErr.Error()})
+			} else {
+				validatedConnections, _ := br.ValidateFallbackConnections(vaultID, nodes, connections)
+				if isIncremental {
+					validatedConnections = filterConnectionsByPendingNodeIDs(validatedConnections, pendingNodeIDs)
+				}
+				broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: validatedConnections})
+			}
+			return
+		}
+
+		for _, insight := range insights {
+			log.Printf("[WS] Persona %s: nodeIDs=%v, keyFindings=%d", insight.PersonaName, insight.NodeIDs, len(insight.KeyFindings))
+		}
+
+		broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
+
+		if !isIncremental {
+			var entities []string
+			for _, insight := range insights {
+				if insight.PersonaName == "Entity Hunter" {
+					entities = append(entities, insight.KeyFindings...)
+				}
+			}
+
+			log.Printf("[Synthesis] Triggering overlaps check with %d entities for %d nodes", len(entities), len(nodes))
+			if len(entities) > 0 && len(nodes) > 0 {
+				go br.Synthesis.AnalyzeOverlap(context.Background(), entities, vaultID, nodes, br)
+			}
+		}
+
+		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
+
+		var connections []models.BoardConnection
+		if isIncremental {
+			connections, _, err = br.RunIncrementalRelationshipWorkflow(context.Background(), vaultID, nodes, pendingNodeIDs, insights)
+		} else {
+			connections, _, err = br.RunRelationshipWorkflow(context.Background(), vaultID, nodes, insights)
+		}
+		if err != nil {
+			log.Printf("[WS Error] Relationship workflow failed: %v", err)
+			broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
+			return
+		}
+
+		log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
+		broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+
+		if isIncremental {
+			return
+		}
+
+		nodesSnapshot := append([]models.MemoryNode(nil), nodes...)
+		insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
+		go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
+			candidateDiscoveries, err := br.SynthesizeDiscoveries(context.Background(), vaultID, nodes, insights)
+			if err != nil {
+				log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
+				return
+			}
+
+			discoveries, err := br.ReviewDiscoveryCandidates(context.Background(), candidateDiscoveries, nodes)
+			if err != nil {
+				log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
+				return
+			}
+
+			if len(discoveries) > 0 {
+				broadcast(models.WSMessage{Type: "DISCOVERIES_FOUND", Payload: discoveries})
+			}
+		}(vaultID, nodesSnapshot, insightsSnapshot)
 	}()
 }
 

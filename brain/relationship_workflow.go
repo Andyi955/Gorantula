@@ -28,6 +28,12 @@ type relationshipCandidateJSONResponse struct {
 	Connections []models.RelationshipCandidate `json:"connections"`
 }
 
+func relationshipTouchesPendingNode(source string, target string, pendingNodeIDs map[string]struct{}) bool {
+	_, sourcePending := pendingNodeIDs[source]
+	_, targetPending := pendingNodeIDs[target]
+	return sourcePending || targetPending
+}
+
 func (b *Brain) RunRelationshipWorkflow(ctx context.Context, vaultID string, nodes []models.MemoryNode, insights []PersonaInsight) ([]models.BoardConnection, models.RelationshipDebugRun, error) {
 	debugRun := models.RelationshipDebugRun{
 		VaultID:   vaultID,
@@ -64,6 +70,52 @@ func (b *Brain) RunRelationshipWorkflow(ctx context.Context, vaultID string, nod
 	debugRun.Candidates = scoredCandidates
 	debugRun.FinalConnections = finalConnections
 	debugRun.Notes = notes
+	debugRun.Stage = "completed"
+
+	if err := writeRelationshipDebugTrace(debugRun); err != nil {
+		debugRun.Notes = append(debugRun.Notes, "trace_write_failed="+err.Error())
+	}
+
+	return finalConnections, debugRun, nil
+}
+
+func (b *Brain) RunIncrementalRelationshipWorkflow(ctx context.Context, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, insights []PersonaInsight) ([]models.BoardConnection, models.RelationshipDebugRun, error) {
+	debugRun := models.RelationshipDebugRun{
+		VaultID:   vaultID,
+		CreatedAt: time.Now().Format(time.RFC3339),
+		Stage:     "starting_incremental",
+		Notes:     []string{fmt.Sprintf("pending_node_count=%d", len(pendingNodeIDs))},
+	}
+	for _, node := range nodes {
+		debugRun.InputNodes = append(debugRun.InputNodes, models.RelationshipDebugNode{
+			ID:       node.ID,
+			Title:    node.Title,
+			Summary:  node.Summary,
+			FullText: node.FullText,
+		})
+	}
+	for _, insight := range insights {
+		debugRun.PersonaSummaries = append(debugRun.PersonaSummaries, models.RelationshipDebugPersona{
+			PersonaName: insight.PersonaName,
+			Confidence:  insight.Confidence,
+			NodeIDs:     append([]string(nil), insight.NodeIDs...),
+			KeyFindings: append([]string(nil), insight.KeyFindings...),
+			Connections: append([]string(nil), insight.Connections...),
+			Questions:   append([]string(nil), insight.Questions...),
+			ProposedConnections: mapPersonaProposals(insight.ProposedConnections, insight.PersonaName),
+		})
+	}
+
+	candidates, err := b.GenerateIncrementalRelationshipCandidates(ctx, nodes, pendingNodeIDs, insights)
+	if err != nil {
+		return nil, debugRun, err
+	}
+	debugRun.Stage = "candidate_generation_complete"
+
+	finalConnections, scoredCandidates, notes := validateAndRankRelationshipCandidates(nodes, candidates)
+	debugRun.Candidates = scoredCandidates
+	debugRun.FinalConnections = finalConnections
+	debugRun.Notes = append(debugRun.Notes, notes...)
 	debugRun.Stage = "completed"
 
 	if err := writeRelationshipDebugTrace(debugRun); err != nil {
@@ -169,6 +221,81 @@ func (b *Brain) GenerateRelationshipCandidates(ctx context.Context, nodes []mode
 	return candidates, nil
 }
 
+func (b *Brain) GenerateIncrementalRelationshipCandidates(ctx context.Context, nodes []models.MemoryNode, pendingNodeIDs []string, insights []PersonaInsight) ([]models.RelationshipCandidate, error) {
+	nodeLookup := make(map[string]models.MemoryNode, len(nodes))
+	for _, node := range nodes {
+		nodeLookup[node.ID] = node
+	}
+
+	pendingNodeIDSet := make(map[string]struct{}, len(pendingNodeIDs))
+	for _, nodeID := range pendingNodeIDs {
+		if _, ok := nodeLookup[nodeID]; ok {
+			pendingNodeIDSet[nodeID] = struct{}{}
+		}
+	}
+	if len(pendingNodeIDSet) == 0 {
+		return nil, fmt.Errorf("incremental relationship generation requires at least one valid pending node")
+	}
+
+	candidateMap := make(map[string]models.RelationshipCandidate)
+	for _, insight := range insights {
+		for _, proposal := range insight.ProposedConnections {
+			if !relationshipTouchesPendingNode(proposal.Source, proposal.Target, pendingNodeIDSet) {
+				continue
+			}
+
+			candidate := normalizeRelationshipCandidate(models.RelationshipCandidate{
+				Source:             proposal.Source,
+				Target:             proposal.Target,
+				Tag:                proposal.Tag,
+				Reasoning:          proposal.Reasoning,
+				Confidence:         proposal.Confidence,
+				EvidenceNodeIDs:    append([]string(nil), proposal.EvidenceNodeIDs...),
+				SupportingPersonas: []string{insight.PersonaName},
+				CandidateSource:    "persona:" + insight.PersonaName,
+			}, nodeLookup)
+			if candidate.Source == "" || candidate.Target == "" || candidate.Tag == "" {
+				continue
+			}
+			mergeRelationshipCandidate(candidateMap, candidate)
+		}
+	}
+
+	synthesized, err := b.generateIncrementalSynthesizedRelationshipCandidates(ctx, nodes, pendingNodeIDs, insights)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range synthesized {
+		if !relationshipTouchesPendingNode(candidate.Source, candidate.Target, pendingNodeIDSet) {
+			continue
+		}
+		mergeRelationshipCandidate(candidateMap, normalizeRelationshipCandidate(candidate, nodeLookup))
+	}
+
+	candidates := make([]models.RelationshipCandidate, 0, len(candidateMap))
+	for _, candidate := range candidateMap {
+		if candidate.Source == "" || candidate.Target == "" || candidate.Tag == "" {
+			continue
+		}
+		if candidate.Confidence < relationshipCandidateConfidenceFloor {
+			continue
+		}
+		if !relationshipTouchesPendingNode(candidate.Source, candidate.Target, pendingNodeIDSet) {
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Confidence == candidates[j].Confidence {
+			return relationshipCandidateKey(candidates[i]) < relationshipCandidateKey(candidates[j])
+		}
+		return candidates[i].Confidence > candidates[j].Confidence
+	})
+
+	return candidates, nil
+}
+
 func (b *Brain) generateSynthesizedRelationshipCandidates(ctx context.Context, nodes []models.MemoryNode, insights []PersonaInsight) ([]models.RelationshipCandidate, error) {
 	provider := b.GetSearchProvider()
 	if provider == nil {
@@ -235,6 +362,93 @@ Persona outputs:
 	var response relationshipCandidateJSONResponse
 	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
 		return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+	}
+
+	return response.Connections, nil
+}
+
+func (b *Brain) generateIncrementalSynthesizedRelationshipCandidates(ctx context.Context, nodes []models.MemoryNode, pendingNodeIDs []string, insights []PersonaInsight) ([]models.RelationshipCandidate, error) {
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return nil, fmt.Errorf("no model providers available")
+	}
+
+	pendingNodeIDSet := make(map[string]struct{}, len(pendingNodeIDs))
+	for _, nodeID := range pendingNodeIDs {
+		pendingNodeIDSet[nodeID] = struct{}{}
+	}
+
+	var pendingBuilder strings.Builder
+	var contextBuilder strings.Builder
+	for _, node := range nodes {
+		if _, ok := pendingNodeIDSet[node.ID]; ok {
+			pendingBuilder.WriteString(fmt.Sprintf("[NodeID: %s]\nTitle: %s\nSummary: %s\nFull Text: %s\n\n", node.ID, node.Title, node.Summary, node.FullText))
+			continue
+		}
+
+		contextBuilder.WriteString(fmt.Sprintf("[ContextNodeID: %s]\nTitle: %s\nSummary: %s\n\n", node.ID, node.Title, node.Summary))
+	}
+
+	var insightBuilder strings.Builder
+	for _, insight := range insights {
+		insightBuilder.WriteString(fmt.Sprintf("[%s]\nConfidence: %.2f\nObservations: %s\nHypotheses: %s\nConnections: %s\nAnalysis: %s\nNodeIDs: %s\n\n",
+			insight.PersonaName,
+			insight.Confidence,
+			strings.Join(insight.Observations, " | "),
+			strings.Join(insight.Hypotheses, " | "),
+			strings.Join(insight.Connections, " | "),
+			insight.FullAnalysis,
+			strings.Join(insight.NodeIDs, ", "),
+		))
+	}
+
+	prompt := fmt.Sprintf(`You are a relationship synthesis engine for an investigation board.
+Integrate the pending evidence into the existing investigation graph.
+
+Rules:
+1. Only propose relationships grounded in exact node IDs.
+2. Every proposed relationship MUST include at least one pending node ID.
+3. Pending nodes are shown in full detail; existing board context nodes are compact summaries only.
+4. Prefer direct evidence from the node text over broad narrative framing.
+5. Use concise uppercase tags of 1-3 words.
+6. Avoid generic connections like RELATED unless no better grounded tag exists.
+7. Do not force a fixed count; return only meaningful candidates.
+8. Do not mention facts, dates, or entities that are not explicitly present in the cited evidence nodes.
+
+Return ONLY valid JSON:
+{
+  "connections": [
+    {
+      "source": "node-id",
+      "target": "node-id",
+      "tag": "TAG",
+      "reasoning": "one sober sentence grounded in the evidence",
+      "confidence": 0.0,
+      "evidenceNodeIDs": ["node-id-1", "node-id-2"],
+      "supportingPersonas": ["Persona Name"],
+      "candidateSource": "synthesis"
+    }
+  ]
+}
+
+Pending node IDs:
+%s
+
+Node mapping:
+%s
+
+Pending evidence:
+%s
+
+Existing board context:
+%s
+
+Persona outputs:
+%s`, strings.Join(pendingNodeIDs, ", "), buildNodeMapping(nodes), pendingBuilder.String(), contextBuilder.String(), insightBuilder.String())
+
+	var response relationshipCandidateJSONResponse
+	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
+		return nil, fmt.Errorf("failed to synthesize incremental relationship candidates: %w", err)
 	}
 
 	return response.Connections, nil

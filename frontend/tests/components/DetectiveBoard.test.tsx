@@ -60,11 +60,38 @@ vi.mock('../../src/utils/ExportUtils', () => ({
 
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible'
 
-const renderBoard = (investigationId = 'investigation-1') =>
+class MockSocket {
+  public readyState = WebSocket.OPEN
+  public sentMessages: string[] = []
+  private listeners = new Map<string, Set<(event: MessageEvent) => void>>()
+
+  addEventListener(type: string, handler: (event: MessageEvent) => void) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set())
+    }
+    this.listeners.get(type)?.add(handler)
+  }
+
+  removeEventListener(type: string, handler: (event: MessageEvent) => void) {
+    this.listeners.get(type)?.delete(handler)
+  }
+
+  send(payload: string) {
+    this.sentMessages.push(payload)
+  }
+
+  emit(type: string, payload: unknown) {
+    const handlers = this.listeners.get('message')
+    const event = { data: JSON.stringify({ type, payload }) } as MessageEvent
+    handlers?.forEach((handler) => handler(event))
+  }
+}
+
+const renderBoard = (investigationId = 'investigation-1', sharedSocket: WebSocket | null = null) =>
   render(
     <DetectiveBoard
       investigationId={investigationId}
-      sharedSocket={null}
+      sharedSocket={sharedSocket}
       onDeepDiveNode={vi.fn()}
       onNavigateToChild={vi.fn()}
     />,
@@ -271,6 +298,306 @@ describe('DetectiveBoard relationship legend', () => {
     expect(setCenterMock).toHaveBeenCalledWith(420, 310, {
       zoom: 0.82,
       duration: 180,
+    })
+  })
+
+  it('sends an append crawl request for the active investigation from the board action bar', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.type(screen.getByPlaceholderText(/search more in this investigation/i), 'follow up lead')
+    await user.click(screen.getByRole('button', { name: /search more/i }))
+
+    expect(socket.sentMessages).toHaveLength(1)
+    expect(JSON.parse(socket.sentMessages[0])).toEqual({
+      type: 'APPEND_CRAWL',
+      payload: 'follow up lead',
+      vaultId: 'investigation-1',
+    })
+  })
+
+  it('switches the connect action into integrate mode after appended evidence arrives', async () => {
+    const socket = new MockSocket()
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    socket.emit('MEMORY_NODE_GATHERED', {
+      append: true,
+      vaultId: 'investigation-1',
+      node: {
+        id: 'node-c',
+        title: 'C',
+        summary: 'C',
+        fullText: 'C',
+        sourceURL: 'https://example.com',
+      },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /integrate new evidence/i })).toBeInTheDocument()
+    })
+  })
+
+  it('restores pending integration state from persisted board data', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /integrate new evidence/i })).toBeInTheDocument()
+    })
+  })
+
+  it('sends an incremental connect request when pending evidence exists', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /integrate new evidence/i }))
+
+    expect(JSON.parse(socket.sentMessages[0])).toEqual({
+      type: 'CONNECT_DOTS_INCREMENTAL',
+      payload: {
+        allNodes: [
+          { id: 'node-a', title: 'A', summary: 'A', fullText: 'A' },
+          { id: 'node-b', title: 'B', summary: 'B', fullText: 'B' },
+          { id: 'node-c', title: 'C', summary: 'C', fullText: 'C' },
+        ],
+        pendingNodeIds: ['node-c'],
+      },
+      vaultId: 'investigation-1',
+    })
+  })
+
+  it('clears pending integration ids after a successful incremental merge', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /integrate new evidence/i }))
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        source: 'node-b',
+        target: 'node-c',
+        tag: 'RELATED',
+        reasoning: 'Integrated line',
+      },
+    ])
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.pendingIntegrationNodeIds).toEqual([])
+    })
+  })
+
+  it('keeps pending integration ids when incremental integration errors', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /integrate new evidence/i }))
+    socket.emit('ERROR', 'integration failed')
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /integrate new evidence/i })).toBeInTheDocument()
+    })
+
+    const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+    expect(persisted.pendingIntegrationNodeIds).toEqual(['node-c'])
+  })
+
+  it('preserves existing connect-the-dots edges while integrating new evidence', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Existing line' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /reconnect the dots/i }))
+
+    const message = JSON.parse(socket.sentMessages[0])
+    expect(message.type).toBe('CONNECT_DOTS')
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        source: 'node-b',
+        target: 'node-c',
+        tag: 'RELATED',
+        reasoning: 'Newly found line',
+      },
+    ])
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
+          expect.objectContaining({ id: 'e-node-b-node-c-RELATED' }),
+        ]),
+      )
+    })
+  })
+
+  it('replaces only AI edges touching pending nodes during incremental integration', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+          { id: 'node-d', position: { x: 600, y: 0 }, data: { title: 'D', summary: 'D', fullText: 'D' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [
+          {
+            id: 'manual-node-a-node-d',
+            source: 'node-a',
+            target: 'node-d',
+            label: 'MANUAL',
+            data: { generatedBy: 'manual', reasoning: 'Manual line' },
+          },
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Keep me' },
+          },
+          {
+            id: 'e-node-b-node-c-RELATED',
+            source: 'node-b',
+            target: 'node-c',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Replace me' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /integrate new evidence/i }))
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        source: 'node-c',
+        target: 'node-d',
+        tag: 'RELATED',
+        reasoning: 'New incremental edge',
+      },
+    ])
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'manual-node-a-node-d' }),
+          expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
+          expect.objectContaining({ id: 'e-node-c-node-d-RELATED' }),
+        ]),
+      )
+      expect(persisted.edges).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'e-node-b-node-c-RELATED' }),
+        ]),
+      )
     })
   })
 })
