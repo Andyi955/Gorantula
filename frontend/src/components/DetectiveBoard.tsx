@@ -1983,7 +1983,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setAnalysisMode(incrementalNodeIds.length > 0 ? 'incremental' : 'full');
         setEdgeReasoning(null);
         setNodes((nds) => nds.filter(node => node.data?.nodeKind !== 'discovery'));
-        setEdges((eds) => eds.filter((edge) => edge.data?.generatedBy !== 'discovery'));
+        setEdges((eds) => eds.filter((edge) => {
+            if (edge.data?.generatedBy === 'discovery') {
+                return false;
+            }
+
+            if (incrementalNodeIds.length === 0 && edge.data?.generatedBy === 'connectTheDots') {
+                return false;
+            }
+
+            return true;
+        }));
         if (investigationId) {
             window.dispatchEvent(new CustomEvent('gorantula:clear-discoveries', { detail: { vaultId: investigationId } }));
         }

@@ -486,6 +486,7 @@ describe('DetectiveBoard relationship legend', () => {
       'inv_data_investigation-1',
       JSON.stringify({
         mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
         nodes: [
           { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
           { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
@@ -505,10 +506,10 @@ describe('DetectiveBoard relationship legend', () => {
 
     renderBoard('investigation-1', socket as unknown as WebSocket)
 
-    await user.click(screen.getByRole('button', { name: /reconnect the dots/i }))
+    await user.click(screen.getByRole('button', { name: /integrate new evidence/i }))
 
     const message = JSON.parse(socket.sentMessages[0])
-    expect(message.type).toBe('CONNECT_DOTS')
+    expect(message.type).toBe('CONNECT_DOTS_INCREMENTAL')
 
     socket.emit('CONNECTIONS_FOUND', [
       {
@@ -525,6 +526,67 @@ describe('DetectiveBoard relationship legend', () => {
         expect.arrayContaining([
           expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
           expect.objectContaining({ id: 'e-node-b-node-c-RELATED' }),
+        ]),
+      )
+    })
+  })
+
+  it('replaces stale AI edges on a full reconnect run', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [
+          {
+            id: 'manual-node-a-node-c',
+            source: 'node-a',
+            target: 'node-c',
+            label: 'MANUAL',
+            data: { generatedBy: 'manual', reasoning: 'Manual line' },
+          },
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Stale AI line' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /reconnect the dots/i }))
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        source: 'node-b',
+        target: 'node-c',
+        tag: 'RELATED',
+        reasoning: 'Fresh AI line',
+      },
+    ])
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'manual-node-a-node-c' }),
+          expect.objectContaining({ id: 'e-node-b-node-c-RELATED' }),
+        ]),
+      )
+      expect(persisted.edges).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
         ]),
       )
     })
