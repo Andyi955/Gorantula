@@ -39,11 +39,19 @@ describe('boardGeometry', () => {
   it('calculates larger expanded frames for longer content', () => {
     const collapsed = calculateNodeFrame('short summary', '', false)
     const expanded = calculateNodeFrame('short summary', 'x'.repeat(900), true)
+    const withImage = calculateNodeFrame('short summary', '', false, true)
+    const withTaggedEntities = calculateNodeFrame(
+      'Following [PERSON:Yann LeCun] and [ORG:AMI Labs] in [LOC:Paris] through [DATE:2027-12-31].',
+      '',
+      false,
+    )
 
     expect(collapsed.width).toBeGreaterThanOrEqual(MIN_NODE_WIDTH)
     expect(collapsed.height).toBeGreaterThanOrEqual(MIN_NODE_HEIGHT)
     expect(expanded.width).toBeGreaterThanOrEqual(collapsed.width)
     expect(expanded.height).toBeGreaterThan(collapsed.height)
+    expect(withImage.height).toBeGreaterThan(collapsed.height)
+    expect(withTaggedEntities.width).toBeGreaterThanOrEqual(collapsed.width)
   })
 
   it('creates stable strict-grid port slots for a given frame', () => {

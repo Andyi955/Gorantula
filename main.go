@@ -47,6 +47,16 @@ func broadcast(msg models.WSMessage) {
 	}
 }
 
+func extractScrapeImagesPreference(msg map[string]interface{}) bool {
+	rawPreference, ok := msg["scrapeImages"]
+	if !ok {
+		return false
+	}
+
+	preference, ok := rawPreference.(bool)
+	return ok && preference
+}
+
 func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -74,7 +84,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 		// Support both legacy {"prompt": "..."} and new {"type": "CRAWL", "payload": "..."}
 		if prompt, ok := msg["prompt"].(string); ok {
-			triggerCrawl(br, prompt, "", false)
+			triggerCrawl(br, prompt, "", false, false)
 		} else if msgType, ok := msg["type"].(string); ok {
 			switch msgType {
 			case "CRAWL":
@@ -83,7 +93,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					if rawVaultID, ok := msg["vaultId"].(string); ok {
 						vaultID = strings.TrimSpace(rawVaultID)
 					}
-					triggerCrawl(br, prompt, vaultID, false)
+					triggerCrawl(br, prompt, vaultID, false, extractScrapeImagesPreference(msg))
 				}
 			case "APPEND_CRAWL":
 				if prompt, ok := msg["payload"].(string); ok {
@@ -95,7 +105,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						broadcast(models.WSMessage{Type: "ERROR", Payload: "Append crawl requires a target investigation."})
 						continue
 					}
-					triggerCrawl(br, prompt, vaultID, true)
+					triggerCrawl(br, prompt, vaultID, true, extractScrapeImagesPreference(msg))
 				}
 			case "CRAWL_LOCAL":
 				if payload, ok := msg["payload"].(string); ok {
@@ -317,15 +327,15 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 	}
 }
 
-func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool) {
+func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, scrapeImages bool) {
 	go func() {
 		var err error
 		if appendToVault {
-			_, err = br.ProcessPromptIntoVault(context.Background(), prompt, vaultID)
+			_, err = br.ProcessPromptIntoVaultWithOptions(context.Background(), prompt, vaultID, scrapeImages)
 		} else if strings.TrimSpace(vaultID) != "" {
-			_, err = br.ProcessPromptForVault(context.Background(), prompt, vaultID)
+			_, err = br.ProcessPromptForVaultWithOptions(context.Background(), prompt, vaultID, scrapeImages)
 		} else {
-			_, err = br.ProcessPrompt(context.Background(), prompt)
+			_, err = br.ProcessPromptWithOptions(context.Background(), prompt, scrapeImages)
 		}
 		if err != nil {
 			broadcast(models.WSMessage{
@@ -472,6 +482,77 @@ func triggerLocalCrawl(br *brain.Brain, filePaths []string) {
 	}()
 }
 
+func handleNodeImageUpload(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/investigations/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 4 || parts[1] != "nodes" || parts[3] != "images" {
+		http.NotFound(w, r)
+		return
+	}
+
+	vaultID := strings.TrimSpace(parts[0])
+	nodeID := strings.TrimSpace(parts[2])
+	if vaultID == "" || nodeID == "" {
+		http.Error(w, "Missing vault or node id", http.StatusBadRequest)
+		return
+	}
+
+	var payload struct {
+		FileName string `json:"fileName"`
+		DataURL  string `json:"dataUrl"`
+		Caption  string `json:"caption"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	image, err := br.AttachManualNodeImage(vaultID, nodeID, payload.FileName, payload.DataURL, payload.Caption)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"image": image,
+	})
+}
+
+func handleVaultAsset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+
+	relativePath := strings.TrimPrefix(r.URL.Path, "/vault-assets/")
+	if relativePath == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	root := filepath.Clean("abdomen_vault")
+	targetPath := filepath.Clean(filepath.Join(root, filepath.FromSlash(relativePath)))
+	if !strings.HasPrefix(targetPath, root+string(filepath.Separator)) && targetPath != root {
+		http.Error(w, "Invalid asset path", http.StatusBadRequest)
+		return
+	}
+
+	http.ServeFile(w, r, targetPath)
+}
+
 func main() {
 	_ = godotenv.Load() // Loads .env if it exists
 
@@ -485,6 +566,14 @@ func main() {
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleConnections(w, r, br)
+	})
+	http.HandleFunc("/vault-assets/", handleVaultAsset)
+	http.HandleFunc("/api/investigations/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/images") {
+			handleNodeImageUpload(w, r, br)
+			return
+		}
+		http.NotFound(w, r)
 	})
 
 	http.HandleFunc("/api/pick-files", func(w http.ResponseWriter, r *http.Request) {

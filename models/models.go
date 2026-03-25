@@ -23,6 +23,7 @@ type NutrientFlow struct {
 	LegID     int
 	SourceURL string
 	Content   string
+	ImageURLs []string
 	Error     error
 }
 
@@ -57,6 +58,17 @@ type WSMessage struct {
 // Broadcaster is a function that sends a message to all connected clients
 type Broadcaster func(msg WSMessage)
 
+type MemoryNodeImage struct {
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	SourceURL string `json:"sourceURL,omitempty"`
+	Caption   string `json:"caption,omitempty"`
+	Origin    string `json:"origin,omitempty"`
+	MimeType  string `json:"mimeType,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+}
+
 // MemoryNode represents a single piece of evidence on the board
 type MemoryNode struct {
 	ID        string `json:"id"`
@@ -64,6 +76,7 @@ type MemoryNode struct {
 	Summary   string `json:"summary"` // 2-sentence summary
 	FullText  string `json:"fullText"`
 	SourceURL string `json:"sourceURL"`
+	Images    []MemoryNodeImage `json:"images,omitempty"`
 }
 
 // BoardConnection represents an edge between two nodes with its reasoning
@@ -175,6 +188,7 @@ type MergedNode struct {
 	Summary          string `json:"summary"`
 	FullText         string `json:"fullText"`
 	SourceURL        string `json:"sourceURL"`
+	Images           []MemoryNodeImage `json:"images,omitempty"`
 	SourceVaultID    string `json:"sourceVaultId"`
 	SourceNodeID     string `json:"sourceNodeId"`
 	DerivedFromMerge bool   `json:"derivedFromMerge"`

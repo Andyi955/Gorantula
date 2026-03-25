@@ -18,6 +18,7 @@ import {
   type InvestigationRecord,
 } from './utils/investigations'
 import { createMergedChildBoard, parsePersistedBoardState } from './utils/hierarchicalCanvas'
+import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 
 export interface DiscoveryRecord {
   id: string
@@ -37,6 +38,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
+  const [imageScrapingEnabled, setImageScrapingEnabled] = useState(() => readImageScrapingPreference())
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>([])
@@ -192,10 +194,15 @@ function App() {
     return () => window.removeEventListener('gorantula:clear-discoveries', handleClearDiscoveries as EventListener)
   }, [])
 
+  useEffect(() => {
+    localStorage.setItem(IMAGE_SCRAPING_PREFERENCE_KEY, imageScrapingEnabled ? 'true' : 'false')
+  }, [imageScrapingEnabled])
+
   const runSpider = (customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
     const textToRun = customPrompt || prompt;
     const labelToUse = customLabel || textToRun;
     const modeToUse = overrideMode || crawlMode;
+    const shouldScrapeImages = modeToUse === 'web' && imageScrapingEnabled
     if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
 
@@ -211,7 +218,11 @@ function App() {
       persistInvestigations(updated)
       setCurrentInvestigationId(id)
 
-      socketConfig.socket.send(JSON.stringify({ type: modeToUse === 'local' ? 'CRAWL_LOCAL' : 'CRAWL', payload: textToRun }))
+      socketConfig.socket.send(JSON.stringify(
+        modeToUse === 'local'
+          ? { type: 'CRAWL_LOCAL', payload: textToRun }
+          : { type: 'CRAWL', payload: textToRun, vaultId: id, scrapeImages: shouldScrapeImages }
+      ))
       if (!customPrompt) setPrompt('')
       setActiveTab('spider')
       return id;
@@ -547,6 +558,24 @@ function App() {
                       LOCAL
                     </button>
                   </div>
+
+                  {crawlMode === 'web' && (
+                    <label className="flex shrink-0 cursor-pointer items-center gap-3 border border-cyber-cyan/25 bg-black/75 px-4 py-3 text-[10px] font-bold uppercase tracking-[0.24em] text-cyber-cyan transition-colors hover:border-cyber-cyan/45">
+                      <span className="text-gray-400">Scrape Images</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={imageScrapingEnabled}
+                        aria-label="Scrape images"
+                        onClick={() => setImageScrapingEnabled((current) => !current)}
+                        className={`relative h-5 w-10 rounded-full border transition-colors ${imageScrapingEnabled ? 'border-cyber-cyan bg-cyber-cyan/20' : 'border-cyber-gray bg-cyber-gray/40'}`}
+                      >
+                        <span
+                          className={`absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all ${imageScrapingEnabled ? 'left-[22px] bg-cyber-cyan shadow-[0_0_10px_rgba(0,243,255,0.55)]' : 'left-[4px] bg-gray-400'}`}
+                        />
+                      </button>
+                    </label>
+                  )}
 
                   <div className="flex-1 flex gap-2 relative">
                     <input

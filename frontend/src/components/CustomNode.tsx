@@ -3,9 +3,11 @@ import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
-import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save } from 'lucide-react';
-import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
+import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save, Image as ImageIcon } from 'lucide-react';
+import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, NODE_IMAGE_PREVIEW_HEIGHT, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
+import type { NodeImageAsset } from './nodeImages';
+import { nodeHasImages } from './nodeImages';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -26,6 +28,7 @@ export interface NodeData {
     summary?: string;
     fullText?: string;
     sourceURL?: string;
+    images?: NodeImageAsset[];
     nodeKind?: 'discovery';
     discoveryClaim?: string;
     discoveryImpact?: string;
@@ -53,6 +56,9 @@ export interface NodeData {
     onDelete?: (nodeId: string) => void;
     onUpdate?: (nodeId: string, data: any) => void;
     onResizeCommit?: (nodeId: string, width: number, height: number) => void;
+    onViewImages?: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => void;
+    onAttachImage?: (nodeId: string, file: File) => Promise<void>;
+    onRemoveImage?: (nodeId: string, imageId: string) => void;
     expanded?: boolean;
     returnVaultId?: string | null;
     currentInvestigationId?: string | null;
@@ -142,6 +148,8 @@ const logNodeResizeDebug = (nodeId: string | undefined, stage: string, payload: 
     });
 };
 
+const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(6 * 1.65em + 0.75rem)';
+
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
     currentInvestigationId?: string | null, 
@@ -169,8 +177,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const [editText, setEditText] = useState(data.fullText || data.summary || '');
     const [editTitle, setEditTitle] = useState(data.title || '');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
     const chatContentRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Let the browser handle the smooth scrolling natively!
     // All we do is stop the event from bubbling up to React Flow to prevent canvas zooming.
@@ -198,7 +208,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const fallbackFrame = calculateNodeFrame(
         data.summary || '',
         data.fullText || '',
-        isExpanded
+        isExpanded,
+        nodeHasImages(data.images)
     );
     const frameWidth = typeof props.width === 'number' ? props.width : fallbackFrame.width;
     const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
@@ -232,6 +243,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
     // Show expanded content when isExpanded is true
     const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
+    const images = data.images || [];
+    const hasImages = nodeHasImages(images);
+    const primaryImage = hasImages ? images[0] : null;
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
@@ -259,10 +273,29 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         if (onSetEditing) onSetEditing(null);
     };
 
+    const handleAttachImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file || !data.id || !data.onAttachImage) {
+            event.target.value = '';
+            return;
+        }
+
+        setIsUploadingImage(true);
+        try {
+            await data.onAttachImage(data.id, file);
+        } catch (error) {
+            console.error('[CustomNode] Failed to attach image', error);
+            alert(error instanceof Error ? error.message : 'Failed to attach image');
+        } finally {
+            setIsUploadingImage(false);
+            event.target.value = '';
+        }
+    };
+
     return (
         <div
             data-testid="custom-node-shell"
-            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (isDiscoveryNode ? 'border-amber-300 shadow-[0_12px_30px_rgba(251,191,36,0.18)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')))} ${selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_0_2px_rgba(0,243,255,0.28),0_0_26px_rgba(0,243,255,0.22)]' : ''} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
+            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (isDiscoveryNode ? 'border-amber-300 shadow-[0_12px_30px_rgba(251,191,36,0.18)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')))} ${selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_0_2px_rgba(0,243,255,0.28),0_0_26px_rgba(0,243,255,0.22)]' : ''} ${isEditing ? 'shadow-[0_0_0_2px_rgba(0,243,255,0.18),0_0_34px_rgba(0,243,255,0.12)]' : ''} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
             style={{
                 width: '100%',
                 height: '100%',
@@ -475,7 +508,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         console.log("[CustomNode] Edit clicked", data.id);
                                         if (onSetEditing) onSetEditing(data.id || null);
                                     }}
-                                    className="text-white/45 hover:text-cyber-cyan transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    className="nodrag nowheel text-white/45 hover:text-cyber-cyan transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
                                     title="Edit Evidence"
                                 >
                                     <Edit2 size={12} />
@@ -487,7 +520,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         console.log("[CustomNode] Delete clicked", data.id);
                                         setShowDeleteConfirm(true);
                                     }}
-                                    className="text-white/45 hover:text-red-500 transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    className="nodrag nowheel text-white/45 hover:text-red-500 transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
                                     title="Delete Evidence"
                                 >
                                     <Trash2 size={12} />
@@ -514,7 +547,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 }
                             }}
                             title="IMPORT NODE: Bring this evidence back to your active investigation"
-                            className={`p-1 transition-all ${
+                            className={`nodrag nowheel p-1 transition-all ${
                                 hasPulled 
                                     ? 'text-cyber-green' 
                                     : 'text-cyber-green/80 hover:text-cyber-green animate-pulse-glow'
@@ -526,7 +559,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
                     <button
                         onClick={handleExpand}
-                        className="text-cyber-purple hover:text-white transition-colors p-1"
+                        className="nodrag nowheel text-cyber-purple hover:text-white transition-colors p-1"
                         title={isExpanded ? "Collapse" : "Expand"}
                     >
                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -534,22 +567,87 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 </div>
             </div>
 
+            {isEditing && (
+                <div className="shrink-0 rounded-lg border border-cyber-cyan/18 bg-black/35 p-2 nodrag nowheel">
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        className="hidden"
+                        onChange={handleAttachImage}
+                    />
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan">Images</div>
+                            <span className="rounded-full border border-cyber-cyan/30 bg-cyber-cyan/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.18em] text-cyber-cyan">
+                                Edit Mode
+                            </span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                fileInputRef.current?.click();
+                            }}
+                            disabled={isUploadingImage || !data.onAttachImage}
+                            className="rounded-lg border border-cyber-cyan/30 bg-cyber-cyan/8 px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            {isUploadingImage ? 'Uploading...' : 'Attach Image'}
+                        </button>
+                    </div>
+                    {hasImages ? (
+                        <div className="flex flex-wrap gap-2">
+                            {images.map((image, index) => (
+                                <div
+                                    key={image.id}
+                                    className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/45 px-2 py-1"
+                                >
+                                    <button
+                                        type="button"
+                                        className="text-[9px] font-bold uppercase tracking-[0.16em] text-gray-300 transition-colors hover:text-white"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            data.onViewImages?.(images, index, data.title, data.id);
+                                        }}
+                                    >
+                                        {image.caption || `Image ${index + 1}`}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            if (data.id && data.onRemoveImage) {
+                                                data.onRemoveImage(data.id, image.id);
+                                            }
+                                        }}
+                                        className="text-[9px] font-black uppercase tracking-[0.16em] text-red-300 transition-colors hover:text-red-100"
+                                    >
+                                        Remove
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-[10px] text-gray-500">No images attached yet.</div>
+                    )}
+                </div>
+            )}
+
             {/* Summary with Auto Flex */}
                 <div
                     ref={contentRef}
-                    className={`relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300 ${isExpanded || isEditing ? 'overflow-y-auto' : ''}`}
-                    style={{ maxHeight: isExpanded || isEditing ? '400px' : '200px' }}
+                    className="relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300"
                 >
                     <div className="flex-1 min-h-0 flex flex-col relative">
                         {isEditing ? (
-                            <div className="flex flex-col gap-2 h-full">
+                            <div className="flex h-full min-h-0 flex-col gap-2 pb-2">
                                 <textarea
                                     autoFocus
                                     value={editText}
                                     onChange={(e) => setEditText(e.target.value)}
                                     onKeyDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="bg-black/55 border border-cyber-cyan/20 text-white p-3 w-full flex-1 outline-none font-mono text-[12px] custom-scrollbar nodrag nowheel min-h-[200px] focus:border-cyber-cyan/50 transition-colors"
+                                    className="bg-black/55 border border-cyber-cyan/20 text-white p-3 w-full flex-1 min-h-0 outline-none font-mono text-[12px] custom-scrollbar nodrag nowheel focus:border-cyber-cyan/50 transition-colors"
                                     placeholder="Enter evidence details..."
                                 />
                             </div>
@@ -564,8 +662,43 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         </div>
                                     </div>
                                 )}
+                                {primaryImage && (
+                                    <button
+                                        type="button"
+                                        data-testid="node-image-preview"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            data.onViewImages?.(images, 0, data.title, data.id);
+                                        }}
+                                        className={`nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-lg border border-white/12 bg-black/45 text-left transition-all hover:border-cyber-cyan/45 hover:shadow-[0_0_0_1px_rgba(0,243,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                        style={{ height: NODE_IMAGE_PREVIEW_HEIGHT }}
+                                        title={images.length > 1 ? `View ${images.length} attached images` : 'View attached image'}
+                                    >
+                                        <img
+                                            src={primaryImage.path}
+                                            alt={primaryImage.caption || `Attached evidence for ${data.title || 'node'}`}
+                                            crossOrigin="anonymous"
+                                            className="h-full w-full object-cover"
+                                        />
+                                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/90 via-black/40 to-transparent px-2 py-1.5">
+                                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan">
+                                                <ImageIcon size={11} />
+                                                Visual Evidence
+                                            </div>
+                                            {images.length > 1 && (
+                                                <span
+                                                    data-testid="node-image-count"
+                                                    className="rounded-full border border-white/15 bg-black/75 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-white"
+                                                >
+                                                    +{images.length - 1}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </button>
+                                )}
                                 <div
-                                    className={`text-white text-[12px] leading-[1.65] font-mono whitespace-pre-wrap flex-1 overflow-y-auto pr-2 custom-scrollbar ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    className={`text-white text-[12px] leading-[1.65] font-mono whitespace-pre-wrap flex-1 pr-2 pb-3 ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    style={isExpanded ? undefined : { maxHeight: COLLAPSED_TEXT_MAX_HEIGHT }}
                                     dangerouslySetInnerHTML={{
                                         __html: parseHighlightedText(displayContent || '')
                                     }}

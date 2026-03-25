@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 
@@ -37,6 +37,8 @@ class WebSocketMock {
   onopen: (() => void) | null = null
   onclose: (() => void) | null = null
   onerror: ((error: unknown) => void) | null = null
+  addEventListener = vi.fn()
+  removeEventListener = vi.fn()
 
   constructor(public url: string) {
     WebSocketMock.instances.push(this)
@@ -82,5 +84,29 @@ describe('App', () => {
     await user.click(screen.getByText('Vault Chat'))
 
     expect(screen.getByText('VaultChatbot')).toBeInTheDocument()
+  })
+
+  it('lets operators toggle image scraping for web crawls', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const imageToggle = screen.getByRole('switch', { name: /scrape images/i })
+    expect(imageToggle).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(imageToggle)
+    expect(imageToggle).toHaveAttribute('aria-checked', 'true')
+
+    await user.type(screen.getByPlaceholderText(/enter crawl parameters/i), 'AI frontier systems')
+    await user.click(screen.getByRole('button', { name: /execute/i }))
+
+    expect(WebSocketMock.instances[0]?.send).toHaveBeenCalled()
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage.type).toBe('CRAWL')
+    expect(crawlMessage.scrapeImages).toBe(true)
   })
 })
