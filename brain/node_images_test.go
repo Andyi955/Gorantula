@@ -43,3 +43,31 @@ func TestAttachManualNodeImage(t *testing.T) {
 		t.Fatalf("expected one stored image file, found %d", len(matches))
 	}
 }
+
+func TestIsSafeRemoteImageURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "allows public https host", url: "https://example.com/image.png", want: true},
+		{name: "blocks localhost", url: "http://localhost:8080/image.png", want: false},
+		{name: "blocks loopback ip", url: "http://127.0.0.1/image.png", want: false},
+		{name: "blocks private ip", url: "http://192.168.1.12/image.png", want: false},
+		{name: "blocks link local ip", url: "http://169.254.169.254/latest/meta-data", want: false},
+		{name: "blocks unsupported scheme", url: "file:///tmp/test.png", want: false},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isSafeRemoteImageURL(test.url); got != test.want {
+				t.Fatalf("isSafeRemoteImageURL(%q) = %v, want %v", test.url, got, test.want)
+			}
+		})
+	}
+}

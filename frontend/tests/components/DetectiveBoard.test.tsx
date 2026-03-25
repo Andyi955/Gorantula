@@ -813,6 +813,7 @@ describe('DetectiveBoard relationship legend', () => {
     await user.click(await screen.findByTestId('node-image-trigger-Visual Node'))
 
     expect(screen.getByTestId('node-image-lightbox')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /visual node/i })).toBeInTheDocument()
     expect(screen.getByAltText('First image')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /next/i }))

@@ -33,6 +33,8 @@ var (
 	clientsMu sync.Mutex
 )
 
+const maxNodeImageUploadBodyBytes = 12 << 20
+
 func broadcast(msg models.WSMessage) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
@@ -511,6 +513,7 @@ func handleNodeImageUpload(w http.ResponseWriter, r *http.Request, br *brain.Bra
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxNodeImageUploadBodyBytes)
 	var payload struct {
 		FileName string `json:"fileName"`
 		DataURL  string `json:"dataUrl"`
@@ -533,6 +536,15 @@ func handleNodeImageUpload(w http.ResponseWriter, r *http.Request, br *brain.Bra
 	})
 }
 
+func isAllowedVaultImageExtension(extension string) bool {
+	switch strings.ToLower(strings.TrimSpace(extension)) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
 func handleVaultAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
@@ -543,10 +555,33 @@ func handleVaultAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pathParts := strings.Split(strings.ReplaceAll(relativePath, "\\", "/"), "/")
+	if len(pathParts) < 3 {
+		http.NotFound(w, r)
+		return
+	}
+
+	vaultID := strings.TrimSpace(pathParts[0])
+	if vaultID == "" || pathParts[1] != "images" {
+		http.NotFound(w, r)
+		return
+	}
+
+	imageSubPath := strings.Join(pathParts[2:], "/")
+	if imageSubPath == "" {
+		http.NotFound(w, r)
+		return
+	}
+
 	root := filepath.Clean("abdomen_vault")
-	targetPath := filepath.Clean(filepath.Join(root, filepath.FromSlash(relativePath)))
-	if !strings.HasPrefix(targetPath, root+string(filepath.Separator)) && targetPath != root {
+	vaultImagesRoot := filepath.Clean(filepath.Join(root, filepath.FromSlash(vaultID), "images"))
+	targetPath := filepath.Clean(filepath.Join(vaultImagesRoot, filepath.FromSlash(imageSubPath)))
+	if !strings.HasPrefix(targetPath, vaultImagesRoot+string(filepath.Separator)) && targetPath != vaultImagesRoot {
 		http.Error(w, "Invalid asset path", http.StatusBadRequest)
+		return
+	}
+	if !isAllowedVaultImageExtension(filepath.Ext(targetPath)) {
+		http.Error(w, "Unsupported asset type", http.StatusBadRequest)
 		return
 	}
 

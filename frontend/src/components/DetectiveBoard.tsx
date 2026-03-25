@@ -500,6 +500,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
     const lightboxFileInputRef = useRef<HTMLInputElement>(null);
+    const lightboxDialogRef = useRef<HTMLDivElement>(null);
+    const previousFocusedElementRef = useRef<HTMLElement | null>(null);
     const boardContainerRef = useRef<HTMLDivElement>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const boardControlsButtonRef = useRef<HTMLButtonElement>(null);
@@ -544,6 +546,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const openImageLightbox = useCallback((images: NodeImageAsset[], initialIndex = 0, nodeTitle?: string, nodeId?: string) => {
         if (!images.length) {
             return;
+        }
+
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+            previousFocusedElementRef.current = document.activeElement;
         }
 
         const clampedIndex = Math.max(0, Math.min(initialIndex, images.length - 1));
@@ -1296,8 +1302,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     useEffect(() => {
         if (!imageLightbox) {
+            previousFocusedElementRef.current?.focus?.();
+            previousFocusedElementRef.current = null;
             return undefined;
         }
+
+        lightboxDialogRef.current?.focus();
 
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
@@ -2914,6 +2924,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onClick={closeImageLightbox}
                 >
                     <div
+                        ref={lightboxDialogRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="node-image-lightbox-title"
+                        tabIndex={-1}
                         className="relative flex max-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.5rem] border border-white/12 bg-cyber-black/96 shadow-[0_26px_60px_rgba(0,0,0,0.58)]"
                         onClick={(event) => event.stopPropagation()}
                     >
@@ -2942,7 +2957,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
                             <div className="min-w-0">
                                 <div className="text-[10px] font-black uppercase tracking-[0.22em] text-cyber-cyan">Visual Evidence</div>
-                                <h3 className="mt-1 truncate text-sm font-bold text-white">
+                                <h3 id="node-image-lightbox-title" className="mt-1 truncate text-sm font-bold text-white">
                                     {imageLightbox.nodeTitle || 'Attached node image'}
                                 </h3>
                                 <div className="mt-1 text-xs text-gray-400">

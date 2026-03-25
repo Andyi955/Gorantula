@@ -11,6 +11,7 @@ import (
 	_ "image/png"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +25,7 @@ import (
 const (
 	maxNodeImageCount = 3
 	maxNodeImageBytes = 8 << 20
+	maxNodeImageRedirects = 3
 )
 
 func assetURLForVaultImage(vaultID, fileName string) string {
@@ -86,6 +88,64 @@ func nodeImagesDir(vaultID string) (string, error) {
 	return directory, nil
 }
 
+func isBlockedRemoteImageHost(hostname string) bool {
+	normalizedHost := strings.ToLower(strings.TrimSpace(hostname))
+	if normalizedHost == "" || normalizedHost == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(normalizedHost)
+	if ip == nil {
+		return false
+	}
+
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+
+	if ipv4 := ip.To4(); ipv4 != nil {
+		switch {
+		case ipv4[0] == 10:
+			return true
+		case ipv4[0] == 127:
+			return true
+		case ipv4[0] == 169 && ipv4[1] == 254:
+			return true
+		case ipv4[0] == 172 && ipv4[1] >= 16 && ipv4[1] <= 31:
+			return true
+		case ipv4[0] == 192 && ipv4[1] == 168:
+			return true
+		}
+		return false
+	}
+
+	if strings.HasPrefix(normalizedHost, "fc") || strings.HasPrefix(normalizedHost, "fd") {
+		return true
+	}
+	if strings.HasPrefix(normalizedHost, "fe80:") {
+		return true
+	}
+
+	return false
+}
+
+func isSafeRemoteImageURL(rawURL string) bool {
+	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return false
+	}
+
+	if parsedURL.Hostname() == "" {
+		return false
+	}
+
+	return !isBlockedRemoteImageHost(parsedURL.Hostname())
+}
+
 func decodeImageMetadata(payload []byte, mimeType string) (int, int) {
 	config, _, err := image.DecodeConfig(bytes.NewReader(payload))
 	if err != nil {
@@ -139,13 +199,27 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, vaultID, nodeID str
 		return nil
 	}
 
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := &http.Client{
+		Timeout: 12 * time.Second,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) >= maxNodeImageRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxNodeImageRedirects)
+			}
+			if !isSafeRemoteImageURL(request.URL.String()) {
+				return fmt.Errorf("blocked redirect target")
+			}
+			return nil
+		},
+	}
 	results := make([]models.MemoryNodeImage, 0, maxNodeImageCount)
 	seen := make(map[string]struct{}, len(imageURLs))
 
 	for _, imageURL := range imageURLs {
 		imageURL = strings.TrimSpace(imageURL)
 		if imageURL == "" {
+			continue
+		}
+		if !isSafeRemoteImageURL(imageURL) {
 			continue
 		}
 		if _, ok := seen[imageURL]; ok {
@@ -207,7 +281,7 @@ func decodeDataURL(dataURL string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("unsupported data url")
 	}
 
-	mimeType := strings.TrimPrefix(strings.SplitN(strings.TrimPrefix(header, "data:"), ";", 2)[0], " ")
+	mimeType := strings.TrimSpace(strings.SplitN(strings.TrimPrefix(header, "data:"), ";", 2)[0])
 	decoded, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
 		return nil, "", err
