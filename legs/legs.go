@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -98,6 +99,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 
 	var extractedTexts []string
+	var imageCandidates []string
 	scrapeClient := &http.Client{Timeout: 15 * time.Second} // Quality gate: timeout slow sites
 	for _, targetURL := range topURLs {
 		var scrapeResp *http.Response
@@ -122,6 +124,8 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		if err != nil {
 			continue
 		}
+
+		imageCandidates = append(imageCandidates, extractCandidateImageURLs(doc, targetURL)...)
 
 		// 404 / Dead Link Detection
 		title := strings.ToLower(doc.Find("title").Text())
@@ -163,6 +167,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		LegID:     legID,
 		SourceURL: strings.Join(topURLs, ", "),
 		Content:   fullContext,
+		ImageURLs: imageCandidates,
 		Error:     nil,
 	}
 }
@@ -242,6 +247,130 @@ func TruncateContent(content string, limit int) string {
 		return string(runes[:limit])
 	}
 	return content
+}
+
+func extractCandidateImageURLs(doc *goquery.Document, pageURL string) []string {
+	candidates := make(map[string]int)
+	appendCandidate := func(raw string, score int) {
+		resolved := resolveImageURL(pageURL, raw)
+		if resolved == "" || !isLikelyEvidenceImageURL(resolved) {
+			return
+		}
+		if score > candidates[resolved] {
+			candidates[resolved] = score
+		}
+	}
+
+	doc.Find(`meta[property="og:image"], meta[name="twitter:image"], meta[property="twitter:image"]`).Each(func(_ int, selection *goquery.Selection) {
+		appendCandidate(strings.TrimSpace(selection.AttrOr("content", "")), 100)
+	})
+
+	doc.Find("article img, main img, img").Each(func(index int, selection *goquery.Selection) {
+		score := 50 - index
+		if score < 1 {
+			score = 1
+		}
+		appendCandidate(strings.TrimSpace(selection.AttrOr("src", "")), score)
+		appendCandidate(strings.TrimSpace(selection.AttrOr("data-src", "")), score-5)
+		appendCandidate(strings.TrimSpace(selection.AttrOr("data-lazy-src", "")), score-5)
+	})
+
+	type rankedCandidate struct {
+		url   string
+		score int
+	}
+
+	ranked := make([]rankedCandidate, 0, len(candidates))
+	for candidateURL, score := range candidates {
+		ranked = append(ranked, rankedCandidate{url: candidateURL, score: score})
+	}
+
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].url < ranked[j].url
+	})
+
+	limit := 4
+	if len(ranked) < limit {
+		limit = len(ranked)
+	}
+
+	results := make([]string, 0, limit)
+	for index := 0; index < limit; index++ {
+		results = append(results, ranked[index].url)
+	}
+
+	return results
+}
+
+func resolveImageURL(pageURL, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if parsed.IsAbs() {
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return ""
+		}
+		return parsed.String()
+	}
+
+	base, err := url.Parse(pageURL)
+	if err != nil {
+		return ""
+	}
+
+	resolved := base.ResolveReference(parsed)
+	if resolved == nil || (resolved.Scheme != "http" && resolved.Scheme != "https") {
+		return ""
+	}
+
+	return resolved.String()
+}
+
+func isLikelyEvidenceImageURL(candidate string) bool {
+	lower := strings.ToLower(candidate)
+	if lower == "" {
+		return false
+	}
+	if strings.HasPrefix(lower, "data:") {
+		return false
+	}
+
+	blockedTokens := []string{
+		"sprite", "logo", "icon", "avatar", "favicon", "badge", "emoji", "tracking", "pixel", "banner-ad", "doubleclick",
+	}
+	for _, token := range blockedTokens {
+		if strings.Contains(lower, token) {
+			return false
+		}
+	}
+
+	parsed, err := url.Parse(candidate)
+	if err != nil {
+		return false
+	}
+
+	pathLower := strings.ToLower(parsed.Path)
+	if pathLower == "" {
+		return true
+	}
+
+	supportedExtensions := []string{".jpg", ".jpeg", ".png", ".webp", ".gif"}
+	for _, extension := range supportedExtensions {
+		if strings.HasSuffix(pathLower, extension) {
+			return true
+		}
+	}
+
+	return strings.Contains(pathLower, "/image") || strings.Contains(pathLower, "/photo") || strings.Contains(pathLower, "/media")
 }
 
 // ExecuteChunkTask processes a pre-parsed text chunk.

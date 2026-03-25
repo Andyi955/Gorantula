@@ -1,5 +1,7 @@
 import type { Edge, Node } from 'reactflow';
 import { calculateNodeFrame } from '../components/boardGeometry';
+import { nodeHasImages } from '../components/nodeImages';
+import type { NodeImageAsset } from '../components/nodeImages';
 import type { BoardMode } from '../components/boardGeometry';
 import type { InvestigationRecord } from './investigations';
 
@@ -26,6 +28,7 @@ export interface MergeNodePayload {
   summary: string;
   fullText: string;
   sourceURL: string;
+  images?: NodeImageAsset[];
   sourceVaultId: string;
   sourceNodeId: string;
   derivedFromMerge: boolean;
@@ -147,7 +150,8 @@ export const createMergedChildBoard = (
       const summary = sanitizeText(node.data?.summary);
       const fullText = sanitizeText(node.data?.fullText) || summary;
       const sourceURL = sanitizeText(node.data?.sourceURL);
-      const frame = calculateNodeFrame(summary, fullText, Boolean(node.data?.expanded));
+      const images = Array.isArray(node.data?.images) ? node.data.images : [];
+      const frame = calculateNodeFrame(summary, fullText, Boolean(node.data?.expanded), nodeHasImages(node.data?.images));
 
       childNodes.push({
         ...node,
@@ -167,6 +171,7 @@ export const createMergedChildBoard = (
           summary,
           fullText,
           sourceURL,
+          images,
           sourceVaultId: investigation.id,
           sourceNodeId: node.id,
           derivedFromMerge: true,
@@ -179,6 +184,7 @@ export const createMergedChildBoard = (
         summary,
         fullText,
         sourceURL,
+        images,
         sourceVaultId: investigation.id,
         sourceNodeId: node.id,
         derivedFromMerge: true,

@@ -2,6 +2,7 @@ import * as React from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
+import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
 
 const fitViewMock = vi.fn()
 const setCenterMock = vi.fn()
@@ -10,11 +11,38 @@ const getZoomMock = vi.fn(() => 0.82)
 vi.mock('reactflow', () => {
   return {
     __esModule: true,
-    default: ({ children }: { children?: React.ReactNode }) =>
+    default: ({
+      children,
+      nodes = [],
+      nodeTypes = {},
+    }: {
+      children?: React.ReactNode
+      nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown> }>
+      nodeTypes?: Record<string, React.ComponentType<any>>
+    }) =>
       React.createElement(
         'div',
         { 'data-testid': 'reactflow' },
         React.createElement('div', { className: 'react-flow__pane', 'data-testid': 'reactflow-pane' }),
+        nodes.map((node) => {
+          const NodeComponent = nodeTypes[node.type || 'default']
+          if (!NodeComponent) {
+            return null
+          }
+
+          return React.createElement(NodeComponent, {
+            key: node.id,
+            id: node.id,
+            type: node.type || 'custom',
+            selected: false,
+            dragging: false,
+            zIndex: 1,
+            isConnectable: true,
+            positionAbsoluteX: 0,
+            positionAbsoluteY: 0,
+            data: node.data,
+          })
+        }),
         children,
       ),
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
@@ -44,7 +72,23 @@ vi.mock('reactflow', () => {
 
 vi.mock('../../src/components/CustomNode', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ data, id }: { id?: string; data?: { title?: string; images?: Array<{ path: string }>; onViewImages?: (images: Array<{ path: string }>, index: number, nodeTitle?: string, nodeId?: string) => void } }) =>
+    React.createElement(
+      'div',
+      null,
+      data?.title ? React.createElement('span', null, data.title) : null,
+      data?.images?.length
+        ? React.createElement(
+            'button',
+            {
+              type: 'button',
+              'data-testid': `node-image-trigger-${data.title || 'node'}`,
+              onClick: () => data.onViewImages?.(data.images || [], 0, data.title, id),
+            },
+            'view images',
+          )
+        : null,
+    ),
 }))
 
 vi.mock('../../src/components/CustomEdge', () => ({
@@ -368,6 +412,25 @@ describe('DetectiveBoard relationship legend', () => {
       type: 'APPEND_CRAWL',
       payload: 'follow up lead',
       vaultId: 'investigation-1',
+      scrapeImages: false,
+    })
+  })
+
+  it('inherits the spider image scraping preference for appended searches', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+    localStorage.setItem(IMAGE_SCRAPING_PREFERENCE_KEY, 'true')
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.type(screen.getByPlaceholderText(/search more in this investigation/i), 'visual lead')
+    await user.click(screen.getByRole('button', { name: /search more/i }))
+
+    expect(JSON.parse(socket.sentMessages[0])).toEqual({
+      type: 'APPEND_CRAWL',
+      payload: 'visual lead',
+      vaultId: 'investigation-1',
+      scrapeImages: true,
     })
   })
 
@@ -714,5 +777,49 @@ describe('DetectiveBoard relationship legend', () => {
         ]),
       )
     })
+  })
+
+  it('opens a node image lightbox and supports cycling attached images', async () => {
+    const user = userEvent.setup()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-visual',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 288 },
+            data: {
+              id: 'node-visual',
+              title: 'Visual Node',
+              summary: 'Summary',
+              fullText: 'Summary',
+              images: [
+                { id: 'img-1', path: '/evidence/one.png', caption: 'First image' },
+                { id: 'img-2', path: '/evidence/two.png', caption: 'Second image' },
+              ],
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard()
+
+    await user.click(await screen.findByTestId('node-image-trigger-Visual Node'))
+
+    expect(screen.getByTestId('node-image-lightbox')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /visual node/i })).toBeInTheDocument()
+    expect(screen.getByAltText('First image')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    expect(screen.getByAltText('Second image')).toBeInTheDocument()
+
+    await user.click(screen.getByTitle('Close image viewer'))
+    expect(screen.queryByTestId('node-image-lightbox')).not.toBeInTheDocument()
   })
 })

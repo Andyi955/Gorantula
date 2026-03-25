@@ -27,8 +27,11 @@ import CustomNode from './CustomNode';
 import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
+import type { NodeImageAsset } from './nodeImages';
+import { nodeHasImages } from './nodeImages';
 import { getLayoutedElements } from './detectiveBoardLayout';
 import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
+import { readImageScrapingPreference } from '../utils/searchPreferences';
 import {
     createTagStyle,
     getRelationshipEdgeVisuals,
@@ -38,7 +41,7 @@ import {
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X } from 'lucide-react';
 import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
 
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -171,6 +174,20 @@ const mergeEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[]) => {
 const edgeTouchesPendingNode = (edge: Edge, pendingNodeIdSet: Set<string>) =>
     pendingNodeIdSet.has(edge.source) || pendingNodeIdSet.has(edge.target);
 
+const fileToDataURL = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+        if (typeof reader.result === 'string') {
+            resolve(reader.result);
+            return;
+        }
+
+        reject(new Error('Failed to read file as data URL.'));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+    reader.readAsDataURL(file);
+});
+
 const mergeIncrementalEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[], pendingNodeIds: string[]) => {
     const pendingNodeIdSet = new Set(pendingNodeIds);
     const preservedEdges = currentEdges.filter((edge) => {
@@ -220,6 +237,13 @@ interface MarqueeState {
     current: XYPosition;
     screenStart: XYPosition;
     screenCurrent: XYPosition;
+}
+
+interface ImageLightboxState {
+    images: NodeImageAsset[];
+    nodeTitle?: string;
+    index: number;
+    nodeId?: string;
 }
 
 const getMarqueeRect = (start: XYPosition, current: XYPosition) => ({
@@ -474,6 +498,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
+    const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
+    const lightboxFileInputRef = useRef<HTMLInputElement>(null);
+    const lightboxDialogRef = useRef<HTMLDivElement>(null);
+    const previousFocusedElementRef = useRef<HTMLElement | null>(null);
     const boardContainerRef = useRef<HTMLDivElement>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const boardControlsButtonRef = useRef<HTMLButtonElement>(null);
@@ -515,10 +543,65 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setShowRelationshipLegend(true);
     }, []);
 
+    const openImageLightbox = useCallback((images: NodeImageAsset[], initialIndex = 0, nodeTitle?: string, nodeId?: string) => {
+        if (!images.length) {
+            return;
+        }
+
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+            previousFocusedElementRef.current = document.activeElement;
+        }
+
+        const clampedIndex = Math.max(0, Math.min(initialIndex, images.length - 1));
+        setImageLightbox({
+            images,
+            nodeTitle,
+            index: clampedIndex,
+            nodeId,
+        });
+    }, []);
+
+    const closeImageLightbox = useCallback(() => {
+        setImageLightbox(null);
+    }, []);
+
+    const stepImageLightbox = useCallback((direction: -1 | 1) => {
+        setImageLightbox((current) => {
+            if (!current || current.images.length <= 1) {
+                return current;
+            }
+
+            return {
+                ...current,
+                index: (current.index + direction + current.images.length) % current.images.length,
+            };
+        });
+    }, []);
+
     const isBoardBusy = isAnalyzing || isGathering || isReorganizing;
     const hasNodes = nodes.length > 0;
     const canConnectDots = !isAnalyzing && !isGathering && !isReorganizing && nodes.length >= 2;
     const canExport = hasNodes && !isReorganizing;
+    const activeLightboxImage = imageLightbox ? imageLightbox.images[imageLightbox.index] : null;
+
+    const syncOpenLightboxImages = useCallback((nodeId: string, nextImages: NodeImageAsset[]) => {
+        setImageLightbox((current) => {
+            if (!current || current.nodeId !== nodeId) {
+                return current;
+            }
+
+            if (nextImages.length === 0) {
+                return null;
+            }
+
+            const nextIndex = Math.min(current.index, nextImages.length - 1);
+            return {
+                ...current,
+                images: nextImages,
+                index: nextIndex,
+            };
+        });
+    }, []);
     const canArrange = hasNodes && !isBoardBusy;
     const canAppendSearch = !!investigationId && !isBoardBusy && appendSearchPrompt.trim().length > 0;
     const hasPendingEvidenceIntegration = pendingIntegrationNodeIds.length > 0;
@@ -827,6 +910,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             type: 'APPEND_CRAWL',
             payload: prompt,
             vaultId: investigationId,
+            scrapeImages: readImageScrapingPreference(),
         }));
     }, [appendSearchPrompt, investigationId, sharedSocket]);
 
@@ -866,7 +950,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const nextFrame = calculateNodeFrame(
                 node.data.summary || '',
                 node.data.fullText || '',
-                expanded
+                expanded,
+                nodeHasImages(node.data.images)
             );
 
             return {
@@ -895,8 +980,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             if (n.id === id) {
                 const nextSummary = data.summary ?? n.data.summary ?? '';
                 const nextFullText = data.fullText ?? n.data.fullText ?? '';
+                const nextImages = Array.isArray(data.images) ? data.images : n.data.images;
                 const isExpanded = Boolean(n.data.expanded);
-                const nextFrame = calculateNodeFrame(nextSummary, nextFullText, isExpanded);
+                const nextFrame = calculateNodeFrame(nextSummary, nextFullText, isExpanded, nodeHasImages(nextImages));
 
                 return {
                     ...n,
@@ -932,6 +1018,103 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             });
         }
     }, [boardMode, sharedSocket, setNodes, syncStrictGridSubset]);
+
+    const handleAttachImage = useCallback(async (nodeId: string, file: File) => {
+        if (!investigationId) {
+            throw new Error('Select an investigation before attaching images.');
+        }
+
+        const dataURL = await fileToDataURL(file);
+        const response = await fetch(`http://localhost:8080/api/investigations/${encodeURIComponent(investigationId)}/nodes/${encodeURIComponent(nodeId)}/images`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                fileName: file.name,
+                dataUrl: dataURL,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error((await response.text()) || 'Failed to upload image.');
+        }
+
+        const payload = await response.json();
+        const image = payload.image as NodeImageAsset | undefined;
+        if (!image) {
+            throw new Error('Backend did not return image metadata.');
+        }
+
+        setNodes((currentNodes) => currentNodes.map((node) => {
+            if (node.id !== nodeId) {
+                return node;
+            }
+
+            const nextImages = [...(Array.isArray(node.data.images) ? node.data.images : []), image];
+            syncOpenLightboxImages(nodeId, nextImages);
+            const nextFrame = calculateNodeFrame(
+                node.data.summary || '',
+                node.data.fullText || '',
+                Boolean(node.data.expanded),
+                nodeHasImages(nextImages)
+            );
+
+            return {
+                ...node,
+                data: {
+                    ...node.data,
+                    images: nextImages,
+                },
+                style: {
+                    ...node.style,
+                    ...nextFrame,
+                },
+            };
+        }));
+
+        if (boardMode === 'strict-grid') {
+            window.requestAnimationFrame(() => {
+                syncStrictGridSubset([nodeId], edgesRef.current, nodesRef.current);
+            });
+        }
+    }, [boardMode, investigationId, syncOpenLightboxImages, syncStrictGridSubset]);
+
+    const handleRemoveImage = useCallback((nodeId: string, imageId: string) => {
+        setNodes((currentNodes) => currentNodes.map((node) => {
+            if (node.id !== nodeId) {
+                return node;
+            }
+
+            const nextImages = (Array.isArray(node.data.images) ? node.data.images : [])
+                .filter((image: NodeImageAsset) => image.id !== imageId);
+            syncOpenLightboxImages(nodeId, nextImages);
+            const nextFrame = calculateNodeFrame(
+                node.data.summary || '',
+                node.data.fullText || '',
+                Boolean(node.data.expanded),
+                nodeHasImages(nextImages)
+            );
+
+            return {
+                ...node,
+                data: {
+                    ...node.data,
+                    images: nextImages,
+                },
+                style: {
+                    ...node.style,
+                    ...nextFrame,
+                },
+            };
+        }));
+
+        if (boardMode === 'strict-grid') {
+            window.requestAnimationFrame(() => {
+                syncStrictGridSubset([nodeId], edgesRef.current, nodesRef.current);
+            });
+        }
+    }, [boardMode, syncOpenLightboxImages, syncStrictGridSubset]);
 
     const handleNodeResizeCommit = useCallback((id: string, width: number, height: number) => {
         const snappedFrame = normalizeNodeFrame(width, height);
@@ -1118,6 +1301,37 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [showRelationshipLegend]);
 
     useEffect(() => {
+        if (!imageLightbox) {
+            previousFocusedElementRef.current?.focus?.();
+            previousFocusedElementRef.current = null;
+            return undefined;
+        }
+
+        lightboxDialogRef.current?.focus();
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                closeImageLightbox();
+                return;
+            }
+
+            if (event.key === 'ArrowLeft') {
+                stepImageLightbox(-1);
+                return;
+            }
+
+            if (event.key === 'ArrowRight') {
+                stepImageLightbox(1);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [closeImageLightbox, imageLightbox, stepImageLightbox]);
+
+    useEffect(() => {
         const savedGridPreference = localStorage.getItem('detective_board_show_grid');
         if (savedGridPreference !== null) {
             console.log('[DetectiveBoard] Loaded grid preference:', savedGridPreference);
@@ -1145,6 +1359,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setAppendSearchPrompt('');
         setPendingIntegrationNodeIds([]);
         setAnalysisMode(null);
+        setImageLightbox(null);
     }, [investigationId]);
 
     useEffect(() => {
@@ -1209,15 +1424,26 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const savedNodeIdSet = new Set(savedNodes.map((node: Node) => node.id));
             const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
                 .filter((nodeId) => savedNodeIdSet.has(nodeId));
-            const restoredNodes = savedNodes.map((n: Node) => ({
-                ...n,
-                style: {
-                    ...n.style,
-                    ...normalizeNodeFrame(
-                        typeof n.style?.width === 'number' ? n.style.width : 288,
-                        typeof n.style?.height === 'number' ? n.style.height : 192
-                    ),
-                },
+            const restoredNodes = savedNodes.map((n: Node) => {
+                const autoFrame = calculateNodeFrame(
+                    n.data?.summary || '',
+                    n.data?.fullText || '',
+                    Boolean(n.data?.expanded),
+                    nodeHasImages(n.data?.images)
+                );
+                const persistedWidth = typeof n.style?.width === 'number' ? n.style.width : 288;
+                const persistedHeight = typeof n.style?.height === 'number' ? n.style.height : 192;
+                const normalizedFrame = normalizeNodeFrame(
+                    Math.max(persistedWidth, autoFrame.width),
+                    Math.max(persistedHeight, autoFrame.height)
+                );
+
+                return {
+                    ...n,
+                    style: {
+                        ...n.style,
+                        ...normalizedFrame,
+                    },
                 data: {
                     ...n.data,
                     onReadFull: () => setSelectedContent(n.data.fullText),
@@ -1226,10 +1452,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
                     onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                    onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                    onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                    onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                     isDeepDiveSource: !!n.data?.isDeepDiveSource,
                     boardMode: savedMode,
                 }
-            }));
+            }});
             const restoredEdges = savedEdges.map((e: Edge) => ({
                 ...e,
                 type: 'customEdge',
@@ -1256,7 +1485,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             setHasConnectedDots(false);
         }
         setLoadedInvestigationId(investigationId);
-    }, [handleDeleteNode, handleNodeExpand, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
+    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -1764,7 +1993,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
             if (msg.type === 'MEMORY_NODE_GATHERED') {
                 const { node, vaultId, append } = msg.payload;
-                const frame = calculateNodeFrame(node.summary || '', node.fullText || '', false);
+                const frame = calculateNodeFrame(node.summary || '', node.fullText || '', false, nodeHasImages(node.images));
 
                 const newNode: Node = {
                     id: node.id,
@@ -1779,6 +2008,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                         onDelete: (id: string) => handleDeleteNode(id),
                         onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                        onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                        onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                        onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                         isDeepDiveSource: false,
                         expanded: false,
                         boardMode,
@@ -1937,11 +2169,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [boardMode, sharedSocket, handleNewConnections, handleDeleteNode, handleNodeExpand, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId]);
+    }, [boardMode, sharedSocket, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
-        const frame = calculateNodeFrame('', '', true);
+        const frame = calculateNodeFrame('', '', true, false);
         setBoardMode('strict-grid');
         const newNode: Node = {
             id,
@@ -1960,6 +2192,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
                 onDelete: (id: string) => handleDeleteNode(id),
                 onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
+                onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                 onSetEditing: (id: string | null) => handleSetEditing(id),
                 onSave: (e: React.MouseEvent, nodeId: string, editTitle: string, editText: string) => {
                     e.stopPropagation();
@@ -1985,7 +2220,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [handleDeleteNode, handleNodeExpand, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, setNodes, setEditingNodeId]);
+    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
 
     // Stable nodeTypes definition to prevent re-mounting all nodes on every render
     const nodeTypes = useMemo(() => ({
@@ -2006,13 +2241,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onExpand: handleNodeExpand,
                 onDelete: handleDeleteNode,
                 onUpdate: handleUpdateNode,
+                onViewImages: openImageLightbox,
+                onAttachImage: handleAttachImage,
+                onRemoveImage: handleRemoveImage,
                 onResizeCommit: handleNodeResizeCommit,
                 onSetEditing: handleSetEditing,
                 isEditing: node.id === editingNodeId
             }
         })));
         // We only want to sync these onto the nodes when the container state changes
-    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleDeleteNode, handleNodeExpand, handleUpdateNode, handleNodeResizeCommit, handleSetEditing, editingNodeId]);
+    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, openImageLightbox, handleNodeResizeCommit, handleSetEditing, editingNodeId]);
 
 
 
@@ -2674,6 +2912,117 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             >
                                 Save Relationship
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {imageLightbox && activeLightboxImage && (
+                <div
+                    data-testid="node-image-lightbox"
+                    className="absolute inset-0 z-[60] flex items-center justify-center bg-black/82 px-6 py-8 backdrop-blur-sm"
+                    onClick={closeImageLightbox}
+                >
+                    <div
+                        ref={lightboxDialogRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="node-image-lightbox-title"
+                        tabIndex={-1}
+                        className="relative flex max-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.5rem] border border-white/12 bg-cyber-black/96 shadow-[0_26px_60px_rgba(0,0,0,0.58)]"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <input
+                            ref={lightboxFileInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            className="hidden"
+                            onChange={async (event) => {
+                                const file = event.target.files?.[0];
+                                if (!file || !imageLightbox?.nodeId) {
+                                    event.target.value = '';
+                                    return;
+                                }
+
+                                try {
+                                    await handleAttachImage(imageLightbox.nodeId, file);
+                                } catch (error) {
+                                    console.error('[DetectiveBoard] Failed to attach image from lightbox', error);
+                                    alert(error instanceof Error ? error.message : 'Failed to attach image');
+                                } finally {
+                                    event.target.value = '';
+                                }
+                            }}
+                        />
+                        <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
+                            <div className="min-w-0">
+                                <div className="text-[10px] font-black uppercase tracking-[0.22em] text-cyber-cyan">Visual Evidence</div>
+                                <h3 id="node-image-lightbox-title" className="mt-1 truncate text-sm font-bold text-white">
+                                    {imageLightbox.nodeTitle || 'Attached node image'}
+                                </h3>
+                                <div className="mt-1 text-xs text-gray-400">
+                                    {imageLightbox.index + 1} / {imageLightbox.images.length}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeImageLightbox}
+                                className="rounded-lg border border-white/10 p-2 text-gray-400 transition-colors hover:border-white/30 hover:text-white"
+                                title="Close image viewer"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black/70 p-4">
+                            <img
+                                src={activeLightboxImage.path}
+                                alt={activeLightboxImage.caption || imageLightbox.nodeTitle || 'Attached node image'}
+                                crossOrigin="anonymous"
+                                className="block max-h-full w-auto max-w-full object-contain"
+                            />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4">
+                            <div className="min-w-0 flex-1 text-xs text-gray-400">
+                                {activeLightboxImage.caption || activeLightboxImage.sourceURL || 'Stored evidence image'}
+                            </div>
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                                {imageLightbox.nodeId && (
+                                    <>
+                                        <button
+                                            type="button"
+                                            onClick={() => lightboxFileInputRef.current?.click()}
+                                            className="rounded-lg border border-cyber-cyan/30 bg-cyber-cyan/8 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                                        >
+                                            Add Image
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRemoveImage(imageLightbox.nodeId!, activeLightboxImage.id)}
+                                            className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-red-200 transition-colors hover:border-red-300 hover:bg-red-400 hover:text-black"
+                                        >
+                                            Remove Image
+                                        </button>
+                                    </>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => stepImageLightbox(-1)}
+                                    disabled={imageLightbox.images.length <= 1}
+                                    className="rounded-lg border border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300 transition-colors hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                    Previous
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => stepImageLightbox(1)}
+                                    disabled={imageLightbox.images.length <= 1}
+                                    className="rounded-lg border border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300 transition-colors hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                    Next
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

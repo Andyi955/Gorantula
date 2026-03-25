@@ -134,20 +134,32 @@ func (b *Brain) GetSearchProvider() ModelProvider {
 
 // ProcessPrompt runs the entire lifecycle for a given user prompt.
 func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error) {
-	return b.processPrompt(ctx, prompt, "", false)
+	return b.ProcessPromptWithOptions(ctx, prompt, false)
+}
+
+func (b *Brain) ProcessPromptWithOptions(ctx context.Context, prompt string, scrapeImages bool) (string, error) {
+	return b.processPrompt(ctx, prompt, "", false, scrapeImages)
 }
 
 // ProcessPromptForVault runs a new investigation crawl while targeting a specific investigation vault ID.
 func (b *Brain) ProcessPromptForVault(ctx context.Context, prompt, vaultID string) (string, error) {
-	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), false)
+	return b.ProcessPromptForVaultWithOptions(ctx, prompt, vaultID, false)
+}
+
+func (b *Brain) ProcessPromptForVaultWithOptions(ctx context.Context, prompt, vaultID string, scrapeImages bool) (string, error) {
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), false, scrapeImages)
 }
 
 // ProcessPromptIntoVault appends a web crawl into an existing investigation vault.
 func (b *Brain) ProcessPromptIntoVault(ctx context.Context, prompt, vaultID string) (string, error) {
-	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true)
+	return b.ProcessPromptIntoVaultWithOptions(ctx, prompt, vaultID, false)
 }
 
-func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool) (string, error) {
+func (b *Brain) ProcessPromptIntoVaultWithOptions(ctx context.Context, prompt, vaultID string, scrapeImages bool) (string, error) {
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true, scrapeImages)
+}
+
+func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool) (string, error) {
 	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
 		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
 	} else {
@@ -287,6 +299,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 					Summary:   summary,
 					FullText:  nutrient.Content,
 					SourceURL: nutrient.SourceURL,
+				}
+				if scrapeImages {
+					node.Images = b.PersistRemoteNodeImages(ctx, vaultID, node.ID, nutrient.ImageURLs)
 				}
 
 				if b.NS.Broadcast != nil {
@@ -1233,6 +1248,7 @@ func (b *Brain) CreateMergedInvestigation(_ context.Context, payload models.Merg
 			Summary:   node.Summary,
 			FullText:  node.FullText,
 			SourceURL: node.SourceURL,
+			Images:    append([]models.MemoryNodeImage(nil), node.Images...),
 		}
 		memoryNodes = append(memoryNodes, memoryNode)
 

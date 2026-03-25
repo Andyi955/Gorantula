@@ -2,7 +2,10 @@ package legs
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 func TestExtractTopURLs(t *testing.T) {
@@ -90,5 +93,61 @@ func TestTruncateContent(t *testing.T) {
 				t.Errorf("TruncateContent() = %q; want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestExtractCandidateImageURLs(t *testing.T) {
+	markup := `
+		<html>
+			<head>
+				<meta property="og:image" content="/images/hero.jpg" />
+				<meta name="twitter:image" content="https://cdn.example.com/social-card.png" />
+			</head>
+			<body>
+				<article>
+					<img src="/images/hero.jpg" />
+					<img src="https://cdn.example.com/logo.png" />
+					<img data-src="/media/evidence-map.webp" />
+				</article>
+			</body>
+		</html>
+	`
+	document, err := goquery.NewDocumentFromReader(strings.NewReader(markup))
+	if err != nil {
+		t.Fatalf("failed to build document: %v", err)
+	}
+
+	results := extractCandidateImageURLs(document, "https://example.com/story")
+	expectedSet := map[string]bool{
+		"https://example.com/images/hero.jpg":       false,
+		"https://cdn.example.com/social-card.png":   false,
+		"https://example.com/media/evidence-map.webp": false,
+	}
+
+	if len(results) != len(expectedSet) {
+		t.Fatalf("extractCandidateImageURLs() returned %d results; want %d", len(results), len(expectedSet))
+	}
+
+	for _, result := range results {
+		if _, ok := expectedSet[result]; !ok {
+			t.Fatalf("unexpected candidate image url %q", result)
+		}
+		expectedSet[result] = true
+	}
+
+	for candidate, seen := range expectedSet {
+		if !seen {
+			t.Fatalf("expected candidate %q to be present", candidate)
+		}
+	}
+}
+
+func TestIsLikelyEvidenceImageURL(t *testing.T) {
+	if isLikelyEvidenceImageURL("https://example.com/assets/logo.png") {
+		t.Fatalf("logo image should be filtered out")
+	}
+
+	if !isLikelyEvidenceImageURL("https://example.com/images/evidence-board.jpg") {
+		t.Fatalf("article image should be accepted")
 	}
 }
