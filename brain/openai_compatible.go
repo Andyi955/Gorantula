@@ -3,6 +3,7 @@ package brain
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,18 @@ import (
 
 // OpenAIMessage represents a chat message
 type OpenAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
+type OpenAIImageURL struct {
+	URL string `json:"url"`
+}
+
+type OpenAIContentPart struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL *OpenAIImageURL `json:"image_url,omitempty"`
 }
 
 // OpenAIChatRequest represents the request structure for OpenAI compatible APIs
@@ -51,6 +62,10 @@ func (p *OpenAICompatibleProvider) Name() string {
 
 func (p *OpenAICompatibleProvider) SupportsMedia() bool {
 	return false
+}
+
+func (p *OpenAICompatibleProvider) SupportsImageReview() bool {
+	return true
 }
 
 func (p *OpenAICompatibleProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
@@ -97,6 +112,35 @@ func (p *OpenAICompatibleProvider) GenerateJSON(ctx context.Context, prompt stri
 	content = strings.TrimSpace(content)
 
 	return json.Unmarshal([]byte(content), response)
+}
+
+func (p *OpenAICompatibleProvider) ReviewImageJSON(ctx context.Context, prompt, mimeType string, imageData []byte, response interface{}) error {
+	if !p.SupportsImageReview() {
+		return fmt.Errorf("provider %q does not support image review", p.Name())
+	}
+
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(imageData))
+	request := OpenAIChatRequest{
+		Model: p.Model,
+		Messages: []OpenAIMessage{
+			{
+				Role: "user",
+				Content: []OpenAIContentPart{
+					{Type: "text", Text: prompt + "\n\nCRITICAL: Respond ONLY with valid JSON."},
+					{Type: "image_url", ImageURL: &OpenAIImageURL{URL: dataURL}},
+				},
+			},
+		},
+		Temperature: 0.1,
+		MaxTokens:   2048,
+	}
+
+	content, err := p.doRequest(ctx, request)
+	if err != nil {
+		return err
+	}
+
+	return parseJSONResponse(content, response)
 }
 
 func (p *OpenAICompatibleProvider) doRequest(ctx context.Context, request OpenAIChatRequest) (string, error) {

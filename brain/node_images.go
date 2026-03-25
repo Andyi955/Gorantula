@@ -26,7 +26,16 @@ const (
 	maxNodeImageCount = 3
 	maxNodeImageBytes = 8 << 20
 	maxNodeImageRedirects = 3
+	maxReviewedScrapedImagesPerNode = 1
+	imageReviewExcerptLimit = 1400
 )
+
+type downloadedRemoteNodeImage struct {
+	fileName  string
+	sourceURL string
+	mimeType  string
+	payload   []byte
+}
 
 func assetURLForVaultImage(vaultID, fileName string) string {
 	return fmt.Sprintf("http://localhost:8080/vault-assets/%s/images/%s", url.PathEscape(vaultID), url.PathEscape(fileName))
@@ -154,6 +163,33 @@ func decodeImageMetadata(payload []byte, mimeType string) (int, int) {
 	return config.Width, config.Height
 }
 
+func clampImageReviewExcerpt(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= imageReviewExcerptLimit {
+		return text
+	}
+
+	return strings.TrimSpace(text[:imageReviewExcerptLimit]) + "... [TRUNCATED]"
+}
+
+func buildScrapedImageReviewPrompt(pageURL, nodeTitle, nodeSummary, nodeFullText string) string {
+	return fmt.Sprintf(
+		"You are reviewing a scraped webpage image for an intelligence investigation node.\n"+
+			"Decide whether the image is directly relevant visual evidence for the page context.\n"+
+			"Reject generic portraits, decorative people photos, logos, ads, stock imagery, social avatars, site chrome, and unrelated promotional images unless they are explicitly central evidence.\n"+
+			"If the image is relevant, provide a short factual caption (max 10 words).\n"+
+			"Return ONLY JSON matching this shape: {\"keep\": boolean, \"reason\": string, \"caption\"?: string}.\n\n"+
+			"Page URL: %s\n"+
+			"Node Title: %s\n"+
+			"Node Summary: %s\n"+
+			"Page Excerpt:\n%s",
+		pageURL,
+		nodeTitle,
+		nodeSummary,
+		clampImageReviewExcerpt(nodeFullText),
+	)
+}
+
 func (b *Brain) storeNodeImage(vaultID, nodeID, fileName, sourceURL, caption, origin, mimeType string, payload []byte) (models.MemoryNodeImage, error) {
 	imagesDir, err := nodeImagesDir(vaultID)
 	if err != nil {
@@ -194,7 +230,77 @@ func (b *Brain) storeNodeImage(vaultID, nodeID, fileName, sourceURL, caption, or
 	}, nil
 }
 
-func (b *Brain) PersistRemoteNodeImages(ctx context.Context, vaultID, nodeID string, imageURLs []string) []models.MemoryNodeImage {
+func (b *Brain) reviewScrapedImageCandidate(ctx context.Context, provider ModelProvider, pageURL, nodeTitle, nodeSummary, nodeFullText string, candidate downloadedRemoteNodeImage) (models.ImageReviewResult, error) {
+	if provider == nil {
+		return models.ImageReviewResult{}, fmt.Errorf("missing image review provider")
+	}
+	if !provider.SupportsImageReview() {
+		return models.ImageReviewResult{}, fmt.Errorf("provider %q does not support image review", provider.Name())
+	}
+
+	prompt := buildScrapedImageReviewPrompt(pageURL, nodeTitle, nodeSummary, nodeFullText)
+	var review models.ImageReviewResult
+	if err := provider.ReviewImageJSON(ctx, prompt, candidate.mimeType, candidate.payload, &review); err != nil {
+		return models.ImageReviewResult{}, err
+	}
+
+	review.Reason = strings.TrimSpace(review.Reason)
+	review.Caption = strings.TrimSpace(review.Caption)
+	if !review.Keep {
+		review.Caption = ""
+	}
+
+	return review, nil
+}
+
+func (b *Brain) persistReviewedRemoteNodeImages(ctx context.Context, provider ModelProvider, vaultID, nodeID, pageURL, nodeTitle, nodeSummary, nodeFullText string, candidates []downloadedRemoteNodeImage) ([]models.MemoryNodeImage, bool) {
+	if len(candidates) == 0 {
+		return nil, true
+	}
+
+	results := make([]models.MemoryNodeImage, 0, maxReviewedScrapedImagesPerNode)
+	for _, candidate := range candidates {
+		review, err := b.reviewScrapedImageCandidate(ctx, provider, pageURL, nodeTitle, nodeSummary, nodeFullText, candidate)
+		if err != nil {
+			return nil, false
+		}
+		if !review.Keep {
+			continue
+		}
+
+		stored, err := b.storeNodeImage(vaultID, nodeID, candidate.fileName, candidate.sourceURL, review.Caption, "scraped", candidate.mimeType, candidate.payload)
+		if err != nil {
+			continue
+		}
+
+		results = append(results, stored)
+		if len(results) >= maxReviewedScrapedImagesPerNode {
+			break
+		}
+	}
+
+	return results, true
+}
+
+func (b *Brain) persistHeuristicRemoteNodeImages(vaultID, nodeID string, candidates []downloadedRemoteNodeImage) []models.MemoryNodeImage {
+	results := make([]models.MemoryNodeImage, 0, maxNodeImageCount)
+
+	for _, candidate := range candidates {
+		stored, err := b.storeNodeImage(vaultID, nodeID, candidate.fileName, candidate.sourceURL, "", "scraped", candidate.mimeType, candidate.payload)
+		if err != nil {
+			continue
+		}
+
+		results = append(results, stored)
+		if len(results) >= maxNodeImageCount {
+			break
+		}
+	}
+
+	return results
+}
+
+func (b *Brain) PersistRemoteNodeImages(ctx context.Context, provider ModelProvider, vaultID, nodeID, pageURL, nodeTitle, nodeSummary, nodeFullText string, imageURLs []string) []models.MemoryNodeImage {
 	if vaultID == "" || len(imageURLs) == 0 {
 		return nil
 	}
@@ -211,7 +317,7 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, vaultID, nodeID str
 			return nil
 		},
 	}
-	results := make([]models.MemoryNodeImage, 0, maxNodeImageCount)
+	candidates := make([]downloadedRemoteNodeImage, 0, len(imageURLs))
 	seen := make(map[string]struct{}, len(imageURLs))
 
 	for _, imageURL := range imageURLs {
@@ -250,6 +356,10 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, vaultID, nodeID str
 			response.Body.Close()
 			continue
 		}
+		if imageExtensionFromMimeType(mimeType) == "" {
+			response.Body.Close()
+			continue
+		}
 
 		payload, err := io.ReadAll(io.LimitReader(response.Body, maxNodeImageBytes+1))
 		response.Body.Close()
@@ -257,17 +367,42 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, vaultID, nodeID str
 			continue
 		}
 
-		stored, err := b.storeNodeImage(vaultID, nodeID, filepath.Base(request.URL.Path), imageURL, "", "scraped", mimeType, payload)
-		if err != nil {
-			continue
+		fileName := filepath.Base(response.Request.URL.Path)
+		if fileName == "." || fileName == "/" || strings.TrimSpace(fileName) == "" {
+			fileName = filepath.Base(request.URL.Path)
 		}
-		results = append(results, stored)
-		if len(results) >= maxNodeImageCount {
-			break
+		if fileName == "." || fileName == "/" || strings.TrimSpace(fileName) == "" {
+			fileName = "scraped-image"
 		}
+
+		candidates = append(candidates, downloadedRemoteNodeImage{
+			fileName:  fileName,
+			sourceURL: imageURL,
+			mimeType:  mimeType,
+			payload:   payload,
+		})
 	}
 
-	return results
+	if provider == nil || !provider.SupportsImageReview() {
+		return b.persistHeuristicRemoteNodeImages(vaultID, nodeID, candidates)
+	}
+
+	reviewedImages, reviewSucceeded := b.persistReviewedRemoteNodeImages(ctx, provider, vaultID, nodeID, pageURL, nodeTitle, nodeSummary, nodeFullText, candidates)
+	if reviewSucceeded {
+		return reviewedImages
+	}
+
+	if len(candidates) > 0 {
+		if b.NS != nil && b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type:    "SYSTEM_LOG",
+				Payload: fmt.Sprintf("Image review failed or returned no usable result for provider '%s'. Falling back to basic image scraping for this node.", provider.Name()),
+			})
+		}
+		return b.persistHeuristicRemoteNodeImages(vaultID, nodeID, candidates)
+	}
+
+	return nil
 }
 
 func decodeDataURL(dataURL string) ([]byte, string, error) {
@@ -303,6 +438,9 @@ func (b *Brain) AttachManualNodeImage(vaultID, nodeID, fileName, dataURL, captio
 	}
 	if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
 		return models.MemoryNodeImage{}, fmt.Errorf("uploaded file is not an image")
+	}
+	if imageExtensionFromMimeType(mimeType) == "" {
+		return models.MemoryNodeImage{}, fmt.Errorf("unsupported image type")
 	}
 
 	return b.storeNodeImage(vaultID, nodeID, fileName, "", caption, "manual", mimeType, payload)

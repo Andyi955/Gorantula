@@ -151,6 +151,8 @@ type ModelProvider interface {
 	GenerateContent(ctx context.Context, prompt string) (string, error)
 	GenerateJSON(ctx context.Context, prompt string, response interface{}) error
 	SupportsMedia() bool
+	SupportsImageReview() bool
+	ReviewImageJSON(ctx context.Context, prompt, mimeType string, imageData []byte, response interface{}) error
 	Name() string
 }
 
@@ -164,6 +166,10 @@ func (g *GeminiProvider) Name() string {
 }
 
 func (g *GeminiProvider) SupportsMedia() bool {
+	return true
+}
+
+func (g *GeminiProvider) SupportsImageReview() bool {
 	return true
 }
 
@@ -200,6 +206,28 @@ func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string, respon
 	return parseJSONResponse(content, response)
 }
 
+func (g *GeminiProvider) ReviewImageJSON(ctx context.Context, prompt, mimeType string, imageData []byte, response interface{}) error {
+	g.brain.modelMu.Lock()
+	defer g.brain.modelMu.Unlock()
+
+	g.brain.Model.ResponseMIMEType = "application/json"
+	defer func() { g.brain.Model.ResponseMIMEType = "text/plain" }()
+
+	resp, err := g.brain.Model.GenerateContent(
+		ctx,
+		genai.Text(prompt),
+		genai.Blob{MIMEType: mimeType, Data: imageData},
+	)
+	if err != nil {
+		return err
+	}
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return fmt.Errorf("empty image review response from Gemini")
+	}
+
+	return parseJSONResponse(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0]), response)
+}
+
 // MiniMaxProvider wraps the MiniMax client for the ModelProvider interface
 type MiniMaxProvider struct {
 	client *MiniMaxClient
@@ -210,6 +238,10 @@ func (m *MiniMaxProvider) Name() string {
 }
 
 func (m *MiniMaxProvider) SupportsMedia() bool {
+	return false
+}
+
+func (m *MiniMaxProvider) SupportsImageReview() bool {
 	return false
 }
 
@@ -224,6 +256,10 @@ func (m *MiniMaxProvider) GenerateJSON(ctx context.Context, prompt string, respo
 	}
 
 	return parseJSONResponse(content, response)
+}
+
+func (m *MiniMaxProvider) ReviewImageJSON(_ context.Context, _, _ string, _ []byte, _ interface{}) error {
+	return fmt.Errorf("provider %q does not support image review", m.Name())
 }
 
 // parseJSONResponse handles common LLM response cleaning and JSON parsing

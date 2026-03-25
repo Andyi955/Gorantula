@@ -1,10 +1,13 @@
 package brain
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"spider-agent/models"
 )
 
 func TestAttachManualNodeImage(t *testing.T) {
@@ -69,5 +72,70 @@ func TestIsSafeRemoteImageURL(t *testing.T) {
 				t.Fatalf("isSafeRemoteImageURL(%q) = %v, want %v", test.url, got, test.want)
 			}
 		})
+	}
+}
+
+func TestPersistReviewedRemoteNodeImagesKeepsOnlyApprovedImages(t *testing.T) {
+	vaultID := "reviewed-image-vault"
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join("abdomen_vault", vaultID))
+	})
+
+	brain := &Brain{}
+	provider := &MockProvider{
+		NameFunc: func() string { return "mock-reviewer" },
+		ReviewImageJSONFunc: func(ctx context.Context, prompt, mimeType string, imageData []byte, target interface{}) error {
+			review := target.(*models.ImageReviewResult)
+			if strings.Contains(prompt, "Node Summary: Evidence summary") {
+				*review = models.ImageReviewResult{
+					Keep:    true,
+					Reason:  "Directly relevant evidence image.",
+					Caption: "Approved evidence",
+				}
+			}
+			return nil
+		},
+	}
+
+	results, reviewSucceeded := brain.persistReviewedRemoteNodeImages(
+		context.Background(),
+		provider,
+		vaultID,
+		"node-1",
+		"https://example.com/article",
+		"Evidence node",
+		"Evidence summary",
+		"Detailed article text",
+		[]downloadedRemoteNodeImage{
+			{
+				fileName:  "evidence.png",
+				sourceURL: "https://cdn.example.com/evidence.png",
+				mimeType:  "image/png",
+				payload:   []byte("not-a-real-image-but-storeable"),
+			},
+		},
+	)
+	if !reviewSucceeded {
+		t.Fatalf("expected image review to succeed")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 approved image, got %d", len(results))
+	}
+	if results[0].Caption != "Approved evidence" {
+		t.Fatalf("expected reviewed caption to be persisted, got %q", results[0].Caption)
+	}
+}
+
+func TestAttachManualNodeImageRejectsUnsupportedImageType(t *testing.T) {
+	brain := &Brain{}
+	_, err := brain.AttachManualNodeImage(
+		"test-image-vault",
+		"node-123",
+		"evidence.svg",
+		"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+		"Vector image",
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported image type") {
+		t.Fatalf("expected unsupported image type error, got %v", err)
 	}
 }

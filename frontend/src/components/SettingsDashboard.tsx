@@ -168,6 +168,7 @@ const SettingsDashboard = () => {
                             ))}
                         </div>
                     </div>
+
                 </div>
 
                 <div className="mt-8 flex justify-end">

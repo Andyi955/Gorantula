@@ -730,12 +730,12 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 		}
 
 		maskedMap := make(map[string]string)
-		targetKeys := []string{
+		sensitiveKeys := []string{
 			"GEMINI_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
 			"OLLAMA_HOST", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "ZHIPUAI_API_KEY",
 			"MOONSHOT_API_KEY", "LM_API_TOKEN",
 		}
-		for _, k := range targetKeys {
+		for _, k := range sensitiveKeys {
 			val := envMap[k]
 			if val != "" {
 				if len(val) > 4 {
@@ -746,6 +746,14 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 			} else {
 				maskedMap[k] = ""
 			}
+		}
+
+		passthroughKeys := []string{
+			"DEFAULT_SEARCH_MODEL",
+			"DEFAULT_PERSONA_MODEL",
+		}
+		for _, k := range passthroughKeys {
+			maskedMap[k] = envMap[k]
 		}
 
 		w.Header().Set("Content-Type", "application/json")

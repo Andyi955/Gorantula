@@ -159,6 +159,24 @@ func (b *Brain) ProcessPromptIntoVaultWithOptions(ctx context.Context, prompt, v
 	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true, scrapeImages)
 }
 
+func notifyImageReviewUnavailable(provider ModelProvider, broadcast models.Broadcaster) {
+	if provider == nil || provider.SupportsImageReview() {
+		return
+	}
+
+	message := fmt.Sprintf(
+		"Image scraping is enabled, but provider '%s' does not support multimodal image review. Falling back to basic image scraping for this crawl.",
+		provider.Name(),
+	)
+	fmt.Println("[Brain Warning]", message)
+	if broadcast != nil {
+		broadcast(models.WSMessage{
+			Type:    "SYSTEM_LOG",
+			Payload: message,
+		})
+	}
+}
+
 func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool) (string, error) {
 	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
 		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
@@ -180,6 +198,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	provider := b.GetSearchProvider()
 	if provider == nil {
 		return "", fmt.Errorf("no AI model providers are configured or available")
+	}
+	if scrapeImages && !provider.SupportsImageReview() {
+		notifyImageReviewUnavailable(provider, b.NS.Broadcast)
 	}
 
 	systemInstruction := fmt.Sprintf("You are the central Brain of a web scraper. Today's current date is %s. Break the user's prompt into between 4 and 12 distinct search queries that cover varied research angles based on the complexity of the request. "+
@@ -301,7 +322,7 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 					SourceURL: nutrient.SourceURL,
 				}
 				if scrapeImages {
-					node.Images = b.PersistRemoteNodeImages(ctx, vaultID, node.ID, nutrient.ImageURLs)
+					node.Images = b.PersistRemoteNodeImages(ctx, provider, vaultID, node.ID, nutrient.SourceURL, title, summary, nutrient.Content, nutrient.ImageURLs)
 				}
 
 				if b.NS.Broadcast != nil {

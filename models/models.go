@@ -69,6 +69,12 @@ type MemoryNodeImage struct {
 	Height    int    `json:"height,omitempty"`
 }
 
+type ImageReviewResult struct {
+	Keep    bool   `json:"keep"`
+	Reason  string `json:"reason"`
+	Caption string `json:"caption,omitempty"`
+}
+
 // MemoryNode represents a single piece of evidence on the board
 type MemoryNode struct {
 	ID        string `json:"id"`

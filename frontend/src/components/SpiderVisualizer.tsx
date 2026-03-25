@@ -12,10 +12,12 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
         Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle']))
     );
     const [brainState, setBrainState] = useState<string>('Offline');
+    const [systemLog, setSystemLog] = useState<string | null>(null);
 
     useEffect(() => {
         if (!sharedSocket) {
             setBrainState('Offline');
+            setSystemLog(null);
             return;
         }
 
@@ -29,6 +31,8 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
                 if (['Done', 'Offline', 'Disconnected'].includes(msg.payload)) {
                     setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
                 }
+            } else if (msg.type === 'SYSTEM_LOG') {
+                setSystemLog(msg.payload);
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
                 setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
             }
@@ -47,6 +51,12 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
             <div className="mb-8 text-center text-xl font-bold tracking-widest uppercase border-b border-cyber-green pb-2">
                 <span className="text-cyber-green">Brain:</span> {brainState}
             </div>
+
+            {systemLog && (
+                <div className="mb-6 max-w-3xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-center text-xs leading-relaxed text-orange-100 shadow-[0_0_18px_rgba(249,115,22,0.12)]">
+                    {systemLog}
+                </div>
+            )}
 
             <div className="relative w-[600px] h-[600px] -my-10">
                 <Canvas camera={{ position: [0, 0, 15], fov: 50 }}>
