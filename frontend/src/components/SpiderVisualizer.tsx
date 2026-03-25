@@ -32,7 +32,13 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
                     setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
                 }
             } else if (msg.type === 'SYSTEM_LOG') {
-                setSystemLog(msg.payload);
+                if (typeof msg.payload === 'string') {
+                    setSystemLog(msg.payload);
+                } else if (msg.payload == null) {
+                    setSystemLog(null);
+                } else {
+                    setSystemLog(String(msg.payload));
+                }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
                 setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
             }

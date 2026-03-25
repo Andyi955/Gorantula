@@ -165,11 +165,12 @@ func decodeImageMetadata(payload []byte, mimeType string) (int, int) {
 
 func clampImageReviewExcerpt(text string) string {
 	text = strings.TrimSpace(text)
-	if len(text) <= imageReviewExcerptLimit {
+	runes := []rune(text)
+	if len(runes) <= imageReviewExcerptLimit {
 		return text
 	}
 
-	return strings.TrimSpace(text[:imageReviewExcerptLimit]) + "... [TRUNCATED]"
+	return strings.TrimSpace(string(runes[:imageReviewExcerptLimit])) + "... [TRUNCATED]"
 }
 
 func buildScrapedImageReviewPrompt(pageURL, nodeTitle, nodeSummary, nodeFullText string) string {
@@ -319,6 +320,10 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, provider ModelProvi
 	}
 	candidates := make([]downloadedRemoteNodeImage, 0, len(imageURLs))
 	seen := make(map[string]struct{}, len(imageURLs))
+	maxCandidateDownloads := maxNodeImageCount
+	if maxReviewedScrapedImagesPerNode > maxCandidateDownloads {
+		maxCandidateDownloads = maxReviewedScrapedImagesPerNode
+	}
 
 	for _, imageURL := range imageURLs {
 		imageURL = strings.TrimSpace(imageURL)
@@ -381,6 +386,9 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, provider ModelProvi
 			mimeType:  mimeType,
 			payload:   payload,
 		})
+		if len(candidates) >= maxCandidateDownloads {
+			break
+		}
 	}
 
 	if provider == nil || !provider.SupportsImageReview() {
@@ -396,7 +404,7 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, provider ModelProvi
 		if b.NS != nil && b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "SYSTEM_LOG",
-				Payload: fmt.Sprintf("Image review failed or returned no usable result for provider '%s'. Falling back to basic image scraping for this node.", provider.Name()),
+				Payload: fmt.Sprintf("Image review failed for provider '%s'. Falling back to basic image scraping for this node.", provider.Name()),
 			})
 		}
 		return b.persistHeuristicRemoteNodeImages(vaultID, nodeID, candidates)

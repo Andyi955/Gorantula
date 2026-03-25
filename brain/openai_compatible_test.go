@@ -126,14 +126,54 @@ func TestOpenAICompatibleProvider_ReviewImageJSON(t *testing.T) {
 			t.Fatalf("failed to decode request: %v", err)
 		}
 
-		messages := reqBody["messages"].([]interface{})
-		content := messages[0].(map[string]interface{})["content"].([]interface{})
+		rawMessages, ok := reqBody["messages"]
+		if !ok {
+			t.Fatalf("expected messages field in request body, got %#v", reqBody)
+		}
+		messages, ok := rawMessages.([]interface{})
+		if !ok {
+			t.Fatalf("expected messages to be an array, got %T", rawMessages)
+		}
+		if len(messages) == 0 {
+			t.Fatal("expected at least one message")
+		}
+
+		firstMessage, ok := messages[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected first message to be an object, got %T", messages[0])
+		}
+		rawContent, ok := firstMessage["content"]
+		if !ok {
+			t.Fatalf("expected content field in first message, got %#v", firstMessage)
+		}
+		content, ok := rawContent.([]interface{})
+		if !ok {
+			t.Fatalf("expected content to be an array, got %T", rawContent)
+		}
 		if len(content) != 2 {
 			t.Fatalf("expected multimodal content parts, got %d", len(content))
 		}
 
-		imagePart := content[1].(map[string]interface{})
-		imageURL := imagePart["image_url"].(map[string]interface{})["url"].(string)
+		imagePart, ok := content[1].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected second content part to be an object, got %T", content[1])
+		}
+		rawImageURL, ok := imagePart["image_url"]
+		if !ok {
+			t.Fatalf("expected image_url field in image content part, got %#v", imagePart)
+		}
+		imageURLMap, ok := rawImageURL.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected image_url to be an object, got %T", rawImageURL)
+		}
+		rawURL, ok := imageURLMap["url"]
+		if !ok {
+			t.Fatalf("expected url field inside image_url, got %#v", imageURLMap)
+		}
+		imageURL, ok := rawURL.(string)
+		if !ok {
+			t.Fatalf("expected image url to be a string, got %T", rawURL)
+		}
 		if !strings.HasPrefix(imageURL, "data:image/png;base64,") {
 			t.Fatalf("expected image data url payload, got %q", imageURL)
 		}
