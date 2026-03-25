@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"spider-agent/models"
@@ -13,15 +14,23 @@ import (
 type MockProvider struct {
 	NameFunc         func() string
 	GenerateJSONFunc func(ctx context.Context, prompt string, target interface{}) error
+	ReviewImageJSONFunc func(ctx context.Context, prompt, mimeType string, imageData []byte, target interface{}) error
 }
 
 func (m *MockProvider) Name() string        { return m.NameFunc() }
 func (m *MockProvider) SupportsMedia() bool { return false }
+func (m *MockProvider) SupportsImageReview() bool { return m.ReviewImageJSONFunc != nil }
 func (m *MockProvider) GenerateJSON(ctx context.Context, prompt string, target interface{}) error {
 	return m.GenerateJSONFunc(ctx, prompt, target)
 }
 func (m *MockProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
 	return "Mock synthesis", nil
+}
+func (m *MockProvider) ReviewImageJSON(ctx context.Context, prompt, mimeType string, imageData []byte, target interface{}) error {
+	if m.ReviewImageJSONFunc == nil {
+		return nil
+	}
+	return m.ReviewImageJSONFunc(ctx, prompt, mimeType, imageData, target)
 }
 
 func TestRankAndFilterFacts(t *testing.T) {
@@ -175,5 +184,27 @@ func TestCreateMergedInvestigation(t *testing.T) {
 
 	if _, exists := brain.Synthesis.Index.NodeArchive[payload.ChildVaultID]["merged-node-1"]; !exists {
 		t.Fatalf("expected merged node to be archived in synthesis engine")
+	}
+}
+
+func TestNotifyImageReviewUnavailableBroadcastsWarning(t *testing.T) {
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error { return nil },
+	}
+
+	var messages []models.WSMessage
+	notifyImageReviewUnavailable(mock, func(msg models.WSMessage) {
+		messages = append(messages, msg)
+	})
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 warning message, got %d", len(messages))
+	}
+	if messages[0].Type != "SYSTEM_LOG" {
+		t.Fatalf("expected SYSTEM_LOG message, got %q", messages[0].Type)
+	}
+	if payload, _ := messages[0].Payload.(string); !strings.Contains(payload, "does not support multimodal image review") {
+		t.Fatalf("expected unsupported image review warning, got %#v", messages[0].Payload)
 	}
 }

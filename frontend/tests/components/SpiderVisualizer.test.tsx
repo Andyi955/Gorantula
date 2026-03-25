@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import SpiderVisualizer from '../../src/components/SpiderVisualizer'
 
 vi.mock('@react-three/fiber', () => ({
@@ -15,6 +15,26 @@ vi.mock('../../src/components/SpiderScene', () => ({
 }))
 
 describe('SpiderVisualizer', () => {
+  class MockSocket {
+    private listeners = new Map<string, Set<(event: MessageEvent) => void>>()
+
+    addEventListener = vi.fn((type: string, handler: (event: MessageEvent) => void) => {
+      if (!this.listeners.has(type)) {
+        this.listeners.set(type, new Set())
+      }
+      this.listeners.get(type)?.add(handler)
+    })
+
+    removeEventListener = vi.fn((type: string, handler: (event: MessageEvent) => void) => {
+      this.listeners.get(type)?.delete(handler)
+    })
+
+    emit(type: string, payload: unknown) {
+      const event = { data: JSON.stringify({ type, payload }) } as MessageEvent
+      this.listeners.get('message')?.forEach((handler) => handler(event))
+    }
+  }
+
   it('shows the offline state without a websocket', () => {
     const { container } = render(<SpiderVisualizer sharedSocket={null} />)
 
@@ -31,5 +51,16 @@ describe('SpiderVisualizer', () => {
     const { container } = render(<SpiderVisualizer sharedSocket={sharedSocket} />)
 
     expect(container).toHaveTextContent('Brain: Connected')
+  })
+
+  it('renders system log warnings from the crawl pipeline', () => {
+    const sharedSocket = new MockSocket()
+    render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
+
+    act(() => {
+      sharedSocket.emit('SYSTEM_LOG', "Image scraping is enabled, but provider 'minimax' does not support multimodal image review.")
+    })
+
+    expect(screen.getByText(/does not support multimodal image review/i)).toBeInTheDocument()
   })
 })
