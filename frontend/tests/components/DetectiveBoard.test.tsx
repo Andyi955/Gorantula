@@ -1,8 +1,10 @@
 import * as React from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
+
+const localStorage = window.localStorage
 
 const fitViewMock = vi.fn()
 const setCenterMock = vi.fn()
@@ -79,6 +81,7 @@ vi.mock('../../src/components/CustomNode', () => ({
     id?: string
     data?: {
       title?: string
+      summary?: string
       fullText?: string
       images?: Array<{ id?: string; path: string }>
       isEditing?: boolean
@@ -93,7 +96,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       'div',
       { 'data-testid': `mock-node-${id}` },
       data?.title ? React.createElement('span', null, data.title) : null,
-      data?.fullText ? React.createElement('span', null, data.fullText) : null,
+      data?.summary ? React.createElement('span', null, data.summary) : null,
       React.createElement(
         'button',
         {
@@ -110,7 +113,7 @@ vi.mock('../../src/components/CustomNode', () => ({
               'button',
               {
                 type: 'button',
-                onClick: () => id && data?.onSave?.(id, data.title || '', data.fullText || '', 'analyze-and-save'),
+                onClick: () => id && data?.onSave?.(id, data.title || '', data.summary || '', 'analyze-and-save'),
               },
               'analyse & save',
             ),
@@ -118,7 +121,7 @@ vi.mock('../../src/components/CustomNode', () => ({
               'button',
               {
                 type: 'button',
-                onClick: () => id && data?.onSave?.(id, data.title || '', data.fullText || '', 'save'),
+                onClick: () => id && data?.onSave?.(id, data.title || '', data.summary || '', 'save'),
               },
               'save',
             ),
@@ -219,7 +222,6 @@ describe('DetectiveBoard relationship legend', () => {
   })
 
   afterEach(() => {
-    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -906,9 +908,9 @@ describe('DetectiveBoard relationship legend', () => {
       },
     })
 
-    await screen.findByTestId('mock-node-node-a')
-    await user.click(screen.getByRole('button', { name: /edit node/i }))
-    await user.click(await screen.findByRole('button', { name: /^save$/i }))
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /^save$/i }))
 
     expect(socket.sentMessages).toEqual([])
   })
@@ -930,9 +932,9 @@ describe('DetectiveBoard relationship legend', () => {
       },
     })
 
-    await screen.findByTestId('mock-node-node-a')
-    await user.click(screen.getByRole('button', { name: /edit node/i }))
-    await user.click(await screen.findByRole('button', { name: /analyse & save/i }))
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /analyse & save/i }))
 
     expect(socket.sentMessages).toHaveLength(1)
     expect(JSON.parse(socket.sentMessages[0])).toEqual({
@@ -969,10 +971,10 @@ describe('DetectiveBoard relationship legend', () => {
       },
     })
 
-    await screen.findByTestId('mock-node-node-a')
-    await user.click(screen.getByRole('button', { name: /edit node/i }))
-    await user.click(await screen.findByRole('button', { name: /attach image/i }))
-    await user.click(await screen.findByRole('button', { name: /remove image/i }))
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /attach image/i }))
+    await user.click(await within(node).findByRole('button', { name: /remove image/i }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -1000,10 +1002,11 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(await screen.findByTestId('mock-node-node-a')).toHaveTextContent(processedText)
 
-    await user.click(screen.getByRole('button', { name: /edit node/i }))
-    await user.click(await screen.findByRole('button', { name: /^save$/i }))
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /^save$/i }))
 
-    expect(screen.getByTestId('mock-node-node-a')).toHaveTextContent(processedText)
+    expect(node).toHaveTextContent(processedText)
     expect(socket.sentMessages).toEqual([])
   })
 })

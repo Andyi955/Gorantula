@@ -1006,9 +1006,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
     }, [boardMode, setNodes, syncStrictGridSubset]);
 
-    const handleAnalyzeNode = useCallback((id: string, fullText: string) => {
-        if (!fullText) {
-            console.warn(`[DetectiveBoard] Skipping manual analysis for ${id}: no fullText`);
+    const handleAnalyzeNode = useCallback((id: string, inputText: string) => {
+        if (!inputText) {
+            console.warn(`[DetectiveBoard] Skipping manual analysis for ${id}: no input text`);
             return;
         }
         if (!sharedSocket || sharedSocket.readyState !== WebSocket.OPEN) {
@@ -1022,7 +1022,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             type: 'PROCESS_MANUAL_NODE',
             payload: {
                 nodeId: id,
-                text: fullText
+                text: inputText
             }
         }));
     }, [sharedSocket, setNodes]);
@@ -2036,11 +2036,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onDelete: (id: string) => handleDeleteNode(id),
                         onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
                         onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                        onSetEditing: (id: string | null) => handleSetEditing(id),
                         onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                         onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                         onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
-                        onSetEditing: (id: string | null) => handleSetEditing(id),
-                        isEditing: node.id === editingNodeId,
                         isDeepDiveSource: false,
                         expanded: false,
                         boardMode,
@@ -2203,7 +2202,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [boardMode, sharedSocket, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, editingNodeId]);
+    }, [boardMode, sharedSocket, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
