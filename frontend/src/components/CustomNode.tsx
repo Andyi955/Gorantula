@@ -55,6 +55,7 @@ export interface NodeData {
     onExpand?: (nodeId: string, expanded: boolean) => void;
     onDelete?: (nodeId: string) => void;
     onUpdate?: (nodeId: string, data: any) => void;
+    onSave?: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => void;
     onResizeCommit?: (nodeId: string, width: number, height: number) => void;
     onViewImages?: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => void;
     onAttachImage?: (nodeId: string, file: File) => Promise<void>;
@@ -68,6 +69,8 @@ export interface NodeData {
     isAnalyzing?: boolean;
     boardMode?: BoardMode;
 }
+
+export type NodeSaveMode = 'save' | 'analyze-and-save';
 
 const escapeHTML = (text: string) => {
     return text
@@ -155,7 +158,6 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     currentInvestigationId?: string | null, 
     sharedSocket?: WebSocket | null,
     onDeleteNode?: (id: string) => void,
-    onUpdateNode?: (id: string, data: any) => void,
     isEditing?: boolean,
     onSetEditing?: (id: string | null) => void,
     width?: number,
@@ -166,7 +168,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const currentInvestigationId = props.currentInvestigationId ?? data.currentInvestigationId;
     const sharedSocket = props.sharedSocket ?? data.sharedSocket;
     const onDeleteNode = props.onDeleteNode ?? data.onDelete;
-    const onUpdateNode = props.onUpdateNode ?? data.onUpdate;
+    const onSaveNode = data.onSave;
     const onResizeCommit = data.onResizeCommit;
     const isEditing = props.isEditing ?? data.isEditing;
     const onSetEditing = props.onSetEditing ?? data.onSetEditing;
@@ -174,7 +176,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const [isExpanded, setIsExpanded] = useState(data.expanded || false);
     const [showChat, setShowChat] = useState(false);
     const [hasPulled, setHasPulled] = useState(false);
-    const [editText, setEditText] = useState(data.fullText || data.summary || '');
+    const [editText, setEditText] = useState(data.summary || data.fullText || '');
     const [editTitle, setEditTitle] = useState(data.title || '');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
@@ -200,7 +202,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     // Sync edit state when entering edit mode or data updates
     useEffect(() => {
         if (isEditing) {
-            setEditText(data.fullText || data.summary || '');
+            setEditText(data.summary || data.fullText || '');
             setEditTitle(data.title || '');
         }
     }, [isEditing, data.fullText, data.summary, data.title]);
@@ -250,16 +252,12 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
 
-    const onSave = (e: React.MouseEvent) => {
+    const handleSave = (mode: NodeSaveMode) => (e: React.MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
-        console.log(`[CustomNode] Saving node ${data.id}`, { editTitle, editText });
-        if (onUpdateNode && data.id) {
-            onUpdateNode(data.id, { 
-                title: editTitle, 
-                fullText: editText,
-                summary: editText 
-            });
+        console.log(`[CustomNode] Saving node ${data.id}`, { editTitle, editText, mode });
+        if (onSaveNode && data.id) {
+            onSaveNode(data.id, editTitle, editText, mode);
         }
         if (onSetEditing) onSetEditing(null);
     };
@@ -268,7 +266,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         e.stopPropagation();
         e.preventDefault();
         console.log("[CustomNode] Editor cancel clicked");
-        setEditText(data.fullText || data.summary || '');
+        setEditText(data.summary || data.fullText || '');
         setEditTitle(data.title || '');
         if (onSetEditing) onSetEditing(null);
     };
@@ -630,6 +628,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                     ) : (
                         <div className="text-[10px] text-gray-500">No images attached yet.</div>
                     )}
+                    <div className="mt-2 text-[9px] uppercase tracking-[0.16em] text-gray-500">
+                        Image changes save directly. Re-analysis is only needed for text changes.
+                    </div>
                 </div>
             )}
 
@@ -856,7 +857,14 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     CANCEL
                                 </button>
                                 <button
-                                    onClick={onSave}
+                                    onClick={handleSave('analyze-and-save')}
+                                    className="px-2 py-1 bg-cyber-cyan/12 border border-cyber-cyan text-cyber-cyan text-[9px] font-black hover:bg-cyber-cyan hover:text-black transition-all uppercase tracking-tight flex items-center gap-1"
+                                >
+                                    <Save size={10} />
+                                    ANALYSE & SAVE
+                                </button>
+                                <button
+                                    onClick={handleSave('save')}
                                     className="px-2 py-1 bg-cyber-green/18 border border-cyber-green text-cyber-green text-[9px] font-black hover:bg-cyber-green hover:text-white transition-all uppercase tracking-tight flex items-center gap-1"
                                 >
                                     <Save size={10} />

@@ -156,4 +156,67 @@ describe('CustomNode', () => {
     await user.click(screen.getByRole('button', { name: /remove/i }))
     expect(onRemoveImage).toHaveBeenCalledWith('node-4', 'img-edit-1')
   })
+
+  it('renders separate analyse and plain save actions in edit mode', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+
+    render(
+      <CustomNode
+        id="node-5"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-5',
+          title: 'Editable Node',
+          summary: 'Editable summary',
+          fullText: 'Editable summary',
+          onReadFull: vi.fn(),
+          onSave,
+          isEditing: true,
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /analyse & save/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }))
+    expect(onSave).toHaveBeenCalledWith('node-5', 'Editable Node', 'Editable summary', 'save')
+  })
+
+  it('passes analyze-and-save mode through the explicit save callback', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+
+    render(
+      <CustomNode
+        id="node-6"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-6',
+          title: 'Editable Node',
+          summary: 'Editable summary',
+          fullText: 'Editable summary',
+          onReadFull: vi.fn(),
+          onSave,
+          isEditing: true,
+        }}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /analyse & save/i }))
+    expect(onSave).toHaveBeenCalledWith('node-6', 'Editable Node', 'Editable summary', 'analyze-and-save')
+  })
 })
