@@ -23,7 +23,7 @@ import type {
     XYPosition,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import CustomNode from './CustomNode';
+import CustomNode, { type NodeSaveMode } from './CustomNode';
 import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
@@ -48,6 +48,9 @@ const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
 };
+
+const shouldPreserveExistingFullText = (summary?: string, fullText?: string) =>
+    Boolean(summary && fullText && summary !== fullText);
 
 const STRICT_GRID_EDGE_Z_INDEX = 0;
 const STRICT_GRID_NODE_Z_INDEX = 100;
@@ -996,28 +999,51 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             return n;
         }));
 
-        if (data.fullText && sharedSocket && sharedSocket.readyState === WebSocket.OPEN) {
-            console.log(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
-
-            setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, isAnalyzing: true } } : n));
-
-            sharedSocket.send(JSON.stringify({
-                type: 'PROCESS_MANUAL_NODE',
-                payload: {
-                    nodeId: id,
-                    text: data.fullText
-                }
-            }));
-        } else {
-            console.warn(`[DetectiveBoard] Socket not ready or no fullText for ${id}`);
-        }
-
         if (boardMode === 'strict-grid') {
             window.requestAnimationFrame(() => {
                 syncStrictGridSubset([id], edgesRef.current, nodesRef.current);
             });
         }
-    }, [boardMode, sharedSocket, setNodes, syncStrictGridSubset]);
+    }, [boardMode, setNodes, syncStrictGridSubset]);
+
+    const handleAnalyzeNode = useCallback((id: string, inputText: string) => {
+        if (!inputText) {
+            console.warn(`[DetectiveBoard] Skipping manual analysis for ${id}: no input text`);
+            return;
+        }
+        if (!sharedSocket || sharedSocket.readyState !== WebSocket.OPEN) {
+            console.warn(`[DetectiveBoard] Skipping manual analysis for ${id}: socket not ready`);
+            return;
+        }
+
+        console.log(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
+        setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, isAnalyzing: true } } : n));
+        sharedSocket.send(JSON.stringify({
+            type: 'PROCESS_MANUAL_NODE',
+            payload: {
+                nodeId: id,
+                text: inputText
+            }
+        }));
+    }, [sharedSocket, setNodes]);
+
+    const handleSaveNode = useCallback((id: string, title: string, text: string, mode: NodeSaveMode) => {
+        const nextText = text;
+        const existingNode = nodesRef.current.find((node) => node.id === id);
+        const existingSummary = typeof existingNode?.data?.summary === 'string' ? existingNode.data.summary : '';
+        const existingFullText = typeof existingNode?.data?.fullText === 'string' ? existingNode.data.fullText : '';
+        const preserveFullText = shouldPreserveExistingFullText(existingSummary, existingFullText);
+
+        handleUpdateNode(id, {
+            title,
+            summary: nextText,
+            fullText: preserveFullText ? existingFullText : nextText,
+        });
+
+        if (mode === 'analyze-and-save') {
+            handleAnalyzeNode(id, nextText);
+        }
+    }, [handleAnalyzeNode, handleUpdateNode]);
 
     const handleAttachImage = useCallback(async (nodeId: string, file: File) => {
         if (!investigationId) {
@@ -1452,6 +1478,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
                     onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                    onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                     onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                     onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                     onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
@@ -2008,6 +2035,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                         onDelete: (id: string) => handleDeleteNode(id),
                         onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                        onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                        onSetEditing: (id: string | null) => handleSetEditing(id),
                         onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                         onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                         onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
@@ -2147,12 +2176,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     if (n.id === nodeId) {
                         // Strip tags for a clean title
                         const cleanTitle = processedText.replace(/\[(?:PERSON|ORG|LOC|DATE|TIME):(.*?)\]/gi, '$1');
+                        const preserveFullText = shouldPreserveExistingFullText(
+                            typeof n.data.summary === 'string' ? n.data.summary : '',
+                            typeof n.data.fullText === 'string' ? n.data.fullText : '',
+                        );
                         return {
                             ...n,
                             data: {
                                 ...n.data,
                                 summary: processedText,
-                                fullText: processedText,
+                                fullText: preserveFullText ? n.data.fullText : processedText,
                                 title: n.data.title === 'NEW_EVIDENCE' || !n.data.title ? (cleanTitle.slice(0, 30) + (cleanTitle.length > 30 ? '...' : '')) : n.data.title,
                                 isAnalyzing: false
                             }
@@ -2169,7 +2202,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [boardMode, sharedSocket, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
+    }, [boardMode, sharedSocket, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -2192,25 +2225,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
                 onDelete: (id: string) => handleDeleteNode(id),
                 onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
+                onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                 onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                 onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                 onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                 onSetEditing: (id: string | null) => handleSetEditing(id),
-                onSave: (e: React.MouseEvent, nodeId: string, editTitle: string, editText: string) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    console.log(`[CustomNode] Reading edited node ${nodeId}...`);
-                    console.log(` - Source Input: "${editText.slice(0, 50)}${editText.length > 50 ? '...' : ''}"`);
-
-                    if (handleUpdateNode && nodeId) {
-                        handleUpdateNode(nodeId, {
-                            title: editTitle,
-                            summary: editText,
-                            fullText: editText
-                        });
-                    }
-                    if (handleSetEditing) handleSetEditing(null);
-                },
                 isEditing: true,
                 isDeepDiveSource: false,
                 expanded: true,
@@ -2220,7 +2239,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
+    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
 
     // Stable nodeTypes definition to prevent re-mounting all nodes on every render
     const nodeTypes = useMemo(() => ({
@@ -2241,6 +2260,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onExpand: handleNodeExpand,
                 onDelete: handleDeleteNode,
                 onUpdate: handleUpdateNode,
+                onSave: handleSaveNode,
                 onViewImages: openImageLightbox,
                 onAttachImage: handleAttachImage,
                 onRemoveImage: handleRemoveImage,
@@ -2250,7 +2270,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             }
         })));
         // We only want to sync these onto the nodes when the container state changes
-    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, openImageLightbox, handleNodeResizeCommit, handleSetEditing, editingNodeId]);
+    }, [boardMode, returnVaultId, investigationId, sharedSocket, handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, handleSaveNode, openImageLightbox, handleNodeResizeCommit, handleSetEditing, editingNodeId]);
 
 
 

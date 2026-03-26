@@ -1,8 +1,10 @@
 import * as React from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
+
+const localStorage = window.localStorage
 
 const fitViewMock = vi.fn()
 const setCenterMock = vi.fn()
@@ -72,11 +74,77 @@ vi.mock('reactflow', () => {
 
 vi.mock('../../src/components/CustomNode', () => ({
   __esModule: true,
-  default: ({ data, id }: { id?: string; data?: { title?: string; images?: Array<{ path: string }>; onViewImages?: (images: Array<{ path: string }>, index: number, nodeTitle?: string, nodeId?: string) => void } }) =>
+  default: ({
+    data,
+    id,
+  }: {
+    id?: string
+    data?: {
+      title?: string
+      summary?: string
+      fullText?: string
+      images?: Array<{ id?: string; path: string }>
+      isEditing?: boolean
+      onSetEditing?: (id: string | null) => void
+      onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
+      onAttachImage?: (nodeId: string, file: File) => Promise<void>
+      onRemoveImage?: (nodeId: string, imageId: string) => void
+      onViewImages?: (images: Array<{ path: string }>, index: number, nodeTitle?: string, nodeId?: string) => void
+    }
+  }) =>
     React.createElement(
       'div',
-      null,
+      { 'data-testid': `mock-node-${id}` },
       data?.title ? React.createElement('span', null, data.title) : null,
+      data?.summary ? React.createElement('span', null, data.summary) : null,
+      React.createElement(
+        'button',
+        {
+          type: 'button',
+          onClick: () => id && data?.onSetEditing?.(id),
+        },
+        'edit node',
+      ),
+      data?.isEditing
+        ? React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(
+              'button',
+              {
+                type: 'button',
+                onClick: () => id && data?.onSave?.(id, data.title || '', data.summary || '', 'analyze-and-save'),
+              },
+              'analyse & save',
+            ),
+            React.createElement(
+              'button',
+              {
+                type: 'button',
+                onClick: () => id && data?.onSave?.(id, data.title || '', data.summary || '', 'save'),
+              },
+              'save',
+            ),
+            React.createElement(
+              'button',
+              {
+                type: 'button',
+                onClick: () => id && data?.onAttachImage?.(id, new File(['image-bytes'], 'board-evidence.png', { type: 'image/png' })),
+              },
+              'attach image',
+            ),
+            data?.images?.[0]
+              ? React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    onClick: () => id && data?.onRemoveImage?.(id, data.images?.[0]?.id || 'img-1'),
+                  },
+                  'remove image',
+                )
+              : null,
+          )
+        : null,
       data?.images?.length
         ? React.createElement(
             'button',
@@ -821,5 +889,124 @@ describe('DetectiveBoard relationship legend', () => {
 
     await user.click(screen.getByTitle('Close image viewer'))
     expect(screen.queryByTestId('node-image-lightbox')).not.toBeInTheDocument()
+  })
+
+  it('saves edited text without sending manual node analysis', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    socket.emit('MEMORY_NODE_GATHERED', {
+      append: false,
+      vaultId: 'investigation-1',
+      node: {
+        id: 'node-a',
+        title: 'A',
+        summary: 'A',
+        fullText: 'A',
+      },
+    })
+
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /^save$/i }))
+
+    expect(socket.sentMessages).toEqual([])
+  })
+
+  it('sends manual node analysis only for analyse and save', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    socket.emit('MEMORY_NODE_GATHERED', {
+      append: false,
+      vaultId: 'investigation-1',
+      node: {
+        id: 'node-a',
+        title: 'A',
+        summary: 'A',
+        fullText: 'A',
+      },
+    })
+
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /analyse & save/i }))
+
+    expect(socket.sentMessages).toHaveLength(1)
+    expect(JSON.parse(socket.sentMessages[0])).toEqual({
+      type: 'PROCESS_MANUAL_NODE',
+      payload: {
+        nodeId: 'node-a',
+        text: 'A',
+      },
+    })
+  })
+
+  it('does not send manual analysis for image attach or remove actions', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        image: { id: 'img-new', path: '/evidence/board-evidence.png', caption: 'Board evidence' },
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    socket.emit('MEMORY_NODE_GATHERED', {
+      append: false,
+      vaultId: 'investigation-1',
+      node: {
+        id: 'node-a',
+        title: 'A',
+        summary: 'A',
+        fullText: 'A',
+        images: [{ id: 'img-1', path: '/evidence/original.png', caption: 'Original' }],
+      },
+    })
+
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /attach image/i }))
+    await user.click(await within(node).findByRole('button', { name: /remove image/i }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    expect(socket.sentMessages).toEqual([])
+  })
+
+  it('keeps existing processed text on plain save when no reanalysis is requested', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+    const processedText = '[PERSON:ALICE] met [ORG:OPENAI]'
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    socket.emit('MEMORY_NODE_GATHERED', {
+      append: false,
+      vaultId: 'investigation-1',
+      node: {
+        id: 'node-a',
+        title: 'A',
+        summary: processedText,
+        fullText: processedText,
+      },
+    })
+
+    expect(await screen.findByTestId('mock-node-node-a')).toHaveTextContent(processedText)
+
+    const node = await screen.findByTestId('mock-node-node-a')
+    await user.click(within(node).getByRole('button', { name: /edit node/i }))
+    await user.click(await within(node).findByRole('button', { name: /^save$/i }))
+
+    expect(node).toHaveTextContent(processedText)
+    expect(socket.sentMessages).toEqual([])
   })
 })
