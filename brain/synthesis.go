@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,12 +19,14 @@ import (
 
 // NodeContextPayload represents where an entity was found
 type NodeContextPayload struct {
-	VaultID   string `json:"vaultId"`
-	NodeID    string `json:"nodeId"`
-	Title     string `json:"title"`
-	Summary   string `json:"summary"`
-	FullText  string `json:"fullText"`
-	SourceURL string `json:"sourceURL"`
+	VaultID       string `json:"vaultId"`
+	NodeID        string `json:"nodeId"`
+	Title         string `json:"title"`
+	Summary       string `json:"summary"`
+	FullText      string `json:"fullText"`
+	SourceURL     string `json:"sourceURL"`
+	EntityType    string `json:"entityType,omitempty"`
+	MatchedEntity string `json:"matchedEntity,omitempty"`
 }
 
 // SynthesisIndex stores the inverted entity index with NodeContext
@@ -43,6 +46,7 @@ type DerivedVaultRecord struct {
 // SynthesisAlert represents the payload sent to the frontend when a connection is found.
 type SynthesisAlert struct {
 	Type           string               `json:"type"`
+	AlertKey       string               `json:"alertKey"`
 	Entity         string               `json:"entity"`
 	CurrentVaultID string               `json:"currentVaultId"`
 	ConnectedCases []string             `json:"connectedCases"`
@@ -242,7 +246,7 @@ func (s *SynthesisEngine) findClosestEntity(exact string) string {
 	}
 
 	exactLen := len(exact)
-	if exactLen < 4 {
+	if exactLen < 4 || containsDigit(exact) {
 		return exact // Too small to fuzzy match
 	}
 
@@ -280,7 +284,127 @@ func (s *SynthesisEngine) computeIDF(entity string) float64 {
 	return math.Log10((total + 1.5) / (df + 0.5)) // smooth
 }
 
-var taggedEntityPattern = regexp.MustCompile(`\[(?:PERSON|ORG|LOC|DATE|TIME):([^\]]+)\]`)
+const (
+	maxContextsPerHistoricalVault = 2
+	maxContextsPerCurrentVault    = 2
+	maxOverlapAlertsPerRun        = 6
+	fullTextExcerptLength         = 220
+	fullTextFallbackThreshold     = 2
+)
+
+type rankedOverlapCandidate struct {
+	entity           string
+	historicalVaults []string
+	nodesList        []NodeContextPayload
+	idfScore         float64
+	priorityScore    float64
+}
+
+func scoreOverlapCandidate(entity string, idfScore float64, nodesList []NodeContextPayload, historicalVaults []string) float64 {
+	score := idfScore * 3
+	score += float64(len(historicalVaults)) * 1.35
+	score += float64(min(len(nodesList), maxContextsPerCurrentVault+maxContextsPerHistoricalVault))
+
+	if strings.Contains(entity, " ") {
+		score += 0.75
+	}
+
+	entityType := ""
+	if len(nodesList) > 0 {
+		entityType = strings.ToUpper(strings.TrimSpace(nodesList[0].EntityType))
+	}
+
+	switch entityType {
+	case "PERSON":
+		score += 2.5
+	case "ORG":
+		score += 2
+	case "LOC":
+		score += 0.25
+	case "DATE":
+		score -= 1
+	}
+
+	if idfScore < 0.2 {
+		score -= 1.5
+	}
+
+	return score
+}
+
+func buildOverlapBatchDecisions(ctx context.Context, candidates []rankedOverlapCandidate, provider ModelProvider) map[string]OverlapAnalysis {
+	if provider == nil || len(candidates) == 0 {
+		return nil
+	}
+
+	batch := make([]overlapBatchCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		contextBuilder := strings.Builder{}
+		for _, nc := range candidate.nodesList {
+			contextBuilder.WriteString(fmt.Sprintf("\n[Case: %s | Node: %s | Type: %s] %s\n", nc.VaultID, nc.NodeID, nc.EntityType, formatOverlapContext(candidate.entity, nc)))
+		}
+		entityType := ""
+		if len(candidate.nodesList) > 0 {
+			entityType = candidate.nodesList[0].EntityType
+		}
+		batch = append(batch, overlapBatchCandidate{
+			Entity:  candidate.entity,
+			Type:    entityType,
+			Cases:   len(candidate.historicalVaults) + 1,
+			Context: contextBuilder.String(),
+		})
+	}
+
+	prompt := fmt.Sprintf(`You are an anomaly detection filter analyzing potential overlaps across case files.
+Review each candidate independently and decide whether it represents a meaningful cross-investigation overlap or just a generic recurring term.
+Be strict: reject broad geopolitical entities, generic country references, and routine dates unless the context shows a concrete shared circumstance.
+Return ONLY valid JSON in the format { "decisions": [{ "entity": "name", "meaningful": true/false, "reason": "short reason" }] }.
+
+Candidates:
+%s`, mustJSON(batch))
+
+	var response overlapBatchResponse
+	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
+		log.Printf("[SynthesisEngine] Batched LLM overlap eval failed, keeping default alerts. Err: %v", err)
+		return nil
+	}
+
+	decisions := make(map[string]OverlapAnalysis, len(response.Decisions))
+	for _, decision := range response.Decisions {
+		entity := strings.ToLower(strings.TrimSpace(decision.Entity))
+		if entity == "" {
+			continue
+		}
+		decisions[entity] = OverlapAnalysis{
+			Meaningful: decision.Meaningful,
+			Reason:     strings.TrimSpace(decision.Reason),
+		}
+	}
+
+	return decisions
+}
+
+func mustJSON(value interface{}) string {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+var taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)\]`)
+var overlapTokenPattern = regexp.MustCompile(`[a-z0-9]{3,}`)
+var overlapEntityTypes = map[string]bool{
+	"PERSON": true,
+	"ORG":    true,
+	"LOC":    true,
+	"DATE":   true,
+}
+var overlapStopwords = map[string]struct{}{
+	"about": {}, "after": {}, "also": {}, "been": {}, "being": {}, "between": {}, "case": {}, "cases": {},
+	"could": {}, "from": {}, "have": {}, "into": {}, "just": {}, "more": {}, "than": {}, "that": {},
+	"their": {}, "there": {}, "these": {}, "they": {}, "this": {}, "through": {}, "using": {}, "with": {},
+}
 
 func extractTaggedEntities(nodes []models.MemoryNode) map[string][]NodeContextPayload {
 	entityContexts := make(map[string][]NodeContextPayload)
@@ -289,28 +413,310 @@ func extractTaggedEntities(nodes []models.MemoryNode) map[string][]NodeContextPa
 		matches := taggedEntityPattern.FindAllStringSubmatch(strings.Join([]string{node.Title, node.Summary, node.FullText}, "\n"), -1)
 		seen := make(map[string]bool)
 		for _, match := range matches {
-			if len(match) < 2 {
+			if len(match) < 3 {
 				continue
 			}
 
-			entity := strings.ToLower(strings.TrimSpace(match[1]))
-			if entity == "" || seen[entity] {
+			entityType := strings.ToUpper(strings.TrimSpace(match[1]))
+			if !overlapEntityTypes[entityType] {
 				continue
 			}
-			seen[entity] = true
+
+			entity := strings.ToLower(strings.TrimSpace(match[2]))
+			if entity == "" {
+				continue
+			}
+
+			seenKey := entityType + "|" + entity
+			if seen[seenKey] {
+				continue
+			}
+			seen[seenKey] = true
 
 			entityContexts[entity] = append(entityContexts[entity], NodeContextPayload{
-				VaultID:   "",
-				NodeID:    node.ID,
-				Title:     node.Title,
-				Summary:   node.Summary,
-				FullText:  node.FullText,
-				SourceURL: node.SourceURL,
+				VaultID:       "",
+				NodeID:        node.ID,
+				Title:         node.Title,
+				Summary:       node.Summary,
+				FullText:      node.FullText,
+				SourceURL:     node.SourceURL,
+				EntityType:    entityType,
+				MatchedEntity: entity,
 			})
 		}
 	}
 
 	return entityContexts
+}
+
+func containsDigit(value string) bool {
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeNodeContexts(existing []NodeContextPayload, incoming []NodeContextPayload) []NodeContextPayload {
+	if len(existing) == 0 {
+		return append([]NodeContextPayload(nil), incoming...)
+	}
+
+	merged := append([]NodeContextPayload(nil), existing...)
+	seen := make(map[string]bool, len(existing))
+	for _, context := range existing {
+		seen[nodeContextKey(context)] = true
+	}
+
+	for _, context := range incoming {
+		key := nodeContextKey(context)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		merged = append(merged, context)
+	}
+
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].VaultID != merged[j].VaultID {
+			return merged[i].VaultID < merged[j].VaultID
+		}
+		return merged[i].NodeID < merged[j].NodeID
+	})
+
+	return merged
+}
+
+func nodeContextKey(context NodeContextPayload) string {
+	return strings.Join([]string{context.VaultID, context.NodeID, context.EntityType, context.MatchedEntity}, "|")
+}
+
+func uniqueSortedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		unique = append(unique, value)
+	}
+	sort.Strings(unique)
+	return unique
+}
+
+func makeAlertKey(currentVaultID, entity string, connectedCases []string) string {
+	return strings.Join([]string{
+		currentVaultID,
+		strings.ToLower(strings.TrimSpace(entity)),
+		strings.Join(uniqueSortedStrings(connectedCases), "|"),
+	}, "::")
+}
+
+func limitContexts(contexts []NodeContextPayload, limit int) []NodeContextPayload {
+	if len(contexts) <= limit {
+		return append([]NodeContextPayload(nil), contexts...)
+	}
+	return append([]NodeContextPayload(nil), contexts[:limit]...)
+}
+
+func (s *SynthesisEngine) hydrateContextsLocked(contexts []NodeContextPayload) []NodeContextPayload {
+	hydrated := make([]NodeContextPayload, 0, len(contexts))
+	for _, context := range contexts {
+		next := context
+		if archive, ok := s.Index.NodeArchive[context.VaultID]; ok {
+			if node, exists := archive[context.NodeID]; exists {
+				next.Title = node.Title
+				next.Summary = node.Summary
+				next.FullText = node.FullText
+				next.SourceURL = node.SourceURL
+			}
+		}
+		hydrated = append(hydrated, next)
+	}
+	return hydrated
+}
+
+func buildOverlapTokenSet(entity string, contexts []NodeContextPayload) map[string]struct{} {
+	ignoreTokens := make(map[string]struct{})
+	for _, token := range tokenizeOverlapText(entity) {
+		ignoreTokens[token] = struct{}{}
+	}
+
+	tokens := make(map[string]struct{})
+	for _, context := range contexts {
+		for _, token := range tokenizeOverlapText(strings.Join([]string{context.Title, context.Summary}, " ")) {
+			if _, ignore := ignoreTokens[token]; ignore {
+				continue
+			}
+			if _, stopword := overlapStopwords[token]; stopword {
+				continue
+			}
+			tokens[token] = struct{}{}
+		}
+	}
+
+	if len(tokens) >= 4 {
+		return tokens
+	}
+
+	for _, context := range contexts {
+		if context.FullText == "" {
+			continue
+		}
+		for _, token := range tokenizeOverlapText(extractEntitySnippet(context.FullText, entity, fullTextExcerptLength)) {
+			if _, ignore := ignoreTokens[token]; ignore {
+				continue
+			}
+			if _, stopword := overlapStopwords[token]; stopword {
+				continue
+			}
+			tokens[token] = struct{}{}
+		}
+	}
+
+	return tokens
+}
+
+func tokenizeOverlapText(text string) []string {
+	raw := overlapTokenPattern.FindAllString(strings.ToLower(text), -1)
+	if len(raw) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(raw))
+	tokens := make([]string, 0, len(raw))
+	for _, token := range raw {
+		if seen[token] {
+			continue
+		}
+		seen[token] = true
+		tokens = append(tokens, token)
+	}
+	return tokens
+}
+
+func extractEntitySnippet(fullText, entity string, limit int) string {
+	normalized := strings.TrimSpace(fullText)
+	if normalized == "" {
+		return ""
+	}
+	if len(normalized) <= limit {
+		return normalized
+	}
+
+	lowerText := strings.ToLower(normalized)
+	lowerEntity := strings.ToLower(entity)
+	index := strings.Index(lowerText, lowerEntity)
+	if index == -1 {
+		return normalized[:limit]
+	}
+
+	start := index - (limit / 2)
+	if start < 0 {
+		start = 0
+	}
+	end := start + limit
+	if end > len(normalized) {
+		end = len(normalized)
+		start = max(0, end-limit)
+	}
+
+	snippet := normalized[start:end]
+	if start > 0 {
+		snippet = "..." + snippet
+	}
+	if end < len(normalized) {
+		snippet += "..."
+	}
+	return snippet
+}
+
+func scoreContextOverlap(entity string, currentTokens map[string]struct{}, context NodeContextPayload) int {
+	score := 0
+	lowerEntity := strings.ToLower(entity)
+	for _, token := range tokenizeOverlapText(strings.Join([]string{context.Title, context.Summary}, " ")) {
+		if _, ok := currentTokens[token]; ok {
+			score++
+		}
+	}
+
+	if strings.Contains(strings.ToLower(context.Title), lowerEntity) {
+		score++
+	}
+	if strings.Contains(strings.ToLower(context.Summary), lowerEntity) {
+		score += 2
+	}
+	if score >= fullTextFallbackThreshold || context.FullText == "" {
+		return score
+	}
+
+	for _, token := range tokenizeOverlapText(extractEntitySnippet(context.FullText, entity, fullTextExcerptLength)) {
+		if _, ok := currentTokens[token]; ok {
+			score++
+		}
+	}
+	return score
+}
+
+func selectHistoricalContexts(entity string, currentContexts []NodeContextPayload, historicalContexts []NodeContextPayload) []NodeContextPayload {
+	if len(historicalContexts) <= maxContextsPerHistoricalVault {
+		return append([]NodeContextPayload(nil), historicalContexts...)
+	}
+
+	currentTokens := buildOverlapTokenSet(entity, currentContexts)
+	type scoredContext struct {
+		context NodeContextPayload
+		score   int
+	}
+
+	scored := make([]scoredContext, 0, len(historicalContexts))
+	for _, context := range historicalContexts {
+		scored = append(scored, scoredContext{
+			context: context,
+			score:   scoreContextOverlap(entity, currentTokens, context),
+		})
+	}
+
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].context.NodeID < scored[j].context.NodeID
+	})
+
+	selected := make([]NodeContextPayload, 0, maxContextsPerHistoricalVault)
+	for _, candidate := range scored[:min(maxContextsPerHistoricalVault, len(scored))] {
+		selected = append(selected, candidate.context)
+	}
+	return selected
+}
+
+func formatOverlapContext(entity string, context NodeContextPayload) string {
+	base := strings.TrimSpace(strings.Join([]string{context.Title, context.Summary}, " | "))
+	if base == "" {
+		base = context.Summary
+	}
+
+	if len(strings.TrimSpace(context.Summary)) >= 90 || context.FullText == "" {
+		return base
+	}
+
+	snippet := extractEntitySnippet(context.FullText, entity, fullTextExcerptLength)
+	if snippet == "" || snippet == context.Summary {
+		return base
+	}
+
+	if base == "" {
+		return snippet
+	}
+
+	return base + " | Full text: " + snippet
 }
 
 func (s *SynthesisEngine) RegisterDerivedVault(vaultID string, parentIDs []string, nodes []models.MemoryNode) {
@@ -353,9 +759,32 @@ type OverlapAnalysis struct {
 	Reason     string `json:"reason"`
 }
 
-// AnalyzeOverlap checks newly extracted entities for cross-case overlap and triggers LLM analysis if found.
-func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []string, newVaultID string, nodes []models.MemoryNode, br *Brain) {
-	log.Printf("[SynthesisEngine] Starting execution for Vault: %s. Processing %d possible entities", newVaultID, len(newEntities))
+type overlapBatchCandidate struct {
+	Entity  string `json:"entity"`
+	Type    string `json:"type"`
+	Cases   int    `json:"cases"`
+	Context string `json:"context"`
+}
+
+type overlapBatchDecision struct {
+	Entity     string `json:"entity"`
+	Meaningful bool   `json:"meaningful"`
+	Reason     string `json:"reason"`
+}
+
+type overlapBatchResponse struct {
+	Decisions []overlapBatchDecision `json:"decisions"`
+}
+
+// AnalyzeOverlap uses tagged node entities as fast overlap candidates, then verifies them with node context.
+func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newVaultID string, candidateNodes []models.MemoryNode, allNodes []models.MemoryNode, br *Brain) {
+	startedAt := time.Now()
+	candidateEntityMap := extractTaggedEntities(candidateNodes)
+	log.Printf("[SynthesisEngine] Starting execution for Vault %s with %d candidate nodes and %d candidate entities", newVaultID, len(candidateNodes), len(candidateEntityMap))
+	if len(candidateEntityMap) == 0 {
+		return
+	}
+
 	s.mu.Lock()
 
 	overlapsFound := make(map[string][]string) // Entity -> List of Historical VaultIDs it appears in
@@ -367,20 +796,19 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []stri
 	}
 
 	// Store full node data in archive
-	for _, n := range nodes {
+	for _, n := range allNodes {
 		s.Index.NodeArchive[newVaultID][n.ID] = n
 	}
 
+	currentContexts := make(map[string][]NodeContextPayload)
+	historicalContexts := make(map[string]map[string][]NodeContextPayload)
 	seenInRun := make(map[string]bool)
 
-	entityToNodes := make(map[string][]NodeContextPayload)
-
-	for _, rawEntity := range newEntities {
-		exact := s.cleanEntity(rawEntity)
-		if exact == "" {
+	for exactEntity, extractedContexts := range candidateEntityMap {
+		if exactEntity == "" {
 			continue
 		}
-		entity := s.findClosestEntity(exact)
+		entity := s.findClosestEntity(exactEntity)
 		if seenInRun[entity] {
 			continue
 		}
@@ -390,83 +818,65 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newEntities []stri
 			s.Index.EntityMap[entity] = make(map[string][]NodeContextPayload)
 		}
 
-		// Map to contexts
-		var contexts []NodeContextPayload
-		for _, n := range nodes {
-			if strings.Contains(strings.ToLower(n.Summary), entity) || strings.Contains(strings.ToLower(n.Title), entity) {
-				contexts = append(contexts, NodeContextPayload{
-					VaultID:   newVaultID,
-					NodeID:    n.ID,
-					Title:     n.Title,
-					Summary:   n.Summary,
-					FullText:  n.FullText,
-					SourceURL: n.SourceURL,
-				})
-			}
+		contexts := make([]NodeContextPayload, 0, len(extractedContexts))
+		for _, context := range extractedContexts {
+			context.VaultID = newVaultID
+			context.MatchedEntity = entity
+			contexts = append(contexts, context)
 		}
 
-		for existingCase := range s.Index.EntityMap[entity] {
+		existingHistoricalVaults := make([]string, 0, len(s.Index.EntityMap[entity]))
+		for existingCase, indexedContexts := range s.Index.EntityMap[entity] {
 			if existingCase != newVaultID {
-				overlapsFound[entity] = append(overlapsFound[entity], existingCase)
-			}
-		}
-
-		if len(contexts) > 0 {
-			if len(s.Index.EntityMap[entity][newVaultID]) == 0 {
-				s.Index.EntityMap[entity][newVaultID] = contexts
-				indexChanged = true
-			}
-		} else {
-			if len(s.Index.EntityMap[entity][newVaultID]) == 0 {
-				nodeID := "synthetic-node"
-				title := "Synthetic Insight"
-				summary := "Detected synthetically inside this case without clear node attribution."
-				fullText := ""
-				sourceURL := ""
-
-				if len(nodes) > 0 {
-					nodeID = nodes[0].ID
-					title = nodes[0].Title
-					summary = nodes[0].Summary
-					fullText = nodes[0].FullText
-					sourceURL = nodes[0].SourceURL
+				existingHistoricalVaults = append(existingHistoricalVaults, existingCase)
+				if historicalContexts[entity] == nil {
+					historicalContexts[entity] = make(map[string][]NodeContextPayload)
 				}
-				s.Index.EntityMap[entity][newVaultID] = []NodeContextPayload{{
-					VaultID:   newVaultID,
-					NodeID:    nodeID,
-					Title:     title,
-					Summary:   summary,
-					FullText:  fullText,
-					SourceURL: sourceURL,
-				}}
-				indexChanged = true
+				historicalContexts[entity][existingCase] = s.hydrateContextsLocked(indexedContexts)
 			}
 		}
 
-		// Keep map up to date for dispatch mapping
-		if len(s.Index.EntityMap[entity][newVaultID]) > 0 {
-			entityToNodes[entity] = s.Index.EntityMap[entity][newVaultID]
+		existingCurrent := s.Index.EntityMap[entity][newVaultID]
+		mergedCurrent := mergeNodeContexts(existingCurrent, contexts)
+		if len(mergedCurrent) != len(existingCurrent) {
+			s.Index.EntityMap[entity][newVaultID] = mergedCurrent
+			indexChanged = true
 		}
+		currentContexts[entity] = s.hydrateContextsLocked(mergedCurrent)
+		overlapsFound[entity] = uniqueSortedStrings(existingHistoricalVaults)
 	}
 
 	if indexChanged {
 		s.saveIndexLocked()
 	}
 
-	overlapContexts := make(map[string][]NodeContextPayload)
-	for entity, vaults := range overlapsFound {
-		var hNodes []NodeContextPayload
-		for _, v := range vaults {
-			hNodes = append(hNodes, s.Index.EntityMap[entity][v]...)
-		}
-		hNodes = append(hNodes, entityToNodes[entity]...)
-		overlapContexts[entity] = hNodes
+	isDerivedCurrentVault := s.Index.Derived[newVaultID].ParentVaultIDs != nil
+	s.mu.Unlock() // unlock BEFORE any prompt verification work
+
+	if isDerivedCurrentVault {
+		log.Printf("[SynthesisEngine] Skipping overlap alerts for derived vault %s after indexing %d entities", newVaultID, len(currentContexts))
+		return
 	}
 
-	s.mu.Unlock() // unlock BEFORE calling LLMs block to avoid deadlock on index saves
+	refinedContexts := make(map[string][]NodeContextPayload)
+	refinedOverlaps := make(map[string][]string)
+	for entity, vaults := range overlapsFound {
+		if len(vaults) == 0 {
+			continue
+		}
 
-	if len(overlapsFound) > 0 {
-		go s.dispatchSynthesis(ctx, overlapsFound, newVaultID, overlapContexts, br)
+		selectedContexts := make([]NodeContextPayload, 0, len(vaults)*maxContextsPerHistoricalVault+maxContextsPerCurrentVault)
+		for _, vaultID := range vaults {
+			selectedContexts = append(selectedContexts, selectHistoricalContexts(entity, currentContexts[entity], historicalContexts[entity][vaultID])...)
+		}
+		selectedContexts = append(selectedContexts, limitContexts(currentContexts[entity], maxContextsPerCurrentVault)...)
+		refinedContexts[entity] = selectedContexts
+		refinedOverlaps[entity] = vaults
+	}
+
+	log.Printf("[SynthesisEngine] Prepared %d verified overlap candidates for vault %s in %s", len(refinedOverlaps), newVaultID, time.Since(startedAt))
+	if len(refinedOverlaps) > 0 {
+		go s.dispatchSynthesis(ctx, refinedOverlaps, newVaultID, refinedContexts, br)
 	}
 }
 
@@ -477,49 +887,79 @@ func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[st
 		return
 	}
 
+	rankedCandidates := make([]rankedOverlapCandidate, 0, len(overlaps))
 	for entity, historicalVaults := range overlaps {
 		s.mu.RLock()
 		idfScore := s.computeIDF(entity)
 		s.mu.RUnlock()
 
 		nodesList := overlapContexts[entity]
+		rankedCandidates = append(rankedCandidates, rankedOverlapCandidate{
+			entity:           entity,
+			historicalVaults: uniqueSortedStrings(historicalVaults),
+			nodesList:        nodesList,
+			idfScore:         idfScore,
+			priorityScore:    scoreOverlapCandidate(entity, idfScore, nodesList, historicalVaults),
+		})
+	}
+
+	sort.SliceStable(rankedCandidates, func(i, j int) bool {
+		if rankedCandidates[i].priorityScore == rankedCandidates[j].priorityScore {
+			return rankedCandidates[i].entity < rankedCandidates[j].entity
+		}
+		return rankedCandidates[i].priorityScore > rankedCandidates[j].priorityScore
+	})
+
+	dispatchCount := len(rankedCandidates)
+	if br != nil && br.GetSearchProvider() != nil && dispatchCount > maxOverlapAlertsPerRun {
+		dispatchCount = maxOverlapAlertsPerRun
+	}
+	if dispatchCount < len(rankedCandidates) {
+		log.Printf("[SynthesisEngine] Ranked %d overlap candidates for %s and kept top %d for alert verification", len(rankedCandidates), currentVaultID, dispatchCount)
+	}
+
+	selectedCandidates := rankedCandidates[:dispatchCount]
+	var batchDecisions map[string]OverlapAnalysis
+	if br != nil && br.GetSearchProvider() != nil {
+		provider := br.GetSearchProvider()
+		batchStartedAt := time.Now()
+		batchDecisions = buildOverlapBatchDecisions(ctx, selectedCandidates, provider)
+		if batchDecisions != nil {
+			log.Printf("[SynthesisEngine] Batched overlap verification evaluated %d candidates for %s in %s", len(selectedCandidates), currentVaultID, time.Since(batchStartedAt))
+		}
+	}
+
+	for _, candidate := range selectedCandidates {
+		entity := candidate.entity
+		historicalVaults := candidate.historicalVaults
+		nodesList := candidate.nodesList
 		allCases := append(historicalVaults, currentVaultID)
 
 		analysisText := fmt.Sprintf("Gorantula detected that %q appears in this case, but was also previously investigated in: %s. This connection suggests a potential hidden overlap.", entity, strings.Join(historicalVaults, ", "))
 
-		// Try to verify Context if we have a brain and the term might be somewhat common or we just want better analysis
-		if br != nil && br.GetSearchProvider() != nil {
-			provider := br.GetSearchProvider()
-			contextBuilder := strings.Builder{}
-			for _, nc := range nodesList {
-				contextBuilder.WriteString(fmt.Sprintf("\n[Case: %s | Node: %s] %s\n", nc.VaultID, nc.NodeID, nc.Summary))
-			}
-
-			prompt := fmt.Sprintf("You are an anomaly detection filter analyzing connections across case files. We found the term '%s' in multiple independent investigations. Here are the summaries of where it was found across these investigations:\n%s\n\nIs there a meaningful thematic or circumstantial overlap between these usages, or is '%s' just being used coincidentally in unrelated contexts? If IDF is low, it might be a generic buzzword. Answer ONLY with a JSON object { \"meaningful\": true/false, \"reason\": \"1-2 sentences explaining the connection or lack thereof\" }", entity, contextBuilder.String(), entity)
-
-			var overlap OverlapAnalysis
-			err := provider.GenerateJSON(ctx, prompt, &overlap)
-			if err == nil {
+		// Verify likely overlaps with bounded context so common terms do not create noisy alerts.
+		if batchDecisions != nil {
+			if overlap, ok := batchDecisions[entity]; ok {
 				if !overlap.Meaningful {
 					log.Printf("[SynthesisEngine] Suppressed buzzword '%s' due to LLM Context Filter. Reason: %s", entity, overlap.Reason)
 					continue
-				} else {
+				}
+				if overlap.Reason != "" {
 					analysisText = overlap.Reason
 				}
-			} else {
-				log.Printf("[SynthesisEngine] LLM eval failed for '%s', keeping default alert. Err: %v", entity, err)
 			}
 		}
 
 		alert := SynthesisAlert{
 			Type:           "synthesis_alert",
+			AlertKey:       makeAlertKey(currentVaultID, entity, allCases),
 			Entity:         entity,
 			CurrentVaultID: currentVaultID,
 			ConnectedCases: allCases,
 			Nodes:          nodesList,
 			Analysis:       analysisText,
 			Timestamp:      time.Now().Format("15:04:05"),
-			Score:          idfScore,
+			Score:          candidate.idfScore,
 		}
 
 		select {

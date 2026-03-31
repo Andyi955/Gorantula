@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,7 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	brain.Synthesis = NewSynthesisEngine("./abdomen_vault", alertChan)
 	go func() {
 		for alert := range alertChan {
+			log.Printf("[Brain] Broadcasting SYNTHESIS_ALERT alertKey=%s currentVault=%s entity=%s connectedCases=%v", alert.AlertKey, alert.CurrentVaultID, alert.Entity, alert.ConnectedCases)
 			if brain.NS.Broadcast != nil {
 				brain.NS.Broadcast(models.WSMessage{
 					Type:    "SYNTHESIS_ALERT",
@@ -329,10 +331,10 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 					b.NS.Broadcast(models.WSMessage{
 						Type: "MEMORY_NODE_GATHERED",
 						Payload: map[string]interface{}{
-							"node":   node,
-							"total":  len(b.Abdomen.MemoryContext),
+							"node":    node,
+							"total":   len(b.Abdomen.MemoryContext),
 							"vaultId": vaultID,
-							"append": isAppend,
+							"append":  isAppend,
 						},
 					})
 				}
@@ -408,11 +410,11 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		b.NS.Broadcast(models.WSMessage{
 			Type: "SYNTHESIS_COMPLETE",
 			Payload: map[string]interface{}{
-				"result":     finalSynthesis,
-				"vaultPath":  vaultPath,
-				"vaultId":    vaultID,
-				"append":     isAppend,
-				"prompt":     prompt,
+				"result":    finalSynthesis,
+				"vaultPath": vaultPath,
+				"vaultId":   vaultID,
+				"append":    isAppend,
+				"prompt":    prompt,
 			},
 		})
 	}

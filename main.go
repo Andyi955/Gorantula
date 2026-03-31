@@ -372,6 +372,26 @@ func filterConnectionsByPendingNodeIDs(connections []models.BoardConnection, pen
 	return filtered
 }
 
+func filterNodesByIDs(nodes []models.MemoryNode, nodeIDs []string) []models.MemoryNode {
+	if len(nodeIDs) == 0 {
+		return append([]models.MemoryNode(nil), nodes...)
+	}
+
+	nodeIDSet := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		nodeIDSet[nodeID] = struct{}{}
+	}
+
+	filtered := make([]models.MemoryNode, 0, len(nodeIDs))
+	for _, node := range nodes {
+		if _, ok := nodeIDSet[node.ID]; ok {
+			filtered = append(filtered, node)
+		}
+	}
+
+	return filtered
+}
+
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string) {
 	go func() {
 		isIncremental := len(pendingNodeIDs) > 0
@@ -415,18 +435,14 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 
 		broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
 
-		if !isIncremental {
-			var entities []string
-			for _, insight := range insights {
-				if insight.PersonaName == "Entity Hunter" {
-					entities = append(entities, insight.KeyFindings...)
-				}
-			}
+		overlapCandidateNodes := nodes
+		if isIncremental {
+			overlapCandidateNodes = filterNodesByIDs(nodes, pendingNodeIDs)
+		}
 
-			log.Printf("[Synthesis] Triggering overlaps check with %d entities for %d nodes", len(entities), len(nodes))
-			if len(entities) > 0 && len(nodes) > 0 {
-				go br.Synthesis.AnalyzeOverlap(context.Background(), entities, vaultID, nodes, br)
-			}
+		log.Printf("[Synthesis] Triggering overlaps check with %d candidate nodes for %d total nodes", len(overlapCandidateNodes), len(nodes))
+		if len(overlapCandidateNodes) > 0 && len(nodes) > 0 {
+			go br.Synthesis.AnalyzeOverlap(context.Background(), vaultID, overlapCandidateNodes, nodes, br)
 		}
 
 		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})

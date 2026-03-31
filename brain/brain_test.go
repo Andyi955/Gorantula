@@ -12,13 +12,13 @@ import (
 
 // MockProvider implements ModelProvider for testing
 type MockProvider struct {
-	NameFunc         func() string
-	GenerateJSONFunc func(ctx context.Context, prompt string, target interface{}) error
+	NameFunc            func() string
+	GenerateJSONFunc    func(ctx context.Context, prompt string, target interface{}) error
 	ReviewImageJSONFunc func(ctx context.Context, prompt, mimeType string, imageData []byte, target interface{}) error
 }
 
-func (m *MockProvider) Name() string        { return m.NameFunc() }
-func (m *MockProvider) SupportsMedia() bool { return false }
+func (m *MockProvider) Name() string              { return m.NameFunc() }
+func (m *MockProvider) SupportsMedia() bool       { return false }
 func (m *MockProvider) SupportsImageReview() bool { return m.ReviewImageJSONFunc != nil }
 func (m *MockProvider) GenerateJSON(ctx context.Context, prompt string, target interface{}) error {
 	return m.GenerateJSONFunc(ctx, prompt, target)
@@ -189,7 +189,7 @@ func TestCreateMergedInvestigation(t *testing.T) {
 
 func TestNotifyImageReviewUnavailableBroadcastsWarning(t *testing.T) {
 	mock := &MockProvider{
-		NameFunc: func() string { return "mock" },
+		NameFunc:         func() string { return "mock" },
 		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error { return nil },
 	}
 

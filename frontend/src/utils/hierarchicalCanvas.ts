@@ -10,6 +10,25 @@ export interface PersistedBoardState {
   nodes: Node[];
   edges: Edge[];
   pendingIntegrationNodeIds?: string[];
+  synthesisAlerts?: PersistedSynthesisAlert[];
+}
+
+export interface PersistedSynthesisAlertNode {
+  vaultId: string;
+  nodeId: string;
+  summary: string;
+}
+
+export interface PersistedSynthesisAlert {
+  type: string;
+  alertKey?: string;
+  entity: string;
+  currentVaultId: string;
+  connectedCases: string[];
+  nodes: PersistedSynthesisAlertNode[];
+  analysis: string;
+  timestamp: string;
+  score?: number;
 }
 
 export interface MergeSourceBoard {
@@ -71,6 +90,18 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
         pendingIntegrationNodeIds: Array.isArray(parsed.pendingIntegrationNodeIds)
           ? parsed.pendingIntegrationNodeIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
           : [],
+        synthesisAlerts: Array.isArray(parsed.synthesisAlerts)
+          ? parsed.synthesisAlerts.filter((alert: unknown): alert is PersistedSynthesisAlert => (
+            Boolean(
+              alert &&
+              typeof alert === 'object' &&
+              typeof (alert as PersistedSynthesisAlert).entity === 'string' &&
+              typeof (alert as PersistedSynthesisAlert).currentVaultId === 'string' &&
+              Array.isArray((alert as PersistedSynthesisAlert).connectedCases) &&
+              Array.isArray((alert as PersistedSynthesisAlert).nodes),
+            )
+          ))
+          : [],
       };
     }
   } catch (error) {
@@ -78,6 +109,14 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
   }
 
   return null;
+};
+
+export const persistBoardStateForInvestigation = (investigationId: string, state: PersistedBoardState) => {
+  if (!investigationId) {
+    return;
+  }
+
+  localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify(state));
 };
 
 const sanitizeText = (value: unknown): string => typeof value === 'string' ? value : '';

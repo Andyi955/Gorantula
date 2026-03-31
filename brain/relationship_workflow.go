@@ -50,12 +50,12 @@ func (b *Brain) RunRelationshipWorkflow(ctx context.Context, vaultID string, nod
 	}
 	for _, insight := range insights {
 		debugRun.PersonaSummaries = append(debugRun.PersonaSummaries, models.RelationshipDebugPersona{
-			PersonaName: insight.PersonaName,
-			Confidence:  insight.Confidence,
-			NodeIDs:     append([]string(nil), insight.NodeIDs...),
-			KeyFindings: append([]string(nil), insight.KeyFindings...),
-			Connections: append([]string(nil), insight.Connections...),
-			Questions:   append([]string(nil), insight.Questions...),
+			PersonaName:         insight.PersonaName,
+			Confidence:          insight.Confidence,
+			NodeIDs:             append([]string(nil), insight.NodeIDs...),
+			KeyFindings:         append([]string(nil), insight.KeyFindings...),
+			Connections:         append([]string(nil), insight.Connections...),
+			Questions:           append([]string(nil), insight.Questions...),
 			ProposedConnections: mapPersonaProposals(insight.ProposedConnections, insight.PersonaName),
 		})
 	}
@@ -96,12 +96,12 @@ func (b *Brain) RunIncrementalRelationshipWorkflow(ctx context.Context, vaultID 
 	}
 	for _, insight := range insights {
 		debugRun.PersonaSummaries = append(debugRun.PersonaSummaries, models.RelationshipDebugPersona{
-			PersonaName: insight.PersonaName,
-			Confidence:  insight.Confidence,
-			NodeIDs:     append([]string(nil), insight.NodeIDs...),
-			KeyFindings: append([]string(nil), insight.KeyFindings...),
-			Connections: append([]string(nil), insight.Connections...),
-			Questions:   append([]string(nil), insight.Questions...),
+			PersonaName:         insight.PersonaName,
+			Confidence:          insight.Confidence,
+			NodeIDs:             append([]string(nil), insight.NodeIDs...),
+			KeyFindings:         append([]string(nil), insight.KeyFindings...),
+			Connections:         append([]string(nil), insight.Connections...),
+			Questions:           append([]string(nil), insight.Questions...),
 			ProposedConnections: mapPersonaProposals(insight.ProposedConnections, insight.PersonaName),
 		})
 	}
@@ -891,51 +891,51 @@ func relationshipGroundingScore(candidate models.RelationshipCandidate, nodeLook
 func relationshipSemanticPriorityAdjustment(candidate models.RelationshipCandidate) float32 {
 	normalizedTag := strings.ToUpper(strings.TrimSpace(candidate.Tag))
 	literalTags := map[string]bool{
-		"OUTPERFORMS":         true,
-		"IMPLEMENTS_WITHIN":  true,
-		"SUPPORTS_BENCHMARKS": true,
-		"AUDITS_PERFORMANCE": true,
-		"ANALYZES_RANK":       true,
-		"OPTIMIZES_WEIGHTS":   true,
-		"INDEXING_SYSTEM":     true,
-		"INTEGRATES_GENERATOR": true,
-		"USES":               true,
-		"IMPLEMENTS":         true,
-		"INTEGRATES":         true,
-		"USES_FAISS":         true,
-		"REDUCES_LATENCY":    true,
-		"REDUCES_HALLUCINATION": true,
+		"OUTPERFORMS":            true,
+		"IMPLEMENTS_WITHIN":      true,
+		"SUPPORTS_BENCHMARKS":    true,
+		"AUDITS_PERFORMANCE":     true,
+		"ANALYZES_RANK":          true,
+		"OPTIMIZES_WEIGHTS":      true,
+		"INDEXING_SYSTEM":        true,
+		"INTEGRATES_GENERATOR":   true,
+		"USES":                   true,
+		"IMPLEMENTS":             true,
+		"INTEGRATES":             true,
+		"USES_FAISS":             true,
+		"REDUCES_LATENCY":        true,
+		"REDUCES_HALLUCINATION":  true,
 		"REDUCES_HALLUCINATIONS": true,
-		"REDUCES_VRAM":       true,
-		"SHARED_INTRINSIC_RANK": true,
-		"SUPERIOR_TO_PROMPTING": true,
+		"REDUCES_VRAM":           true,
+		"SHARED_INTRINSIC_RANK":  true,
+		"SUPERIOR_TO_PROMPTING":  true,
 	}
 	interpretiveTags := map[string]bool{
-		"HISTORICAL_EVOLUTION":     true,
-		"ARCHITECTURAL_VALIDATION": true,
-		"ESTABLISHES_SOTA":         true,
-		"EFFICIENCY_CAUSALITY":     true,
-		"RESEARCH_CONTINUITY":      true,
-		"TEMPORAL_INCONSISTENCY":   true,
-		"SUPPORTS_INFRASTRUCTURE":  true,
-		"INFRASTRUCTURE_SCALING":   true,
-		"ARCHITECTURAL_FOUNDATION": true,
+		"HISTORICAL_EVOLUTION":      true,
+		"ARCHITECTURAL_VALIDATION":  true,
+		"ESTABLISHES_SOTA":          true,
+		"EFFICIENCY_CAUSALITY":      true,
+		"RESEARCH_CONTINUITY":       true,
+		"TEMPORAL_INCONSISTENCY":    true,
+		"SUPPORTS_INFRASTRUCTURE":   true,
+		"INFRASTRUCTURE_SCALING":    true,
+		"ARCHITECTURAL_FOUNDATION":  true,
 		"DEVELOPMENT_TO_DEPLOYMENT": true,
 	}
 	lowValueFactualTags := map[string]bool{
-		"COLLABORATION":       true,
-		"REFERENCES":          true,
-		"UNDERPINS":           true,
-		"RESEARCH_LINEAGE":    true,
-		"MODEL_OPTIMIZATION":  true,
-		"SUPPORTS":            true,
-		"COMPLEMENTS":         true,
+		"COLLABORATION":          true,
+		"REFERENCES":             true,
+		"UNDERPINS":              true,
+		"RESEARCH_LINEAGE":       true,
+		"MODEL_OPTIMIZATION":     true,
+		"SUPPORTS":               true,
+		"COMPLEMENTS":            true,
 		"EFFICIENCY_CONVERGENCE": true,
-		"TECH_VALIDATION":     true,
-		"EMPIRICAL_VALIDATION": true,
-		"DEVELOPER_RELATION":  true,
-		"ANALYZES":            true,
-		"VALIDATES":           true,
+		"TECH_VALIDATION":        true,
+		"EMPIRICAL_VALIDATION":   true,
+		"DEVELOPER_RELATION":     true,
+		"ANALYZES":               true,
+		"VALIDATES":              true,
 	}
 	switch {
 	case literalTags[normalizedTag]:
@@ -997,17 +997,17 @@ func looksGenericRelationshipTag(tag string, reasoning string) bool {
 		return true
 	}
 	genericTags := map[string]bool{
-		"RELATED":       true,
-		"CONNECTED":     true,
-		"LINKED":        true,
-		"ASSOCIATED":    true,
-		"SAME_ORG":      true,
-		"SAME_RESEARCH": true,
-		"SAME_ENTITY":   true,
-		"SAME_TOPIC":    true,
-		"SAME_SOURCE":   true,
-		"MARKET_SENTIMENT": true,
-		"CONSUMER_IMPACT": true,
+		"RELATED":                  true,
+		"CONNECTED":                true,
+		"LINKED":                   true,
+		"ASSOCIATED":               true,
+		"SAME_ORG":                 true,
+		"SAME_RESEARCH":            true,
+		"SAME_ENTITY":              true,
+		"SAME_TOPIC":               true,
+		"SAME_SOURCE":              true,
+		"MARKET_SENTIMENT":         true,
+		"CONSUMER_IMPACT":          true,
 		"AI_METHODOLOGY_EVOLUTION": true,
 	}
 	if genericTags[normalizedTag] {
@@ -1188,9 +1188,9 @@ func sanitizeRelationshipReasoning(reasoning string) string {
 		reasoning = strings.TrimSpace(reasoning[:idx+1])
 	}
 	replacements := map[string]string{
-		"high-fidelity":        "strong",
-		"strategic":            "",
-		"mission-critical":     "important",
+		"high-fidelity":         "strong",
+		"strategic":             "",
+		"mission-critical":      "important",
 		"global infrastructure": "infrastructure",
 	}
 	for oldValue, newValue := range replacements {

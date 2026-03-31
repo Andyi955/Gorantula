@@ -17,7 +17,7 @@ import {
   removeInvestigationRecord,
   type InvestigationRecord,
 } from './utils/investigations'
-import { createMergedChildBoard, parsePersistedBoardState } from './utils/hierarchicalCanvas'
+import { createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from './utils/hierarchicalCanvas'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 
 export interface DiscoveryRecord {
@@ -246,7 +246,13 @@ function App() {
         const updatedNodes = nodes.map((n: any) =>
           n.id === sourceNodeId ? { ...n, data: { ...n.data, linkedInvestigationId: newInvId, isDeepDiveSource: false } } : n
         );
-        localStorage.setItem(`inv_data_${currentInvestigationId}`, JSON.stringify({ mode, nodes: updatedNodes, edges }));
+        persistBoardStateForInvestigation(currentInvestigationId, {
+          mode,
+          nodes: updatedNodes,
+          edges,
+          pendingIntegrationNodeIds: savedState.pendingIntegrationNodeIds || [],
+          synthesisAlerts: savedState.synthesisAlerts || [],
+        });
       }
     }
   }, [currentInvestigationId, runSpider]);
@@ -328,9 +334,9 @@ function App() {
     });
 
     Object.entries(updatedParentBoards).forEach(([parentId, board]) => {
-      localStorage.setItem(`inv_data_${parentId}`, JSON.stringify(board));
+      persistBoardStateForInvestigation(parentId, board);
     });
-    localStorage.setItem(`inv_data_${childId}`, JSON.stringify(childBoard));
+    persistBoardStateForInvestigation(childId, childBoard);
     persistInvestigations(updatedInvestigations);
 
     if (socketConfig.socket && socketConfig.ready) {
@@ -378,7 +384,7 @@ function App() {
 
       const cleanedNodes = savedState.nodes.filter((node) => !node.data?.portalKind || !removal.removedIds.includes(node.data?.linkedInvestigationId))
       if (cleanedNodes.length !== savedState.nodes.length) {
-        localStorage.setItem(`inv_data_${investigation.id}`, JSON.stringify({ ...savedState, nodes: cleanedNodes }))
+        persistBoardStateForInvestigation(investigation.id, { ...savedState, nodes: cleanedNodes })
       }
     })
 

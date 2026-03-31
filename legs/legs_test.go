@@ -119,8 +119,8 @@ func TestExtractCandidateImageURLs(t *testing.T) {
 
 	results := extractCandidateImageURLs(document, "https://example.com/story")
 	expectedSet := map[string]bool{
-		"https://example.com/images/hero.jpg":       false,
-		"https://cdn.example.com/social-card.png":   false,
+		"https://example.com/images/hero.jpg":         false,
+		"https://cdn.example.com/social-card.png":     false,
 		"https://example.com/media/evidence-map.webp": false,
 	}
 
