@@ -781,9 +781,6 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newVaultID string,
 	startedAt := time.Now()
 	candidateEntityMap := extractTaggedEntities(candidateNodes)
 	log.Printf("[SynthesisEngine] Starting execution for Vault %s with %d candidate nodes and %d candidate entities", newVaultID, len(candidateNodes), len(candidateEntityMap))
-	if len(candidateEntityMap) == 0 {
-		return
-	}
 
 	s.mu.Lock()
 
@@ -798,6 +795,13 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newVaultID string,
 	// Store full node data in archive
 	for _, n := range allNodes {
 		s.Index.NodeArchive[newVaultID][n.ID] = n
+	}
+
+	if len(candidateEntityMap) == 0 {
+		s.saveIndexLocked()
+		s.mu.Unlock()
+		log.Printf("[SynthesisEngine] Archived vault %s without tagged overlap entities in %s", newVaultID, time.Since(startedAt))
+		return
 	}
 
 	currentContexts := make(map[string][]NodeContextPayload)
@@ -911,7 +915,7 @@ func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[st
 	})
 
 	dispatchCount := len(rankedCandidates)
-	if br != nil && br.GetSearchProvider() != nil && dispatchCount > maxOverlapAlertsPerRun {
+	if dispatchCount > maxOverlapAlertsPerRun {
 		dispatchCount = maxOverlapAlertsPerRun
 	}
 	if dispatchCount < len(rankedCandidates) {

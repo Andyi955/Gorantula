@@ -382,6 +382,38 @@ func TestNodeArchive(t *testing.T) {
 	}
 }
 
+func TestAnalyzeOverlapArchivesVaultWithoutTaggedEntities(t *testing.T) {
+	tempDir := t.TempDir()
+	alertChan := make(chan SynthesisAlert, 10)
+	engine := NewSynthesisEngine(tempDir, alertChan)
+
+	nodes := []models.MemoryNode{
+		{
+			ID:       "plain-node",
+			Title:    "Plain note",
+			Summary:  "No structured tags here.",
+			FullText: "This note should still be archived even without overlap tags.",
+		},
+	}
+
+	engine.AnalyzeOverlap(context.Background(), "plain-vault", nodes, nodes, nil)
+	waitForOverlapDispatch()
+
+	if alerts := drainAlerts(alertChan); len(alerts) != 0 {
+		t.Fatalf("expected no alerts for untagged vault, got %d", len(alerts))
+	}
+
+	engine.mu.RLock()
+	defer engine.mu.RUnlock()
+
+	if !engine.Index.Vaults["plain-vault"] {
+		t.Fatalf("expected plain-vault to still be tracked")
+	}
+	if archive := engine.Index.NodeArchive["plain-vault"]; len(archive) != 1 {
+		t.Fatalf("expected plain-vault archive to contain 1 node, got %d", len(archive))
+	}
+}
+
 func TestRegisterDerivedVault(t *testing.T) {
 	tempDir := t.TempDir()
 	alertChan := make(chan SynthesisAlert, 10)
@@ -433,5 +465,33 @@ func TestDerivedVaultSkipsOverlapAlerts(t *testing.T) {
 	alerts := drainAlerts(alertChan)
 	if len(alerts) != 0 {
 		t.Fatalf("expected derived vault overlap alerts to be suppressed, got %d", len(alerts))
+	}
+}
+
+func TestOverlapDispatchCapsAlertsWithoutProvider(t *testing.T) {
+	tempDir := t.TempDir()
+	alertChan := make(chan SynthesisAlert, 20)
+	engine := NewSynthesisEngine(tempDir, alertChan)
+
+	firstCase := []models.MemoryNode{
+		taggedNode("base-1", "Overlap seed", "[PERSON:Jane Doe] met [ORG:Alpha Systems] in [LOC:Tehran] on [DATE:2026-03-31]."),
+		taggedNode("base-2", "Follow up", "[ORG:Meridian Labs] called [PERSON:Omar Haddad] while [ORG:Redline Capital] tracked [ORG:Beacon Works]."),
+		taggedNode("base-3", "Extra context", "[ORG:Northstar Dynamics] coordinated a response."),
+	}
+	engine.AnalyzeOverlap(context.Background(), "vault-base", firstCase, firstCase, nil)
+	waitForOverlapDispatch()
+	drainAlerts(alertChan)
+
+	secondCase := []models.MemoryNode{
+		taggedNode("next-1", "Overlap follow up", "[PERSON:Jane Doe] revisited [ORG:Alpha Systems] in [LOC:Tehran] on [DATE:2026-03-31]."),
+		taggedNode("next-2", "Investor chatter", "[ORG:Meridian Labs] briefed [PERSON:Omar Haddad] while [ORG:Redline Capital] monitored [ORG:Beacon Works]."),
+		taggedNode("next-3", "Operations", "[ORG:Northstar Dynamics] surfaced again."),
+	}
+	engine.AnalyzeOverlap(context.Background(), "vault-next", secondCase, secondCase, nil)
+	waitForOverlapDispatch()
+
+	alerts := drainAlerts(alertChan)
+	if len(alerts) != maxOverlapAlertsPerRun {
+		t.Fatalf("expected nil-provider overlap dispatch to honor the %d alert cap, got %d", maxOverlapAlertsPerRun, len(alerts))
 	}
 }

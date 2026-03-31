@@ -26,6 +26,7 @@ interface SynthesisAlert {
 }
 
 type AlertBuckets = Record<string, SynthesisAlert[]>;
+const EMPTY_ALERTS: SynthesisAlert[] = [];
 
 const LEGACY_ALERTS_KEY = 'gorantula_synthesis_alerts';
 const ALERT_BUCKETS_KEY = 'gorantula_synthesis_alerts_by_investigation';
@@ -153,6 +154,37 @@ const persistAlertBuckets = (buckets: AlertBuckets): AlertBuckets => {
     }
 };
 
+const pruneBucketsForState = (buckets: AlertBuckets, prioritizedInvestigationId?: string | null): AlertBuckets => {
+    const prioritizedEntries = Object.entries(buckets).sort(([leftId], [rightId]) => {
+        if (leftId === prioritizedInvestigationId) {
+            return -1;
+        }
+        if (rightId === prioritizedInvestigationId) {
+            return 1;
+        }
+        return 0;
+    });
+
+    let runningCount = 0;
+    const pruned: AlertBuckets = {};
+    for (const [investigationId, alerts] of prioritizedEntries) {
+        if (runningCount >= MAX_TOTAL_ALERTS) {
+            break;
+        }
+
+        const remaining = MAX_TOTAL_ALERTS - runningCount;
+        const trimmedAlerts = alerts.slice(0, remaining);
+        if (trimmedAlerts.length === 0) {
+            continue;
+        }
+
+        pruned[investigationId] = trimmedAlerts;
+        runningCount += trimmedAlerts.length;
+    }
+
+    return pruned;
+};
+
 const migrateLegacyAlerts = (): AlertBuckets => {
     const migrated = parseAlertBuckets(localStorage.getItem(ALERT_BUCKETS_KEY));
     if (Object.keys(migrated).length > 0) {
@@ -207,7 +239,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
     const [pulledNodeId, setPulledNodeId] = useState<string | null>(null);
     const [activeToast, setActiveToast] = useState<SynthesisAlert | null>(null);
-    const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] || []) : [];
+    const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const hasUnread = currentInvestigationId ? Boolean(unreadByInvestigation[currentInvestigationId]) : false;
 
     useEffect(() => {
@@ -247,10 +279,12 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 count: persistedAlerts.length,
             });
 
-            return persistAlertBuckets({
+            const nextBuckets = pruneBucketsForState({
                 ...prev,
                 [currentInvestigationId]: persistedAlerts,
-            });
+            }, currentInvestigationId);
+            persistAlertBuckets(nextBuckets);
+            return nextBuckets;
         });
     }, [currentInvestigationId]);
 
@@ -290,10 +324,11 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                             nextCount: updatedBucket.length,
                             duplicateKey: currentAlertsForVault.some((alert) => (alert.alertKey || buildAlertKey(alert)) === newAlert.alertKey),
                         });
-                        const updated = persistAlertBuckets({
+                        const updated = pruneBucketsForState({
                             ...prev,
                             [newAlert.currentVaultId]: updatedBucket,
-                        });
+                        }, newAlert.currentVaultId);
+                        persistAlertBuckets(updated);
                         persistInvestigationAlerts(newAlert.currentVaultId, updatedBucket);
                         return updated;
                     });
@@ -371,7 +406,8 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             const updated = { ...prev };
             delete updated[currentInvestigationId];
             persistInvestigationAlerts(currentInvestigationId, []);
-            return persistAlertBuckets(updated);
+            persistAlertBuckets(updated);
+            return updated;
         });
         setUnreadByInvestigation(prev => ({
             ...prev,
@@ -411,14 +447,6 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         : (showToast && activeToast ? [activeToast] : []);
     const hasPanelAlerts = displayedAlerts.length > 0;
     const showPanelHandle = Boolean(currentInvestigationId);
-
-    console.log('[SynthesisPanel] Render gate', {
-        currentInvestigationId,
-        hasPanelAlerts,
-        showToast,
-        isOpen,
-        currentAlertKeys: displayedAlerts.map((alert) => alert.alertKey),
-    });
 
     if (!currentInvestigationId) return null;
 

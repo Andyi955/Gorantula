@@ -113,10 +113,16 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
 
 export const persistBoardStateForInvestigation = (investigationId: string, state: PersistedBoardState) => {
   if (!investigationId) {
-    return;
+    return false;
   }
 
-  localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify(state));
+  try {
+    localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify(state));
+    return true;
+  } catch (error) {
+    console.error('[HierarchicalCanvas] Failed to persist board state:', error);
+    return false;
+  }
 };
 
 const sanitizeText = (value: unknown): string => typeof value === 'string' ? value : '';
