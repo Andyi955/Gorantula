@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
+import { parsePersistedBoardState, persistBoardStateForInvestigation, type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
 
 interface NodeContextPayload {
     vaultId: string;
@@ -14,6 +15,7 @@ export interface MergeCandidateNode {
 
 interface SynthesisAlert {
     type: string;
+    alertKey?: string;
     entity: string;
     currentVaultId: string;
     connectedCases: string[];
@@ -24,6 +26,7 @@ interface SynthesisAlert {
 }
 
 type AlertBuckets = Record<string, SynthesisAlert[]>;
+const EMPTY_ALERTS: SynthesisAlert[] = [];
 
 const LEGACY_ALERTS_KEY = 'gorantula_synthesis_alerts';
 const ALERT_BUCKETS_KEY = 'gorantula_synthesis_alerts_by_investigation';
@@ -31,6 +34,7 @@ const MAX_ALERTS_PER_INVESTIGATION = 20;
 const MAX_TOTAL_ALERTS = 80;
 const MAX_ANALYSIS_LENGTH = 700;
 const MAX_NODE_SUMMARY_LENGTH = 220;
+const TOAST_DURATION_MS = 5000;
 
 const parseAlertBuckets = (raw: string | null): AlertBuckets => {
     if (!raw) {
@@ -74,8 +78,19 @@ const trimText = (value: string, maxLength: number): string => {
     return `${normalized.slice(0, maxLength - 3)}...`;
 };
 
+const buildAlertKey = (alert: Partial<SynthesisAlert>): string => {
+    const currentVaultId = (alert.currentVaultId || '').trim();
+    const entity = (alert.entity || 'unknown').trim().toLowerCase();
+    const connectedCases = Array.isArray(alert.connectedCases)
+        ? Array.from(new Set(alert.connectedCases.filter((caseId): caseId is string => typeof caseId === 'string' && caseId.trim().length > 0))).sort()
+        : [];
+
+    return [currentVaultId, entity, connectedCases.join('|')].join('::');
+};
+
 const normalizeAlert = (alert: SynthesisAlert): SynthesisAlert => ({
     ...alert,
+    alertKey: alert.alertKey || buildAlertKey(alert),
     entity: trimText(alert.entity || 'unknown', 80),
     analysis: trimText(alert.analysis || '', MAX_ANALYSIS_LENGTH),
     connectedCases: Array.isArray(alert.connectedCases) ? alert.connectedCases.slice(0, 8) : [],
@@ -87,6 +102,23 @@ const normalizeAlert = (alert: SynthesisAlert): SynthesisAlert => ({
         }))
         : [],
 });
+
+const upsertAlertBucket = (alerts: SynthesisAlert[], incomingAlert: SynthesisAlert): SynthesisAlert[] => {
+    const deduped = alerts.filter((alert) => (alert.alertKey || buildAlertKey(alert)) !== incomingAlert.alertKey);
+    return [incomingAlert, ...deduped].slice(0, MAX_ALERTS_PER_INVESTIGATION);
+};
+
+const persistInvestigationAlerts = (investigationId: string, alerts: SynthesisAlert[]) => {
+    const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
+    if (!savedState) {
+        return;
+    }
+
+    persistBoardStateForInvestigation(investigationId, {
+        ...savedState,
+        synthesisAlerts: alerts as PersistedSynthesisAlert[],
+    });
+};
 
 const pruneBucketsForStorage = (buckets: AlertBuckets): AlertBuckets => {
     const orderedEntries = Object.entries(buckets).map(([investigationId, alerts]) => [
@@ -115,11 +147,42 @@ const persistAlertBuckets = (buckets: AlertBuckets): AlertBuckets => {
     const pruned = pruneBucketsForStorage(buckets);
     try {
         localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(pruned));
-        return pruned;
+        return buckets;
     } catch (error) {
         console.warn('[SynthesisPanel] Failed to persist synthesis alerts; continuing in-memory only.', error);
-        return pruned;
+        return buckets;
     }
+};
+
+const pruneBucketsForState = (buckets: AlertBuckets, prioritizedInvestigationId?: string | null): AlertBuckets => {
+    const prioritizedEntries = Object.entries(buckets).sort(([leftId], [rightId]) => {
+        if (leftId === prioritizedInvestigationId) {
+            return -1;
+        }
+        if (rightId === prioritizedInvestigationId) {
+            return 1;
+        }
+        return 0;
+    });
+
+    let runningCount = 0;
+    const pruned: AlertBuckets = {};
+    for (const [investigationId, alerts] of prioritizedEntries) {
+        if (runningCount >= MAX_TOTAL_ALERTS) {
+            break;
+        }
+
+        const remaining = MAX_TOTAL_ALERTS - runningCount;
+        const trimmedAlerts = alerts.slice(0, remaining);
+        if (trimmedAlerts.length === 0) {
+            continue;
+        }
+
+        pruned[investigationId] = trimmedAlerts;
+        runningCount += trimmedAlerts.length;
+    }
+
+    return pruned;
 };
 
 const migrateLegacyAlerts = (): AlertBuckets => {
@@ -175,12 +238,63 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     const [isOpen, setIsOpen] = useState(false);
     const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
     const [pulledNodeId, setPulledNodeId] = useState<string | null>(null);
-    const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] || []) : [];
+    const [activeToast, setActiveToast] = useState<SynthesisAlert | null>(null);
+    const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const hasUnread = currentInvestigationId ? Boolean(unreadByInvestigation[currentInvestigationId]) : false;
 
     useEffect(() => {
+        console.log('[SynthesisPanel] Mounted with current investigation:', currentInvestigationId);
         setAlertsByInvestigation(migrateLegacyAlerts());
     }, []);
+
+    useEffect(() => {
+        console.log('[SynthesisPanel] Investigation state changed', {
+            currentInvestigationId,
+            alertCount: currentAlerts.length,
+            hasUnread,
+            isOpen,
+            hasToast: Boolean(activeToast),
+            toastVaultId: activeToast?.currentVaultId || null,
+        });
+    }, [activeToast, currentAlerts.length, currentInvestigationId, hasUnread, isOpen]);
+
+    useEffect(() => {
+        if (!currentInvestigationId) {
+            return;
+        }
+
+        const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${currentInvestigationId}`));
+        const persistedAlerts = savedState?.synthesisAlerts?.map((alert) => normalizeAlert(alert as SynthesisAlert)) || [];
+        if (persistedAlerts.length === 0) {
+            return;
+        }
+
+        setAlertsByInvestigation(prev => {
+            if ((prev[currentInvestigationId] || []).length > 0) {
+                return prev;
+            }
+
+            console.log('[SynthesisPanel] Rehydrating synthesis alerts from persisted board state', {
+                currentInvestigationId,
+                count: persistedAlerts.length,
+            });
+
+            const nextBuckets = pruneBucketsForState({
+                ...prev,
+                [currentInvestigationId]: persistedAlerts,
+            }, currentInvestigationId);
+            persistAlertBuckets(nextBuckets);
+            return nextBuckets;
+        });
+    }, [currentInvestigationId]);
+
+    useEffect(() => {
+        if (!currentInvestigationId) {
+            return;
+        }
+
+        persistInvestigationAlerts(currentInvestigationId, currentAlerts);
+    }, [currentAlerts, currentInvestigationId]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -190,22 +304,55 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'SYNTHESIS_ALERT') {
                     const newAlert = normalizeAlert(msg.payload as SynthesisAlert);
+                    console.log('[SynthesisPanel] Received SYNTHESIS_ALERT', {
+                        currentInvestigationId,
+                        alertCurrentVaultId: newAlert.currentVaultId,
+                        alertKey: newAlert.alertKey,
+                        entity: newAlert.entity,
+                        connectedCases: newAlert.connectedCases,
+                    });
                     if (!newAlert.currentVaultId) {
+                        console.warn('[SynthesisPanel] Ignoring alert without currentVaultId', newAlert);
                         return;
                     }
                     setAlertsByInvestigation(prev => {
                         const currentAlertsForVault = prev[newAlert.currentVaultId] || [];
-                        const updatedBucket = [newAlert, ...currentAlertsForVault].slice(0, MAX_ALERTS_PER_INVESTIGATION);
-                        const updated = persistAlertBuckets({
+                        const updatedBucket = upsertAlertBucket(currentAlertsForVault, newAlert);
+                        console.log('[SynthesisPanel] Updating alert bucket', {
+                            targetVaultId: newAlert.currentVaultId,
+                            previousCount: currentAlertsForVault.length,
+                            nextCount: updatedBucket.length,
+                            duplicateKey: currentAlertsForVault.some((alert) => (alert.alertKey || buildAlertKey(alert)) === newAlert.alertKey),
+                        });
+                        const updated = pruneBucketsForState({
                             ...prev,
                             [newAlert.currentVaultId]: updatedBucket,
-                        });
+                        }, newAlert.currentVaultId);
+                        persistAlertBuckets(updated);
+                        persistInvestigationAlerts(newAlert.currentVaultId, updatedBucket);
                         return updated;
                     });
                     setUnreadByInvestigation(prev => ({
                         ...prev,
                         [newAlert.currentVaultId]: true,
                     }));
+                    if (newAlert.currentVaultId === currentInvestigationId) {
+                        console.log('[SynthesisPanel] Auto-opening panel for active investigation alert', {
+                            currentInvestigationId,
+                            alertKey: newAlert.alertKey,
+                        });
+                        setActiveToast(newAlert);
+                        setIsOpen(true);
+                        setUnreadByInvestigation(prev => ({
+                            ...prev,
+                            [newAlert.currentVaultId]: false,
+                        }));
+                    } else {
+                        console.log('[SynthesisPanel] Alert stored for non-active investigation', {
+                            currentInvestigationId,
+                            alertCurrentVaultId: newAlert.currentVaultId,
+                        });
+                    }
                 }
             } catch (err) { }
         };
@@ -213,6 +360,32 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         sharedSocket.addEventListener('message', handleMessage);
         return () => sharedSocket.removeEventListener('message', handleMessage);
     }, [currentInvestigationId, sharedSocket]);
+
+    useEffect(() => {
+        if (!activeToast || activeToast.currentVaultId !== currentInvestigationId) {
+            return;
+        }
+
+        console.log('[SynthesisPanel] Starting toast auto-dismiss timer', {
+            alertKey: activeToast.alertKey,
+            currentInvestigationId,
+        });
+        const timeoutId = window.setTimeout(() => {
+            setActiveToast((current) => current?.alertKey === activeToast.alertKey ? null : current);
+        }, TOAST_DURATION_MS);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [activeToast, currentInvestigationId]);
+
+    useEffect(() => {
+        if (activeToast && activeToast.currentVaultId !== currentInvestigationId) {
+            console.log('[SynthesisPanel] Clearing toast because investigation changed', {
+                toastVaultId: activeToast.currentVaultId,
+                currentInvestigationId,
+            });
+            setActiveToast(null);
+        }
+    }, [activeToast, currentInvestigationId]);
 
     const togglePanel = () => {
         setIsOpen(!isOpen);
@@ -232,7 +405,9 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         setAlertsByInvestigation(prev => {
             const updated = { ...prev };
             delete updated[currentInvestigationId];
-            return persistAlertBuckets(updated);
+            persistInvestigationAlerts(currentInvestigationId, []);
+            persistAlertBuckets(updated);
+            return updated;
         });
         setUnreadByInvestigation(prev => ({
             ...prev,
@@ -250,18 +425,70 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         }
     };
 
-    // The toggle button that floats on the right side if closed, or is hidden if empty
-    if (!currentInvestigationId || currentAlerts.length === 0) return null;
+    const handleReviewToast = () => {
+        console.log('[SynthesisPanel] Review toast clicked', {
+            currentInvestigationId,
+            alertKey: activeToast?.alertKey || null,
+        });
+        setIsOpen(true);
+        setActiveToast(null);
+        if (!currentInvestigationId) {
+            return;
+        }
+        setUnreadByInvestigation(prev => ({
+            ...prev,
+            [currentInvestigationId]: false,
+        }));
+    };
+
+    const showToast = Boolean(activeToast && activeToast.currentVaultId === currentInvestigationId);
+    const displayedAlerts = currentAlerts.length > 0
+        ? currentAlerts
+        : (showToast && activeToast ? [activeToast] : []);
+    const hasPanelAlerts = displayedAlerts.length > 0;
+    const showPanelHandle = Boolean(currentInvestigationId);
+
+    if (!currentInvestigationId) return null;
 
     return (
         <>
+            {showToast && activeToast && (
+                <div
+                    data-testid="synthesis-overlap-toast"
+                    className="absolute right-4 top-4 z-[60] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-cyber-cyan/40 bg-black/92 p-4 shadow-[0_20px_40px_rgba(0,0,0,0.55)] backdrop-blur-md"
+                >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-cyber-cyan">New Overlap Detected</span>
+                        <button
+                            onClick={() => setActiveToast(null)}
+                            className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 transition-colors hover:text-white"
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                    <div className="text-sm font-black text-white">{activeToast.entity}</div>
+                    <p className="mt-2 text-xs leading-relaxed text-gray-300">{activeToast.analysis}</p>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                        <span className="text-[10px] text-gray-500">{activeToast.connectedCases.length} linked investigations</span>
+                        <button
+                            onClick={handleReviewToast}
+                            className="rounded border border-cyber-cyan/40 bg-cyber-cyan/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                        >
+                            Review
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Floating Toggle Button */}
-            {!isOpen && (
+            {showPanelHandle && (
                 <button
                     onClick={togglePanel}
-                    className="absolute right-0 top-24 bg-cyber-purple text-white p-3 rounded-l-lg shadow-[0_0_15px_rgba(188,19,254,0.5)] z-40 border border-cyber-purple hover:bg-white hover:text-black transition-all flex items-center gap-2"
+                    aria-label={isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}
+                    title={isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}
+                    className="absolute right-0 top-24 bg-cyber-purple text-white p-3 rounded-l-lg shadow-[0_0_15px_rgba(188,19,254,0.5)] z-[60] border border-cyber-purple hover:bg-white hover:text-black transition-all flex items-center gap-2"
                 >
-                    <ChevronLeft size={18} />
+                    {isOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
                     <Network size={20} className={hasUnread ? "animate-pulse text-cyber-cyan" : ""} />
                     {hasUnread && (
                         <span className="absolute -top-2 -left-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full">
@@ -276,7 +503,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 className={`absolute top-0 right-0 bottom-0 w-96 bg-cyber-black/95 backdrop-blur-md border-l border-cyber-purple shadow-[-10px_0_30px_rgba(188,19,254,0.2)] z-50 transform transition-transform duration-300 flex flex-col ${isOpen ? 'translate-x-0' : 'translate-x-full'
                     }`}
             >
-                <div className="p-4 border-b border-cyber-purple/50 flex flex-col gap-2 bg-cyber-purple/10">
+                    <div className="p-4 border-b border-cyber-purple/50 flex flex-col gap-2 bg-cyber-purple/10">
                     <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2 text-cyber-purple font-black">
                             <Network size={20} />
@@ -301,9 +528,9 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                     )}
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {currentAlerts.map((alert, idx) => (
-                        <div key={idx} className="bg-black border border-cyber-purple/30 p-4 rounded-sm relative group hover:border-cyber-purple transition-colors">
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {hasPanelAlerts ? displayedAlerts.map((alert, idx) => (
+                        <div key={alert.alertKey || idx} className="bg-black border border-cyber-purple/30 p-4 rounded-sm relative group hover:border-cyber-purple transition-colors">
                             <div className="absolute top-0 right-0 p-2 opacity-10">
                                 <Network size={40} />
                             </div>
@@ -413,9 +640,13 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                 </div>
                             </div>
                         </div>
-                    ))}
+                    )) : (
+                        <div className="rounded border border-cyber-purple/20 bg-black/35 p-4 text-xs leading-relaxed text-gray-300">
+                            No cross-investigation overlaps yet for this investigation. Run <span className="font-black uppercase tracking-[0.16em] text-cyber-purple">Reconnect The Dots</span> to check for links against older cases.
+                        </div>
+                    )}
+                    </div>
                 </div>
-            </div>
         </>
     );
 }

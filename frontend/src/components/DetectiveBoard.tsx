@@ -30,7 +30,7 @@ import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
 import { getLayoutedElements } from './detectiveBoardLayout';
-import { parsePersistedBoardState, type PersistedBoardState } from '../utils/hierarchicalCanvas';
+import { parsePersistedBoardState, persistBoardStateForInvestigation, type PersistedBoardState } from '../utils/hierarchicalCanvas';
 import { readImageScrapingPreference } from '../utils/searchPreferences';
 import {
     createTagStyle,
@@ -1524,7 +1524,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         persistTimerRef.current = window.setTimeout(() => {
-            localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes, edges, pendingIntegrationNodeIds }));
+            const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
+            persistBoardStateForInvestigation(investigationId, {
+                mode: boardMode,
+                nodes,
+                edges,
+                pendingIntegrationNodeIds,
+                synthesisAlerts: existingState?.synthesisAlerts || [],
+            });
             persistTimerRef.current = null;
         }, 250);
 
@@ -1544,7 +1551,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             persistTimerRef.current = null;
         }
 
-        localStorage.setItem(`inv_data_${investigationId}`, JSON.stringify({ mode: boardMode, nodes: nodesRef.current, edges: edgesRef.current, pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current }));
+        const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
+        persistBoardStateForInvestigation(investigationId, {
+            mode: boardMode,
+            nodes: nodesRef.current,
+            edges: edgesRef.current,
+            pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current,
+            synthesisAlerts: existingState?.synthesisAlerts || [],
+        });
     }, [boardMode, investigationId, loadedInvestigationId]);
 
     const onNodesChange: OnNodesChange = useCallback(
@@ -2066,7 +2080,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             const currentIds = vaultData.pendingIntegrationNodeIds || [];
                             vaultData.pendingIntegrationNodeIds = currentIds.includes(node.id) ? currentIds : [...currentIds, node.id];
                         }
-                        localStorage.setItem(`inv_data_${vaultId}`, JSON.stringify(vaultData));
+                        const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
+                        persistBoardStateForInvestigation(vaultId, {
+                            ...vaultData,
+                            synthesisAlerts: existingState?.synthesisAlerts || [],
+                        });
                         console.log(`[Board] Node ${node.id} successfully persisted to target vault ${vaultId}`);
                     }
                     return; // Don't add to the currently visible board (which is likely the source/historical vault)

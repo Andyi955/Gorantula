@@ -192,11 +192,11 @@ func TestOpenAICompatibleProvider_ReviewImageJSON(t *testing.T) {
 	defer mockServer.Close()
 
 	provider := &OpenAICompatibleProvider{
-		NameID:        "lmstudio",
-		APIKey:        "token",
-		BaseURL:       mockServer.URL,
-		Model:         "vision-model",
-		HTTPClient:    mockServer.Client(),
+		NameID:     "lmstudio",
+		APIKey:     "token",
+		BaseURL:    mockServer.URL,
+		Model:      "vision-model",
+		HTTPClient: mockServer.Client(),
 	}
 
 	var result struct {

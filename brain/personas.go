@@ -34,17 +34,17 @@ type PersonaConnectionProposal struct {
 
 // PersonaInsight represents the analysis output from a single persona
 type PersonaInsight struct {
-	PersonaName         string                    `json:"personaName"`
-	Perspective         string                    `json:"perspective"`
-	KeyFindings         []string                  `json:"keyFindings"`    // List of important discoveries
-	Connections         []string                  `json:"connections"`    // Connections this persona sees
-	Observations        []string                  `json:"observations"`   // Direct evidence-grounded observations
-	Hypotheses          []string                  `json:"hypotheses"`     // Optional inferences that remain grounded
-	Questions           []string                  `json:"questions"`      // Follow-up questions raised
-	Confidence          float32                   `json:"confidence"`     // 0.0-1.0 confidence score
-	FullAnalysis        string                    `json:"fullAnalysis"`   // Full text analysis
-	NodeIDs             []string                  `json:"nodeIDs"`        // Node IDs this persona contributed insights to
-	TimelineEvents      []TimelineEvent           `json:"timelineEvents"` // Chronological events extracted
+	PersonaName         string                      `json:"personaName"`
+	Perspective         string                      `json:"perspective"`
+	KeyFindings         []string                    `json:"keyFindings"`    // List of important discoveries
+	Connections         []string                    `json:"connections"`    // Connections this persona sees
+	Observations        []string                    `json:"observations"`   // Direct evidence-grounded observations
+	Hypotheses          []string                    `json:"hypotheses"`     // Optional inferences that remain grounded
+	Questions           []string                    `json:"questions"`      // Follow-up questions raised
+	Confidence          float32                     `json:"confidence"`     // 0.0-1.0 confidence score
+	FullAnalysis        string                      `json:"fullAnalysis"`   // Full text analysis
+	NodeIDs             []string                    `json:"nodeIDs"`        // Node IDs this persona contributed insights to
+	TimelineEvents      []TimelineEvent             `json:"timelineEvents"` // Chronological events extracted
 	ProposedConnections []PersonaConnectionProposal `json:"proposedConnections"`
 }
 
@@ -233,14 +233,14 @@ Respond ONLY with the JSON.`, persona.SystemPrompt, strings.Join(pendingNodeIDs,
 
 // PersonaJSONResponse represents the expected JSON structure from persona analysis
 type PersonaJSONResponse struct {
-	KeyFindings         []string                  `json:"keyFindings"`
-	Observations        []string                  `json:"observations"`
-	Hypotheses          []string                  `json:"hypotheses"`
-	Connections         []string                  `json:"connections"`
+	KeyFindings         []string                    `json:"keyFindings"`
+	Observations        []string                    `json:"observations"`
+	Hypotheses          []string                    `json:"hypotheses"`
+	Connections         []string                    `json:"connections"`
 	ProposedConnections []PersonaConnectionProposal `json:"proposedConnections"`
-	Questions           []string                  `json:"questions"`
-	Confidence          float32                   `json:"confidence"`
-	FullAnalysis        string                    `json:"fullAnalysis"`
-	NodeIDs             []string                  `json:"nodeIDs"` // Which node IDs this persona's insights apply to
-	TimelineEvents      []TimelineEvent           `json:"timelineEvents"`
+	Questions           []string                    `json:"questions"`
+	Confidence          float32                     `json:"confidence"`
+	FullAnalysis        string                      `json:"fullAnalysis"`
+	NodeIDs             []string                    `json:"nodeIDs"` // Which node IDs this persona's insights apply to
+	TimelineEvents      []TimelineEvent             `json:"timelineEvents"`
 }

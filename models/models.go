@@ -77,11 +77,11 @@ type ImageReviewResult struct {
 
 // MemoryNode represents a single piece of evidence on the board
 type MemoryNode struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Summary   string `json:"summary"` // 2-sentence summary
-	FullText  string `json:"fullText"`
-	SourceURL string `json:"sourceURL"`
+	ID        string            `json:"id"`
+	Title     string            `json:"title"`
+	Summary   string            `json:"summary"` // 2-sentence summary
+	FullText  string            `json:"fullText"`
+	SourceURL string            `json:"sourceURL"`
 	Images    []MemoryNodeImage `json:"images,omitempty"`
 }
 
@@ -141,14 +141,14 @@ type RelationshipDebugPersona struct {
 }
 
 type RelationshipDebugRun struct {
-	VaultID          string                   `json:"vaultId"`
-	CreatedAt        string                   `json:"createdAt"`
-	Stage            string                   `json:"stage"`
-	InputNodes       []RelationshipDebugNode  `json:"inputNodes"`
+	VaultID          string                     `json:"vaultId"`
+	CreatedAt        string                     `json:"createdAt"`
+	Stage            string                     `json:"stage"`
+	InputNodes       []RelationshipDebugNode    `json:"inputNodes"`
 	PersonaSummaries []RelationshipDebugPersona `json:"personaSummaries"`
-	Candidates       []RelationshipCandidate  `json:"candidates"`
-	FinalConnections []BoardConnection        `json:"finalConnections"`
-	Notes            []string                 `json:"notes,omitempty"`
+	Candidates       []RelationshipCandidate    `json:"candidates"`
+	FinalConnections []BoardConnection          `json:"finalConnections"`
+	Notes            []string                   `json:"notes,omitempty"`
 }
 
 // Discovery represents a derived breakthrough identified from linked evidence.
@@ -189,15 +189,15 @@ type Investigation struct {
 }
 
 type MergedNode struct {
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	Summary          string `json:"summary"`
-	FullText         string `json:"fullText"`
-	SourceURL        string `json:"sourceURL"`
+	ID               string            `json:"id"`
+	Title            string            `json:"title"`
+	Summary          string            `json:"summary"`
+	FullText         string            `json:"fullText"`
+	SourceURL        string            `json:"sourceURL"`
 	Images           []MemoryNodeImage `json:"images,omitempty"`
-	SourceVaultID    string `json:"sourceVaultId"`
-	SourceNodeID     string `json:"sourceNodeId"`
-	DerivedFromMerge bool   `json:"derivedFromMerge"`
+	SourceVaultID    string            `json:"sourceVaultId"`
+	SourceNodeID     string            `json:"sourceNodeId"`
+	DerivedFromMerge bool              `json:"derivedFromMerge"`
 }
 
 type MergedEdge struct {

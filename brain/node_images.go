@@ -23,11 +23,11 @@ import (
 )
 
 const (
-	maxNodeImageCount = 3
-	maxNodeImageBytes = 8 << 20
-	maxNodeImageRedirects = 3
+	maxNodeImageCount               = 3
+	maxNodeImageBytes               = 8 << 20
+	maxNodeImageRedirects           = 3
 	maxReviewedScrapedImagesPerNode = 1
-	imageReviewExcerptLimit = 1400
+	imageReviewExcerptLimit         = 1400
 )
 
 type downloadedRemoteNodeImage struct {
