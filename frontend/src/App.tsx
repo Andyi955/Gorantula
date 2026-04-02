@@ -32,7 +32,68 @@ export interface DiscoveryRecord {
   nodeKind: string
 }
 
+interface TokenUsageReport {
+  investigationId?: string
+  label: string
+  callCount: number
+  reportedCallCount: number
+  estimatedCallCount: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  providerTotals?: Record<string, number>
+}
+
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
+
+const compactTokenFormatter = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+})
+
+const formatCompactTokens = (value: number) => compactTokenFormatter.format(value)
+
+const formatTokenProviderBreakdown = (providerTotals?: Record<string, number>) => {
+  const entries = Object.entries(providerTotals || {})
+  if (entries.length === 0) {
+    return 'No provider totals reported'
+  }
+
+  return entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([provider, total]) => `${provider}: ${total.toLocaleString()}`)
+    .join(' | ')
+}
+
+const buildEmptyTokenUsageReport = (label: string): TokenUsageReport => ({
+  label,
+  callCount: 0,
+  reportedCallCount: 0,
+  estimatedCallCount: 0,
+  promptTokens: 0,
+  completionTokens: 0,
+  totalTokens: 0,
+  providerTotals: {},
+})
+
+const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport): TokenUsageReport => {
+  const providerTotals: Record<string, number> = { ...(base.providerTotals || {}) }
+  for (const [provider, total] of Object.entries(incoming.providerTotals || {})) {
+    providerTotals[provider] = (providerTotals[provider] || 0) + total
+  }
+
+  return {
+    investigationId: base.investigationId || incoming.investigationId,
+    label: base.label,
+    callCount: base.callCount + incoming.callCount,
+    reportedCallCount: base.reportedCallCount + incoming.reportedCallCount,
+    estimatedCallCount: base.estimatedCallCount + incoming.estimatedCallCount,
+    promptTokens: base.promptTokens + incoming.promptTokens,
+    completionTokens: base.completionTokens + incoming.completionTokens,
+    totalTokens: base.totalTokens + incoming.totalTokens,
+    providerTotals,
+  }
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
@@ -47,6 +108,8 @@ function App() {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
   const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
+  const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
+  const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -134,6 +197,18 @@ function App() {
     const handleMessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data)
+        if (msg.type === 'TOKEN_USAGE' && msg.payload && typeof msg.payload === 'object') {
+          const report = msg.payload as TokenUsageReport
+          setSessionTokenUsage((current) => accumulateTokenUsage(current, report))
+          if (report.investigationId) {
+            setBoardTokenUsageByInvestigation((current) => ({
+              ...current,
+              [report.investigationId!]: report,
+            }))
+          }
+          return
+        }
+
         if (msg.type !== 'DISCOVERIES_FOUND' || !Array.isArray(msg.payload)) {
           return
         }
@@ -160,13 +235,15 @@ function App() {
           }))
         }
       } catch (error) {
-        console.error('[App] Failed to parse discovery websocket message', error)
+        console.error('[App] Failed to parse websocket message', error)
       }
     }
 
     socketConfig.socket.addEventListener('message', handleMessage)
     return () => socketConfig.socket?.removeEventListener('message', handleMessage)
   }, [currentInvestigationId, socketConfig.socket])
+
+  const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
 
   useEffect(() => {
     const handleClearDiscoveries = (event: Event) => {
@@ -674,6 +751,38 @@ function App() {
             </span>
           </div>
         </div>
+
+        {currentBoardTokenUsage && (
+          <div
+            className="ml-4 flex shrink-0 items-center gap-3 border-l border-orange-500/25 pl-4 text-[10px] text-orange-200"
+            title={`${currentBoardTokenUsage.label} | ${formatTokenProviderBreakdown(currentBoardTokenUsage.providerTotals)}`}
+          >
+            <span className="font-bold uppercase tracking-[0.2em] text-orange-300/80">Current Board</span>
+            <span className="text-orange-100">{currentBoardTokenUsage.label}</span>
+            <span>{formatCompactTokens(currentBoardTokenUsage.totalTokens)} total</span>
+            <span>{formatCompactTokens(currentBoardTokenUsage.promptTokens)} in</span>
+            <span>{formatCompactTokens(currentBoardTokenUsage.completionTokens)} out</span>
+            <span>{currentBoardTokenUsage.callCount} calls</span>
+            {currentBoardTokenUsage.estimatedCallCount > 0 && (
+              <span>{currentBoardTokenUsage.estimatedCallCount} est.</span>
+            )}
+          </div>
+        )}
+        {sessionTokenUsage.totalTokens > 0 && (
+          <div
+            className="ml-4 flex shrink-0 items-center gap-3 border-l border-cyber-cyan/20 pl-4 text-[10px] text-cyber-cyan"
+            title={formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}
+          >
+            <span className="font-bold uppercase tracking-[0.2em] text-cyber-cyan/70">Session Total</span>
+            <span>{formatCompactTokens(sessionTokenUsage.totalTokens)} total</span>
+            <span>{formatCompactTokens(sessionTokenUsage.promptTokens)} in</span>
+            <span>{formatCompactTokens(sessionTokenUsage.completionTokens)} out</span>
+            <span>{sessionTokenUsage.callCount} calls</span>
+            {sessionTokenUsage.estimatedCallCount > 0 && (
+              <span>{sessionTokenUsage.estimatedCallCount} est.</span>
+            )}
+          </div>
+        )}
       </footer >
     </div >
   )

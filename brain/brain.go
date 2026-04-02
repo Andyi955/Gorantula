@@ -32,14 +32,16 @@ type RankResult struct {
 
 // Brain controls the LLM generation and orchestration of the Nervous System
 type Brain struct {
-	Client      *genai.Client
-	Model       *genai.GenerativeModel
-	NS          *nervous_system.NervousSystem
-	Abdomen     *models.Abdomen
-	ModelRouter map[string]ModelProvider
-	routerMu    sync.RWMutex
-	modelMu     sync.Mutex
-	Synthesis   *SynthesisEngine
+	Client       *genai.Client
+	Model        *genai.GenerativeModel
+	NS           *nervous_system.NervousSystem
+	Abdomen      *models.Abdomen
+	ModelRouter  map[string]ModelProvider
+	routerMu     sync.RWMutex
+	modelMu      sync.Mutex
+	tokenUsageMu sync.Mutex
+	tokenUsage   *tokenUsageTracker
+	Synthesis    *SynthesisEngine
 }
 
 // GetRouter safely retrieves a model provider from the router
@@ -79,10 +81,11 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	model := client.GenerativeModel("gemini-3-flash-preview")
 
 	brain := &Brain{
-		Client:  client,
-		Model:   model, // Legacy ref, kept for backward compatibility if needed temporarily
-		NS:      ns,
-		Abdomen: abdomen,
+		Client:     client,
+		Model:      model, // Legacy ref, kept for backward compatibility if needed temporarily
+		NS:         ns,
+		Abdomen:    abdomen,
+		tokenUsage: newTokenUsageTracker(),
 	}
 
 	router, err := NewModelRouter(brain)
@@ -813,23 +816,22 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 }
 
 // AnalyzeWithPersonas runs multi-agent persona analysis on the gathered findings
-func (b *Brain) AnalyzeWithPersonas(ctx context.Context, nodes []models.MemoryNode) ([]PersonaInsight, error) {
-	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(GetDefaultPersonas()))
-
-	// Build findings text from all nodes - include ID so AI can reference them
-	findingsText := ""
-	for _, node := range nodes {
-		findingsText += fmt.Sprintf("[NodeID: %s]\nSource: %s\nTitle: %s\nSummary: %s\nFull Text: %s\n\n",
-			node.ID, node.SourceURL, node.Title, node.Summary, node.FullText)
-	}
-
+func (b *Brain) AnalyzeWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode) ([]PersonaInsight, error) {
 	personas := GetDefaultPersonas()
+	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(personas))
+
+	findingsText := buildSummaryFirstPersonaFindings(nodes)
+	fmt.Printf("[Brain] Full-board persona evidence prepared for %d nodes across %d personas (%d chars)\n",
+		len(nodes), len(personas), len(findingsText))
+
+	scopeID := b.newTokenUsageScope("persona-full-board")
 	insightsChan := make(chan PersonaInsight, len(personas))
 
 	// Run each persona analysis in parallel
 	for _, persona := range personas {
 		go func(p Persona) {
-			insight, err := b.runPersonaAnalysis(ctx, p, findingsText)
+			personaCtx := withTokenUsageTracking(ctx, scopeID, tokenUsageOperationLabel("full_board_persona", p.Name))
+			insight, err := b.runPersonaAnalysis(personaCtx, p, findingsText)
 			if err != nil {
 				fmt.Printf("[Brain] Persona %s failed: %v\n", p.Name, err)
 				// Send empty insight on failure
@@ -851,6 +853,7 @@ func (b *Brain) AnalyzeWithPersonas(ctx context.Context, nodes []models.MemoryNo
 	}
 
 	fmt.Printf("[Brain] Persona analysis complete. Collected %d insights.\n", len(insights))
+	b.broadcastTokenUsageSummary(investigationID, "Full-board persona analysis", b.summarizeTokenUsageScope(scopeID))
 	return insights, nil
 }
 
@@ -879,7 +882,7 @@ func buildIncrementalPersonaFindings(nodes []models.MemoryNode, pendingNodeIDs [
 	return pendingBuilder.String(), contextBuilder.String(), validPendingNodeIDs
 }
 
-func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, nodes []models.MemoryNode, pendingNodeIDs []string) ([]PersonaInsight, error) {
+func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode, pendingNodeIDs []string) ([]PersonaInsight, error) {
 	fmt.Printf("[Brain] Running incremental persona analysis with %d personas across %d nodes (%d pending)...\n", len(GetDefaultPersonas()), len(nodes), len(pendingNodeIDs))
 
 	pendingFindings, contextFindings, validPendingNodeIDs := buildIncrementalPersonaFindings(nodes, pendingNodeIDs)
@@ -888,12 +891,14 @@ func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, nodes []mode
 	}
 
 	personas := GetDefaultPersonas()
+	scopeID := b.newTokenUsageScope("persona-incremental")
 	insightsChan := make(chan PersonaInsight, len(personas))
 
 	for _, persona := range personas {
 		go func(p Persona) {
 			prompt := BuildIncrementalPersonaPrompt(p, pendingFindings, contextFindings, validPendingNodeIDs)
-			insight, err := b.runPersonaAnalysisWithPrompt(ctx, p, prompt)
+			personaCtx := withTokenUsageTracking(ctx, scopeID, tokenUsageOperationLabel("incremental_persona", p.Name))
+			insight, err := b.runPersonaAnalysisWithPrompt(personaCtx, p, prompt)
 			if err != nil {
 				fmt.Printf("[Brain] Incremental persona %s failed: %v\n", p.Name, err)
 				insightsChan <- PersonaInsight{PersonaName: p.Name, Confidence: 0}
@@ -913,6 +918,7 @@ func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, nodes []mode
 	}
 
 	fmt.Printf("[Brain] Incremental multi-agent analysis complete. Generated %d valid persona insights.\n", len(insights))
+	b.broadcastTokenUsageSummary(investigationID, "Incremental persona analysis", b.summarizeTokenUsageScope(scopeID))
 	return insights, nil
 }
 

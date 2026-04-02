@@ -212,3 +212,57 @@ func TestOpenAICompatibleProvider_ReviewImageJSON(t *testing.T) {
 		t.Fatalf("unexpected review result: %#v", result)
 	}
 }
+
+func TestOpenAICompatibleProvider_GenerateContent_TracksUsage(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": "Tracked response",
+					},
+				},
+			},
+			"usage": map[string]interface{}{
+				"prompt_tokens":     31,
+				"completion_tokens": 12,
+				"total_tokens":      43,
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	brain := &Brain{}
+	provider := &OpenAICompatibleProvider{
+		NameID:     "test",
+		APIKey:     "test-api-key",
+		BaseURL:    mockServer.URL,
+		Model:      "test-model",
+		HTTPClient: mockServer.Client(),
+		brain:      brain,
+	}
+
+	ctx := withTokenUsageTracking(context.Background(), "scope-openai-usage", "test_usage")
+	result, err := provider.GenerateContent(ctx, "Hello")
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if result != "Tracked response" {
+		t.Fatalf("expected tracked response, got %q", result)
+	}
+
+	summary := brain.summarizeTokenUsageScope("scope-openai-usage")
+	if summary.CallCount != 1 {
+		t.Fatalf("expected 1 tracked call, got %d", summary.CallCount)
+	}
+	if summary.PromptTokens != 31 || summary.CompletionTokens != 12 || summary.TotalTokens != 43 {
+		t.Fatalf("unexpected token usage summary: %#v", summary)
+	}
+	if summary.EstimatedCallCount != 0 || summary.ReportedCallCount != 1 {
+		t.Fatalf("expected reported usage only, got %#v", summary)
+	}
+	if summary.ProviderTotals["test"] != 43 {
+		t.Fatalf("expected provider total of 43, got %d", summary.ProviderTotals["test"])
+	}
+}

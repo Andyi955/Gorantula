@@ -129,6 +129,9 @@ You are analyzing the following investigation findings:
 
 ---
 
+These findings are summary-first. Some nodes may include a bounded "Full Text Excerpt" instead of the complete source body.
+Treat omitted text as unavailable evidence rather than implied support, and work only from the material shown.
+
 Your expertise: %s
 Your perspective: %s
 

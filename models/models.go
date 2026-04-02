@@ -55,6 +55,18 @@ type WSMessage struct {
 	Payload interface{} `json:"payload"`
 }
 
+type TokenUsageReport struct {
+	InvestigationID    string         `json:"investigationId,omitempty"`
+	Label              string         `json:"label"`
+	CallCount          int            `json:"callCount"`
+	ReportedCallCount  int            `json:"reportedCallCount"`
+	EstimatedCallCount int            `json:"estimatedCallCount"`
+	PromptTokens       int            `json:"promptTokens"`
+	CompletionTokens   int            `json:"completionTokens"`
+	TotalTokens        int            `json:"totalTokens"`
+	ProviderTotals     map[string]int `json:"providerTotals,omitempty"`
+}
+
 // Broadcaster is a function that sends a message to all connected clients
 type Broadcaster func(msg WSMessage)
 
