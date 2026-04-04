@@ -408,9 +408,9 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			err      error
 		)
 		if isIncremental {
-			insights, err = br.AnalyzeIncrementalWithPersonas(context.Background(), nodes, pendingNodeIDs)
+			insights, err = br.AnalyzeIncrementalWithPersonas(context.Background(), vaultID, nodes, pendingNodeIDs)
 		} else {
-			insights, err = br.AnalyzeWithPersonas(context.Background(), nodes)
+			insights, err = br.AnalyzeWithPersonas(context.Background(), vaultID, nodes)
 		}
 		if err != nil {
 			log.Printf("[WS Error] Persona analysis failed: %v", err)

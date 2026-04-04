@@ -35,7 +35,7 @@ func TestBuildPersonaPrompt(t *testing.T) {
 		Questions:    "Does it work?",
 		SystemPrompt: "You are a tester.",
 	}
-	findings := "Ground truth findings."
+	findings := "[NodeID: node-1]\nSource: https://example.com\nTitle: Ground Truth\nSummary: Ground truth summary.\nFull Text Excerpt: Ground truth detail."
 
 	prompt := BuildPersonaPrompt(persona, findings)
 
@@ -44,10 +44,11 @@ func TestBuildPersonaPrompt(t *testing.T) {
 		contains string
 	}{
 		{"Contains System Prompt", "You are a tester."},
-		{"Contains Findings", "Ground truth findings."},
+		{"Contains Findings", "Full Text Excerpt: Ground truth detail."},
 		{"Contains Expertise", "Testing"},
 		{"Contains Perspective", "Testing things"},
 		{"Contains Questions", "Does it work?"},
+		{"Contains Summary First Guidance", "Treat omitted text as unavailable evidence rather than implied support"},
 		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your prompt."},
 		{"Contains Exact Node ID Rule", "CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings"},
 	}

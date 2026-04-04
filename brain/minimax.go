@@ -71,7 +71,7 @@ func NewMiniMaxClient() (*MiniMaxClient, error) {
 }
 
 // GenerateChatCompletion sends a chat completion request to MiniMax
-func (m *MiniMaxClient) GenerateChatCompletion(ctx context.Context, messages []MiniMaxMessage, temperature float32, maxTokens int) (string, error) {
+func (m *MiniMaxClient) GenerateChatCompletion(ctx context.Context, messages []MiniMaxMessage, temperature float32, maxTokens int) (string, *llmTokenUsage, error) {
 	// Convert messages to MiniMax format
 	mmMessages := make([]MiniMaxMessage, len(messages))
 	copy(mmMessages, messages)
@@ -86,14 +86,14 @@ func (m *MiniMaxClient) GenerateChatCompletion(ctx context.Context, messages []M
 	// Marshal request
 	jsonData, err := json.Marshal(request)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// Create request
 	url := fmt.Sprintf("%s/text/chatcompletion_v2", m.BaseURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -103,19 +103,19 @@ func (m *MiniMaxClient) GenerateChatCompletion(ctx context.Context, messages []M
 	// Send request
 	resp, err := m.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
+		return "", nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+		return "", nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("MiniMax API returned status %d: %s", resp.StatusCode, string(body))
+		return "", nil, fmt.Errorf("MiniMax API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response
@@ -123,21 +123,21 @@ func (m *MiniMaxClient) GenerateChatCompletion(ctx context.Context, messages []M
 	if err := json.Unmarshal(body, &chatResp); err != nil {
 		// Try to parse as a simpler format - maybe it's a direct text response
 		fmt.Printf("[MiniMax] Response parse error: %v\nResponse body: %s\n", err, string(body))
-		return "", fmt.Errorf("failed to parse response: %w, response: %s", err, string(body))
+		return "", nil, fmt.Errorf("failed to parse response: %w, response: %s", err, string(body))
 	}
 
 	// Extract content
 	if len(chatResp.Choices) == 0 {
 		// Check if there's base_resp or other fields
 		fmt.Printf("[MiniMax] Empty choices. Full response: %s\n", string(body))
-		return "", fmt.Errorf("no choices returned from MiniMax")
+		return "", nil, fmt.Errorf("no choices returned from MiniMax")
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	return chatResp.Choices[0].Message.Content, extractMiniMaxTokenUsage(chatResp), nil
 }
 
 // GenerateText sends a simple text prompt to MiniMax and returns the response
-func (m *MiniMaxClient) GenerateText(ctx context.Context, systemPrompt, userPrompt string, temperature float32) (string, error) {
+func (m *MiniMaxClient) GenerateText(ctx context.Context, systemPrompt, userPrompt string, temperature float32) (string, *llmTokenUsage, error) {
 	messages := []MiniMaxMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
@@ -177,18 +177,23 @@ func (g *GeminiProvider) GenerateContent(ctx context.Context, prompt string) (st
 	g.brain.modelMu.Lock()
 	defer g.brain.modelMu.Unlock()
 
-	return g.generateContentLocked(ctx, prompt)
-}
-
-func (g *GeminiProvider) generateContentLocked(ctx context.Context, prompt string) (string, error) {
-	resp, err := g.brain.Model.GenerateContent(ctx, genai.Text(prompt))
+	content, usage, err := g.generateContentLocked(ctx, prompt, genai.Text(prompt))
 	if err != nil {
 		return "", err
 	}
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("empty response from Gemini")
+	g.brain.recordProviderTokenUsage(ctx, g.Name(), "GenerateContent", prompt, content, usage)
+	return content, nil
+}
+
+func (g *GeminiProvider) generateContentLocked(ctx context.Context, prompt string, parts ...genai.Part) (string, *llmTokenUsage, error) {
+	resp, err := g.brain.Model.GenerateContent(ctx, parts...)
+	if err != nil {
+		return "", nil, err
 	}
-	return fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0]), nil
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "", nil, fmt.Errorf("empty response from Gemini")
+	}
+	return fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0]), extractGeminiTokenUsage(resp), nil
 }
 
 func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string, response interface{}) error {
@@ -198,10 +203,11 @@ func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string, respon
 	g.brain.Model.ResponseMIMEType = "application/json"
 	defer func() { g.brain.Model.ResponseMIMEType = "text/plain" }()
 
-	content, err := g.generateContentLocked(ctx, prompt)
+	content, usage, err := g.generateContentLocked(ctx, prompt, genai.Text(prompt))
 	if err != nil {
 		return err
 	}
+	g.brain.recordProviderTokenUsage(ctx, g.Name(), "GenerateJSON", prompt, content, usage)
 
 	return parseJSONResponse(content, response)
 }
@@ -213,24 +219,24 @@ func (g *GeminiProvider) ReviewImageJSON(ctx context.Context, prompt, mimeType s
 	g.brain.Model.ResponseMIMEType = "application/json"
 	defer func() { g.brain.Model.ResponseMIMEType = "text/plain" }()
 
-	resp, err := g.brain.Model.GenerateContent(
+	content, usage, err := g.generateContentLocked(
 		ctx,
+		prompt,
 		genai.Text(prompt),
 		genai.Blob{MIMEType: mimeType, Data: imageData},
 	)
 	if err != nil {
 		return err
 	}
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return fmt.Errorf("empty image review response from Gemini")
-	}
+	g.brain.recordProviderTokenUsage(ctx, g.Name(), "ReviewImageJSON", prompt, content, usage)
 
-	return parseJSONResponse(fmt.Sprintf("%v", resp.Candidates[0].Content.Parts[0]), response)
+	return parseJSONResponse(content, response)
 }
 
 // MiniMaxProvider wraps the MiniMax client for the ModelProvider interface
 type MiniMaxProvider struct {
 	client *MiniMaxClient
+	brain  *Brain
 }
 
 func (m *MiniMaxProvider) Name() string {
@@ -246,20 +252,33 @@ func (m *MiniMaxProvider) SupportsImageReview() bool {
 }
 
 func (m *MiniMaxProvider) GenerateContent(ctx context.Context, prompt string) (string, error) {
-	return m.client.GenerateText(ctx, "", prompt, 0.7)
+	content, usage, err := m.client.GenerateText(ctx, "", prompt, 0.7)
+	if err != nil {
+		return "", err
+	}
+	m.recordTokenUsage(ctx, "GenerateContent", prompt, content, usage)
+	return content, nil
 }
 
 func (m *MiniMaxProvider) GenerateJSON(ctx context.Context, prompt string, response interface{}) error {
-	content, err := m.client.GenerateText(ctx, "", prompt, 0.0)
+	content, usage, err := m.client.GenerateText(ctx, "", prompt, 0.0)
 	if err != nil {
 		return err
 	}
+	m.recordTokenUsage(ctx, "GenerateJSON", prompt, content, usage)
 
 	return parseJSONResponse(content, response)
 }
 
 func (m *MiniMaxProvider) ReviewImageJSON(_ context.Context, _, _ string, _ []byte, _ interface{}) error {
 	return fmt.Errorf("provider %q does not support image review", m.Name())
+}
+
+func (m *MiniMaxProvider) recordTokenUsage(ctx context.Context, fallbackOperation, prompt, completion string, usage *llmTokenUsage) {
+	if m == nil || m.brain == nil {
+		return
+	}
+	m.brain.recordProviderTokenUsage(ctx, m.Name(), fallbackOperation, prompt, completion, usage)
 }
 
 // parseJSONResponse handles common LLM response cleaning and JSON parsing
@@ -324,7 +343,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 	if err != nil {
 		fmt.Printf("[Brain] Warning: MiniMax not available: %v\n", err)
 	} else {
-		router["minimax"] = &MiniMaxProvider{client: minimax}
+		router["minimax"] = &MiniMaxProvider{client: minimax, brain: brain}
 	}
 
 	httpClient := &http.Client{Timeout: 60 * time.Second}
@@ -336,6 +355,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    "https://api.openai.com/v1",
 			Model:      "gpt-4o",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -346,6 +366,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    "https://api.deepseek.com/v1",
 			Model:      "deepseek-chat",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -356,6 +377,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    "https://dashscope.aliyuncs.com/compatible-mode/v1",
 			Model:      "qwen-plus",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -366,6 +388,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    "https://open.bigmodel.cn/api/paas/v4",
 			Model:      "glm-4-plus",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -376,6 +399,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    "https://api.moonshot.cn/v1",
 			Model:      "moonshot-v1-8k",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -385,6 +409,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    host + "/v1",
 			Model:      "llama3",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -395,6 +420,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			BaseURL:    "http://localhost:1234/v1",
 			Model:      "local-model",
 			HTTPClient: httpClient,
+			brain:      brain,
 		}
 	}
 
@@ -432,4 +458,28 @@ func removeSuffix(s, suffix string) string {
 		return s[:len(s)-len(suffix)]
 	}
 	return s
+}
+
+func extractGeminiTokenUsage(resp *genai.GenerateContentResponse) *llmTokenUsage {
+	if resp == nil || resp.UsageMetadata == nil {
+		return nil
+	}
+
+	return &llmTokenUsage{
+		PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
+		CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount),
+		TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
+	}
+}
+
+func extractMiniMaxTokenUsage(resp MiniMaxChatResponse) *llmTokenUsage {
+	if resp.Usage.PromptTokens == 0 && resp.Usage.CompletionTokens == 0 && resp.Usage.TotalTokens == 0 {
+		return nil
+	}
+
+	return &llmTokenUsage{
+		PromptTokens:     resp.Usage.PromptTokens,
+		CompletionTokens: resp.Usage.CompletionTokens,
+		TotalTokens:      resp.Usage.TotalTokens,
+	}
 }
