@@ -47,3 +47,18 @@ func TestRecordProviderTokenUsageEstimatesWhenProviderUsageMissing(t *testing.T)
 		t.Fatalf("expected total tokens to match prompt+completion, got %#v", summary)
 	}
 }
+
+func TestRecordProviderTokenUsageIgnoresUnscopedCalls(t *testing.T) {
+	brain := &Brain{}
+
+	brain.recordProviderTokenUsage(context.Background(), "gemini", "GenerateJSON", "prompt", "completion", &llmTokenUsage{
+		PromptTokens:     12,
+		CompletionTokens: 8,
+		TotalTokens:      20,
+	})
+
+	summary := brain.summarizeTokenUsageScope("")
+	if summary.CallCount != 0 {
+		t.Fatalf("expected unscoped calls to be ignored, got %#v", summary)
+	}
+}

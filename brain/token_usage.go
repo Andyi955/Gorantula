@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -211,6 +212,10 @@ func (b *Brain) recordProviderTokenUsage(ctx context.Context, providerName, fall
 	}
 
 	metadata := tokenUsageMetadataFromContext(ctx)
+	if metadata.ScopeID == "" {
+		return
+	}
+
 	operation := fallbackOperation
 	if metadata.Operation != "" {
 		operation = metadata.Operation
@@ -232,8 +237,15 @@ func (b *Brain) recordProviderTokenUsage(ctx context.Context, providerName, fall
 	}
 	tracker.record(record)
 
-	fmt.Printf("[TokenUsage] provider=%s operation=%s prompt=%d completion=%d total=%d estimated=%t scope=%s\n",
-		record.Provider, record.Operation, record.PromptTokens, record.CompletionTokens, record.TotalTokens, record.Estimated, record.ScopeID)
+	if shouldLogPerCallTokenUsage() {
+		fmt.Printf("[TokenUsage] provider=%s operation=%s prompt=%d completion=%d total=%d estimated=%t scope=%s\n",
+			record.Provider, record.Operation, record.PromptTokens, record.CompletionTokens, record.TotalTokens, record.Estimated, record.ScopeID)
+	}
+}
+
+func shouldLogPerCallTokenUsage() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("GORANTULA_DEBUG_TOKEN_USAGE")))
+	return value == "1" || value == "true" || value == "yes"
 }
 
 func (b *Brain) broadcastSystemLog(message string) {

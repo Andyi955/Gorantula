@@ -183,4 +183,42 @@ describe('App', () => {
     expect(screen.getByText('10 calls')).toBeInTheDocument()
     expect(screen.getByText('1 est.')).toBeInTheDocument()
   })
+
+  it('ignores malformed token usage payloads', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-1', topic: 'Board One' }]),
+    )
+
+    render(<App />)
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('TOKEN_USAGE', [])
+      WebSocketMock.instances[0]?.emit('TOKEN_USAGE', {
+        investigationId: 'inv-1',
+        label: 'Broken totals',
+        callCount: 'oops',
+        reportedCallCount: undefined,
+        estimatedCallCount: null,
+        promptTokens: 'bad',
+        completionTokens: {},
+        totalTokens: [],
+        providerTotals: {
+          gemini: 'bad',
+        },
+      })
+    })
+
+    expect(screen.getByText('Current Board')).toBeInTheDocument()
+    expect(screen.queryByText('Session Total')).not.toBeInTheDocument()
+    expect(screen.getByText('Broken totals')).toBeInTheDocument()
+    expect(screen.getByText('0 total')).toBeInTheDocument()
+    expect(screen.getByText('0 in')).toBeInTheDocument()
+    expect(screen.getByText('0 out')).toBeInTheDocument()
+    expect(screen.getByText('0 calls')).toBeInTheDocument()
+  })
 })

@@ -76,6 +76,42 @@ const buildEmptyTokenUsageReport = (label: string): TokenUsageReport => ({
   providerTotals: {},
 })
 
+const parseTokenCount = (value: unknown): number => {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+const coerceTokenUsageReport = (payload: unknown): TokenUsageReport | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+
+  const candidate = payload as Record<string, unknown>
+  if (typeof candidate.label !== 'string' || candidate.label.trim() === '') {
+    return null
+  }
+
+  const rawProviderTotals = candidate.providerTotals && typeof candidate.providerTotals === 'object' && !Array.isArray(candidate.providerTotals)
+    ? candidate.providerTotals as Record<string, unknown>
+    : {}
+
+  const providerTotals = Object.entries(rawProviderTotals).reduce<Record<string, number>>((totals, [provider, total]) => {
+    totals[provider] = parseTokenCount(total)
+    return totals
+  }, {})
+
+  return {
+    investigationId: typeof candidate.investigationId === 'string' && candidate.investigationId.trim() !== '' ? candidate.investigationId : undefined,
+    label: candidate.label,
+    callCount: parseTokenCount(candidate.callCount),
+    reportedCallCount: parseTokenCount(candidate.reportedCallCount),
+    estimatedCallCount: parseTokenCount(candidate.estimatedCallCount),
+    promptTokens: parseTokenCount(candidate.promptTokens),
+    completionTokens: parseTokenCount(candidate.completionTokens),
+    totalTokens: parseTokenCount(candidate.totalTokens),
+    providerTotals,
+  }
+}
+
 const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport): TokenUsageReport => {
   const providerTotals: Record<string, number> = { ...(base.providerTotals || {}) }
   for (const [provider, total] of Object.entries(incoming.providerTotals || {})) {
@@ -83,7 +119,7 @@ const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport
   }
 
   return {
-    investigationId: base.investigationId || incoming.investigationId,
+    investigationId: base.investigationId,
     label: base.label,
     callCount: base.callCount + incoming.callCount,
     reportedCallCount: base.reportedCallCount + incoming.reportedCallCount,
@@ -197,8 +233,11 @@ function App() {
     const handleMessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data)
-        if (msg.type === 'TOKEN_USAGE' && msg.payload && typeof msg.payload === 'object') {
-          const report = msg.payload as TokenUsageReport
+        if (msg.type === 'TOKEN_USAGE') {
+          const report = coerceTokenUsageReport(msg.payload)
+          if (!report) {
+            return
+          }
           setSessionTokenUsage((current) => accumulateTokenUsage(current, report))
           if (report.investigationId) {
             setBoardTokenUsageByInvestigation((current) => ({

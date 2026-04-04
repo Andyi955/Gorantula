@@ -20,9 +20,11 @@ func buildSummaryFirstPersonaFindings(nodes []models.MemoryNode) string {
 
 func formatSummaryFirstPersonaNode(node models.MemoryNode) string {
 	var builder strings.Builder
+	normalizedTitle := normalizePersonaPromptWhitespace(node.Title)
+	normalizedSummary := normalizePersonaPromptWhitespace(node.Summary)
 	builder.WriteString(fmt.Sprintf("[NodeID: %s]\nSource: %s\nTitle: %s\nSummary: %s\n",
-		node.ID, node.SourceURL, node.Title, node.Summary))
-	if excerpt := buildPersonaFullTextExcerpt(node.Summary, node.FullText); excerpt != "" {
+		node.ID, node.SourceURL, normalizedTitle, normalizedSummary))
+	if excerpt := buildPersonaFullTextExcerpt(normalizedSummary, node.FullText); excerpt != "" {
 		builder.WriteString(fmt.Sprintf("Full Text Excerpt: %s\n", excerpt))
 	}
 	builder.WriteString("\n")

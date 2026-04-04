@@ -85,3 +85,33 @@ func TestBuildSummaryFirstPersonaFindingsIncludesExcerptOnlyWhenNeeded(t *testin
 		t.Fatalf("expected exactly one excerpt marker, got %d in %q", count, findings)
 	}
 }
+
+func TestBuildSummaryFirstPersonaFindingsNormalizesTitleAndSummaryWhitespace(t *testing.T) {
+	findings := buildSummaryFirstPersonaFindings([]models.MemoryNode{
+		{
+			ID:        "node-1",
+			SourceURL: "https://example.com/report",
+			Title:     "Example   Title\nwith spacing",
+			Summary:   "Example summary\nwith\tmessy   spacing.",
+			FullText:  "Example summary with messy spacing. More detail appears here for the persona.",
+		},
+	})
+
+	for _, unexpected := range []string{
+		"Title: Example   Title\nwith spacing",
+		"Summary: Example summary\nwith\tmessy   spacing.",
+	} {
+		if strings.Contains(findings, unexpected) {
+			t.Fatalf("expected findings to normalize whitespace, got %q", findings)
+		}
+	}
+
+	for _, expected := range []string{
+		"Title: Example Title with spacing",
+		"Summary: Example summary with messy spacing.",
+	} {
+		if !strings.Contains(findings, expected) {
+			t.Fatalf("expected findings to contain normalized field %q, got %q", expected, findings)
+		}
+	}
+}
