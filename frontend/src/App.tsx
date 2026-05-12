@@ -1,11 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import SpiderVisualizer from './components/SpiderVisualizer'
-import DetectiveBoard from './components/DetectiveBoard'
-import SettingsDashboard from './components/SettingsDashboard'
-import TimelineView from './components/TimelineView'
-import VaultChatbot from './components/VaultChatbot'
-import SynthesisPanel from './components/SynthesisPanel'
-import DiscoveryPanel from './components/DiscoveryPanel'
+import { Suspense, lazy, useState, useEffect, useRef, useCallback } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
 import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare } from 'lucide-react'
 import {
@@ -20,6 +13,14 @@ import {
 import { createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from './utils/hierarchicalCanvas'
 import { BROWSER_QA_CLEARED_EVENT, BROWSER_QA_SEEDED_EVENT, type BrowserQaSeedResult } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
+
+const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
+const DetectiveBoard = lazy(() => import('./components/DetectiveBoard'))
+const SettingsDashboard = lazy(() => import('./components/SettingsDashboard'))
+const TimelineView = lazy(() => import('./components/TimelineView'))
+const VaultChatbot = lazy(() => import('./components/VaultChatbot'))
+const SynthesisPanel = lazy(() => import('./components/SynthesisPanel'))
+const DiscoveryPanel = lazy(() => import('./components/DiscoveryPanel'))
 
 export interface DiscoveryRecord {
   id: string
@@ -52,6 +53,12 @@ const compactTokenFormatter = new Intl.NumberFormat('en-US', {
 })
 
 const formatCompactTokens = (value: number) => compactTokenFormatter.format(value)
+
+const tabFallback = (label: string) => (
+  <div className="flex h-full items-center justify-center bg-cyber-black text-xs font-bold uppercase tracking-[0.24em] text-cyber-cyan/70">
+    Loading {label}...
+  </div>
+)
 
 const formatTokenProviderBreakdown = (providerTotals?: Record<string, number>) => {
   const entries = Object.entries(providerTotals || {})
@@ -684,48 +691,52 @@ function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 relative">
-          <DiscoveryPanel
-            currentInvestigationId={currentInvestigationId}
-            discoveries={currentInvestigationId ? (discoveriesByInvestigation[currentInvestigationId] || []) : []}
-            hasUnread={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
-            onOpenDiscovery={(nodeId?: string) => {
-              if (!currentInvestigationId) return
-              handleNavigateDiscovery(currentInvestigationId, nodeId)
-            }}
-            onClear={() => {
-              if (!currentInvestigationId) return
+          <Suspense fallback={null}>
+            <DiscoveryPanel
+              currentInvestigationId={currentInvestigationId}
+              discoveries={currentInvestigationId ? (discoveriesByInvestigation[currentInvestigationId] || []) : []}
+              hasUnread={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
+              onOpenDiscovery={(nodeId?: string) => {
+                if (!currentInvestigationId) return
+                handleNavigateDiscovery(currentInvestigationId, nodeId)
+              }}
+              onClear={() => {
+                if (!currentInvestigationId) return
 
-              setDiscoveriesByInvestigation(prev => {
-                const next = { ...prev, [currentInvestigationId]: [] }
-                localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
-                return next
-              })
-              setUnreadDiscoveriesByInvestigation(prev => ({
-                ...prev,
-                [currentInvestigationId]: false,
-              }))
-            }}
-            onMarkRead={() => {
-              if (!currentInvestigationId) return
-              setUnreadDiscoveriesByInvestigation(prev => ({
-                ...prev,
-                [currentInvestigationId]: false,
-              }))
-            }}
-          />
-          <SynthesisPanel
-            sharedSocket={socketConfig.socket}
-            currentInvestigationId={currentInvestigationId}
-            onNavigateVault={handleNavigateSynthesis}
-            returnVaultId={returnVaultId}
-            investigations={investigations}
-            onMergeInvestigations={handleMergeInvestigations}
-          />
+                setDiscoveriesByInvestigation(prev => {
+                  const next = { ...prev, [currentInvestigationId]: [] }
+                  localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+                  return next
+                })
+                setUnreadDiscoveriesByInvestigation(prev => ({
+                  ...prev,
+                  [currentInvestigationId]: false,
+                }))
+              }}
+              onMarkRead={() => {
+                if (!currentInvestigationId) return
+                setUnreadDiscoveriesByInvestigation(prev => ({
+                  ...prev,
+                  [currentInvestigationId]: false,
+                }))
+              }}
+            />
+            <SynthesisPanel
+              sharedSocket={socketConfig.socket}
+              currentInvestigationId={currentInvestigationId}
+              onNavigateVault={handleNavigateSynthesis}
+              returnVaultId={returnVaultId}
+              investigations={investigations}
+              onMergeInvestigations={handleMergeInvestigations}
+            />
+          </Suspense>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <div className="h-full flex flex-col">
               <div className="flex-1 overflow-hidden">
-                <SpiderVisualizer sharedSocket={socketConfig.socket} />
+                <Suspense fallback={tabFallback('Spider View')}>
+                  <SpiderVisualizer sharedSocket={socketConfig.socket} />
+                </Suspense>
               </div>
 
               {/* Input Footer */}
@@ -807,36 +818,44 @@ function App() {
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'board' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-            <DetectiveBoard
-              investigationId={currentInvestigationId}
-              returnVaultId={returnVaultId}
-              sharedSocket={socketConfig.socket}
-              onDeepDiveNode={handleDeepDiveNode}
-              onNavigateToChild={handleNavigateToChild}
-              focusNodeId={focusedNodeId}
-              onReturnToParent={handleReturnToParent}
-              isMergedChild={currentInvestigation?.kind === 'merged-child'}
-            />
+            <Suspense fallback={tabFallback('Detective Board')}>
+              <DetectiveBoard
+                investigationId={currentInvestigationId}
+                returnVaultId={returnVaultId}
+                sharedSocket={socketConfig.socket}
+                onDeepDiveNode={handleDeepDiveNode}
+                onNavigateToChild={handleNavigateToChild}
+                focusNodeId={focusedNodeId}
+                onReturnToParent={handleReturnToParent}
+                isMergedChild={currentInvestigation?.kind === 'merged-child'}
+              />
+            </Suspense>
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'timeline' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-            <TimelineView
-              investigationId={currentInvestigationId}
-              onNavigateToNode={(nodeId) => {
-                setFocusedNodeId(nodeId);
-                setActiveTab('board');
-                // Clear the focus after a delay to allow re-triggering same node
-                setTimeout(() => setFocusedNodeId(null), 1000);
-              }}
-            />
+            <Suspense fallback={tabFallback('Timeline')}>
+              <TimelineView
+                investigationId={currentInvestigationId}
+                onNavigateToNode={(nodeId) => {
+                  setFocusedNodeId(nodeId);
+                  setActiveTab('board');
+                  // Clear the focus after a delay to allow re-triggering same node
+                  setTimeout(() => setFocusedNodeId(null), 1000);
+                }}
+              />
+            </Suspense>
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 flex flex-col ${activeTab === 'chat' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-            <VaultChatbot sharedSocket={socketConfig.socket} />
+            <Suspense fallback={tabFallback('Vault Chat')}>
+              <VaultChatbot sharedSocket={socketConfig.socket} />
+            </Suspense>
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'settings' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-            <SettingsDashboard />
+            <Suspense fallback={tabFallback('Settings')}>
+              <SettingsDashboard />
+            </Suspense>
           </div>
         </main>
       </div>

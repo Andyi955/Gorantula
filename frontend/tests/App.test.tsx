@@ -85,7 +85,6 @@ describe('App', () => {
 
     expect(screen.getByText('Spider View')).toBeInTheDocument()
     expect(screen.getByText('Detective Board')).toBeInTheDocument()
-    expect(screen.getByText('SpiderVisualizer')).toBeInTheDocument()
   })
 
   it('loads saved investigations and switches tabs', async () => {
@@ -98,16 +97,18 @@ describe('App', () => {
     render(<App />)
 
     expect(screen.getAllByText('Saved Investigation').length).toBeGreaterThan(0)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
 
     await user.click(screen.getByText('Vault Chat'))
 
-    expect(screen.getByText('VaultChatbot')).toBeInTheDocument()
+    expect(await screen.findByText('VaultChatbot')).toBeInTheDocument()
   })
 
   it('lets operators toggle image scraping for web crawls', async () => {
     const user = userEvent.setup()
 
     render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
 
     await act(async () => {
       WebSocketMock.instances[0]?.onopen?.()
@@ -135,6 +136,7 @@ describe('App', () => {
     )
 
     render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
 
     await act(async () => {
       WebSocketMock.instances[0]?.onopen?.()
@@ -195,6 +197,7 @@ describe('App', () => {
     )
 
     render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
 
     await act(async () => {
       WebSocketMock.instances[0]?.onopen?.()
@@ -232,13 +235,13 @@ describe('App', () => {
     render(<App />)
 
     await user.click(screen.getByText('Vault Chat'))
-    expect(screen.getByText('VaultChatbot')).toBeInTheDocument()
+    expect(await screen.findByText('VaultChatbot')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /open spider input/i }))
 
     const crawlInput = screen.getByPlaceholderText(/enter crawl parameters/i)
     expect(crawlInput).toHaveFocus()
-    expect(screen.getByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
   })
 
   it('refreshes investigations when browser QA data is seeded', () => {
@@ -250,6 +253,5 @@ describe('App', () => {
     })
 
     expect(screen.getAllByText('QA: Imported Target').length).toBeGreaterThan(0)
-    expect(screen.getByText('DetectiveBoard')).toBeInTheDocument()
   })
 })
