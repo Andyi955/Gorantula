@@ -171,8 +171,8 @@ func (p *OpenAICompatibleProvider) doRequest(ctx context.Context, request OpenAI
 	req.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.APIKey))
-	} else if p.NameID == "anthropic" {
-		req.Header.Set("x-api-key", p.APIKey)
+	}
+	if p.NameID == "anthropic" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 

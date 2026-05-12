@@ -70,15 +70,18 @@ func (b *Brain) ReloadModelProviders() error {
 func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain, error) {
 	ctx := context.Background()
 	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY environment variable not set")
+	var client *genai.Client
+	var model *genai.GenerativeModel
+	if apiKey != "" {
+		var err error
+		client, err = genai.NewClient(ctx, option.WithAPIKey(apiKey))
+		if err != nil {
+			return nil, err
+		}
+		model = client.GenerativeModel(envOrDefault("GEMINI_MODEL", DefaultGeminiModel))
+	} else {
+		log.Println("[Brain] GEMINI_API_KEY not set. Starting without Gemini and relying on other configured providers.")
 	}
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
-	if err != nil {
-		return nil, err
-	}
-
-	model := client.GenerativeModel("gemini-3-flash-preview")
 
 	brain := &Brain{
 		Client:     client,
@@ -124,12 +127,12 @@ func (b *Brain) GetSearchProvider() ModelProvider {
 		}
 	}
 
-	// Safe Fallback: if gemini is missing, use any available provider
+	// Safe Fallback: if the preferred provider is missing, use any available provider.
 	if provider == nil {
 		b.routerMu.RLock()
 		defer b.routerMu.RUnlock()
 		for _, p := range b.ModelRouter {
-			fmt.Printf("[Brain Warning] Gemini missing. Using '%s' as generic search fallback.\n", p.Name())
+			fmt.Printf("[Brain Warning] Preferred search provider '%s' unavailable. Using '%s' as generic search fallback.\n", pref, p.Name())
 			return p
 		}
 	}
