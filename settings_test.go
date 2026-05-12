@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -101,5 +102,57 @@ func TestSettingsHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSettingsHandler_GetExposesModelOverridesAndHosts(t *testing.T) {
+	tempEnvFile, err := os.CreateTemp("", ".env.test")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tempEnvFile.Name())
+
+	content := strings.Join([]string{
+		"OPENAI_API_KEY=sk-test-123456",
+		"OLLAMA_HOST=http://localhost:11434",
+		"LMSTUDIO_BASE_URL=http://localhost:1234/v1",
+		"DEEPSEEK_MODEL=deepseek-v4-pro",
+		"DEFAULT_SEARCH_MODEL=deepseek",
+	}, "\n")
+	if err := os.WriteFile(tempEnvFile.Name(), []byte(content), 0o600); err != nil {
+		t.Fatalf("failed to write temp env file: %v", err)
+	}
+
+	var envMutex sync.Mutex
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rr := httptest.NewRecorder()
+
+	handleSettings(rr, req, tempEnvFile.Name(), &envMutex, nil)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Keys map[string]string `json:"keys"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if payload.Keys["OLLAMA_HOST"] != "http://localhost:11434" {
+		t.Fatalf("expected passthrough ollama host, got %q", payload.Keys["OLLAMA_HOST"])
+	}
+	if payload.Keys["LMSTUDIO_BASE_URL"] != "http://localhost:1234/v1" {
+		t.Fatalf("expected passthrough lm studio base url, got %q", payload.Keys["LMSTUDIO_BASE_URL"])
+	}
+	if payload.Keys["DEEPSEEK_MODEL"] != "deepseek-v4-pro" {
+		t.Fatalf("expected passthrough deepseek model, got %q", payload.Keys["DEEPSEEK_MODEL"])
+	}
+	if payload.Keys["DEFAULT_SEARCH_MODEL"] != "deepseek" {
+		t.Fatalf("expected passthrough search model, got %q", payload.Keys["DEFAULT_SEARCH_MODEL"])
+	}
+	if payload.Keys["OPENAI_API_KEY"] == "sk-test-123456" {
+		t.Fatal("expected OPENAI_API_KEY to be masked")
 	}
 }

@@ -748,7 +748,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 		maskedMap := make(map[string]string)
 		sensitiveKeys := []string{
 			"GEMINI_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-			"OLLAMA_HOST", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "ZHIPUAI_API_KEY",
+			"DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "ZHIPUAI_API_KEY",
 			"MOONSHOT_API_KEY", "LM_API_TOKEN",
 		}
 		for _, k := range sensitiveKeys {
@@ -765,8 +765,20 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 		}
 
 		passthroughKeys := []string{
+			"OLLAMA_HOST",
+			"LMSTUDIO_BASE_URL",
 			"DEFAULT_SEARCH_MODEL",
 			"DEFAULT_PERSONA_MODEL",
+			"GEMINI_MODEL",
+			"OPENAI_MODEL",
+			"ANTHROPIC_MODEL",
+			"DEEPSEEK_MODEL",
+			"DASHSCOPE_MODEL",
+			"ZHIPUAI_MODEL",
+			"MOONSHOT_MODEL",
+			"MINIMAX_MODEL",
+			"OLLAMA_MODEL",
+			"LMSTUDIO_MODEL",
 		}
 		for _, k := range passthroughKeys {
 			maskedMap[k] = envMap[k]

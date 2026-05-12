@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,26 @@ func TestGetDefaultPersonas(t *testing.T) {
 
 		if p.Name == "" || p.Expertise == "" || p.Perspective == "" || p.SystemPrompt == "" {
 			t.Errorf("Persona %s has empty required fields", p.Name)
+		}
+	}
+}
+
+func TestGetDefaultPersonasUsesConfiguredProvider(t *testing.T) {
+	original := os.Getenv("DEFAULT_PERSONA_MODEL")
+	t.Cleanup(func() {
+		if original == "" {
+			os.Unsetenv("DEFAULT_PERSONA_MODEL")
+			return
+		}
+		os.Setenv("DEFAULT_PERSONA_MODEL", original)
+	})
+
+	os.Setenv("DEFAULT_PERSONA_MODEL", "deepseek")
+
+	personas := GetDefaultPersonas()
+	for _, persona := range personas {
+		if persona.ModelPref != "deepseek" {
+			t.Fatalf("expected persona %s to use deepseek, got %s", persona.Name, persona.ModelPref)
 		}
 	}
 }

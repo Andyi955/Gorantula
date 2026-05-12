@@ -7,23 +7,37 @@ import {
     seedBrowserQaData,
 } from '../utils/browserQaSeed';
 
-const PROVIDERS = [
-    { id: 'GEMINI_API_KEY', name: 'Google Gemini', default: '' },
-    { id: 'OPENAI_API_KEY', name: 'OpenAI (ChatGPT)', default: '' },
-    { id: 'ANTHROPIC_API_KEY', name: 'Anthropic (Claude)', default: '' },
-    { id: 'DEEPSEEK_API_KEY', name: 'DeepSeek', default: '' },
-    { id: 'DASHSCOPE_API_KEY', name: 'Qwen (DashScope)', default: '' },
-    { id: 'ZHIPUAI_API_KEY', name: 'GLM (Zhipu AI)', default: '' },
-    { id: 'MOONSHOT_API_KEY', name: 'Kimi (Moonshot)', default: '' },
-    { id: 'MINIMAX_API_KEY', name: 'MiniMax', default: '' },
-    { id: 'OLLAMA_HOST', name: 'Ollama Base URL', default: 'http://localhost:11434' },
-    { id: 'LM_API_TOKEN', name: 'LM Studio Token', default: '' }
+const CREDENTIAL_FIELDS = [
+    { id: 'GEMINI_API_KEY', name: 'Google Gemini API Key', default: '', inputType: 'password' },
+    { id: 'OPENAI_API_KEY', name: 'OpenAI API Key', default: '', inputType: 'password' },
+    { id: 'ANTHROPIC_API_KEY', name: 'Anthropic API Key', default: '', inputType: 'password' },
+    { id: 'DEEPSEEK_API_KEY', name: 'DeepSeek API Key', default: '', inputType: 'password' },
+    { id: 'DASHSCOPE_API_KEY', name: 'DashScope API Key', default: '', inputType: 'password' },
+    { id: 'ZHIPUAI_API_KEY', name: 'Zhipu AI API Key', default: '', inputType: 'password' },
+    { id: 'MOONSHOT_API_KEY', name: 'Moonshot API Key', default: '', inputType: 'password' },
+    { id: 'MINIMAX_API_KEY', name: 'MiniMax API Key', default: '', inputType: 'password' },
+    { id: 'OLLAMA_HOST', name: 'Ollama Base URL', default: 'http://localhost:11434', inputType: 'text' },
+    { id: 'LMSTUDIO_BASE_URL', name: 'LM Studio Base URL', default: 'http://localhost:1234/v1', inputType: 'text' },
+    { id: 'LM_API_TOKEN', name: 'LM Studio Token', default: '', inputType: 'password' }
+];
+
+const MODEL_FIELDS = [
+    { id: 'GEMINI_MODEL', name: 'Gemini Default', default: 'gemini-2.5-flash' },
+    { id: 'OPENAI_MODEL', name: 'OpenAI Default', default: 'gpt-5.4-mini' },
+    { id: 'ANTHROPIC_MODEL', name: 'Anthropic Default', default: 'claude-sonnet-4-6' },
+    { id: 'DEEPSEEK_MODEL', name: 'DeepSeek Default', default: 'deepseek-v4-flash' },
+    { id: 'DASHSCOPE_MODEL', name: 'DashScope Default', default: 'qwen3.6-plus' },
+    { id: 'ZHIPUAI_MODEL', name: 'Zhipu AI Default', default: 'glm-5-turbo' },
+    { id: 'MOONSHOT_MODEL', name: 'Moonshot Default', default: 'kimi-k2.6' },
+    { id: 'MINIMAX_MODEL', name: 'MiniMax Default', default: 'MiniMax-M2.7-highspeed' },
+    { id: 'OLLAMA_MODEL', name: 'Ollama Default', default: 'qwen3-coder' },
+    { id: 'LMSTUDIO_MODEL', name: 'LM Studio Default', default: 'qwen3.6' }
 ];
 
 const ROUTING_OPTIONS = [
     { id: 'gemini', name: 'Google Gemini' },
-    { id: 'openai', name: 'OpenAI (ChatGPT)' },
-    { id: 'anthropic', name: 'Anthropic (Claude)' },
+    { id: 'openai', name: 'OpenAI' },
+    { id: 'anthropic', name: 'Anthropic Claude' },
     { id: 'deepseek', name: 'DeepSeek' },
     { id: 'qwen', name: 'Qwen (DashScope)' },
     { id: 'zhipuai', name: 'GLM (Zhipu AI)' },
@@ -37,6 +51,19 @@ const ROUTING_SETTINGS = [
     { id: 'DEFAULT_SEARCH_MODEL', name: 'Internet Browsing & Search', desc: 'Synthesizing information' },
     { id: 'DEFAULT_PERSONA_MODEL', name: 'Background Personas', desc: 'Multi-agent reasoning' }
 ];
+
+const ROUTING_REQUIREMENTS: Record<string, string> = {
+    gemini: 'GEMINI_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    anthropic: 'ANTHROPIC_API_KEY',
+    deepseek: 'DEEPSEEK_API_KEY',
+    qwen: 'DASHSCOPE_API_KEY',
+    zhipuai: 'ZHIPUAI_API_KEY',
+    moonshot: 'MOONSHOT_API_KEY',
+    minimax: 'MINIMAX_API_KEY',
+    ollama: 'OLLAMA_HOST',
+    lmstudio: 'LMSTUDIO_BASE_URL',
+};
 
 const SettingsDashboard = () => {
     const [keys, setKeys] = useState<Record<string, string>>({});
@@ -128,7 +155,7 @@ const SettingsDashboard = () => {
                     <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
                         <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
                         <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Cpu size={20} /> Model Routing</h3>
-                        <p className="text-sm text-gray-400 mb-6">Select the default neural models for various cognitive tasks. Make sure you have configured the corresponding API keys below.</p>
+                        <p className="text-sm text-gray-400 mb-6">Select the default provider route for each task. Autoselect prefers Gemini when configured and otherwise falls back to the next available provider.</p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {ROUTING_SETTINGS.map(r => (
@@ -141,24 +168,14 @@ const SettingsDashboard = () => {
                                         onChange={(e) => handleChange(r.id, e.target.value)}
                                         className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono text-white"
                                     >
-                                        <option value="">-- Autoselect (Gemini) --</option>
+                                        <option value="">-- Autoselect (Best Available) --</option>
                                         {ROUTING_OPTIONS.map(opt => {
-                                            // Determine if the option should be disabled because the key is missing
-                                            let disabled = false;
-
-                                            if (opt.id === 'openai' && !keys['OPENAI_API_KEY']) disabled = true;
-                                            if (opt.id === 'deepseek' && !keys['DEEPSEEK_API_KEY']) disabled = true;
-                                            if (opt.id === 'qwen' && !keys['DASHSCOPE_API_KEY']) disabled = true;
-                                            if (opt.id === 'glm' && !keys['ZHIPU_API_KEY']) disabled = true;
-                                            if (opt.id === 'kimi' && !keys['MOONSHOT_API_KEY']) disabled = true;
-                                            if (opt.id === 'minimax' && !keys['MINIMAX_API_KEY']) disabled = true;
-                                            if (opt.id === 'ollama' && !keys['OLLAMA_HOST']) disabled = true;
-                                            if (opt.id === 'lmstudio' && !keys['LMSTUDIO_HOST']) disabled = true;
-                                            if (opt.id === 'anthropic' && !keys['ANTHROPIC_API_KEY']) disabled = true;
+                                            const requirementKey = ROUTING_REQUIREMENTS[opt.id];
+                                            const disabled = requirementKey ? !keys[requirementKey] : false;
 
                                             return (
                                                 <option key={opt.id} value={opt.id} disabled={disabled}>
-                                                    {opt.name} {disabled ? '(Requires Key)' : ''}
+                                                    {opt.name} {disabled ? '(Requires Setup)' : ''}
                                                 </option>
                                             )
                                         })}
@@ -171,23 +188,47 @@ const SettingsDashboard = () => {
 
                     <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
                         <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
-                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Lock size={20} /> API Credentials</h3>
-                        <p className="text-sm text-gray-400 mb-2">Configure API keys for external intelligences and local LLM routers. Blank fields will unset the environment configuration.</p>
+                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Lock size={20} /> API Credentials & Local Hosts</h3>
+                        <p className="text-sm text-gray-400 mb-2">Configure provider keys plus the local runtime hosts used by Ollama and LM Studio. Blank fields will unset the environment configuration.</p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                            {PROVIDERS.map(p => (
-                                <div key={p.id} className="flex flex-col gap-2">
+                            {CREDENTIAL_FIELDS.map(field => (
+                                <div key={field.id} className="flex flex-col gap-2">
                                     <label className="text-xs font-bold text-cyber-cyan tracking-widest uppercase flex items-center gap-2">
-                                        <Lock size={12} className="opacity-70" /> {p.name}
+                                        <Lock size={12} className="opacity-70" /> {field.name}
                                     </label>
                                     <input
-                                        type="password"
-                                        value={keys[p.id] || ''}
-                                        onChange={(e) => handleChange(p.id, e.target.value)}
-                                        placeholder={p.default || `Enter ${p.id}...`}
+                                        type={field.inputType}
+                                        value={keys[field.id] || ''}
+                                        onChange={(e) => handleChange(field.id, e.target.value)}
+                                        placeholder={field.default || `Enter ${field.id}...`}
                                         className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono placeholder:text-gray-700 placeholder:italic"
                                     />
-                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {p.id}</span>
+                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {field.id}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
+                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Cpu size={20} /> Provider Model IDs</h3>
+                        <p className="text-sm text-gray-400 mb-2">Override the default model ID used for each provider. Leave a field blank to use the built-in recommended default for that provider.</p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                            {MODEL_FIELDS.map(field => (
+                                <div key={field.id} className="flex flex-col gap-2">
+                                    <label className="text-xs font-bold text-cyber-cyan tracking-widest uppercase flex items-center gap-2">
+                                        <Cpu size={12} className="opacity-70" /> {field.name}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={keys[field.id] || ''}
+                                        onChange={(e) => handleChange(field.id, e.target.value)}
+                                        placeholder={field.default}
+                                        className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono placeholder:text-gray-700 placeholder:italic"
+                                    />
+                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {field.id}</span>
                                 </div>
                             ))}
                         </div>

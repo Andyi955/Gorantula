@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/generative-ai-go/genai"
@@ -62,11 +63,11 @@ func NewMiniMaxClient() (*MiniMaxClient, error) {
 
 	return &MiniMaxClient{
 		APIKey:  apiKey,
-		BaseURL: "https://www.minimax.io/v1", // Coding Plan uses www.minimax.io, not api.minimax.chat
+		BaseURL: "https://api.minimax.io/v1",
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		Model: "MiniMax-M2.5-highspeed", // Plus High-Speed model
+		Model: envOrDefault("MINIMAX_MODEL", DefaultMiniMaxModel),
 	}, nil
 }
 
@@ -336,7 +337,9 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 	router := make(map[string]ModelProvider)
 
 	// Add Gemini provider
-	router["gemini"] = &GeminiProvider{brain: brain}
+	if brain != nil && brain.Model != nil {
+		router["gemini"] = &GeminiProvider{brain: brain}
+	}
 
 	// Add MiniMax provider if available
 	minimax, err := NewMiniMaxClient()
@@ -353,7 +356,18 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			NameID:     "openai",
 			APIKey:     key,
 			BaseURL:    "https://api.openai.com/v1",
-			Model:      "gpt-4o",
+			Model:      envOrDefault("OPENAI_MODEL", DefaultOpenAIModel),
+			HTTPClient: httpClient,
+			brain:      brain,
+		}
+	}
+
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		router["anthropic"] = &OpenAICompatibleProvider{
+			NameID:     "anthropic",
+			APIKey:     key,
+			BaseURL:    "https://api.anthropic.com/v1",
+			Model:      envOrDefault("ANTHROPIC_MODEL", DefaultAnthropicModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}
@@ -364,7 +378,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			NameID:     "deepseek",
 			APIKey:     key,
 			BaseURL:    "https://api.deepseek.com/v1",
-			Model:      "deepseek-chat",
+			Model:      envOrDefault("DEEPSEEK_MODEL", DefaultDeepSeekModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}
@@ -375,7 +389,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			NameID:     "qwen",
 			APIKey:     key,
 			BaseURL:    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-			Model:      "qwen-plus",
+			Model:      envOrDefault("DASHSCOPE_MODEL", DefaultDashScopeModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}
@@ -386,7 +400,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 			NameID:     "zhipuai",
 			APIKey:     key,
 			BaseURL:    "https://open.bigmodel.cn/api/paas/v4",
-			Model:      "glm-4-plus",
+			Model:      envOrDefault("ZHIPUAI_MODEL", DefaultZhipuAIModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}
@@ -396,8 +410,8 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		router["moonshot"] = &OpenAICompatibleProvider{
 			NameID:     "moonshot",
 			APIKey:     key,
-			BaseURL:    "https://api.moonshot.cn/v1",
-			Model:      "moonshot-v1-8k",
+			BaseURL:    "https://api.moonshot.ai/v1",
+			Model:      envOrDefault("MOONSHOT_MODEL", DefaultMoonshotModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}
@@ -407,18 +421,19 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		router["ollama"] = &OpenAICompatibleProvider{
 			NameID:     "ollama",
 			BaseURL:    host + "/v1",
-			Model:      "llama3",
+			Model:      envOrDefault("OLLAMA_MODEL", DefaultOllamaModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}
 	}
 
-	if token := os.Getenv("LM_API_TOKEN"); token != "" {
+	lmStudioBaseURL := envOrDefault("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+	if token := os.Getenv("LM_API_TOKEN"); token != "" || strings.TrimSpace(os.Getenv("LMSTUDIO_BASE_URL")) != "" {
 		router["lmstudio"] = &OpenAICompatibleProvider{
 			NameID:     "lmstudio",
 			APIKey:     token,
-			BaseURL:    "http://localhost:1234/v1",
-			Model:      "local-model",
+			BaseURL:    lmStudioBaseURL,
+			Model:      envOrDefault("LMSTUDIO_MODEL", DefaultLMStudioModel),
 			HTTPClient: httpClient,
 			brain:      brain,
 		}

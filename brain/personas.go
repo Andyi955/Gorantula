@@ -12,7 +12,7 @@ type Persona struct {
 	Expertise    string `json:"expertise"`    // Area of focus (e.g., "timeline analysis", "entity extraction")
 	Perspective  string `json:"perspective"`  // How they approach analysis
 	Questions    string `json:"questions"`    // Questions they specifically ask
-	ModelPref    string `json:"modelPref"`    // Preferred model (gemini or minimax)
+	ModelPref    string `json:"modelPref"`    // Preferred provider route ID (for example gemini, openai, deepseek)
 	SystemPrompt string `json:"systemPrompt"` // Custom system instructions for this persona
 }
 

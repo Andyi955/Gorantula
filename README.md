@@ -66,12 +66,25 @@ BRAVE_API_KEY=your_brave_api_key
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 DEEPSEEK_API_KEY=
-QWEN_API_KEY=
-GLM_API_KEY=
-KIMI_API_KEY=
+DASHSCOPE_API_KEY=
+ZHIPUAI_API_KEY=
+MOONSHOT_API_KEY=
 MINIMAX_API_KEY=
 OLLAMA_HOST=http://localhost:11434
-LMSTUDIO_HOST=http://localhost:1234
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
+LM_API_TOKEN=
+
+# Optional model overrides:
+GEMINI_MODEL=gemini-2.5-flash
+OPENAI_MODEL=gpt-5.4-mini
+ANTHROPIC_MODEL=claude-sonnet-4-6
+DEEPSEEK_MODEL=deepseek-v4-flash
+DASHSCOPE_MODEL=qwen3.6-plus
+ZHIPUAI_MODEL=glm-5-turbo
+MOONSHOT_MODEL=kimi-k2.6
+MINIMAX_MODEL=MiniMax-M2.7-highspeed
+OLLAMA_MODEL=qwen3-coder
+LMSTUDIO_MODEL=qwen3.6
 ```
 
 ### 3. Installation
