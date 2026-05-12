@@ -1,6 +1,6 @@
 import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
+import { Line, Mesh, Vector3 } from 'three';
 
 interface SpiderSceneProps {
     legStates: Record<number, string>;
@@ -17,15 +17,15 @@ const getLegColor = (state: string) => {
 };
 
 export const SpiderScene: React.FC<SpiderSceneProps> = ({ legStates, brainState }) => {
-    const coreRef = useRef<THREE.Mesh>(null);
-    const nodesRef = useRef<(THREE.Mesh | null)[]>([]);
-    const linesRef = useRef<(THREE.Line | null)[]>([]);
+    const coreRef = useRef<Mesh>(null);
+    const nodesRef = useRef<(Mesh | null)[]>([]);
+    const linesRef = useRef<(Line | null)[]>([]);
 
     const radius = 6;
     const basePositions = useMemo(() => {
         return Array.from({ length: 8 }).map((_, i) => {
             const angle = (i * Math.PI * 2) / 8;
-            return new THREE.Vector3(
+            return new Vector3(
                 Math.cos(angle) * radius,
                 Math.sin(angle) * radius,
                 0
@@ -37,7 +37,7 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({ legStates, brainState 
         const time = state.clock.getElapsedTime();
 
         // 1. Core Logic
-        let corePos = new THREE.Vector3(0, 0, 0);
+        let corePos = new Vector3(0, 0, 0);
         if (coreRef.current) {
             coreRef.current.position.y = Math.sin(time * 2) * 0.2;
             corePos = coreRef.current.position.clone();
@@ -61,10 +61,10 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({ legStates, brainState 
             const isActive = legState !== 'Idle';
 
             // Calculate target position
-            const targetPos = new THREE.Vector3().copy(basePos);
+            const targetPos = new Vector3().copy(basePos);
 
             // Add global spin to the entire web conceptually
-            targetPos.applyAxisAngle(new THREE.Vector3(0, 0, 1), time * 0.2);
+            targetPos.applyAxisAngle(new Vector3(0, 0, 1), time * 0.2);
 
             if (isActive) {
                 targetPos.x += Math.sin(time * 20 + i) * 0.5;
@@ -134,7 +134,7 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({ legStates, brainState 
                         </mesh>
 
                         {/* @ts-ignore */}
-                        <line ref={(el: THREE.Line | null) => { linesRef.current[i] = el; }}>
+                        <line ref={(el: Line | null) => { linesRef.current[i] = el; }}>
                             <bufferGeometry>
                                 <bufferAttribute
                                     attach="attributes-position"

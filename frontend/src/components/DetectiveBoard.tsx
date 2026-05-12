@@ -41,8 +41,6 @@ import {
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X } from 'lucide-react';
-import { exportAsPng, exportAsSvg, exportAsPdf } from '../utils/ExportUtils';
-
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -2532,11 +2530,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const handleExport = async (type: 'png' | 'svg' | 'pdf') => {
         setShowExportMenu(false);
         const boardElementId = 'detective-board-flow';
+        const exportUtils = await import('../utils/ExportUtils');
 
         if (type === 'png') {
-            await exportAsPng(boardElementId);
+            await exportUtils.exportAsPng(boardElementId);
         } else if (type === 'svg') {
-            await exportAsSvg(boardElementId);
+            await exportUtils.exportAsSvg(boardElementId);
         } else if (type === 'pdf') {
             const currentInv = JSON.parse(localStorage.getItem('gorantula_investigations') || '[]')
                 .find((i: any) => i.id === investigationId);
@@ -2555,7 +2554,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const vaultSaved = localStorage.getItem(`vault_result_${investigationId}`);
             const finalSynthesis = vaultSaved ? JSON.parse(vaultSaved).result : "No synthesis available for this investigation.";
 
-            await exportAsPdf({
+            await exportUtils.exportAsPdf({
                 topic: currentInv?.topic || 'Unknown Investigation',
                 finalSynthesis: finalSynthesis,
                 nodes: nodesData
