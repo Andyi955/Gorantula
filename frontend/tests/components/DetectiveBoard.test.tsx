@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
@@ -19,7 +19,7 @@ vi.mock('reactflow', () => {
       nodeTypes = {},
     }: {
       children?: React.ReactNode
-      nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown> }>
+      nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
       nodeTypes?: Record<string, React.ComponentType<any>>
     }) =>
       React.createElement(
@@ -32,24 +32,32 @@ vi.mock('reactflow', () => {
             return null
           }
 
-          return React.createElement(NodeComponent, {
-            key: node.id,
-            id: node.id,
-            type: node.type || 'custom',
-            selected: false,
-            dragging: false,
-            zIndex: 1,
-            isConnectable: true,
-            positionAbsoluteX: 0,
-            positionAbsoluteY: 0,
-            data: node.data,
-          })
+          return React.createElement(
+            'div',
+            {
+              key: node.id,
+              'data-testid': `mock-node-shell-${node.id}`,
+              'data-position-x': node.position?.x,
+              'data-position-y': node.position?.y,
+            },
+            React.createElement(NodeComponent, {
+              id: node.id,
+              type: node.type || 'custom',
+              selected: false,
+              dragging: false,
+              zIndex: 1,
+              isConnectable: true,
+              positionAbsoluteX: 0,
+              positionAbsoluteY: 0,
+              data: node.data,
+            }),
+          )
         }),
         children,
       ),
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
     Background: () => null,
-    Controls: () => null,
+    Controls: () => React.createElement('div', { 'data-testid': 'reactflow-controls' }),
     MiniMap: ({ onClick, ...props }: React.HTMLAttributes<HTMLDivElement> & { onClick?: (event: React.MouseEvent, position: { x: number; y: number }) => void }) =>
       React.createElement('div', {
         ...props,
@@ -85,6 +93,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       fullText?: string
       images?: Array<{ id?: string; path: string }>
       isEditing?: boolean
+      isRecentlyImported?: boolean
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -97,6 +106,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       { 'data-testid': `mock-node-${id}` },
       data?.title ? React.createElement('span', null, data.title) : null,
       data?.summary ? React.createElement('span', null, data.summary) : null,
+      data?.isRecentlyImported ? React.createElement('span', null, 'recent import') : null,
       React.createElement(
         'button',
         {
@@ -385,6 +395,12 @@ describe('DetectiveBoard relationship legend', () => {
     expect(screen.getByTestId('minimap-panel')).toBeInTheDocument()
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
+  })
+
+  it('does not render the default React Flow controls', () => {
+    renderBoard()
+
+    expect(screen.queryByTestId('reactflow-controls')).not.toBeInTheDocument()
   })
 
   it('toggles the minimap size from the expand control', async () => {
@@ -889,6 +905,85 @@ describe('DetectiveBoard relationship legend', () => {
 
     await user.click(screen.getByTitle('Close image viewer'))
     expect(screen.queryByTestId('node-image-lightbox')).not.toBeInTheDocument()
+  })
+
+  it('adds manual evidence near the visible board center using strict-grid snapping', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+
+    const flow = document.getElementById('detective-board-flow')
+    expect(flow).not.toBeNull()
+    const flowElement = flow as HTMLDivElement
+    flowElement.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 600,
+        width: 800,
+        height: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect
+
+    await user.click(screen.getByRole('button', { name: /add evidence/i }))
+
+    const newNode = await screen.findByTestId(/^mock-node-shell-manual-/)
+    expect(newNode).toHaveAttribute('data-position-x', '240')
+    expect(newNode).toHaveAttribute('data-position-y', '216')
+  })
+
+  it('places imported evidence near the visible board center and briefly highlights it', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      const flow = document.getElementById('detective-board-flow')
+      expect(flow).not.toBeNull()
+      const flowElement = flow as HTMLDivElement
+      flowElement.getBoundingClientRect = () =>
+        ({
+          left: 0,
+          top: 0,
+          right: 800,
+          bottom: 600,
+          width: 800,
+          height: 600,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'imported-node-a',
+            title: '[IMPORTED] A',
+            summary: 'Imported summary',
+            fullText: 'Imported summary',
+          },
+        })
+      })
+
+      const importedNode = screen.getByTestId('mock-node-shell-imported-node-a')
+      expect(importedNode).toHaveAttribute('data-position-x', '240')
+      expect(importedNode).toHaveAttribute('data-position-y', '216')
+      expect(screen.getByText('recent import')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(screen.queryByText('recent import')).not.toBeInTheDocument()
+    } finally {
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('saves edited text without sending manual node analysis', async () => {

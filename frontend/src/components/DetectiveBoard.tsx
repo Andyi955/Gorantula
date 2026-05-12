@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import ReactFlow, {
     Background,
     BackgroundVariant,
-    Controls,
     MiniMap,
     applyEdgeChanges,
     applyNodeChanges,
@@ -442,6 +441,20 @@ const MINIMAP_PANEL_DIMENSIONS = {
 } as const;
 const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
 const BOARD_CONTROLS_PANEL_MARGIN = 16;
+const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
+
+const isImportedEvidenceNode = (nodeLike: { id?: string; title?: string } | null | undefined) =>
+    Boolean(nodeLike?.title?.includes('[IMPORTED]') || nodeLike?.id?.startsWith('imported-'));
+
+const stripTransientNodeData = (node: Node): Node => ({
+    ...node,
+    data: {
+        ...node.data,
+        isRecentlyImported: false,
+    }
+});
+
+const sanitizeNodesForPersistence = (nodes: Node[]) => nodes.map(stripTransientNodeData);
 
 const getMiniMapNodeColor = (node: Node) => {
     if (node.data?.portalKind === 'merged-child') {
@@ -520,6 +533,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const persistTimerRef = useRef<number | null>(null);
     const marqueePointerIdRef = useRef<number | null>(null);
     const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
+    const recentImportTimeoutsRef = useRef<Map<string, number>>(new Map());
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -647,6 +661,72 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             duration: 180,
         });
     }, [getZoom, setCenter]);
+
+    const getViewportCenteredNodePosition = useCallback((
+        frame: { width: number; height: number },
+        mode: BoardMode = boardMode
+    ) => {
+        const wrapperRect = flowWrapperRef.current?.getBoundingClientRect();
+        const screenCenter = wrapperRect
+            ? {
+                x: wrapperRect.left + wrapperRect.width / 2,
+                y: wrapperRect.top + wrapperRect.height / 2,
+            }
+            : {
+                x: typeof window !== 'undefined' ? window.innerWidth / 2 : frame.width / 2,
+                y: typeof window !== 'undefined' ? window.innerHeight / 2 : frame.height / 2,
+            };
+        const flowCenter = screenToFlowPosition(screenCenter);
+        const rawPosition = {
+            x: flowCenter.x - (frame.width / 2),
+            y: flowCenter.y - (frame.height / 2),
+        };
+
+        if (mode === 'strict-grid') {
+            return {
+                x: snapCoordinateToGrid(rawPosition.x),
+                y: snapCoordinateToGrid(rawPosition.y),
+            };
+        }
+
+        return rawPosition;
+    }, [boardMode, screenToFlowPosition]);
+
+    const markNodeAsRecentlyImported = useCallback((nodeId: string) => {
+        const activeTimeout = recentImportTimeoutsRef.current.get(nodeId);
+        if (activeTimeout) {
+            window.clearTimeout(activeTimeout);
+        }
+
+        setNodes((currentNodes) => currentNodes.map((node) => (
+            node.id === nodeId
+                ? {
+                    ...node,
+                    data: {
+                        ...node.data,
+                        isRecentlyImported: true,
+                    }
+                }
+                : node
+        )));
+
+        const timeoutId = window.setTimeout(() => {
+            recentImportTimeoutsRef.current.delete(nodeId);
+            setNodes((currentNodes) => currentNodes.map((node) => (
+                node.id === nodeId
+                    ? {
+                        ...node,
+                        data: {
+                            ...node.data,
+                            isRecentlyImported: false,
+                        }
+                    }
+                    : node
+            )));
+        }, RECENT_IMPORT_HIGHLIGHT_DURATION_MS);
+
+        recentImportTimeoutsRef.current.set(nodeId, timeoutId);
+    }, []);
 
     const decorateStrictGridEdges = useCallback((nextEdges: Edge[], nextNodes: Node[]) => {
         const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
@@ -1483,6 +1563,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                     onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                     isDeepDiveSource: !!n.data?.isDeepDiveSource,
+                    isRecentlyImported: false,
                     boardMode: savedMode,
                 }
             }});
@@ -1527,7 +1608,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
             persistBoardStateForInvestigation(investigationId, {
                 mode: boardMode,
-                nodes,
+                nodes: sanitizeNodesForPersistence(nodes),
                 edges,
                 pendingIntegrationNodeIds,
                 synthesisAlerts: existingState?.synthesisAlerts || [],
@@ -1554,12 +1635,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
         persistBoardStateForInvestigation(investigationId, {
             mode: boardMode,
-            nodes: nodesRef.current,
+            nodes: sanitizeNodesForPersistence(nodesRef.current),
             edges: edgesRef.current,
             pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current,
             synthesisAlerts: existingState?.synthesisAlerts || [],
         });
     }, [boardMode, investigationId, loadedInvestigationId]);
+
+    useEffect(() => () => {
+        recentImportTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        recentImportTimeoutsRef.current.clear();
+    }, []);
 
     const onNodesChange: OnNodesChange = useCallback(
         (changes) => {
@@ -2035,11 +2121,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             if (msg.type === 'MEMORY_NODE_GATHERED') {
                 const { node, vaultId, append } = msg.payload;
                 const frame = calculateNodeFrame(node.summary || '', node.fullText || '', false, nodeHasImages(node.images));
+                const targetBoardMode = vaultId && vaultId !== investigationId
+                    ? (parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`))?.mode === 'legacy' ? 'legacy' : 'strict-grid')
+                    : boardMode;
+                const isImported = isImportedEvidenceNode(node);
 
                 const newNode: Node = {
                     id: node.id,
                     type: 'custom',
-                    zIndex: boardMode === 'strict-grid' ? STRICT_GRID_NODE_Z_INDEX : undefined,
+                    zIndex: targetBoardMode === 'strict-grid' ? STRICT_GRID_NODE_Z_INDEX : undefined,
                     style: frame,
                     data: {
                         ...node,
@@ -2055,13 +2145,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                         onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                         isDeepDiveSource: false,
+                        isRecentlyImported: isImported,
                         expanded: false,
-                        boardMode,
+                        boardMode: targetBoardMode,
                     },
-                    position: {
-                        x: boardMode === 'strict-grid' ? snapCoordinateToGrid(Math.random() * 400 + 100) : Math.random() * 400 + 100,
-                        y: boardMode === 'strict-grid' ? snapCoordinateToGrid(Math.random() * 400 + 100) : Math.random() * 400 + 100,
-                    },
+                    position: getViewportCenteredNodePosition(frame, targetBoardMode),
                     sourcePosition: Position.Right,
                     targetPosition: Position.Left
                 };
@@ -2070,12 +2158,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 if (vaultId && vaultId !== investigationId) {
                     console.log(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
                     const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
-                    let vaultData: PersistedBoardState = savedState || { mode: boardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
+                    let vaultData: PersistedBoardState = savedState || { mode: targetBoardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
 
                     const nodeExists = (vaultData.nodes || []).some((n: any) => n.id === node.id);
                     if (!nodeExists) {
-                        vaultData.nodes = [...(vaultData.nodes || []), newNode];
-                        vaultData.mode = vaultData.mode || boardMode;
+                        vaultData.nodes = [...(vaultData.nodes || []), stripTransientNodeData(newNode)];
+                        vaultData.mode = vaultData.mode || targetBoardMode;
                         if (append) {
                             const currentIds = vaultData.pendingIntegrationNodeIds || [];
                             vaultData.pendingIntegrationNodeIds = currentIds.includes(node.id) ? currentIds : [...currentIds, node.id];
@@ -2094,6 +2182,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     if (nds.find(n => n.id === node.id)) return nds;
                     return [...nds, newNode];
                 });
+                if (isImported) {
+                    markNodeAsRecentlyImported(node.id);
+                }
                 if (append && vaultId === investigationId) {
                     addPendingIntegrationNodeId(node.id);
                 }
@@ -2220,7 +2311,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [boardMode, sharedSocket, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
+    }, [boardMode, sharedSocket, getViewportCenteredNodePosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -2230,7 +2321,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             id,
             type: 'custom',
             zIndex: STRICT_GRID_NODE_Z_INDEX,
-            position: { x: snapCoordinateToGrid(96), y: snapCoordinateToGrid(96) },
+            position: getViewportCenteredNodePosition(frame, 'strict-grid'),
             style: frame,
             data: {
                 id,
@@ -2250,6 +2341,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 onSetEditing: (id: string | null) => handleSetEditing(id),
                 isEditing: true,
                 isDeepDiveSource: false,
+                isRecentlyImported: false,
                 expanded: true,
                 boardMode: 'strict-grid',
             },
@@ -2257,7 +2349,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
+    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
 
     // Stable nodeTypes definition to prevent re-mounting all nodes on every render
     const nodeTypes = useMemo(() => ({
@@ -2835,7 +2927,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 16px rgba(0,243,255,0.08), 0 0 0 1px rgba(120,255,255,0.08)',
                         }}
                     />
-                    <Controls />
                 </ReactFlow>
                 <div
                     data-testid="minimap-panel"
