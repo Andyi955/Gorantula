@@ -22,7 +22,7 @@ const CREDENTIAL_FIELDS = [
 ];
 
 const MODEL_FIELDS = [
-    { id: 'GEMINI_MODEL', name: 'Gemini Default', default: 'gemini-2.5-flash' },
+    { id: 'GEMINI_MODEL', name: 'Gemini Default', default: 'gemini-3-flash-preview' },
     { id: 'OPENAI_MODEL', name: 'OpenAI Default', default: 'gpt-5.4-mini' },
     { id: 'ANTHROPIC_MODEL', name: 'Anthropic Default', default: 'claude-sonnet-4-6' },
     { id: 'DEEPSEEK_MODEL', name: 'DeepSeek Default', default: 'deepseek-v4-flash' },

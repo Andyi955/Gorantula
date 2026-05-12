@@ -75,7 +75,7 @@ LMSTUDIO_BASE_URL=http://localhost:1234/v1
 LM_API_TOKEN=
 
 # Optional model overrides:
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3-flash-preview
 OPENAI_MODEL=gpt-5.4-mini
 ANTHROPIC_MODEL=claude-sonnet-4-6
 DEEPSEEK_MODEL=deepseek-v4-flash

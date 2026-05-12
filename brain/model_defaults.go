@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	DefaultGeminiModel    = "gemini-2.5-flash"
+	DefaultGeminiModel    = "gemini-3-flash-preview"
 	DefaultOpenAIModel    = "gpt-5.4-mini"
 	DefaultAnthropicModel = "claude-sonnet-4-6"
 	DefaultDeepSeekModel  = "deepseek-v4-flash"

@@ -145,7 +145,7 @@ func ExecuteMediaTask(legID int, targetQuery string, broadcast models.Broadcaste
 	// 3. Prompt Gemini
 	geminiModel := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
 	if geminiModel == "" {
-		geminiModel = "gemini-2.5-flash"
+		geminiModel = "gemini-3-flash-preview"
 	}
 	model := client.GenerativeModel(geminiModel)
 	prompt := genai.Text("You are an expert transcriptionist and intelligence analyst. Please listen to the attached media file. First, optionally provide a brief summary of what is discussed. Then, extract ALL critical facts exactly as they are stated, focusing on details relevant to a deep dive investigation. If the content contains names, dates, amounts, or strong claims, enumerate them clearly.")
