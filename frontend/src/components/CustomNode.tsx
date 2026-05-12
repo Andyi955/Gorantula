@@ -255,6 +255,22 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const recentImportShellClass = data.isRecentlyImported
         ? 'ring-2 ring-amber-300/90 shadow-[0_0_0_2px_rgba(251,191,36,0.25),0_0_34px_rgba(245,158,11,0.34)]'
         : '';
+    const nodeShellToneClass = isPortalNode
+        ? 'forensic-node-portal'
+        : isDiscoveryNode
+            ? 'forensic-node-discovery'
+            : isImported
+                ? 'forensic-node-imported'
+                : '';
+    const nodeBadgeClass = isPortalNode
+        ? 'forensic-badge border-fuchsia-300/40 bg-fuchsia-400/14 text-fuchsia-100'
+        : isDiscoveryNode
+            ? 'forensic-badge forensic-badge-warning'
+            : 'forensic-badge forensic-badge-imported';
+    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass}`;
+    const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
+    const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
+    const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
 
     const handleSave = (mode: NodeSaveMode) => (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -297,7 +313,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     return (
         <div
             data-testid="custom-node-shell"
-            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (isDiscoveryNode ? 'border-amber-300 shadow-[0_12px_30px_rgba(251,191,36,0.18)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')))} ${selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_0_2px_rgba(0,243,255,0.28),0_0_26px_rgba(0,243,255,0.22)]' : ''} ${isEditing ? 'shadow-[0_0_0_2px_rgba(0,243,255,0.18),0_0_34px_rgba(0,243,255,0.12)]' : ''} ${recentImportShellClass} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
+            className={shellClassName}
             style={{
                 width: '100%',
                 height: '100%',
@@ -338,35 +354,35 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 }}
             />
             {isImported && (
-                <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
+                <div className={`absolute -top-2.5 -left-2 z-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] ${nodeBadgeClass}`}>
                     IMPORTED
                 </div>
             )}
             {isPortalNode && (
-                <div className="absolute -top-2 -left-2 bg-fuchsia-400 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
+                <div className={`absolute -top-2.5 -left-2 z-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] ${nodeBadgeClass}`}>
                     PORTAL
                 </div>
             )}
             {isDiscoveryNode && (
-                <div className="absolute -top-2 -left-2 bg-amber-300 text-black text-[9px] font-black px-2 py-0.5 z-50 border border-black/10 uppercase tracking-[0.18em]">
+                <div className={`absolute -top-2.5 -left-2 z-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] ${nodeBadgeClass}`}>
                     DISCOVERY
                 </div>
             )}
             {data.isDeepDiveSource && (
-                <div className="absolute inset-0 bg-cyber-green/5 animate-pulse pointer-events-none" />
+                <div className="absolute inset-0 bg-emerald-200/[0.035] animate-pulse pointer-events-none" />
             )}
             {data.isRecentlyImported && (
-                <div className="absolute inset-0 pointer-events-none bg-amber-300/6 animate-pulse" />
+                <div className="absolute inset-0 pointer-events-none bg-[rgba(246,200,121,0.08)] animate-pulse" />
             )}
 
             {/* Professional Delete Confirmation Overlay */}
             {showDeleteConfirm && (
                 <div 
-                    className="absolute inset-0 z-[100] bg-red-950/90 backdrop-blur-md flex flex-col items-center justify-center p-4 border-2 border-red-500 animate-in fade-in zoom-in duration-200 nodrag nowheel"
+                    className="forensic-board-dialog absolute inset-0 z-[100] flex flex-col items-center justify-center border border-red-400/45 bg-[linear-gradient(180deg,rgba(41,8,10,0.95),rgba(19,6,8,0.95))] p-4 backdrop-blur-md animate-in fade-in zoom-in duration-200 nodrag nowheel"
                     onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
                 >
-                    <Trash2 size={32} className="text-red-500 mb-2 animate-pulse" />
-                    <h3 className="text-white font-black text-[11px] uppercase tracking-[0.18em] mb-4 text-center">Permanently Erase Evidence?</h3>
+                    <Trash2 size={32} className="mb-2 text-red-300 animate-pulse" />
+                    <h3 className="mb-4 text-center text-[11px] font-black uppercase tracking-[0.18em] text-white">Permanently Erase Evidence?</h3>
                     <div className="flex gap-3">
                         <button 
                             type="button"
@@ -376,7 +392,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 e.preventDefault();
                                 setShowDeleteConfirm(false); 
                             }}
-                            className="px-3 py-1.5 border border-white/50 text-white text-[9px] font-black hover:bg-white hover:text-black transition-all uppercase tracking-tighter"
+                            className="rounded-md border border-white/25 px-3 py-1.5 text-[9px] font-black uppercase tracking-tighter text-[var(--forensic-text-muted)] transition-all hover:border-white/45 hover:bg-white hover:text-black"
                         >
                             CANCEL
                         </button>
@@ -391,7 +407,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     setShowDeleteConfirm(false);
                                 }
                             }}
-                            className="px-3 py-1.5 bg-red-600 text-white text-[9px] font-black hover:bg-red-500 transition-all shadow-[0_0_15px_rgba(220,38,38,0.5)] uppercase tracking-tighter"
+                            className="rounded-md border border-red-300/35 bg-red-400/18 px-3 py-1.5 text-[9px] font-black uppercase tracking-tighter text-red-100 transition-all hover:bg-red-400 hover:text-black"
                         >
                             CONFIRM ERASE
                         </button>
@@ -485,13 +501,13 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             })}
 
             {/* Corner Accents */}
-            <div className="absolute -top-1 -left-1 w-2 h-2 border-t-2 border-l-2 border-cyber-cyan" />
-            <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b-2 border-r-2 border-cyber-purple" />
+            <div className="absolute -top-1 -left-1 h-2 w-2 border-l-2 border-t-2 border-[rgba(145,225,255,0.75)]" />
+            <div className="absolute -bottom-1 -right-1 h-2 w-2 border-b-2 border-r-2 border-[rgba(160,179,195,0.68)]" />
 
             <div className="flex flex-col flex-1 gap-2 min-h-0">
                 {/* Header with Expand Button */}
-                <div className="flex items-center justify-between border-b border-cyber-cyan/35 pb-2 shrink-0">
-                    <div className="text-cyber-cyan font-black text-[11px] uppercase tracking-[0.18em] truncate flex-1 leading-none">
+                <div className="forensic-node-header flex shrink-0 items-center justify-between pb-2">
+                    <div className="forensic-node-title flex-1 truncate text-[11px] font-black uppercase leading-none tracking-[0.18em]">
                         {isEditing ? (
                             <input
                                 autoFocus
@@ -499,7 +515,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 onChange={(e) => setEditTitle(e.target.value)}
                                 onKeyDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
-                                className="bg-black/60 border border-cyber-cyan/35 text-cyber-cyan p-1.5 w-full outline-none text-[12px]"
+                                className="w-full border border-[rgba(129,227,255,0.24)] bg-[rgba(5,10,15,0.86)] p-1.5 text-[12px] text-[var(--forensic-accent)] outline-none transition-colors focus:border-[rgba(129,227,255,0.52)]"
                             />
                         ) : (data.title || 'ARCHIVED_INTEL')}
                     </div>
@@ -513,7 +529,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         console.log("[CustomNode] Edit clicked", data.id);
                                         if (onSetEditing) onSetEditing(data.id || null);
                                     }}
-                                    className="nodrag nowheel text-white/45 hover:text-cyber-cyan transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    className={iconControlClass}
                                     title="Edit Evidence"
                                 >
                                     <Edit2 size={12} />
@@ -525,7 +541,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         console.log("[CustomNode] Delete clicked", data.id);
                                         setShowDeleteConfirm(true);
                                     }}
-                                    className="nodrag nowheel text-white/45 hover:text-red-500 transition-colors p-1 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded"
+                                    className={`${iconControlClass} hover:border-red-300/30 hover:bg-red-400/10 hover:text-red-200`}
                                     title="Delete Evidence"
                                 >
                                     <Trash2 size={12} />
@@ -552,10 +568,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 }
                             }}
                             title="IMPORT NODE: Bring this evidence back to your active investigation"
-                            className={`nodrag nowheel p-1 transition-all ${
+                            className={`forensic-node-control nodrag nowheel rounded-md p-1 transition-all ${
                                 hasPulled 
-                                    ? 'text-cyber-green' 
-                                    : 'text-cyber-green/80 hover:text-cyber-green animate-pulse-glow'
+                                    ? 'border-emerald-300/28 bg-emerald-300/14 text-emerald-100'
+                                    : 'border-emerald-300/16 bg-emerald-300/8 text-emerald-200/80 hover:border-emerald-300/35 hover:bg-emerald-300/14 hover:text-emerald-100 animate-pulse-glow'
                             }`}
                         >
                             {hasPulled ? <CheckCircle size={16} /> : <ArrowRightToLine size={16} />}
@@ -564,7 +580,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
                     <button
                         onClick={handleExpand}
-                        className="nodrag nowheel text-cyber-purple hover:text-white transition-colors p-1"
+                        className="forensic-node-control nodrag nowheel rounded-md p-1 text-[var(--forensic-accent-muted)] transition-all hover:border-[rgba(129,227,255,0.2)] hover:bg-[rgba(129,227,255,0.08)] hover:text-white"
                         title={isExpanded ? "Collapse" : "Expand"}
                     >
                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -573,7 +589,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             </div>
 
             {isEditing && (
-                <div className="shrink-0 rounded-lg border border-cyber-cyan/18 bg-black/35 p-2 nodrag nowheel">
+                <div className="forensic-node-edit-panel shrink-0 rounded-xl p-2 nodrag nowheel">
                     <input
                         ref={fileInputRef}
                         type="file"
@@ -583,8 +599,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                     />
                     <div className="mb-2 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan">Images</div>
-                            <span className="rounded-full border border-cyber-cyan/30 bg-cyber-cyan/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.18em] text-cyber-cyan">
+                            <div className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">Images</div>
+                            <span className="forensic-badge rounded-full px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.18em]">
                                 Edit Mode
                             </span>
                         </div>
@@ -595,7 +611,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 fileInputRef.current?.click();
                             }}
                             disabled={isUploadingImage || !data.onAttachImage}
-                            className="rounded-lg border border-cyber-cyan/30 bg-cyber-cyan/8 px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-lg border border-[rgba(129,227,255,0.24)] bg-[rgba(129,227,255,0.08)] px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)] transition-colors hover:border-[rgba(129,227,255,0.48)] hover:bg-[rgba(129,227,255,0.16)] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             {isUploadingImage ? 'Uploading...' : 'Attach Image'}
                         </button>
@@ -605,11 +621,11 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                             {images.map((image, index) => (
                                 <div
                                     key={image.id}
-                                    className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/45 px-2 py-1"
+                                    className="forensic-node-image flex items-center gap-2 rounded-lg px-2 py-1"
                                 >
                                     <button
                                         type="button"
-                                        className="text-[9px] font-bold uppercase tracking-[0.16em] text-gray-300 transition-colors hover:text-white"
+                                        className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--forensic-text-muted)] transition-colors hover:text-white"
                                         onClick={(event) => {
                                             event.stopPropagation();
                                             data.onViewImages?.(images, index, data.title, data.id);
@@ -633,9 +649,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                             ))}
                         </div>
                     ) : (
-                        <div className="text-[10px] text-gray-500">No images attached yet.</div>
+                        <div className="text-[10px] text-[var(--forensic-text-faint)]">No images attached yet.</div>
                     )}
-                    <div className="mt-2 text-[9px] uppercase tracking-[0.16em] text-gray-500">
+                    <div className="mt-2 text-[9px] uppercase tracking-[0.16em] text-[var(--forensic-text-faint)]">
                         Image changes save directly. Re-analysis is only needed for text changes.
                     </div>
                 </div>
@@ -644,7 +660,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             {/* Summary with Auto Flex */}
                 <div
                     ref={contentRef}
-                    className="relative group/text flex-1 min-h-0 flex flex-col pr-1 transition-all duration-300"
+                    className="relative group/text flex min-h-0 flex-1 flex-col pr-1 transition-all duration-300"
                 >
                     <div className="flex-1 min-h-0 flex flex-col relative">
                         {isEditing ? (
@@ -655,17 +671,17 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     onChange={(e) => setEditText(e.target.value)}
                                     onKeyDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="bg-black/55 border border-cyber-cyan/20 text-white p-3 w-full flex-1 min-h-0 outline-none font-mono text-[12px] custom-scrollbar nodrag nowheel focus:border-cyber-cyan/50 transition-colors"
+                                    className="custom-scrollbar nodrag nowheel min-h-0 w-full flex-1 border border-[rgba(129,227,255,0.18)] bg-[rgba(7,12,18,0.9)] p-3 font-mono text-[12px] text-[var(--forensic-text)] outline-none transition-colors focus:border-[rgba(129,227,255,0.45)]"
                                     placeholder="Enter evidence details..."
                                 />
                             </div>
                         ) : (
                             <div className="relative flex-1 flex flex-col min-h-0">
                                 {data.isAnalyzing && (
-                                    <div className="absolute inset-0 bg-black/58 z-10 flex flex-col items-center justify-center gap-3 overflow-hidden">
-                                    <div className="absolute top-0 left-0 w-full h-[2px] bg-cyber-cyan animate-scan z-20" />
-                                    <div className="flex items-center gap-2 text-cyber-cyan text-[11px] font-black animate-pulse">
-                                            <div className="w-1 h-1 bg-cyber-cyan rounded-full" />
+                                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 overflow-hidden bg-[rgba(4,9,14,0.7)]">
+                                    <div className="absolute top-0 left-0 z-20 h-[2px] w-full bg-[var(--forensic-accent)] animate-scan" />
+                                    <div className="flex items-center gap-2 text-[11px] font-black text-[var(--forensic-accent)] animate-pulse">
+                                            <div className="h-1 w-1 rounded-full bg-[var(--forensic-accent)]" />
                                             IDENTIFYING ENTITIES...
                                         </div>
                                     </div>
@@ -678,7 +694,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                             e.stopPropagation();
                                             data.onViewImages?.(images, 0, data.title, data.id);
                                         }}
-                                        className={`nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-lg border border-white/12 bg-black/45 text-left transition-all hover:border-cyber-cyan/45 hover:shadow-[0_0_0_1px_rgba(0,243,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                        className={`forensic-node-image nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-xl text-left transition-all hover:border-[rgba(129,227,255,0.34)] hover:shadow-[0_0_0_1px_rgba(129,227,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                         style={{ height: NODE_IMAGE_PREVIEW_HEIGHT }}
                                         title={images.length > 1 ? `View ${images.length} attached images` : 'View attached image'}
                                     >
@@ -688,15 +704,15 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                             crossOrigin="anonymous"
                                             className="h-full w-full object-cover"
                                         />
-                                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/90 via-black/40 to-transparent px-2 py-1.5">
-                                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan">
+                                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-[rgba(4,9,14,0.94)] via-[rgba(4,9,14,0.58)] to-transparent px-2 py-1.5">
+                                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">
                                                 <ImageIcon size={11} />
                                                 Visual Evidence
                                             </div>
                                             {images.length > 1 && (
                                                 <span
                                                     data-testid="node-image-count"
-                                                    className="rounded-full border border-white/15 bg-black/75 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-white"
+                                                    className="rounded-full border border-white/12 bg-[rgba(8,14,20,0.9)] px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-white"
                                                 >
                                                     +{images.length - 1}
                                                 </span>
@@ -705,7 +721,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     </button>
                                 )}
                                 <div
-                                    className={`text-white text-[12px] leading-[1.65] font-mono whitespace-pre-wrap flex-1 pr-2 pb-3 ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    className={`forensic-node-text flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                     style={isExpanded ? undefined : { maxHeight: COLLAPSED_TEXT_MAX_HEIGHT }}
                                     dangerouslySetInnerHTML={{
                                         __html: parseHighlightedText(displayContent || '')
@@ -723,7 +739,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                             e.stopPropagation();
                             setShowChat(true);
                         }}
-                        className="mt-1 w-5 h-5 flex items-center justify-center bg-amber-500/10 border border-amber-500/30 text-amber-500 hover:bg-amber-500/40 hover:text-amber-200 transition-all duration-300 group/insight"
+                        className="forensic-node-control mt-1 flex h-6 w-6 items-center justify-center rounded-md border-amber-200/28 bg-amber-200/10 text-amber-100 transition-all duration-300 group/insight hover:border-amber-200/42 hover:bg-amber-200/16"
                         title="Review Specialist Insights"
                     >
                         <MessageCircle className="w-3 h-3 group-hover/insight:scale-110 transition-transform" />
@@ -734,12 +750,12 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 {showChat && data.personaInsights && data.personaInsights.length > 0 && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setShowChat(false)}>
                         <div
-                            className="bg-gray-900 border border-white/20 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl"
+                            className="forensic-node-chat-panel flex max-h-[85vh] w-full max-w-2xl flex-col rounded-[1.25rem] shadow-2xl"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
+                            <div className="flex shrink-0 items-center justify-between border-b border-white/10 p-4">
                                 <h3 className="text-lg font-bold text-white">Persona Discussion</h3>
-                                <button onClick={() => setShowChat(false)} className="text-gray-400 hover:text-white">
+                                <button onClick={() => setShowChat(false)} className="rounded-md border border-white/10 p-1 text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white">
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>
@@ -804,7 +820,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 )}
 
                 {/* Actions Footer */}
-                <div className="flex items-center justify-between mt-auto pt-3 border-t border-white/5 shrink-0">
+                <div className="forensic-node-footer mt-auto flex shrink-0 items-center justify-between pt-3">
                     <div className="flex gap-2 flex-wrap">
                         {!isPortalNode && (
                             <button
@@ -812,7 +828,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     e.stopPropagation();
                                     data.onReadFull();
                                 }}
-                                className="flex items-center gap-1.5 text-[10px] font-black text-cyber-purple hover:text-white transition-all uppercase tracking-tight"
+                                className={`${footerActionClass} text-[var(--forensic-accent-muted)] hover:text-white`}
                                 title="Open Dossier"
                             >
                                 <BookOpen size={12} />
@@ -826,14 +842,14 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     e.stopPropagation();
                                     if (data.onNavigateToChild) data.onNavigateToChild(data.linkedInvestigationId!, data.parentInvestigationId);
                                 }}
-                                className={`flex items-center gap-1.5 text-[10px] font-black transition-all uppercase tracking-tight px-2 py-1 rounded ${isPortalNode ? 'text-fuchsia-300 hover:text-white bg-fuchsia-500/10' : 'text-cyber-cyan hover:text-white bg-cyber-cyan/10'}`}
+                                className={`${footerPillClass} ${isPortalNode ? 'border-fuchsia-300/25 bg-fuchsia-400/12 text-fuchsia-100 hover:bg-fuchsia-300/18 hover:text-white' : 'border-[rgba(129,227,255,0.24)] bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)] hover:bg-[rgba(129,227,255,0.16)] hover:text-white'}`}
                                 title={isPortalNode ? 'Go to merged child canvas' : 'Go to detailed canvas'}
                             >
                                 <ArrowRight size={12} />
                                 {isPortalNode ? 'OPEN CHILD CANVAS' : 'OPEN SUB-FILE'}
                             </button>
                         ) : isDiscoveryNode ? (
-                            <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight text-amber-300">
+                            <div className="forensic-badge forensic-badge-warning flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px] font-black uppercase tracking-tight">
                                 CONFIDENCE {Math.round((data.discoveryConfidence || 0) * 100)}%
                             </div>
                         ) : (
@@ -845,7 +861,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     }
                                 }}
                                 disabled={data.isDeepDiveSource}
-                                className={`flex items-center gap-1.5 text-[10px] font-black ${data.isDeepDiveSource ? 'text-gray-500' : 'text-cyber-green hover:text-white'} transition-all uppercase tracking-tight`}
+                                className={`${footerActionClass} ${data.isDeepDiveSource ? 'text-[var(--forensic-text-faint)]' : 'text-emerald-200 hover:text-white'}`}
                                 title="Begin Deep Dive in New Canvas"
                             >
                                 <Search size={12} />
@@ -859,20 +875,20 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                             <>
                                 <button
                                     onClick={onCancel}
-                                    className="px-2 py-1 border border-white/20 text-white/50 text-[9px] font-black hover:bg-white/10 hover:text-white transition-all uppercase tracking-tight"
+                                    className="rounded-md border border-white/18 px-2 py-1 text-[9px] font-black uppercase tracking-tight text-[var(--forensic-text-faint)] transition-all hover:border-white/32 hover:bg-white/10 hover:text-white"
                                 >
                                     CANCEL
                                 </button>
                                 <button
                                     onClick={handleSave('analyze-and-save')}
-                                    className="px-2 py-1 bg-cyber-cyan/12 border border-cyber-cyan text-cyber-cyan text-[9px] font-black hover:bg-cyber-cyan hover:text-black transition-all uppercase tracking-tight flex items-center gap-1"
+                                    className="flex items-center gap-1 rounded-md border border-[rgba(129,227,255,0.34)] bg-[rgba(129,227,255,0.08)] px-2 py-1 text-[9px] font-black uppercase tracking-tight text-[var(--forensic-accent)] transition-all hover:bg-[rgba(129,227,255,0.16)] hover:text-white"
                                 >
                                     <Save size={10} />
                                     ANALYSE & SAVE
                                 </button>
                                 <button
                                     onClick={handleSave('save')}
-                                    className="px-2 py-1 bg-cyber-green/18 border border-cyber-green text-cyber-green text-[9px] font-black hover:bg-cyber-green hover:text-white transition-all uppercase tracking-tight flex items-center gap-1"
+                                    className="flex items-center gap-1 rounded-md border border-emerald-300/28 bg-emerald-300/12 px-2 py-1 text-[9px] font-black uppercase tracking-tight text-emerald-100 transition-all hover:bg-emerald-300/20 hover:text-white"
                                 >
                                     <Save size={10} />
                                     SAVE
@@ -885,7 +901,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 target="_blank"
                                 rel="noreferrer"
                                 onClick={(e) => e.stopPropagation()}
-                                className="text-gray-600 hover:text-cyber-cyan transition-colors ml-1"
+                                className="ml-1 text-[var(--forensic-text-faint)] transition-colors hover:text-[var(--forensic-accent)]"
                                 title="Verify Source"
                             >
                                 <ExternalLink size={12} />
@@ -897,9 +913,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
 
             {/* Status Indicator */}
-            <div className="absolute -top-2 -right-2 bg-black border border-cyber-cyan px-1 py-0.5 flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-cyber-green animate-pulse" />
-                <span className="text-[8px] text-cyber-cyan font-bold tracking-[0.14em]">VERIFIED</span>
+            <div className="forensic-badge forensic-badge-verified absolute -top-2.5 -right-2 flex items-center gap-1 px-1.5 py-1">
+                <div className="h-1 w-1 rounded-full bg-emerald-200 animate-pulse" />
+                <span className="text-[8px] font-bold tracking-[0.14em]">VERIFIED</span>
             </div>
         </div>
     );

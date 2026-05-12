@@ -2564,20 +2564,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
 
     return (
-        <div ref={boardContainerRef} className="w-full h-full relative bg-cyber-black" id="detective-board-container">
+        <div ref={boardContainerRef} className="forensic-board-root relative h-full w-full overflow-hidden" id="detective-board-container">
             <div className="absolute top-4 left-1/2 z-20 flex w-[min(1040px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-3 px-2">
                 <div className="flex w-full justify-center">
                     {(isGathering || isReorganizing) && (
-                        <div className="flex items-center gap-2 rounded-full border border-cyber-cyan/50 bg-black/85 px-5 py-2 text-[11px] font-black uppercase tracking-[0.24em] text-cyber-cyan shadow-[0_0_20px_rgba(0,243,255,0.14)] backdrop-blur-md animate-pulse">
+                        <div className="forensic-busy-pill flex items-center gap-2 rounded-full px-5 py-2 text-[11px] font-black uppercase tracking-[0.24em] backdrop-blur-md animate-pulse">
                             {isReorganizing ? 'Reorganizing Neural Pathways...' : (deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...')} {isReorganizing ? '' : `${nodes.length}/8`}
                         </div>
                     )}
                 </div>
 
                 <div className="flex w-full justify-center">
-                    <div data-testid="board-action-bar" className="flex w-full max-w-full items-center gap-2 overflow-x-auto rounded-[1.35rem] border border-white/10 bg-black/78 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-22rem)]">
-                        <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-cyber-cyan/18 bg-black/55 px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
-                            <Search size={15} className="text-cyber-cyan/80" />
+                    <div data-testid="board-action-bar" className="forensic-action-bar flex w-full max-w-full items-center gap-2 overflow-x-auto rounded-[1.35rem] p-2 backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-22rem)]">
+                        <div className="forensic-search-shell flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
+                            <Search size={15} className="text-[var(--forensic-accent-muted)]" />
                             <input
                                 type="text"
                                 value={appendSearchPrompt}
@@ -2589,15 +2589,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                 }}
                                 disabled={!investigationId || isBoardBusy}
                                 placeholder={investigationId ? 'Search more in this investigation...' : 'Select an investigation to append search'}
-                                className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-cyber-cyan outline-none placeholder:text-gray-500 disabled:cursor-not-allowed disabled:text-gray-500"
+                                className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[var(--forensic-accent)] outline-none placeholder:text-[var(--forensic-text-faint)] disabled:cursor-not-allowed disabled:text-[var(--forensic-text-faint)]"
                             />
                             <button
                                 type="button"
                                 onClick={appendSearchToInvestigation}
                                 disabled={!canAppendSearch}
                                 className={`shrink-0 rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-all ${canAppendSearch
-                                    ? 'border-cyber-cyan/55 bg-cyber-cyan/10 text-cyber-cyan hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black'
-                                    : 'cursor-not-allowed border-cyber-cyan/15 bg-cyber-cyan/5 text-cyber-cyan/35'
+                                    ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)] hover:border-[rgba(129,227,255,0.55)] hover:bg-[rgba(129,227,255,0.18)] hover:text-white'
+                                    : 'cursor-not-allowed border-[rgba(129,227,255,0.12)] bg-[rgba(129,227,255,0.05)] text-[rgba(129,227,255,0.38)]'
                                     }`}
                             >
                                 Search More
@@ -2606,7 +2606,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                         <button
                             onClick={addManualNode}
-                            className="flex min-h-11 items-center gap-2 rounded-xl border border-cyber-green/50 bg-cyber-green/10 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-cyber-green transition-all hover:border-cyber-green hover:bg-cyber-green hover:text-black"
+                            className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-emerald-100 transition-all hover:border-emerald-300/42 hover:bg-emerald-300/20 hover:text-white"
                         >
                             <PlusSquare size={15} />
                             Add Evidence
@@ -2617,8 +2617,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             onClick={connectTheDots}
                             disabled={!canConnectDots}
                             className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-black tracking-[0.18em] transition-all ${canConnectDots
-                                ? 'border-cyber-purple/60 bg-cyber-purple/10 text-cyber-purple hover:border-cyber-purple hover:bg-cyber-purple hover:text-white'
-                                : 'cursor-not-allowed border-cyber-purple/20 bg-cyber-purple/5 text-cyber-purple/40'
+                                ? 'border-[rgba(170,212,255,0.24)] bg-[rgba(170,212,255,0.08)] text-[var(--forensic-accent-muted)] hover:border-[rgba(170,212,255,0.4)] hover:bg-[rgba(170,212,255,0.16)] hover:text-white'
+                                : 'cursor-not-allowed border-[rgba(170,212,255,0.12)] bg-[rgba(170,212,255,0.04)] text-[rgba(170,212,255,0.38)]'
                                 }`}
                         >
                             <Zap size={15} className={isAnalyzing ? 'animate-spin' : ''} />
@@ -2632,7 +2632,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         {isMergedChild && returnVaultId && onReturnToParent && (
                             <button
                                 onClick={onReturnToParent}
-                                className="flex min-h-11 items-center gap-2 rounded-xl border border-fuchsia-400/50 bg-fuchsia-500/10 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-fuchsia-200 transition-all hover:border-fuchsia-300 hover:bg-fuchsia-400 hover:text-black"
+                                className="flex min-h-11 items-center gap-2 rounded-xl border border-fuchsia-300/32 bg-fuchsia-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-fuchsia-100 transition-all hover:border-fuchsia-200/48 hover:bg-fuchsia-300/20 hover:text-white"
                             >
                                 <ArrowLeft size={15} />
                                 Return To Parent
@@ -2647,8 +2647,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                 }}
                                 disabled={!canExport}
                                 className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${canExport
-                                    ? 'border-white/15 bg-white/5 text-white hover:border-white/35 hover:bg-white hover:text-black'
-                                    : 'cursor-not-allowed border-white/8 bg-white/5 text-white/35'
+                                    ? 'border-white/14 bg-white/[0.045] text-[var(--forensic-text)] hover:border-white/28 hover:bg-white/12 hover:text-white'
+                                    : 'cursor-not-allowed border-white/8 bg-white/[0.04] text-white/35'
                                     }`}
                             >
                                 <Download size={15} />
@@ -2657,22 +2657,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             </button>
 
                             {showExportMenu && (
-                                <div className="absolute left-0 top-[calc(100%+0.75rem)] z-50 w-56 overflow-hidden rounded-2xl border border-white/12 bg-cyber-black/95 shadow-[0_22px_40px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+                                <div className="forensic-board-dialog absolute left-0 top-[calc(100%+0.75rem)] z-50 w-56 overflow-hidden rounded-2xl backdrop-blur-xl">
                                     <button
                                         onClick={() => handleExport('png')}
-                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
                                     >
-                                        <ImageIcon size={14} className="text-cyber-cyan" /> Snapshot (PNG)
+                                        <ImageIcon size={14} className="text-[var(--forensic-accent)]" /> Snapshot (PNG)
                                     </button>
                                     <button
                                         onClick={() => handleExport('svg')}
-                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
                                     >
                                         <Box size={14} className="text-cyber-green" /> Vector (SVG)
                                     </button>
                                     <button
                                         onClick={() => handleExport('pdf')}
-                                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-gray-300 transition-colors hover:bg-white/8 hover:text-white"
+                                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
                                     >
                                         <FileText size={14} className="text-cyber-purple" /> Full Report (PDF)
                                     </button>
@@ -2689,8 +2689,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     setShowBoardControls((current) => !current);
                                 }}
                                 className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${showBoardControls
-                                    ? 'border-cyber-cyan/50 bg-cyber-cyan/12 text-cyber-cyan'
-                                    : 'border-white/10 bg-black/72 text-gray-200 hover:border-white/25 hover:text-white'
+                                    ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.12)] text-[var(--forensic-accent)]'
+                                    : 'border-white/10 bg-[rgba(8,13,19,0.82)] text-[var(--forensic-text-muted)] hover:border-white/25 hover:text-white'
                                     }`}
                             >
                                 <SlidersHorizontal size={15} />
@@ -2705,7 +2705,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     <div
                         ref={boardControlsPanelRef}
                         data-testid="board-controls-overlay"
-                        className="absolute z-30 rounded-[1.5rem] border border-white/12 bg-cyber-black/95 p-4 shadow-[0_18px_36px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+                        className="forensic-board-dialog absolute z-30 rounded-[1.5rem] p-4 backdrop-blur-xl"
                         style={{
                             top: `${boardControlsPosition.top}px`,
                             left: `${boardControlsPosition.left}px`,
@@ -2715,14 +2715,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     >
                         <div className="mb-4 flex items-start justify-between gap-4 border-b border-white/8 pb-3">
                             <div>
-                                <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white">Board Controls</h3>
-                                <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                                <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-[var(--forensic-accent)]">Board Controls</h3>
+                                <p className="mt-1 text-xs leading-relaxed text-[var(--forensic-text-faint)]">
                                     Manage visibility, snapping, layout, and maintenance actions without crowding the main board.
                                 </p>
                             </div>
                             <button
                                 onClick={() => setShowBoardControls(false)}
-                                className="rounded-lg border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 transition-colors hover:border-white/30 hover:text-white"
+                                className="rounded-lg border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
                             >
                                 Close
                             </button>
@@ -2730,8 +2730,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                         <div className="custom-scrollbar max-h-[min(34rem,65vh)] overflow-y-auto pr-1">
                             <div className="space-y-4">
-                                <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
-                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                                <section className="forensic-board-section rounded-2xl p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-text-faint)]">
                                         <Eye size={13} className="text-white/60" />
                                         View
                                     </div>
@@ -2761,9 +2761,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     </button>
                                 </section>
 
-                                <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
-                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-                                        <Target size={13} className="text-cyber-cyan/80" />
+                                <section className="forensic-board-section rounded-2xl p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-text-faint)]">
+                                        <Target size={13} className="text-[var(--forensic-accent-muted)]" />
                                         Snapping
                                     </div>
                                     <div className="space-y-2">
@@ -2805,9 +2805,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     </div>
                                 </section>
 
-                                <section className="rounded-2xl border border-white/8 bg-white/[0.02] p-3">
-                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-                                        <Move size={13} className="text-cyber-green/80" />
+                                <section className="forensic-board-section rounded-2xl p-3">
+                                    <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-text-faint)]">
+                                        <Move size={13} className="text-emerald-200/80" />
                                         Arrange
                                     </div>
                                     <div className="space-y-2">
@@ -2933,14 +2933,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     style={{ width: minimapDimensions.width }}
                 >
                     <div className="relative">
-                        <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-[rgba(3,7,10,0.74)] px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-cyber-cyan/70 backdrop-blur-sm">
+                        <div className="forensic-minimap-frame pointer-events-none absolute left-2 top-2 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-[var(--forensic-accent-muted)] backdrop-blur-sm">
                             Navigator
                         </div>
                         <button
                             type="button"
                             onClick={() => setIsMiniMapExpanded((current) => !current)}
                             aria-label={isMiniMapExpanded ? 'Shrink minimap' : 'Enlarge minimap'}
-                            className="pointer-events-auto absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-cyber-cyan/25 bg-[rgba(3,7,10,0.88)] text-cyber-cyan/80 transition-colors hover:border-cyber-cyan/55 hover:bg-[rgba(8,18,24,0.95)] hover:text-cyber-cyan"
+                            className="forensic-minimap-frame pointer-events-auto absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
                         >
                             {isMiniMapExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                         </button>
@@ -2949,7 +2949,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 {marquee && (
                     <div
                         data-testid="marquee-selection"
-                        className="pointer-events-none absolute z-20 border-2 border-cyber-cyan/90 bg-cyber-cyan/5 shadow-[0_0_0_1px_rgba(0,243,255,0.2)]"
+                        className="pointer-events-none absolute z-20 border-2 border-[rgba(145,225,255,0.9)] bg-[rgba(129,227,255,0.06)] shadow-[0_0_0_1px_rgba(129,227,255,0.2)]"
                         style={{
                             left: getMarqueeRect(marquee.screenStart, marquee.screenCurrent).x,
                             top: getMarqueeRect(marquee.screenStart, marquee.screenCurrent).y,
@@ -2961,7 +2961,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             </div>
 
             {edgeReasoning && (
-                <div className="absolute bottom-10 left-10 w-80 bg-cyber-black/90 border p-4 z-40 shadow-2xl backdrop-blur-md" style={{ borderColor: edgeReasoning.color, boxShadow: `0 0 20px ${edgeReasoning.color}33` }}>
+                <div className="forensic-board-dialog absolute bottom-10 left-10 z-40 w-80 p-4 backdrop-blur-md" style={{ borderColor: edgeReasoning.color, boxShadow: `0 24px 44px rgba(0,0,0,0.45), 0 0 20px ${edgeReasoning.color}33` }}>
                     <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2 text-[10px] font-black tracking-tighter uppercase" style={{ color: edgeReasoning.color }}><Info size={12} /> Connection logic: {edgeReasoning.tag}</div>
                         <button onClick={() => setEdgeReasoning(null)} className="text-gray-500 hover:text-white text-xs">×</button>
@@ -2987,13 +2987,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
             {relationshipDraft && (
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-                    <div className="w-full max-w-md border border-cyber-cyan bg-cyber-black/95 p-6 shadow-[0_0_30px_rgba(0,243,255,0.15)]">
+                    <div className="forensic-board-dialog w-full max-w-md p-6">
                         <div className="mb-5 flex items-start justify-between gap-4">
                             <div>
-                                <h3 className="text-sm font-black uppercase tracking-[0.2em] text-cyber-cyan">
+                                <h3 className="text-sm font-black uppercase tracking-[0.2em] text-[var(--forensic-accent)]">
                                     {relationshipDraft.mode === 'create' ? 'Create Relationship' : 'Rename Relationship'}
                                 </h3>
-                                <p className="mt-2 text-xs leading-relaxed text-gray-400">
+                                <p className="mt-2 text-xs leading-relaxed text-[var(--forensic-text-faint)]">
                                     {relationshipDraft.mode === 'create'
                                         ? 'Name this connection so it appears consistently on the board and in the relationship legend.'
                                         : 'Update the relationship name. The edge styling and legend will update automatically.'}
@@ -3001,13 +3001,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             </div>
                             <button
                                 onClick={closeRelationshipEditor}
-                                className="border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-gray-400 hover:border-white/30 hover:text-white"
+                                className="border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[var(--forensic-text-faint)] hover:border-white/30 hover:text-white"
                             >
                                 Close
                             </button>
                         </div>
 
-                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400">
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--forensic-text-faint)]">
                             Relationship Name
                         </label>
                         <input
@@ -3023,7 +3023,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     closeRelationshipEditor();
                                 }
                             }}
-                            className="w-full border border-cyber-cyan/40 bg-black px-4 py-3 text-sm font-mono text-white outline-none transition-colors focus:border-cyber-cyan"
+                            className="w-full border border-[rgba(129,227,255,0.34)] bg-[rgba(4,9,14,0.82)] px-4 py-3 text-sm font-mono text-white outline-none transition-colors focus:border-[rgba(129,227,255,0.54)]"
                             placeholder="RELATED"
                         />
 
@@ -3036,7 +3036,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             </button>
                             <button
                                 onClick={submitRelationshipEditor}
-                                className="border border-cyber-cyan bg-cyber-cyan/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                                className="border border-[rgba(129,227,255,0.34)] bg-[rgba(129,227,255,0.08)] px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--forensic-accent)] hover:bg-[rgba(129,227,255,0.18)] hover:text-white"
                             >
                                 Save Relationship
                             </button>
@@ -3057,7 +3057,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         aria-modal="true"
                         aria-labelledby="node-image-lightbox-title"
                         tabIndex={-1}
-                        className="relative flex max-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.5rem] border border-white/12 bg-cyber-black/96 shadow-[0_26px_60px_rgba(0,0,0,0.58)]"
+                        className="forensic-board-dialog relative flex max-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.5rem]"
                         onClick={(event) => event.stopPropagation()}
                     >
                         <input
@@ -3084,7 +3084,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         />
                         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
                             <div className="min-w-0">
-                                <div className="text-[10px] font-black uppercase tracking-[0.22em] text-cyber-cyan">Visual Evidence</div>
+                                <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-accent)]">Visual Evidence</div>
                                 <h3 id="node-image-lightbox-title" className="mt-1 truncate text-sm font-bold text-white">
                                     {imageLightbox.nodeTitle || 'Attached node image'}
                                 </h3>
@@ -3095,7 +3095,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             <button
                                 type="button"
                                 onClick={closeImageLightbox}
-                                className="rounded-lg border border-white/10 p-2 text-gray-400 transition-colors hover:border-white/30 hover:text-white"
+                                className="rounded-lg border border-white/10 p-2 text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
                                 title="Close image viewer"
                             >
                                 <X size={16} />
@@ -3121,7 +3121,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                         <button
                                             type="button"
                                             onClick={() => lightboxFileInputRef.current?.click()}
-                                            className="rounded-lg border border-cyber-cyan/30 bg-cyber-cyan/8 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                                        className="rounded-lg border border-[rgba(129,227,255,0.3)] bg-[rgba(129,227,255,0.08)] px-3 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--forensic-accent)] transition-colors hover:border-[rgba(129,227,255,0.5)] hover:bg-[rgba(129,227,255,0.18)] hover:text-white"
                                         >
                                             Add Image
                                         </button>
@@ -3157,12 +3157,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             )}
 
             {showRelationshipLegend ? (
-                <div className="absolute bottom-10 right-10 z-40 flex max-h-[50vh] w-64 flex-col border border-cyber-cyan bg-cyber-black/90 p-4 shadow-[0_0_20px_rgba(0,243,255,0.1)] backdrop-blur-md">
-                    <div className="mb-3 flex items-center justify-between gap-3 border-b border-cyber-cyan/30 pb-2">
-                        <h3 className="text-cyber-cyan text-xs font-black tracking-widest">RELATIONSHIPS</h3>
+                <div className="forensic-legend-panel absolute bottom-10 right-10 z-40 flex max-h-[50vh] w-64 flex-col p-4 backdrop-blur-md">
+                    <div className="mb-3 flex items-center justify-between gap-3 border-b border-[rgba(129,227,255,0.18)] pb-2">
+                        <h3 className="text-xs font-black tracking-widest text-[var(--forensic-accent)]">RELATIONSHIPS</h3>
                         <button
                             onClick={closeRelationshipLegend}
-                            className="flex items-center gap-1 rounded-md border border-cyber-cyan/30 bg-cyber-cyan/8 px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                            className="flex items-center gap-1 rounded-md border border-[rgba(129,227,255,0.3)] bg-[rgba(129,227,255,0.08)] px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)] transition-colors hover:border-[rgba(129,227,255,0.5)] hover:bg-[rgba(129,227,255,0.18)] hover:text-white"
                             title="Hide relationship legend"
                         >
                             <ChevronDown size={12} />
@@ -3171,17 +3171,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     </div>
                     <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1 custom-scrollbar">
                         {visibleStyles.length === 0 && (
-                            <div className="text-[10px] text-gray-500 italic">No connections yet. Dynamic tags will appear here.</div>
+                            <div className="text-[10px] italic text-[var(--forensic-text-faint)]">No connections yet. Dynamic tags will appear here.</div>
                         )}
                         {visibleStyles.map(([tag, style]) => (
                             <div
                                 key={tag}
                                 onClick={() => setEditingTag(editingTag === tag ? null : tag)}
-                                className={`flex items-center gap-2 cursor-pointer p-1 -ml-1 rounded transition-colors group ${editingTag === tag ? 'bg-cyber-cyan/20 border border-cyber-cyan/50' : 'hover:bg-white/5 border border-transparent'}`}
+                                className={`group -ml-1 flex cursor-pointer items-center gap-2 rounded p-1 transition-colors ${editingTag === tag ? 'border border-[rgba(129,227,255,0.5)] bg-[rgba(129,227,255,0.16)]' : 'border border-transparent hover:bg-white/5'}`}
                             >
                                 <div className="w-3 h-3 rounded-full border border-black shadow-sm shrink-0" style={{ backgroundColor: style.color }}></div>
-                                <span className="text-[10px] font-bold tracking-wider text-gray-300 truncate" title={tag}>{tag}</span>
-                                <Edit2 size={10} className="ml-auto text-gray-500 opacity-0 group-hover:opacity-100" />
+                                <span className="truncate text-[10px] font-bold tracking-wider text-[var(--forensic-text-muted)]" title={tag}>{tag}</span>
+                                <Edit2 size={10} className="ml-auto text-[var(--forensic-text-faint)] opacity-0 group-hover:opacity-100" />
                             </div>
                         ))}
                     </div>
@@ -3189,7 +3189,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             ) : (
                 <button
                     onClick={openRelationshipLegend}
-                    className="absolute bottom-10 right-10 z-40 flex max-w-[min(16rem,calc(100vw-2.5rem))] items-center gap-2 rounded-full border border-cyber-cyan/45 bg-cyber-black/92 px-4 py-2 text-left text-[10px] font-black uppercase tracking-[0.2em] text-cyber-cyan shadow-[0_0_22px_rgba(0,243,255,0.16)] backdrop-blur-md transition-all hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                    className="forensic-legend-panel absolute bottom-10 right-10 z-40 flex max-w-[min(16rem,calc(100vw-2.5rem))] items-center gap-2 rounded-full px-4 py-2 text-left text-[10px] font-black uppercase tracking-[0.2em] text-[var(--forensic-accent)] backdrop-blur-md transition-all hover:border-[rgba(129,227,255,0.5)] hover:bg-[rgba(129,227,255,0.14)] hover:text-white"
                     title="Show relationship legend"
                 >
                     <ChevronUp size={14} />
@@ -3198,15 +3198,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             )}
 
             {showRelationshipLegend && editingTag && tagStyles[editingTag] && (
-                <div className="absolute bottom-10 right-[320px] w-64 bg-cyber-black/95 border border-cyber-purple p-4 z-50 shadow-[0_0_25px_rgba(188,19,254,0.2)] backdrop-blur-md">
-                    <div className="flex justify-between items-center mb-4 border-b border-cyber-purple/30 pb-2">
-                        <h3 className="text-cyber-purple text-xs font-black tracking-widest truncate max-w-[150px]">EDIT: {editingTag}</h3>
+                <div className="forensic-board-dialog absolute bottom-10 right-[320px] z-50 w-64 p-4 backdrop-blur-md">
+                    <div className="mb-4 flex items-center justify-between border-b border-[rgba(129,227,255,0.18)] pb-2">
+                        <h3 className="max-w-[150px] truncate text-xs font-black tracking-widest text-[var(--forensic-accent-muted)]">EDIT: {editingTag}</h3>
                         <button onClick={() => setEditingTag(null)} className="text-gray-400 hover:text-white">✕</button>
                     </div>
 
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">COLOR</label>
+                            <label className="mb-2 block text-[10px] font-bold tracking-wider text-[var(--forensic-text-faint)]">COLOR</label>
                             <input
                                 type="color"
                                 value={tagStyles[editingTag].color || '#bc13fe'}
@@ -3214,12 +3214,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     const newStyles = { ...tagStyles, [editingTag]: { ...tagStyles[editingTag], color: e.target.value } };
                                     persistTagStyles(newStyles);
                                 }}
-                                className="w-full h-8 bg-black border border-gray-700 cursor-pointer"
+                                className="h-8 w-full cursor-pointer border border-white/12 bg-black"
                             />
                         </div>
 
                         <div>
-                            <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">LINE PATTERN</label>
+                            <label className="mb-2 block text-[10px] font-bold tracking-wider text-[var(--forensic-text-faint)]">LINE PATTERN</label>
                             <div className="grid grid-cols-2 gap-2 text-[10px]">
                                 {SUPPORTED_RELATIONSHIP_PATTERNS.map((pat) => (
                                     <button
@@ -3231,7 +3231,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                             };
                                             persistTagStyles(newStyles);
                                         }}
-                                        className={`py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].pattern === pat ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                                        className={`border px-2 py-1 uppercase tracking-wider ${tagStyles[editingTag].pattern === pat ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)]' : 'border-white/12 text-[var(--forensic-text-faint)] hover:border-white/24'}`}
                                     >
                                         {pat}
                                     </button>
@@ -3240,7 +3240,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         </div>
 
                         <div>
-                            <label className="block text-[10px] font-bold text-gray-400 mb-2 tracking-wider">LINE SHAPE</label>
+                            <label className="mb-2 block text-[10px] font-bold tracking-wider text-[var(--forensic-text-faint)]">LINE SHAPE</label>
                             <div className="grid grid-cols-2 gap-2 text-[10px]">
                                 {SUPPORTED_RELATIONSHIP_SHAPES.map((shape) => (
                                     <button
@@ -3252,7 +3252,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                             };
                                             persistTagStyles(newStyles);
                                         }}
-                                        className={`py-1 px-2 border uppercase tracking-wider ${tagStyles[editingTag].shape === shape ? 'border-cyber-cyan text-cyber-cyan bg-cyber-cyan/10' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                                        className={`border px-2 py-1 uppercase tracking-wider ${tagStyles[editingTag].shape === shape ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)]' : 'border-white/12 text-[var(--forensic-text-faint)] hover:border-white/24'}`}
                                     >
                                         {shape}
                                     </button>
@@ -3264,10 +3264,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             )}
 
             {selectedContent && (
-                <div className="absolute right-0 top-0 w-1/3 h-full bg-cyber-gray border-l border-cyber-cyan p-8 overflow-y-auto z-30 shadow-2xl backdrop-blur-md bg-opacity-95">
-                    <button onClick={() => setSelectedContent(null)} className="mb-6 text-cyber-purple border border-cyber-purple px-4 py-1 hover:bg-cyber-purple hover:text-white transition-colors uppercase text-[10px] font-bold tracking-widest">[ CLOSE TERMINAL ]</button>
-                    <h2 className="text-cyber-cyan text-xl font-black mb-6 underline decoration-cyber-purple underline-offset-8">INTEL_REPORT_FULL</h2>
-                    <div className="text-gray-300 text-sm whitespace-pre-wrap leading-loose font-mono">{selectedContent}</div>
+                <div className="forensic-overlay-panel absolute right-0 top-0 z-30 h-full w-1/3 overflow-y-auto border-l p-8 backdrop-blur-md">
+                    <button onClick={() => setSelectedContent(null)} className="mb-6 border border-[rgba(129,227,255,0.28)] px-4 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--forensic-accent-muted)] transition-colors hover:bg-[rgba(129,227,255,0.14)] hover:text-white">[ CLOSE TERMINAL ]</button>
+                    <h2 className="mb-6 text-xl font-black text-[var(--forensic-accent)] underline decoration-[rgba(170,212,255,0.55)] underline-offset-8">INTEL_REPORT_FULL</h2>
+                    <div className="whitespace-pre-wrap font-mono text-sm leading-loose text-gray-300">{selectedContent}</div>
                 </div>
             )}
         </div>

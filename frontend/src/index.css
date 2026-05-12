@@ -167,3 +167,388 @@ body {
   backface-visibility: visible;
   transform: none;
 }
+
+:root {
+  --forensic-bg-root: #04090d;
+  --forensic-bg-panel: rgba(10, 16, 23, 0.9);
+  --forensic-bg-panel-strong: rgba(8, 13, 19, 0.96);
+  --forensic-bg-panel-soft: rgba(17, 25, 34, 0.72);
+  --forensic-bg-card: rgba(12, 18, 26, 0.94);
+  --forensic-bg-card-elevated: rgba(16, 24, 34, 0.98);
+  --forensic-border-soft: rgba(124, 150, 174, 0.18);
+  --forensic-border: rgba(118, 177, 214, 0.3);
+  --forensic-border-strong: rgba(154, 223, 255, 0.56);
+  --forensic-accent: #8ee8ff;
+  --forensic-accent-strong: #ecfdff;
+  --forensic-accent-muted: #79adc0;
+  --forensic-text: #eff7fc;
+  --forensic-text-muted: #a2b3c4;
+  --forensic-text-faint: #677789;
+  --forensic-success: #90f3da;
+  --forensic-warning: #f6c879;
+  --forensic-danger: #ff8c86;
+  --forensic-glow: rgba(129, 227, 255, 0.16);
+  --forensic-glow-strong: rgba(153, 235, 255, 0.28);
+  --forensic-grid: rgba(100, 134, 160, 0.16);
+}
+
+.forensic-sidebar {
+  background:
+    linear-gradient(180deg, rgba(8, 15, 22, 0.96), rgba(5, 10, 15, 0.94)),
+    radial-gradient(circle at top left, rgba(126, 225, 255, 0.1), transparent 42%);
+  border-right: 1px solid rgba(116, 148, 171, 0.24);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.02);
+}
+
+.forensic-sidebar-header {
+  background:
+    linear-gradient(180deg, rgba(17, 27, 38, 0.86), rgba(10, 16, 23, 0.82));
+  border-bottom: 1px solid rgba(116, 148, 171, 0.18);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.forensic-sidebar-label {
+  color: var(--forensic-text-faint);
+  letter-spacing: 0.24em;
+}
+
+.forensic-sidebar-plus {
+  color: var(--forensic-accent);
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  background: rgba(129, 227, 255, 0.06);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), 0 0 20px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-sidebar-plus:hover {
+  color: #041118;
+  background: var(--forensic-accent);
+  border-color: var(--forensic-border-strong);
+}
+
+.forensic-sidebar-item {
+  position: relative;
+  border-bottom: 1px solid rgba(116, 148, 171, 0.12);
+  background: linear-gradient(180deg, rgba(8, 13, 19, 0.82), rgba(8, 13, 19, 0.56));
+}
+
+.forensic-sidebar-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(129, 227, 255, 0.09), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 55%);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
+.forensic-sidebar-item:hover::before,
+.forensic-sidebar-item-active::before {
+  opacity: 1;
+}
+
+.forensic-sidebar-item-active {
+  border-left: 2px solid var(--forensic-accent);
+  background: linear-gradient(180deg, rgba(17, 29, 40, 0.96), rgba(10, 18, 25, 0.9));
+  box-shadow: inset 0 0 0 1px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-sidebar-folder {
+  color: var(--forensic-accent-muted);
+}
+
+.forensic-sidebar-item-active .forensic-sidebar-folder {
+  color: var(--forensic-accent);
+  filter: drop-shadow(0 0 8px rgba(129, 227, 255, 0.12));
+}
+
+.forensic-sidebar-topic {
+  color: var(--forensic-text-muted);
+}
+
+.forensic-sidebar-item-active .forensic-sidebar-topic {
+  color: var(--forensic-text);
+}
+
+.forensic-sidebar-delete {
+  color: rgba(162, 179, 196, 0.45);
+}
+
+.forensic-sidebar-delete:hover {
+  color: var(--forensic-danger);
+}
+
+.forensic-statusbar {
+  background:
+    linear-gradient(180deg, rgba(9, 15, 22, 0.98), rgba(5, 9, 14, 0.98)),
+    radial-gradient(circle at center top, rgba(129, 227, 255, 0.08), transparent 45%);
+  border-top: 1px solid rgba(114, 148, 173, 0.22);
+  color: var(--forensic-text-faint);
+  box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.forensic-statusbar strong,
+.forensic-statusbar .forensic-status-heading {
+  color: rgba(162, 179, 196, 0.72);
+}
+
+.forensic-status-chip {
+  background: rgba(129, 227, 255, 0.08);
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  color: var(--forensic-accent-muted);
+  box-shadow: 0 0 18px rgba(129, 227, 255, 0.05);
+}
+
+.forensic-status-marquee {
+  color: var(--forensic-accent);
+}
+
+.forensic-status-metric {
+  border-left-color: rgba(129, 227, 255, 0.16) !important;
+  color: var(--forensic-text-muted);
+}
+
+.forensic-status-metric strong,
+.forensic-status-metric .forensic-status-heading {
+  color: var(--forensic-accent-muted);
+}
+
+.forensic-board-root {
+  background:
+    radial-gradient(circle at top center, rgba(117, 199, 240, 0.14), transparent 25%),
+    radial-gradient(circle at left 20%, rgba(17, 34, 48, 0.46), transparent 30%),
+    linear-gradient(180deg, #071017 0%, #04090d 100%);
+}
+
+.forensic-board-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(121, 173, 192, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(121, 173, 192, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.4), black 18%, black 78%, rgba(0, 0, 0, 0.3));
+  pointer-events: none;
+  opacity: 0.34;
+}
+
+.forensic-board-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 12%, transparent 88%, rgba(255, 255, 255, 0.018)),
+    repeating-linear-gradient(180deg, rgba(129, 227, 255, 0.025), rgba(129, 227, 255, 0.025) 1px, transparent 1px, transparent 4px);
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+.forensic-busy-pill {
+  border: 1px solid rgba(146, 224, 255, 0.32);
+  background: linear-gradient(180deg, rgba(13, 26, 37, 0.94), rgba(8, 17, 24, 0.88));
+  color: var(--forensic-accent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02), 0 0 24px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-action-bar {
+  border: 1px solid rgba(118, 177, 214, 0.18);
+  background:
+    linear-gradient(180deg, rgba(12, 20, 28, 0.9), rgba(8, 13, 19, 0.9)),
+    radial-gradient(circle at top left, rgba(129, 227, 255, 0.08), transparent 45%);
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 0 0 1px rgba(129, 227, 255, 0.04);
+}
+
+.forensic-search-shell {
+  border: 1px solid rgba(118, 177, 214, 0.15);
+  background: linear-gradient(180deg, rgba(7, 13, 18, 0.7), rgba(11, 18, 25, 0.84));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.forensic-board-surface {
+  border: 1px solid rgba(118, 177, 214, 0.18);
+  background:
+    linear-gradient(180deg, rgba(10, 16, 23, 0.96), rgba(8, 13, 19, 0.95)),
+    radial-gradient(circle at top left, rgba(129, 227, 255, 0.06), transparent 38%);
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 0 0 1px rgba(129, 227, 255, 0.03);
+}
+
+.forensic-board-section {
+  border: 1px solid rgba(118, 177, 214, 0.12);
+  background: linear-gradient(180deg, rgba(15, 24, 33, 0.76), rgba(8, 13, 19, 0.74));
+}
+
+.forensic-board-dialog {
+  border: 1px solid rgba(130, 194, 227, 0.28);
+  background: linear-gradient(180deg, rgba(10, 16, 23, 0.98), rgba(7, 12, 18, 0.98));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(129, 227, 255, 0.06);
+}
+
+.forensic-minimap-frame {
+  background: linear-gradient(180deg, rgba(5, 10, 15, 0.94), rgba(7, 13, 18, 0.98));
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 20px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-legend-panel {
+  border: 1px solid rgba(130, 194, 227, 0.32);
+  background: linear-gradient(180deg, rgba(10, 16, 23, 0.94), rgba(7, 12, 18, 0.94));
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(129, 227, 255, 0.05);
+}
+
+.forensic-overlay-toast,
+.forensic-overlay-panel,
+.forensic-overlay-handle {
+  box-shadow: 0 22px 44px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(129, 227, 255, 0.05);
+}
+
+.forensic-overlay-toast {
+  border: 1px solid rgba(130, 194, 227, 0.28);
+  background: linear-gradient(180deg, rgba(11, 18, 24, 0.95), rgba(7, 12, 18, 0.95));
+}
+
+.forensic-overlay-handle {
+  border: 1px solid rgba(130, 194, 227, 0.28);
+  background: linear-gradient(180deg, rgba(13, 22, 31, 0.94), rgba(8, 13, 19, 0.95));
+  color: var(--forensic-accent-strong);
+}
+
+.forensic-overlay-panel {
+  border-left: 1px solid rgba(130, 194, 227, 0.2);
+  background:
+    linear-gradient(180deg, rgba(10, 16, 23, 0.96), rgba(6, 10, 15, 0.96)),
+    radial-gradient(circle at top right, rgba(129, 227, 255, 0.06), transparent 30%);
+}
+
+.forensic-node-shell {
+  background:
+    linear-gradient(180deg, rgba(18, 27, 36, 0.98), rgba(10, 16, 23, 0.98)),
+    radial-gradient(circle at top left, rgba(129, 227, 255, 0.08), transparent 38%);
+  border: 1px solid rgba(118, 177, 214, 0.28);
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    inset 0 0 0 1px rgba(129, 227, 255, 0.03);
+  color: var(--forensic-text);
+}
+
+.forensic-node-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 14%, transparent 72%, rgba(255,255,255,0.018)),
+    radial-gradient(circle at top right, rgba(129, 227, 255, 0.08), transparent 24%);
+  pointer-events: none;
+}
+
+.forensic-node-shell::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.025);
+  pointer-events: none;
+}
+
+.forensic-node-shell.forensic-node-imported {
+  border-color: rgba(246, 200, 121, 0.38);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.36), 0 0 0 1px rgba(246, 200, 121, 0.08), inset 0 1px 0 rgba(255,255,255,0.025);
+}
+
+.forensic-node-shell.forensic-node-portal {
+  border-color: rgba(220, 149, 255, 0.42);
+}
+
+.forensic-node-shell.forensic-node-discovery {
+  border-color: rgba(246, 200, 121, 0.42);
+}
+
+.forensic-node-header {
+  border-bottom: 1px solid rgba(129, 227, 255, 0.16);
+}
+
+.forensic-node-title {
+  color: var(--forensic-accent);
+  text-shadow: 0 0 18px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-node-control {
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.forensic-node-edit-panel,
+.forensic-node-chat-panel {
+  border: 1px solid rgba(118, 177, 214, 0.18);
+  background: linear-gradient(180deg, rgba(10, 16, 23, 0.92), rgba(7, 12, 18, 0.92));
+}
+
+.forensic-node-text {
+  color: var(--forensic-text);
+}
+
+.forensic-node-text .text-cyber-green {
+  color: #c8fbff !important;
+}
+
+.forensic-node-image {
+  border: 1px solid rgba(118, 177, 214, 0.18);
+  background: rgba(5, 10, 15, 0.62);
+}
+
+.forensic-node-footer {
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+.forensic-badge {
+  border: 1px solid rgba(118, 177, 214, 0.18);
+  background: rgba(129, 227, 255, 0.08);
+  color: var(--forensic-accent);
+}
+
+.forensic-badge-warning {
+  border-color: rgba(246, 200, 121, 0.26);
+  background: rgba(246, 200, 121, 0.1);
+  color: var(--forensic-warning);
+}
+
+.forensic-badge-imported {
+  border-color: rgba(246, 200, 121, 0.52);
+  background:
+    linear-gradient(180deg, rgba(246, 200, 121, 0.92), rgba(226, 171, 82, 0.92));
+  color: #091118;
+  box-shadow:
+    0 10px 22px rgba(246, 200, 121, 0.2),
+    0 0 0 1px rgba(255, 248, 228, 0.18);
+}
+
+.forensic-badge-verified {
+  border-color: rgba(139, 238, 207, 0.44);
+  background:
+    linear-gradient(180deg, rgba(10, 38, 34, 0.96), rgba(8, 23, 22, 0.96));
+  color: #d7fff1;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(139, 238, 207, 0.08),
+    0 0 18px rgba(139, 238, 207, 0.12);
+}
+
+.forensic-badge-danger {
+  border-color: rgba(255, 140, 134, 0.24);
+  background: rgba(255, 140, 134, 0.08);
+  color: var(--forensic-danger);
+}
+
+.forensic-selection-ring {
+  box-shadow:
+    0 0 0 1px rgba(236, 253, 255, 0.05),
+    0 0 0 2px rgba(142, 232, 255, 0.22),
+    0 0 30px rgba(129, 227, 255, 0.16) !important;
+}

@@ -642,9 +642,9 @@ function App() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-64 border-r border-cyber-gray bg-black/50 flex flex-col">
-          <div className="p-4 border-b border-cyber-gray flex justify-between items-center bg-cyber-gray/10">
-            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Investigations</span>
+        <aside className="forensic-sidebar w-64 flex flex-col">
+          <div className="forensic-sidebar-header p-4 flex justify-between items-center">
+            <span className="forensic-sidebar-label text-[10px] font-bold uppercase">Investigations</span>
             <button
               type="button"
               aria-label="Open spider input"
@@ -652,7 +652,7 @@ function App() {
                 setActiveTab('spider')
                 focusSpiderInput()
               }}
-              className="text-cyber-green hover:text-white transition-colors"
+              className="forensic-sidebar-plus rounded-md p-1.5 transition-colors"
             >
               <Plus size={14} />
             </button>
@@ -660,26 +660,29 @@ function App() {
 
           <div className="flex-1 overflow-y-auto">
             {sidebarRows.map(({ investigation, depth }) => (
-              <div key={investigation.id} className="group relative">
+              <div
+                key={investigation.id}
+                className={`forensic-sidebar-item group relative ${currentInvestigationId === investigation.id ? 'forensic-sidebar-item-active' : ''}`}
+              >
                 <button
                   onClick={() => {
                     setCurrentInvestigationId(investigation.id);
                     setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
                   }}
-                  className={`w-full text-left p-4 border-b border-cyber-gray/30 flex items-start gap-3 transition-colors ${currentInvestigationId === investigation.id ? 'bg-cyber-green/10 border-l-2 border-l-cyber-green' : 'hover:bg-cyber-gray/20 text-gray-400'}`}
+                  className="w-full text-left p-4 flex items-start gap-3 transition-colors"
                   style={{ paddingLeft: `${16 + (depth * 18)}px` }}
                 >
-                  <Folder size={16} className={currentInvestigationId === investigation.id ? 'text-cyber-green' : 'text-gray-600'} />
-                  <span className={`text-xs truncate max-w-[150px] ${currentInvestigationId === investigation.id ? 'text-white font-bold' : ''}`}>
+                  <Folder size={16} className="forensic-sidebar-folder shrink-0" />
+                  <span className={`forensic-sidebar-topic text-xs truncate max-w-[150px] ${currentInvestigationId === investigation.id ? 'font-bold' : ''}`}>
                     {investigation.displayTopic}
                     {investigation.kind === 'merged-child' && (
-                      <span className="ml-2 text-[9px] uppercase tracking-[0.16em] text-cyber-cyan/70">Merged</span>
+                      <span className="ml-2 text-[9px] uppercase tracking-[0.16em] text-[var(--forensic-accent-muted)]">Merged</span>
                     )}
                   </span>
                 </button>
                 <button
                   onClick={(e) => deleteInvestigation(e, investigation.id)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="forensic-sidebar-delete absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Delete Investigation"
                 >
                   <Trash2 size={14} />
@@ -861,15 +864,15 @@ function App() {
       </div>
 
       {/* Status Bar */}
-      < footer className="px-4 py-2 border-t border-cyber-gray text-[10px] text-gray-600 flex items-center justify-between z-50 bg-cyber-black shadow-[0_-5px_20px_rgba(0,0,0,0.5)] overflow-hidden h-8" >
-        <div className="flex items-center gap-2 shrink-0 bg-cyber-black z-10 pr-4">
+      < footer className="forensic-statusbar px-4 py-2 text-[10px] flex items-center justify-between z-50 overflow-hidden h-8" >
+        <div className="flex items-center gap-2 shrink-0 z-10 pr-4">
           <div className={`w-2 h-2 rounded-full ${socketConfig.ready ? 'bg-cyber-green animate-pulse' : 'bg-red-500'}`} />
           <span>SYSTEM STATUS: {socketConfig.ready ? 'NOMINAL // WEBSOCKET: ACTIVE' : 'OFFLINE'}</span>
         </div>
 
         <div className="flex-1 relative overflow-hidden flex items-center h-full ml-4 mask-edges-left">
-          <div className="absolute whitespace-nowrap animate-marquee flex items-center gap-2 text-cyber-cyan">
-            <span className="font-bold opacity-50 shrink-0">CURRENT INVESTIGATION:</span>
+          <div className="forensic-status-marquee absolute whitespace-nowrap animate-marquee flex items-center gap-2">
+            <span className="forensic-status-heading font-bold opacity-50 shrink-0">CURRENT INVESTIGATION:</span>
             <span className="font-black tracking-widest uppercase truncate max-w-none">
               {currentInvestigation?.displayTopic || 'NONE'}
             </span>
@@ -878,11 +881,11 @@ function App() {
 
         {currentBoardTokenUsage && (
           <div
-            className="ml-4 flex shrink-0 items-center gap-3 border-l border-orange-500/25 pl-4 text-[10px] text-orange-200"
+            className="forensic-status-metric ml-4 flex shrink-0 items-center gap-3 pl-4 text-[10px]"
             title={`${currentBoardTokenUsage.label} | ${formatTokenProviderBreakdown(currentBoardTokenUsage.providerTotals)}`}
           >
-            <span className="font-bold uppercase tracking-[0.2em] text-orange-300/80">Current Board</span>
-            <span className="text-orange-100">{currentBoardTokenUsage.label}</span>
+            <span className="forensic-status-heading font-bold uppercase tracking-[0.2em]">Current Board</span>
+            <span className="text-[var(--forensic-text)]">{currentBoardTokenUsage.label}</span>
             <span>{formatCompactTokens(currentBoardTokenUsage.totalTokens)} total</span>
             <span>{formatCompactTokens(currentBoardTokenUsage.promptTokens)} in</span>
             <span>{formatCompactTokens(currentBoardTokenUsage.completionTokens)} out</span>
@@ -894,10 +897,10 @@ function App() {
         )}
         {sessionTokenUsage.totalTokens > 0 && (
           <div
-            className="ml-4 flex shrink-0 items-center gap-3 border-l border-cyber-cyan/20 pl-4 text-[10px] text-cyber-cyan"
+            className="forensic-status-metric ml-4 flex shrink-0 items-center gap-3 pl-4 text-[10px]"
             title={formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}
           >
-            <span className="font-bold uppercase tracking-[0.2em] text-cyber-cyan/70">Session Total</span>
+            <span className="forensic-status-heading font-bold uppercase tracking-[0.2em]">Session Total</span>
             <span>{formatCompactTokens(sessionTokenUsage.totalTokens)} total</span>
             <span>{formatCompactTokens(sessionTokenUsage.promptTokens)} in</span>
             <span>{formatCompactTokens(sessionTokenUsage.completionTokens)} out</span>

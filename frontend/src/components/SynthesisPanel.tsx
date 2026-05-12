@@ -455,24 +455,24 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             {showToast && activeToast && (
                 <div
                     data-testid="synthesis-overlap-toast"
-                    className="absolute right-4 top-4 z-[60] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-cyber-cyan/40 bg-black/92 p-4 shadow-[0_20px_40px_rgba(0,0,0,0.55)] backdrop-blur-md"
+                    className="forensic-overlay-toast absolute right-4 top-4 z-[60] w-[min(24rem,calc(100vw-2rem))] rounded-[1.15rem] p-4"
                 >
                     <div className="mb-2 flex items-center justify-between gap-3">
-                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-cyber-cyan">New Overlap Detected</span>
+                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">New Overlap Detected</span>
                         <button
                             onClick={() => setActiveToast(null)}
-                            className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 transition-colors hover:text-white"
+                            className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--forensic-text-faint)] transition-colors hover:text-white"
                         >
                             Dismiss
                         </button>
                     </div>
-                    <div className="text-sm font-black text-white">{activeToast.entity}</div>
-                    <p className="mt-2 text-xs leading-relaxed text-gray-300">{activeToast.analysis}</p>
+                    <div className="text-sm font-black text-[var(--forensic-text)]">{activeToast.entity}</div>
+                    <p className="mt-2 text-xs leading-relaxed text-[var(--forensic-text-muted)]">{activeToast.analysis}</p>
                     <div className="mt-3 flex items-center justify-between gap-3">
-                        <span className="text-[10px] text-gray-500">{activeToast.connectedCases.length} linked investigations</span>
+                        <span className="text-[10px] text-[var(--forensic-text-faint)]">{activeToast.connectedCases.length} linked investigations</span>
                         <button
                             onClick={handleReviewToast}
-                            className="rounded border border-cyber-cyan/40 bg-cyber-cyan/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                            className="forensic-badge rounded px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] transition-colors hover:bg-[var(--forensic-accent)] hover:text-black"
                         >
                             Review
                         </button>
@@ -486,10 +486,10 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                     onClick={togglePanel}
                     aria-label={isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}
                     title={isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}
-                    className="absolute right-0 top-24 bg-cyber-purple text-white p-3 rounded-l-lg shadow-[0_0_15px_rgba(188,19,254,0.5)] z-[60] border border-cyber-purple hover:bg-white hover:text-black transition-all flex items-center gap-2"
+                    className="forensic-overlay-handle absolute right-0 top-24 z-[60] flex items-center gap-2 rounded-l-xl p-3 transition-all hover:bg-[var(--forensic-accent)] hover:text-black"
                 >
                     {isOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-                    <Network size={20} className={hasUnread ? "animate-pulse text-cyber-cyan" : ""} />
+                    <Network size={20} className={hasUnread ? "animate-pulse text-[var(--forensic-accent)]" : ""} />
                     {hasUnread && (
                         <span className="absolute -top-2 -left-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full">
                             !
@@ -500,28 +500,28 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
 
             {/* Slide-out Panel */}
             <div
-                className={`absolute top-0 right-0 bottom-0 w-96 bg-cyber-black/95 backdrop-blur-md border-l border-cyber-purple shadow-[-10px_0_30px_rgba(188,19,254,0.2)] z-50 transform transition-transform duration-300 flex flex-col ${isOpen ? 'translate-x-0' : 'translate-x-full'
+                className={`forensic-overlay-panel absolute top-0 right-0 bottom-0 w-96 z-50 transform transition-transform duration-300 flex flex-col ${isOpen ? 'translate-x-0' : 'translate-x-full'
                     }`}
             >
-                    <div className="p-4 border-b border-cyber-purple/50 flex flex-col gap-2 bg-cyber-purple/10">
+                    <div className="p-4 border-b border-[rgba(129,227,255,0.15)] flex flex-col gap-2 bg-[linear-gradient(180deg,rgba(129,227,255,0.08),rgba(129,227,255,0.03))]">
                     <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2 text-cyber-purple font-black">
+                        <div className="flex items-center gap-2 text-[var(--forensic-accent)] font-black uppercase tracking-[0.16em]">
                             <Network size={20} />
                             <h2>GRAND UNIFIED THEORY</h2>
                         </div>
                         <div className="flex items-center gap-3">
-                            <button onClick={clearAlerts} className="text-gray-500 hover:text-red-500 text-xs font-bold">
+                            <button onClick={clearAlerts} className="text-[var(--forensic-text-faint)] hover:text-[var(--forensic-danger)] text-xs font-bold">
                                 CLEAR
                             </button>
-                            <button onClick={togglePanel} className="text-gray-400 hover:text-white">
+                            <button onClick={togglePanel} className="text-[var(--forensic-text-faint)] hover:text-white">
                                 <ChevronRight size={20} />
                             </button>
                         </div>
                     </div>
                     {returnVaultId && (
-                        <div className="bg-cyber-purple/20 border border-cyber-purple p-2 rounded flex justify-between items-center text-xs text-cyber-cyan animate-pulse">
+                        <div className="forensic-board-section rounded-xl p-2 flex justify-between items-center text-xs text-[var(--forensic-accent)] animate-pulse">
                             <span>Viewing Portal Node</span>
-                            <button onClick={handleReturn} className="flex items-center gap-1 font-bold hover:text-white bg-black/50 px-2 py-1 rounded">
+                            <button onClick={handleReturn} className="flex items-center gap-1 font-bold hover:text-white bg-black/40 px-2 py-1 rounded-lg border border-white/8">
                                 <ArrowLeft size={12} /> RETURN
                             </button>
                         </div>
@@ -530,26 +530,26 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
                     {hasPanelAlerts ? displayedAlerts.map((alert, idx) => (
-                        <div key={alert.alertKey || idx} className="bg-black border border-cyber-purple/30 p-4 rounded-sm relative group hover:border-cyber-purple transition-colors">
-                            <div className="absolute top-0 right-0 p-2 opacity-10">
+                        <div key={alert.alertKey || idx} className="forensic-board-section p-4 rounded-[1.25rem] relative group hover:border-[var(--forensic-border-strong)] transition-colors">
+                            <div className="absolute top-0 right-0 p-2 opacity-[0.08]">
                                 <Network size={40} />
                             </div>
 
                             <div className="flex items-center gap-2 mb-3">
-                                <span className="bg-cyber-purple/20 text-cyber-purple px-2 py-0.5 text-[10px] font-bold uppercase rounded border border-cyber-purple/50">
+                                <span className="forensic-badge rounded px-2 py-0.5 text-[10px] font-bold uppercase">
                                     Overlap Detected
                                 </span>
-                                <span className="text-gray-500 text-[10px] flex items-center gap-1">
+                                <span className="text-[var(--forensic-text-faint)] text-[10px] flex items-center gap-1">
                                     <Clock size={10} /> {alert.timestamp}
                                 </span>
                             </div>
 
                             <div className="mb-4">
-                                <h3 className="text-white font-bold text-lg mb-1 flex items-center gap-2">
-                                    <Hash size={16} className="text-cyber-cyan" />
-                                    <span className="text-cyber-cyan">{alert.entity}</span>
+                                <h3 className="text-[var(--forensic-text)] font-bold text-lg mb-1 flex items-center gap-2">
+                                    <Hash size={16} className="text-[var(--forensic-accent)]" />
+                                    <span className="text-[var(--forensic-accent)]">{alert.entity}</span>
                                 </h3>
-                                <p className="text-gray-300 text-xs leading-relaxed">
+                                <p className="text-[var(--forensic-text-muted)] text-xs leading-relaxed">
                                     {alert.analysis}
                                 </p>
                                 {alert.connectedCases.length >= 2 && onMergeInvestigations && (
@@ -559,7 +559,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                             alert.connectedCases,
                                             alert.nodes.map((node) => ({ vaultId: node.vaultId, nodeId: node.nodeId })),
                                         )}
-                                        className="mt-3 inline-flex items-center gap-2 rounded border border-cyber-cyan/40 bg-cyber-cyan/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-cyber-cyan transition-colors hover:border-cyber-cyan hover:bg-cyber-cyan hover:text-black"
+                                        className="forensic-badge mt-3 inline-flex items-center gap-2 rounded px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] transition-colors hover:bg-[var(--forensic-accent)] hover:text-black"
                                     >
                                         <Network size={12} />
                                         Merge Investigation
@@ -567,27 +567,27 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                 )}
                             </div>
 
-                            <div className="mt-4 pt-3 border-t border-cyber-purple/20">
-                                <div className="text-[10px] text-gray-500 mb-2 flex items-center justify-between uppercase">
+                            <div className="mt-4 pt-3 border-t border-[rgba(255,255,255,0.06)]">
+                                <div className="text-[10px] text-[var(--forensic-text-faint)] mb-2 flex items-center justify-between uppercase">
                                     <div className="flex items-center gap-1"><Database size={10} /> Connected Vaults</div>
                                     {alert.score !== undefined && (
-                                        <div className="text-cyber-green/50">Rarity: {alert.score.toFixed(2)}</div>
+                                        <div className="text-[var(--forensic-success)]/70">Rarity: {alert.score.toFixed(2)}</div>
                                     )}
                                 </div>
                                 <div className="flex flex-col gap-2">
                                     {alert.connectedCases.map((caseId, cIdx) => {
                                         const caseNodes = alert.nodes?.filter(n => n.vaultId === caseId) || [];
                                         return (
-                                            <div key={cIdx} className="bg-cyber-gray/20 text-gray-300 p-2 text-xs rounded border border-cyber-gray/30 flex flex-col gap-2">
+                                            <div key={cIdx} className="rounded-xl border border-[rgba(118,177,214,0.14)] bg-[rgba(255,255,255,0.025)] text-[var(--forensic-text-muted)] p-2 text-xs flex flex-col gap-2">
                                                 <div className="flex justify-between items-center">
-                                                    <span className="font-mono text-[10px] text-cyber-cyan truncate max-w-[200px]" title={caseId}>
+                                                    <span className="font-mono text-[10px] text-[var(--forensic-accent)] truncate max-w-[200px]" title={caseId}>
                                                         {investigations.find(inv => inv.id === caseId)?.displayTopic || investigations.find(inv => inv.id === caseId)?.topic || caseId}
                                                         {caseId === currentInvestigationId && ' (CURRENT)'}
                                                     </span>
                                                     {caseId !== currentInvestigationId && (
                                                         <button
                                                             onClick={() => handleJump(caseId, caseNodes[0]?.nodeId)}
-                                                            className="text-[9px] bg-cyber-purple/30 text-white px-2 py-0.5 rounded hover:bg-cyber-purple transition-colors flex items-center gap-1 font-bold"
+                                                            className="rounded-lg border border-[rgba(129,227,255,0.18)] bg-[rgba(129,227,255,0.08)] px-2 py-0.5 text-[9px] text-[var(--forensic-accent-strong)] hover:bg-[var(--forensic-accent)] hover:text-black transition-colors flex items-center gap-1 font-bold"
                                                         >
                                                             PORTAL JUMP <ArrowRightToLine size={10} />
                                                         </button>
@@ -596,11 +596,11 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                                 {/* Hover context nodes */}
                                                 <div className="flex flex-col gap-1">
                                                     {caseNodes.map((n, i) => (
-                                                        <div key={i} className="group/node relative truncate max-w-full text-[10px] text-gray-400 cursor-help hover:text-white border-l-2 border-cyber-purple pl-2">
+                                                        <div key={i} className="group/node relative truncate max-w-full text-[10px] text-[var(--forensic-text-faint)] cursor-help hover:text-white border-l-2 border-[rgba(129,227,255,0.26)] pl-2">
                                                             {n.summary}
                                                             {/* Tooltip on hover */}
-                                                            <div className="absolute top-full left-0 mt-1 hidden group-hover/node:block z-50 bg-black border border-cyber-purple p-2 shadow-[0_5px_15px_rgba(0,0,0,0.8)] w-64 text-xs text-gray-300 whitespace-normal break-words rounded">
-                                                                <div className="text-cyber-cyan font-bold mb-1 border-b border-cyber-purple/50 pb-1">Context Node ({n.nodeId})</div>
+                                                            <div className="absolute top-full left-0 mt-1 hidden group-hover/node:block z-50 forensic-board-dialog p-2 w-64 text-xs text-[var(--forensic-text-muted)] whitespace-normal break-words rounded-xl">
+                                                                <div className="text-[var(--forensic-accent)] font-bold mb-1 border-b border-[rgba(129,227,255,0.14)] pb-1">Context Node ({n.nodeId})</div>
                                                                 {n.summary}
                                                                 
                                                                 <button
@@ -621,10 +621,10 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                                                         }
                                                                     }}
                                                                     title="IMPORT NODE: Bring this context into your active investigation board"
-                                                                    className={`mt-3 w-full py-1.5 px-3 rounded-sm font-black transition-all flex items-center justify-center gap-2 text-[9px] tracking-widest uppercase ${
+                                                                    className={`mt-3 w-full py-1.5 px-3 rounded-lg font-black transition-all flex items-center justify-center gap-2 text-[9px] tracking-widest uppercase ${
                                                                         pulledNodeId === n.nodeId 
-                                                                        ? 'bg-cyber-green text-black shadow-[0_0_10px_rgba(34,197,94,0.4)]' 
-                                                                        : 'bg-white/10 text-cyber-green border border-cyber-green/30 hover:bg-cyber-green hover:text-black hover:border-transparent animate-pulse-glow'
+                                                                        ? 'bg-[var(--forensic-success)] text-black shadow-[0_0_10px_rgba(144,243,218,0.32)]' 
+                                                                        : 'bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)] border border-[rgba(129,227,255,0.24)] hover:bg-[var(--forensic-accent)] hover:text-black hover:border-transparent'
                                                                     }`}
                                                                 >
                                                                     {pulledNodeId === n.nodeId ? <CheckCircle size={12} /> : <ArrowRightToLine size={12} />}
@@ -641,8 +641,8 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                             </div>
                         </div>
                     )) : (
-                        <div className="rounded border border-cyber-purple/20 bg-black/35 p-4 text-xs leading-relaxed text-gray-300">
-                            No cross-investigation overlaps yet for this investigation. Run <span className="font-black uppercase tracking-[0.16em] text-cyber-purple">Reconnect The Dots</span> to check for links against older cases.
+                        <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
+                            No cross-investigation overlaps yet for this investigation. Run <span className="font-black uppercase tracking-[0.16em] text-[var(--forensic-accent)]">Reconnect The Dots</span> to check for links against older cases.
                         </div>
                     )}
                     </div>
