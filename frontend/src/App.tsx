@@ -128,7 +128,9 @@ const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport
     completionTokens: base.completionTokens + incoming.completionTokens,
     totalTokens: base.totalTokens + incoming.totalTokens,
     providerTotals,
-=======
+  }
+}
+
 const loadInvestigationsFromStorage = () => {
   const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY)
   if (!saved) {
