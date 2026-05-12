@@ -18,6 +18,7 @@ import {
   type InvestigationRecord,
 } from './utils/investigations'
 import { createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from './utils/hierarchicalCanvas'
+import { BROWSER_QA_CLEARED_EVENT, BROWSER_QA_SEEDED_EVENT, type BrowserQaSeedResult } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 
 export interface DiscoveryRecord {
@@ -45,7 +46,6 @@ interface TokenUsageReport {
 }
 
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
-
 const compactTokenFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -128,6 +128,18 @@ const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport
     completionTokens: base.completionTokens + incoming.completionTokens,
     totalTokens: base.totalTokens + incoming.totalTokens,
     providerTotals,
+=======
+const loadInvestigationsFromStorage = () => {
+  const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY)
+  if (!saved) {
+    return []
+  }
+
+  try {
+    return normalizeInvestigations(JSON.parse(saved))
+  } catch (error) {
+    console.error('[App] Failed to parse investigations from storage', error)
+    return []
   }
 }
 
@@ -150,8 +162,13 @@ function App() {
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const isUnmounted = useRef(false);
+  const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const sidebarRows = buildSidebarInvestigationRows(investigations);
+
+  const focusSpiderInput = useCallback(() => {
+    crawlInputRef.current?.focus()
+  }, [])
 
   const persistInvestigations = useCallback((nextInvestigations: InvestigationRecord[]) => {
     setInvestigations(nextInvestigations);
@@ -199,11 +216,10 @@ function App() {
     connect();
 
     // Load list from local storage if any
-    const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY)
-    if (saved) {
-      const data = normalizeInvestigations(JSON.parse(saved))
+    const data = loadInvestigationsFromStorage()
+    if (data.length > 0) {
       setInvestigations(data)
-      if (data.length > 0) setCurrentInvestigationId(data[0].id)
+      setCurrentInvestigationId(data[0].id)
     }
 
     const savedDiscoveries = localStorage.getItem(DISCOVERIES_STORAGE_KEY)
@@ -313,6 +329,45 @@ function App() {
   useEffect(() => {
     localStorage.setItem(IMAGE_SCRAPING_PREFERENCE_KEY, imageScrapingEnabled ? 'true' : 'false')
   }, [imageScrapingEnabled])
+
+  useEffect(() => {
+    const handleBrowserQaSeeded = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaSeedResult>).detail
+      const nextInvestigations = loadInvestigationsFromStorage()
+      setInvestigations(nextInvestigations)
+      setCurrentInvestigationId(
+        detail?.focusInvestigationId && nextInvestigations.some((investigation) => investigation.id === detail.focusInvestigationId)
+          ? detail.focusInvestigationId
+          : (nextInvestigations[0]?.id || null),
+      )
+      setReturnVaultId(null)
+      setFocusedNodeId(null)
+      setActiveTab('board')
+    }
+
+    const handleBrowserQaCleared = () => {
+      const nextInvestigations = loadInvestigationsFromStorage()
+      setInvestigations(nextInvestigations)
+      setCurrentInvestigationId((current) => (
+        current && nextInvestigations.some((investigation) => investigation.id === current)
+          ? current
+          : (nextInvestigations[0]?.id || null)
+      ))
+      setReturnVaultId((current) => (
+        current && nextInvestigations.some((investigation) => investigation.id === current)
+          ? current
+          : null
+      ))
+      setFocusedNodeId(null)
+    }
+
+    window.addEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
+    window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
+    return () => {
+      window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
+      window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
+    }
+  }, [])
 
   const runSpider = (customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
     const textToRun = customPrompt || prompt;
@@ -581,7 +636,15 @@ function App() {
         <aside className="w-64 border-r border-cyber-gray bg-black/50 flex flex-col">
           <div className="p-4 border-b border-cyber-gray flex justify-between items-center bg-cyber-gray/10">
             <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Investigations</span>
-            <button className="text-cyber-green hover:text-white transition-colors">
+            <button
+              type="button"
+              aria-label="Open spider input"
+              onClick={() => {
+                setActiveTab('spider')
+                focusSpiderInput()
+              }}
+              className="text-cyber-green hover:text-white transition-colors"
+            >
               <Plus size={14} />
             </button>
           </div>
@@ -701,6 +764,7 @@ function App() {
 
                   <div className="flex-1 flex gap-2 relative">
                     <input
+                      ref={crawlInputRef}
                       type="text"
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}

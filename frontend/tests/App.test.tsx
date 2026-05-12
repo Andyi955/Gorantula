@@ -1,6 +1,10 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../src/App'
+import {
+  BROWSER_QA_SEEDED_EVENT,
+  seedBrowserQaData,
+} from '../src/utils/browserQaSeed'
 
 vi.mock('../src/components/SpiderVisualizer', () => ({
   default: () => <div>SpiderVisualizer</div>,
@@ -220,5 +224,32 @@ describe('App', () => {
     expect(screen.getByText('0 in')).toBeInTheDocument()
     expect(screen.getByText('0 out')).toBeInTheDocument()
     expect(screen.getByText('0 calls')).toBeInTheDocument()
+  })
+
+  it('uses the sidebar plus shortcut to jump to spider view and focus the crawl input', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(screen.getByText('Vault Chat'))
+    expect(screen.getByText('VaultChatbot')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open spider input/i }))
+
+    const crawlInput = screen.getByPlaceholderText(/enter crawl parameters/i)
+    expect(crawlInput).toHaveFocus()
+    expect(screen.getByText('SpiderVisualizer')).toBeInTheDocument()
+  })
+
+  it('refreshes investigations when browser QA data is seeded', () => {
+    render(<App />)
+
+    act(() => {
+      const result = seedBrowserQaData()
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SEEDED_EVENT, { detail: result }))
+    })
+
+    expect(screen.getAllByText('QA: Imported Target').length).toBeGreaterThan(0)
+    expect(screen.getByText('DetectiveBoard')).toBeInTheDocument()
   })
 })

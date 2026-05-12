@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Save, Lock, Bot, Cpu } from 'lucide-react';
+import { Save, Lock, Bot, Cpu, FlaskConical, RotateCcw } from 'lucide-react';
+import {
+    BROWSER_QA_CLEARED_EVENT,
+    BROWSER_QA_SEEDED_EVENT,
+    clearBrowserQaData,
+    seedBrowserQaData,
+} from '../utils/browserQaSeed';
 
 const PROVIDERS = [
     { id: 'GEMINI_API_KEY', name: 'Google Gemini', default: '' },
@@ -37,6 +43,7 @@ const SettingsDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [status, setStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+    const showBrowserQaTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
 
     useEffect(() => {
         fetch('http://localhost:8080/api/settings')
@@ -50,6 +57,11 @@ const SettingsDashboard = () => {
                 setLoading(false);
             });
     }, []);
+
+    const pushTransientStatus = (nextStatus: { type: 'success' | 'error', msg: string }) => {
+        setStatus(nextStatus);
+        setTimeout(() => setStatus(null), 3000);
+    };
 
     const handleChange = (id: string, value: string) => {
         setKeys(prev => ({ ...prev, [id]: value }));
@@ -80,6 +92,18 @@ const SettingsDashboard = () => {
         } finally {
             setSaving(false);
         }
+    };
+
+    const handleSeedBrowserQaData = () => {
+        const result = seedBrowserQaData();
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_SEEDED_EVENT, { detail: result }));
+        pushTransientStatus({ type: 'success', msg: 'Browser QA data loaded' });
+    };
+
+    const handleClearBrowserQaData = () => {
+        clearBrowserQaData();
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_CLEARED_EVENT));
+        pushTransientStatus({ type: 'success', msg: 'Browser QA data cleared' });
     };
 
     if (loading) return <div className="text-cyber-green p-8">Initializing Neural Link to Settings...</div>;
@@ -168,6 +192,35 @@ const SettingsDashboard = () => {
                             ))}
                         </div>
                     </div>
+
+                    {showBrowserQaTools && (
+                        <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-cyber-green"></div>
+                            <h3 className="text-xl font-bold text-cyber-green mb-2 flex items-center gap-2"><FlaskConical size={20} /> Local QA Tools</h3>
+                            <p className="text-sm text-gray-400 mb-6">
+                                Seed a deterministic local browser test workspace for manual QA and browser-use smoke tests. These cases stay in LocalStorage only and can be cleared at any time.
+                            </p>
+
+                            <div className="flex flex-wrap gap-3">
+                                <button
+                                    type="button"
+                                    onClick={handleSeedBrowserQaData}
+                                    className="flex items-center gap-2 border border-cyber-green/40 bg-cyber-green/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-cyber-green transition-colors hover:bg-cyber-green hover:text-black"
+                                >
+                                    <FlaskConical size={14} />
+                                    Load Browser Test Data
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleClearBrowserQaData}
+                                    className="flex items-center gap-2 border border-cyber-gray/60 bg-black px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-gray-300 transition-colors hover:border-white hover:text-white"
+                                >
+                                    <RotateCcw size={14} />
+                                    Clear Browser Test Data
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                 </div>
 

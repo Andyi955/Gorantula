@@ -61,6 +61,7 @@ export interface NodeData {
     onAttachImage?: (nodeId: string, file: File) => Promise<void>;
     onRemoveImage?: (nodeId: string, imageId: string) => void;
     expanded?: boolean;
+    isRecentlyImported?: boolean;
     returnVaultId?: string | null;
     currentInvestigationId?: string | null;
     sharedSocket?: WebSocket | null;
@@ -251,6 +252,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
+    const recentImportShellClass = data.isRecentlyImported
+        ? 'ring-2 ring-amber-300/90 shadow-[0_0_0_2px_rgba(251,191,36,0.25),0_0_34px_rgba(245,158,11,0.34)]'
+        : '';
 
     const handleSave = (mode: NodeSaveMode) => (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -293,7 +297,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     return (
         <div
             data-testid="custom-node-shell"
-            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (isDiscoveryNode ? 'border-amber-300 shadow-[0_12px_30px_rgba(251,191,36,0.18)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')))} ${selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_0_2px_rgba(0,243,255,0.28),0_0_26px_rgba(0,243,255,0.22)]' : ''} ${isEditing ? 'shadow-[0_0_0_2px_rgba(0,243,255,0.18),0_0_34px_rgba(0,243,255,0.12)]' : ''} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
+            className={`bg-[#111317] border-2 flex flex-col w-full h-full min-w-[288px] ${isPortalNode ? 'border-fuchsia-400 shadow-[0_10px_28px_rgba(217,70,239,0.2)]' : (isDiscoveryNode ? 'border-amber-300 shadow-[0_12px_30px_rgba(251,191,36,0.18)]' : (data.isDeepDiveSource ? 'border-cyber-green shadow-[0_10px_28px_rgba(16,185,129,0.18)]' : (isImported ? 'border-amber-500 shadow-[0_10px_24px_rgba(245,158,11,0.18)]' : 'border-cyber-cyan shadow-[0_12px_30px_rgba(0,243,255,0.1)]')))} ${selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_0_2px_rgba(0,243,255,0.28),0_0_26px_rgba(0,243,255,0.22)]' : ''} ${isEditing ? 'shadow-[0_0_0_2px_rgba(0,243,255,0.18),0_0_34px_rgba(0,243,255,0.12)]' : ''} ${recentImportShellClass} rounded-[2px] p-4 transition-colors duration-300 group relative overflow-visible`}
             style={{
                 width: '100%',
                 height: '100%',
@@ -350,6 +354,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             )}
             {data.isDeepDiveSource && (
                 <div className="absolute inset-0 bg-cyber-green/5 animate-pulse pointer-events-none" />
+            )}
+            {data.isRecentlyImported && (
+                <div className="absolute inset-0 pointer-events-none bg-amber-300/6 animate-pulse" />
             )}
 
             {/* Professional Delete Confirmation Overlay */}
