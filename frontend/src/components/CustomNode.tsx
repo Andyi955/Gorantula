@@ -153,6 +153,8 @@ const logNodeResizeDebug = (nodeId: string | undefined, stage: string, payload: 
 };
 
 const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(6 * 1.65em + 0.75rem)';
+const isBackendServedImage = (path?: string) =>
+    Boolean(path && /^https?:\/\/localhost:8080\/vault-assets\//i.test(path));
 
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
@@ -249,6 +251,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const images = data.images || [];
     const hasImages = nodeHasImages(images);
     const primaryImage = hasImages ? images[0] : null;
+    const isBackendImageUnavailable = primaryImage
+        ? isBackendServedImage(primaryImage.path) && (!sharedSocket || sharedSocket.readyState !== WebSocket.OPEN)
+        : false;
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
@@ -698,12 +703,19 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         style={{ height: NODE_IMAGE_PREVIEW_HEIGHT }}
                                         title={images.length > 1 ? `View ${images.length} attached images` : 'View attached image'}
                                     >
-                                        <img
-                                            src={primaryImage.path}
-                                            alt={primaryImage.caption || `Attached evidence for ${data.title || 'node'}`}
-                                            crossOrigin="anonymous"
-                                            className="h-full w-full object-cover"
-                                        />
+                                        {isBackendImageUnavailable ? (
+                                            <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[rgba(4,9,14,0.78)] px-3 text-center text-[10px] font-black uppercase tracking-[0.16em] text-[var(--forensic-text-faint)]">
+                                                <ImageIcon size={18} className="text-[var(--forensic-accent-muted)]" />
+                                                Backend offline
+                                            </div>
+                                        ) : (
+                                            <img
+                                                src={primaryImage.path}
+                                                alt={primaryImage.caption || `Attached evidence for ${data.title || 'node'}`}
+                                                crossOrigin="anonymous"
+                                                className="h-full w-full object-cover"
+                                            />
+                                        )}
                                         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-[rgba(4,9,14,0.94)] via-[rgba(4,9,14,0.58)] to-transparent px-2 py-1.5">
                                             <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">
                                                 <ImageIcon size={11} />

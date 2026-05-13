@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import ReactFlow, {
     Background,
     BackgroundVariant,
@@ -39,8 +39,14 @@ import {
     SUPPORTED_RELATIONSHIP_SHAPES,
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
+import {
+    BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
+    BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
+    BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+    emitBoardWorkspaceEvent,
+} from '../utils/boardWorkspaceEvents';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, PanelRightOpen } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -369,6 +375,10 @@ const EDGE_TYPES = {
     customEdge: CustomEdge,
 };
 
+const NODE_TYPES = {
+    custom: CustomNode,
+};
+
 const logResizePipelineDebug = (stage: string, payload: Record<string, unknown>) => {
     if (!import.meta.env.DEV) {
         return;
@@ -428,18 +438,29 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
     });
 };
 
-const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
-const BOARD_FIT_VIEW_OPTIONS = { padding: 0.1, minZoom: 0.98, maxZoom: 1 };
+const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 96, zoom: 1 };
+const BOARD_FIT_VIEW_OPTIONS = { padding: 0.16, minZoom: 0.98, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const MINIMAP_NODE_STROKE = '#06080b';
-const MINIMAP_MASK_STROKE = 'rgba(120, 255, 255, 0.95)';
-const MINIMAP_PANEL_DIMENSIONS = {
-    compact: { width: 168, height: 168 },
-    expanded: { width: 256, height: 232 },
+const MINIMAP_MASK_STROKE = 'rgba(152, 255, 255, 1)';
+const MINIMAP_MASK_FILL = 'rgba(129, 227, 255, 0.018)';
+const MINIMAP_MASK_STROKE_WIDTH = 4;
+const MINIMAP_OFFSET_SCALE = 2.5;
+const MINIMAP_PANEL_LAYOUT = {
+    compact: {
+        panel: { width: 244, height: 178 },
+        map: { width: 212, height: 116 },
+    },
+    expanded: {
+        panel: { width: 320, height: 238 },
+        map: { width: 288, height: 176 },
+    },
 } as const;
+const MINIMAP_PANEL_OFFSET = { left: 24, top: 16, padding: 16, header: 42, toolbarGap: 20 };
 const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
 const BOARD_CONTROLS_PANEL_MARGIN = 16;
 const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
+const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
 
 const isImportedEvidenceNode = (nodeLike: { id?: string; title?: string } | null | undefined) =>
     Boolean(nodeLike?.title?.includes('[IMPORTED]') || nodeLike?.id?.startsWith('imported-'));
@@ -620,7 +641,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const canArrange = hasNodes && !isBoardBusy;
     const canAppendSearch = !!investigationId && !isBoardBusy && appendSearchPrompt.trim().length > 0;
     const hasPendingEvidenceIntegration = pendingIntegrationNodeIds.length > 0;
-    const minimapDimensions = isMiniMapExpanded ? MINIMAP_PANEL_DIMENSIONS.expanded : MINIMAP_PANEL_DIMENSIONS.compact;
+    const minimapLayout = isMiniMapExpanded ? MINIMAP_PANEL_LAYOUT.expanded : MINIMAP_PANEL_LAYOUT.compact;
+    const minimapMapPosition = {
+        left: MINIMAP_PANEL_OFFSET.left + MINIMAP_PANEL_OFFSET.padding,
+        top: MINIMAP_PANEL_OFFSET.top + MINIMAP_PANEL_OFFSET.header,
+    };
+    const toolbarPosition = {
+        left: MINIMAP_PANEL_OFFSET.left + minimapLayout.panel.width + MINIMAP_PANEL_OFFSET.toolbarGap,
+        right: 24,
+    };
 
     const ensureTagStyles = useCallback((tags: string[]) => {
         const normalizedTags = tags.map(tag => normalizeRelationshipTag(tag));
@@ -1056,7 +1085,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [boardMode, syncStrictGridSubset]);
 
     const handleUpdateNode = useCallback((id: string, data: any) => {
-        console.log(`[DetectiveBoard] Updating node ${id}`, data);
+        console.debug(`[DetectiveBoard] Updating node ${id}`, data);
         setNodes(nds => nds.map(n => {
             if (n.id === id) {
                 const nextSummary = data.summary ?? n.data.summary ?? '';
@@ -1094,7 +1123,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             return;
         }
 
-        console.log(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
+        console.debug(`[DetectiveBoard] Triggering LLM processing for node ${id}`);
         setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, isAnalyzing: true } } : n));
         sharedSocket.send(JSON.stringify({
             type: 'PROCESS_MANUAL_NODE',
@@ -1257,7 +1286,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [boardMode, syncStrictGridSubset]);
 
     const handleSetEditing = useCallback((id: string | null) => {
-        console.log(`[DetectiveBoard] Setting active editing node: ${id}`);
+        console.debug(`[DetectiveBoard] Setting active editing node: ${id}`);
         setEditingNodeId(id);
         setNodes(nds => nds.map(node => ({
             ...node,
@@ -1310,7 +1339,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const nodeExists = nodesRef.current.some(n => n.id === focusNodeId);
 
             if (nodeExists) {
-                console.log('[Board] Focusing node:', focusNodeId);
+                console.debug('[Board] Focusing node:', focusNodeId);
                 lastFocusedRef.current = focusNodeId;
 
                 // Close any open side panels (intel reports) to show the node clearly
@@ -1388,6 +1417,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         };
     }, [showBoardControls, updateBoardControlsPosition]);
 
+    const toggleBoardControlsPanel = useCallback(() => {
+        setShowExportMenu(false);
+        updateBoardControlsPosition();
+        setShowBoardControls((current) => !current);
+    }, [updateBoardControlsPosition]);
+
+    const recenterBoardViewport = useCallback(() => {
+        setShowExportMenu(false);
+        setShowBoardControls(false);
+        fitView({
+            ...BOARD_FIT_VIEW_OPTIONS,
+            duration: 220,
+        });
+    }, [fitView]);
+
+    const toggleDiscoveryWorkspacePanel = useCallback(() => {
+        emitBoardWorkspaceEvent(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT);
+    }, []);
+
+    const toggleSynthesisWorkspacePanel = useCallback(() => {
+        emitBoardWorkspaceEvent(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT);
+    }, []);
+
+    const toggleRelationshipWorkspacePanel = useCallback(() => {
+        setEditingTag(null);
+        setShowRelationshipLegend((current) => !current);
+    }, []);
+
     // Load tag styles on mount
     useEffect(() => {
         const saved = localStorage.getItem('board_tag_styles');
@@ -1438,10 +1495,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     useEffect(() => {
         const savedGridPreference = localStorage.getItem('detective_board_show_grid');
         if (savedGridPreference !== null) {
-            console.log('[DetectiveBoard] Loaded grid preference:', savedGridPreference);
+            console.debug('[DetectiveBoard] Loaded grid preference:', savedGridPreference);
             setShowGrid(savedGridPreference === 'true');
         } else {
-            console.log('[DetectiveBoard] No saved grid preference found. Defaulting to visible grid.');
+            console.debug('[DetectiveBoard] No saved grid preference found. Defaulting to visible grid.');
         }
 
         const savedSnappingPreference = localStorage.getItem('detective_board_snap_connection_labels');
@@ -1467,7 +1524,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [investigationId]);
 
     useEffect(() => {
-        console.log('[DetectiveBoard] Grid visibility changed:', showGrid);
+        console.debug('[DetectiveBoard] Grid visibility changed:', showGrid);
         localStorage.setItem('detective_board_show_grid', String(showGrid));
     }, [showGrid]);
 
@@ -1519,7 +1576,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     useEffect(() => {
         if (!investigationId || loadedInvestigationId === investigationId) return;
 
-        console.log('[DetectiveBoard] Loading investigation:', investigationId);
+        console.debug('[DetectiveBoard] Loading investigation:', investigationId);
         const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
         if (savedState) {
             const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
@@ -1611,6 +1668,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 pendingIntegrationNodeIds,
                 synthesisAlerts: existingState?.synthesisAlerts || [],
             });
+            emitBoardWorkspaceEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT);
             persistTimerRef.current = null;
         }, 250);
 
@@ -1638,6 +1696,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current,
             synthesisAlerts: existingState?.synthesisAlerts || [],
         });
+        emitBoardWorkspaceEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT);
     }, [boardMode, investigationId, loadedInvestigationId]);
 
     useEffect(() => () => {
@@ -1986,11 +2045,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [finalizeMarqueeSelection, marquee]);
 
     const handleNewConnections = useCallback((connections: any[]) => {
-        console.log('[Board] Received connections:', connections);
+        console.debug('[Board] Received connections:', connections);
         const currentNodes = nodesRef.current;
         const activeAnalysisMode = analysisModeRef.current;
         const activePendingNodeIds = pendingIntegrationNodeIdsRef.current;
-        console.log('[Board] Current nodes:', currentNodes.map(n => ({ id: n.id, title: n.data.title })));
+        console.debug('[Board] Current nodes:', currentNodes.map(n => ({ id: n.id, title: n.data.title })));
 
         // Filter connections to only include those where source and target exist
         const nodeIds = new Set(currentNodes.map(n => n.id));
@@ -1998,12 +2057,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             const sourceExists = nodeIds.has(c.source);
             const targetExists = nodeIds.has(c.target);
             if (!sourceExists || !targetExists) {
-                console.log('[Board] Skipping invalid connection:', c.source, '->', c.target, '| Valid:', sourceExists, targetExists);
+                console.debug('[Board] Skipping invalid connection:', c.source, '->', c.target, '| Valid:', sourceExists, targetExists);
             }
             return sourceExists && targetExists;
         });
 
-        console.log('[Board] Valid connections:', validConnections.length, 'of', connections.length);
+        console.debug('[Board] Valid connections:', validConnections.length, 'of', connections.length);
 
         const nextStyles = { ...tagStyles };
         let stylesUpdated = false;
@@ -2114,7 +2173,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         const handleMessage = (event: MessageEvent) => {
             const msg = JSON.parse(event.data);
-            console.log('[Board] Received:', msg.type);
+            console.debug('[Board] Received:', msg.type);
 
             if (msg.type === 'MEMORY_NODE_GATHERED') {
                 const { node, vaultId, append } = msg.payload;
@@ -2154,7 +2213,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                 // Check if this node is meant for a different investigation (Pull Node flow)
                 if (vaultId && vaultId !== investigationId) {
-                    console.log(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
+                    console.debug(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
                     const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
                     let vaultData: PersistedBoardState = savedState || { mode: targetBoardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
 
@@ -2171,7 +2230,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             ...vaultData,
                             synthesisAlerts: existingState?.synthesisAlerts || [],
                         });
-                        console.log(`[Board] Node ${node.id} successfully persisted to target vault ${vaultId}`);
+                        console.debug(`[Board] Node ${node.id} successfully persisted to target vault ${vaultId}`);
                     }
                     return; // Don't add to the currently visible board (which is likely the source/historical vault)
                 }
@@ -2208,16 +2267,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         confidence: number;
                     }>;
                 }>;
-                console.log('[PERSONA_INSIGHTS] Received insights:', insights);
+                console.debug('[PERSONA_INSIGHTS] Received insights:', insights);
                 if (insights && Array.isArray(insights)) {
                     setNodes((nds) => {
-                        console.log('[PERSONA_INSIGHTS] Current nodes:', nds.map(n => ({ id: n.id, title: n.data.title })));
+                        console.debug('[PERSONA_INSIGHTS] Current nodes:', nds.map(n => ({ id: n.id, title: n.data.title })));
                         return nds.map(node => {
                             // Find personas that contributed to this specific node
                             const nodeInsights = insights.filter(insight =>
                                 insight.nodeIDs && insight.nodeIDs.includes(node.id)
                             );
-                            console.log(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
+                            console.debug(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
                             return {
                                 ...node,
                                 data: {
@@ -2272,12 +2331,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 alert(`System Error: ${msg.payload}`);
             } else if (msg.type === 'MANUAL_NODE_PROCESSED') {
                 const { nodeId, processedText } = msg.payload;
-                console.log(`[Board] Manual node ${nodeId} processing completed:`);
-                console.log(` - Input snippet: "... [see board]"`);
-                console.log(` - Output snippet: "${processedText.slice(0, 80)}..."`);
+                console.debug(`[Board] Manual node ${nodeId} processing completed:`);
+                console.debug(` - Input snippet: "... [see board]"`);
+                console.debug(` - Output snippet: "${processedText.slice(0, 80)}..."`);
 
                 const entities = processedText.match(/\[(?:PERSON|ORG|LOC|DATE|TIME):.*?\]/gi) || [];
-                console.log(` - Highlights determined: ${entities.length > 0 ? entities.join(', ') : 'NONE FOUND'}`);
+                console.debug(` - Highlights determined: ${entities.length > 0 ? entities.join(', ') : 'NONE FOUND'}`);
 
                 setNodes(nds => nds.map(n => {
                     if (n.id === nodeId) {
@@ -2349,11 +2408,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setEditingNodeId(id);
     }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
 
-    // Stable nodeTypes definition to prevent re-mounting all nodes on every render
-    const nodeTypes = useMemo(() => ({
-        custom: CustomNode
-    }), []);
-
     // Enhanced node data that includes all necessary context and stable handlers
     // We update nodes whenever stable props like sharedSocket or returnVaultId change
     useEffect(() => {
@@ -2395,7 +2449,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             return;
         }
 
-        console.log('[Board] Dispatching CONNECT_DOTS...');
+        console.debug('[Board] Dispatching CONNECT_DOTS...');
         setIsAnalyzing(true);
         setAnalysisMode(incrementalNodeIds.length > 0 ? 'incremental' : 'full');
         setEdgeReasoning(null);
@@ -2455,9 +2509,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     };
 
     const handleReorganize = useCallback(() => {
-        console.log('[TidyUp] Clicked. Current nodes:', nodes.length, 'Current edges:', edges.length);
+        console.debug('[TidyUp] Clicked. Current nodes:', nodes.length, 'Current edges:', edges.length);
         if (nodes.length === 0) {
-            console.log('[TidyUp] No nodes to organize.');
+            console.debug('[TidyUp] No nodes to organize.');
             return;
         }
 
@@ -2473,21 +2527,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
                         setTimeout(() => {
                             setIsReorganizing(false);
-                            console.log('[TidyUp] Reorganization cycle complete.');
+                            console.debug('[TidyUp] Reorganization cycle complete.');
                         }, 850);
                     }, 850);
                     return;
                 }
 
                 // Reset handles and distribution
-                console.log('[TidyUp] Distributing edges...');
+                console.debug('[TidyUp] Distributing edges...');
                 const { edges: finalEdges, handledNodes } = distributeEdges(edges, nodes);
 
                 // Compute new layout positions
-                console.log('[TidyUp] Running Dagre layout...');
+                console.debug('[TidyUp] Running Dagre layout...');
                 const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
 
-                console.log('[TidyUp] Setting state with layouted nodes...');
+                console.debug('[TidyUp] Setting state with layouted nodes...');
 
                 // Set both at once. The CSS transition in index.css will handle the motion.
                 setNodes(layoutedNodes);
@@ -2495,13 +2549,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
                 // Wait for the SLIDE transition to complete (0.8s) before fitting view
                 setTimeout(() => {
-                    console.log('[TidyUp] Triggering fitView...');
+                    console.debug('[TidyUp] Triggering fitView...');
                     fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
 
                     // Final finish after animation
                     setTimeout(() => {
                         setIsReorganizing(false);
-                        console.log('[TidyUp] Reorganization cycle complete.');
+                        console.debug('[TidyUp] Reorganization cycle complete.');
                     }, 850);
                 }, 850); // Matches the CSS transition duration
             } catch (err) {
@@ -2565,7 +2619,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     return (
         <div ref={boardContainerRef} className="forensic-board-root relative h-full w-full overflow-hidden" id="detective-board-container">
-            <div className="absolute top-4 left-1/2 z-20 flex w-[min(1040px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-3 px-2">
+            <div
+                className="absolute top-4 z-20 flex flex-col items-stretch gap-3 px-0"
+                style={toolbarPosition}
+            >
                 <div className="flex w-full justify-center">
                     {(isGathering || isReorganizing) && (
                         <div className="forensic-busy-pill flex items-center gap-2 rounded-full px-5 py-2 text-[11px] font-black uppercase tracking-[0.24em] backdrop-blur-md animate-pulse">
@@ -2575,8 +2632,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 </div>
 
                 <div className="flex w-full justify-center">
-                    <div data-testid="board-action-bar" className="forensic-action-bar flex w-full max-w-full items-center gap-2 overflow-x-auto rounded-[1.35rem] p-2 backdrop-blur-xl md:w-auto md:max-w-[calc(100vw-22rem)]">
-                        <div className="forensic-search-shell flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
+                    <div data-testid="board-action-bar" className="forensic-action-bar forensic-toolbar-shell flex w-full max-w-full items-center gap-3 overflow-x-auto rounded-[1.45rem] p-2.5 backdrop-blur-xl">
+                        <div className="forensic-toolbar-cluster flex min-w-0 flex-1 items-center gap-2 md:flex-none">
+                            <div className="forensic-search-shell flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
                             <Search size={15} className="text-[var(--forensic-accent-muted)]" />
                             <input
                                 type="text"
@@ -2603,31 +2661,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                 Search More
                             </button>
                         </div>
+                        </div>
 
-                        <button
-                            onClick={addManualNode}
-                            className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-emerald-100 transition-all hover:border-emerald-300/42 hover:bg-emerald-300/20 hover:text-white"
-                        >
-                            <PlusSquare size={15} />
-                            Add Evidence
-                        </button>
+                        <div className="forensic-toolbar-cluster flex items-center gap-2">
+                            <button
+                                onClick={addManualNode}
+                                className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-emerald-100 transition-all hover:border-emerald-300/42 hover:bg-emerald-300/20 hover:text-white"
+                            >
+                                <PlusSquare size={15} />
+                                Add Evidence
+                            </button>
 
-                        <button
-                            id="connect-dots-btn"
-                            onClick={connectTheDots}
-                            disabled={!canConnectDots}
-                            className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-black tracking-[0.18em] transition-all ${canConnectDots
-                                ? 'border-[rgba(170,212,255,0.24)] bg-[rgba(170,212,255,0.08)] text-[var(--forensic-accent-muted)] hover:border-[rgba(170,212,255,0.4)] hover:bg-[rgba(170,212,255,0.16)] hover:text-white'
-                                : 'cursor-not-allowed border-[rgba(170,212,255,0.12)] bg-[rgba(170,212,255,0.04)] text-[rgba(170,212,255,0.38)]'
-                                }`}
-                        >
-                            <Zap size={15} className={isAnalyzing ? 'animate-spin' : ''} />
-                            {isAnalyzing
-                                ? (analysisMode === 'incremental' ? 'Integrating New Evidence...' : 'Analyzing Patterns...')
-                                : hasPendingEvidenceIntegration
-                                    ? 'Integrate New Evidence'
-                                    : (hasConnectedDots ? 'Reconnect the Dots' : 'Connect the Dots')}
-                        </button>
+                            <button
+                                id="connect-dots-btn"
+                                onClick={connectTheDots}
+                                disabled={!canConnectDots}
+                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-black tracking-[0.18em] transition-all ${canConnectDots
+                                    ? 'border-[rgba(170,212,255,0.24)] bg-[rgba(170,212,255,0.08)] text-[var(--forensic-accent-muted)] hover:border-[rgba(170,212,255,0.4)] hover:bg-[rgba(170,212,255,0.16)] hover:text-white'
+                                    : 'cursor-not-allowed border-[rgba(170,212,255,0.12)] bg-[rgba(170,212,255,0.04)] text-[rgba(170,212,255,0.38)]'
+                                    }`}
+                            >
+                                <Zap size={15} className={isAnalyzing ? 'animate-spin' : ''} />
+                                {isAnalyzing
+                                    ? (analysisMode === 'incremental' ? 'Integrating New Evidence...' : 'Analyzing Patterns...')
+                                    : hasPendingEvidenceIntegration
+                                        ? 'Integrate New Evidence'
+                                        : (hasConnectedDots ? 'Reconnect the Dots' : 'Connect the Dots')}
+                            </button>
+                        </div>
 
                         {isMergedChild && returnVaultId && onReturnToParent && (
                             <button
@@ -2639,64 +2700,62 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             </button>
                         )}
 
-                        <div className="relative" ref={exportMenuRef}>
-                            <button
-                                onClick={() => {
-                                    setShowBoardControls(false);
-                                    setShowExportMenu((current) => !current);
-                                }}
-                                disabled={!canExport}
-                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${canExport
-                                    ? 'border-white/14 bg-white/[0.045] text-[var(--forensic-text)] hover:border-white/28 hover:bg-white/12 hover:text-white'
-                                    : 'cursor-not-allowed border-white/8 bg-white/[0.04] text-white/35'
-                                    }`}
-                            >
-                                <Download size={15} />
-                                Export
-                                <ChevronDown size={14} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
-                            </button>
+                        <div className="forensic-toolbar-cluster flex items-center gap-2">
+                            <div className="relative" ref={exportMenuRef}>
+                                <button
+                                    onClick={() => {
+                                        setShowBoardControls(false);
+                                        setShowExportMenu((current) => !current);
+                                    }}
+                                    disabled={!canExport}
+                                    className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${canExport
+                                        ? 'border-white/14 bg-white/[0.045] text-[var(--forensic-text)] hover:border-white/28 hover:bg-white/12 hover:text-white'
+                                        : 'cursor-not-allowed border-white/8 bg-white/[0.04] text-white/35'
+                                        }`}
+                                >
+                                    <Download size={15} />
+                                    Export
+                                    <ChevronDown size={14} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+                                </button>
 
-                            {showExportMenu && (
-                                <div className="forensic-board-dialog absolute left-0 top-[calc(100%+0.75rem)] z-50 w-56 overflow-hidden rounded-2xl backdrop-blur-xl">
-                                    <button
-                                        onClick={() => handleExport('png')}
-                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
-                                    >
-                                        <ImageIcon size={14} className="text-[var(--forensic-accent)]" /> Snapshot (PNG)
-                                    </button>
-                                    <button
-                                        onClick={() => handleExport('svg')}
-                                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
-                                    >
-                                        <Box size={14} className="text-cyber-green" /> Vector (SVG)
-                                    </button>
-                                    <button
-                                        onClick={() => handleExport('pdf')}
-                                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
-                                    >
-                                        <FileText size={14} className="text-cyber-purple" /> Full Report (PDF)
-                                    </button>
-                                </div>
-                            )}
-                        </div>
+                                {showExportMenu && (
+                                    <div className="forensic-board-dialog absolute left-0 top-[calc(100%+0.75rem)] z-50 w-56 overflow-hidden rounded-2xl backdrop-blur-xl">
+                                        <button
+                                            onClick={() => handleExport('png')}
+                                            className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
+                                        >
+                                            <ImageIcon size={14} className="text-[var(--forensic-accent)]" /> Snapshot (PNG)
+                                        </button>
+                                        <button
+                                            onClick={() => handleExport('svg')}
+                                            className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
+                                        >
+                                            <Box size={14} className="text-cyber-green" /> Vector (SVG)
+                                        </button>
+                                        <button
+                                            onClick={() => handleExport('pdf')}
+                                            className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
+                                        >
+                                            <FileText size={14} className="text-cyber-purple" /> Full Report (PDF)
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
 
-                        <div className="relative">
-                            <button
-                                ref={boardControlsButtonRef}
-                                onClick={() => {
-                                    setShowExportMenu(false);
-                                    updateBoardControlsPosition();
-                                    setShowBoardControls((current) => !current);
-                                }}
-                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${showBoardControls
-                                    ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.12)] text-[var(--forensic-accent)]'
-                                    : 'border-white/10 bg-[rgba(8,13,19,0.82)] text-[var(--forensic-text-muted)] hover:border-white/25 hover:text-white'
-                                    }`}
-                            >
-                                <SlidersHorizontal size={15} />
-                                Board Controls
-                                <ChevronDown size={14} className={`transition-transform ${showBoardControls ? 'rotate-180' : ''}`} />
-                            </button>
+                            <div className="relative">
+                                <button
+                                    ref={boardControlsButtonRef}
+                                    onClick={toggleBoardControlsPanel}
+                                    className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${showBoardControls
+                                        ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.12)] text-[var(--forensic-accent)]'
+                                        : 'border-white/10 bg-[rgba(8,13,19,0.82)] text-[var(--forensic-text-muted)] hover:border-white/25 hover:text-white'
+                                        }`}
+                                >
+                                    <SlidersHorizontal size={15} />
+                                    Board Controls
+                                    <ChevronDown size={14} className={`transition-transform ${showBoardControls ? 'rotate-180' : ''}`} />
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2738,7 +2797,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     <button
                                         onClick={() => setShowGrid((current) => {
                                             const next = !current;
-                                            console.log('[DetectiveBoard] Grid toggle clicked. Next state:', next);
+                                            console.debug('[DetectiveBoard] Grid toggle clicked. Next state:', next);
                                             return next;
                                         })}
                                         className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${showGrid
@@ -2882,7 +2941,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     onConnect={onConnect}
                     onReconnect={onReconnect}
                     onEdgeClick={onEdgeClick}
-                    nodeTypes={nodeTypes}
+                    nodeTypes={NODE_TYPES}
                     edgeTypes={EDGE_TYPES}
                     connectionMode={ConnectionMode.Loose}
                     snapToGrid={boardMode === 'strict-grid' || snapNodes}
@@ -2892,6 +2951,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     defaultViewport={BOARD_DEFAULT_VIEWPORT}
                     minZoom={0.68}
                     maxZoom={1.75}
+                    proOptions={REACT_FLOW_PRO_OPTIONS}
                 >
                     {showGrid && (
                         <Background
@@ -2907,44 +2967,121 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         pannable
                         zoomable={false}
                         maskStrokeColor={MINIMAP_MASK_STROKE}
-                        maskStrokeWidth={4}
+                        maskStrokeWidth={MINIMAP_MASK_STROKE_WIDTH}
                         nodeColor={getMiniMapNodeColor}
                         nodeStrokeColor={MINIMAP_NODE_STROKE}
                         nodeStrokeWidth={2}
                         nodeBorderRadius={6}
-                        maskColor="rgba(7, 20, 28, 0.22)"
-                        offsetScale={6}
+                        maskColor={MINIMAP_MASK_FILL}
+                        offsetScale={MINIMAP_OFFSET_SCALE}
                         data-testid="reactflow-minimap"
                         style={{
-                            width: minimapDimensions.width,
-                            height: minimapDimensions.height,
-                            marginTop: 16,
-                            marginLeft: 16,
+                            width: minimapLayout.map.width,
+                            height: minimapLayout.map.height,
+                            top: minimapMapPosition.top,
+                            left: minimapMapPosition.left,
+                            margin: 0,
+                            zIndex: 25,
                             background: 'rgba(4, 8, 12, 0.96)',
                             border: '1px solid rgba(0, 243, 255, 0.18)',
-                            borderRadius: 10,
+                            borderRadius: 14,
                             boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 16px rgba(0,243,255,0.08), 0 0 0 1px rgba(120,255,255,0.08)',
                         }}
                     />
                 </ReactFlow>
                 <div
                     data-testid="minimap-panel"
-                    className="pointer-events-none absolute left-4 top-4 z-20"
-                    style={{ width: minimapDimensions.width }}
+                    className="pointer-events-none absolute z-20"
+                    style={{
+                        width: minimapLayout.panel.width,
+                        height: minimapLayout.panel.height,
+                        left: MINIMAP_PANEL_OFFSET.left,
+                        top: MINIMAP_PANEL_OFFSET.top,
+                    }}
                 >
-                    <div className="relative">
-                        <div className="forensic-minimap-frame pointer-events-none absolute left-2 top-2 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-[var(--forensic-accent-muted)] backdrop-blur-sm">
-                            Navigator
+                    <div className="forensic-minimap-module relative flex h-full flex-col overflow-hidden rounded-[1.2rem] p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <div className="forensic-minimap-frame rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.24em] text-[var(--forensic-accent-muted)] backdrop-blur-sm">
+                                Navigator
+                            </div>
+                            <div className="forensic-minimap-readout text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-text-faint)]">
+                                {nodes.length} nodes
+                            </div>
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => setIsMiniMapExpanded((current) => !current)}
-                            aria-label={isMiniMapExpanded ? 'Shrink minimap' : 'Enlarge minimap'}
-                            className="forensic-minimap-frame pointer-events-auto absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
-                        >
-                            {isMiniMapExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-                        </button>
+                        <div
+                            className="forensic-minimap-map-slot rounded-xl"
+                            style={{ height: minimapLayout.map.height }}
+                        />
+                        <div className="forensic-minimap-footer flex items-center justify-between gap-3">
+                            <button
+                                type="button"
+                                onClick={recenterBoardViewport}
+                                aria-label="Center board from minimap"
+                                className="forensic-minimap-frame pointer-events-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
+                            >
+                                <Crosshair size={11} />
+                                Center
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setIsMiniMapExpanded((current) => !current)}
+                                aria-label={isMiniMapExpanded ? 'Shrink minimap' : 'Enlarge minimap'}
+                                className="forensic-minimap-frame pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
+                            >
+                                {isMiniMapExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                            </button>
+                        </div>
                     </div>
+                </div>
+                <div
+                    data-testid="board-utility-rail"
+                    className="forensic-utility-rail absolute right-5 top-24 z-20 flex flex-col items-center gap-2"
+                >
+                    <button
+                        type="button"
+                        onClick={toggleSynthesisWorkspacePanel}
+                        aria-label="Toggle synthesis panel"
+                        title="Toggle synthesis panel"
+                        className="forensic-utility-button"
+                    >
+                        <Network size={16} />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={toggleDiscoveryWorkspacePanel}
+                        aria-label="Toggle discoveries panel"
+                        title="Toggle discoveries panel"
+                        className="forensic-utility-button"
+                    >
+                        <Lightbulb size={16} />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={toggleRelationshipWorkspacePanel}
+                        aria-label={showRelationshipLegend ? 'Hide relationships legend' : 'Show relationships legend'}
+                        title={showRelationshipLegend ? 'Hide relationships legend' : 'Show relationships legend'}
+                        className={`forensic-utility-button ${showRelationshipLegend ? 'forensic-utility-button-active' : ''}`}
+                    >
+                        <Info size={16} />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={recenterBoardViewport}
+                        aria-label="Recenter board viewport"
+                        title="Recenter board viewport"
+                        className="forensic-utility-button"
+                    >
+                        <Target size={16} />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={toggleBoardControlsPanel}
+                        aria-label="Open advanced controls"
+                        title="Open advanced controls"
+                        className={`forensic-utility-button ${showBoardControls ? 'forensic-utility-button-active' : ''}`}
+                    >
+                        <PanelRightOpen size={16} />
+                    </button>
                 </div>
                 {marquee && (
                     <div
@@ -3157,7 +3294,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             )}
 
             {showRelationshipLegend ? (
-                <div className="forensic-legend-panel absolute bottom-10 right-10 z-40 flex max-h-[50vh] w-64 flex-col p-4 backdrop-blur-md">
+                <div className="forensic-legend-panel absolute bottom-6 right-6 z-40 flex max-h-[50vh] w-64 flex-col p-4 backdrop-blur-md">
                     <div className="mb-3 flex items-center justify-between gap-3 border-b border-[rgba(129,227,255,0.18)] pb-2">
                         <h3 className="text-xs font-black tracking-widest text-[var(--forensic-accent)]">RELATIONSHIPS</h3>
                         <button
@@ -3189,7 +3326,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             ) : (
                 <button
                     onClick={openRelationshipLegend}
-                    className="forensic-legend-panel absolute bottom-10 right-10 z-40 flex max-w-[min(16rem,calc(100vw-2.5rem))] items-center gap-2 rounded-full px-4 py-2 text-left text-[10px] font-black uppercase tracking-[0.2em] text-[var(--forensic-accent)] backdrop-blur-md transition-all hover:border-[rgba(129,227,255,0.5)] hover:bg-[rgba(129,227,255,0.14)] hover:text-white"
+                    className="forensic-legend-panel absolute bottom-6 right-6 z-40 flex max-w-[min(16rem,calc(100vw-2.5rem))] items-center gap-2 rounded-full px-4 py-2 text-left text-[10px] font-black uppercase tracking-[0.2em] text-[var(--forensic-accent)] backdrop-blur-md transition-all hover:border-[rgba(129,227,255,0.5)] hover:bg-[rgba(129,227,255,0.14)] hover:text-white"
                     title="Show relationship legend"
                 >
                     <ChevronUp size={14} />
@@ -3198,7 +3335,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             )}
 
             {showRelationshipLegend && editingTag && tagStyles[editingTag] && (
-                <div className="forensic-board-dialog absolute bottom-10 right-[320px] z-50 w-64 p-4 backdrop-blur-md">
+                <div className="forensic-board-dialog absolute bottom-6 right-[calc(1.5rem+17rem)] z-50 w-64 p-4 backdrop-blur-md">
                     <div className="mb-4 flex items-center justify-between border-b border-[rgba(129,227,255,0.18)] pb-2">
                         <h3 className="max-w-[150px] truncate text-xs font-black tracking-widest text-[var(--forensic-accent-muted)]">EDIT: {editingTag}</h3>
                         <button onClick={() => setEditingTag(null)} className="text-gray-400 hover:text-white">✕</button>

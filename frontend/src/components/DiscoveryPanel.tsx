@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Lightbulb, ChevronRight, ChevronLeft, Sparkles, Target, ShieldAlert } from 'lucide-react'
 import type { DiscoveryRecord } from '../App'
+import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../utils/boardWorkspaceEvents'
 
 interface DiscoveryPanelProps {
   currentInvestigationId: string | null
   discoveries: DiscoveryRecord[]
   hasUnread: boolean
+  showHandle?: boolean
   onOpenDiscovery: (nodeId?: string) => void
   onClear: () => void
   onMarkRead: () => void
@@ -17,6 +19,7 @@ export default function DiscoveryPanel({
   currentInvestigationId,
   discoveries,
   hasUnread,
+  showHandle = true,
   onOpenDiscovery,
   onClear,
   onMarkRead,
@@ -28,13 +31,28 @@ export default function DiscoveryPanel({
     [discoveries],
   )
 
+  useEffect(() => {
+    const handlePanelToggle = () => {
+      setIsOpen((current) => {
+        const next = !current
+        if (next) {
+          onMarkRead()
+        }
+        return next
+      })
+    }
+
+    window.addEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, handlePanelToggle)
+    return () => window.removeEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, handlePanelToggle)
+  }, [onMarkRead])
+
   if (!currentInvestigationId) {
     return null
   }
 
   return (
     <>
-      {!isOpen && (
+      {showHandle && !isOpen && (
         <button
           onClick={() => {
             setIsOpen(true)

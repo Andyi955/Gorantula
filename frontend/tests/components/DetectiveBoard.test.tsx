@@ -3,25 +3,36 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
+import {
+  BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
+  BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
+} from '../../src/utils/boardWorkspaceEvents'
 
 const localStorage = window.localStorage
 
 const fitViewMock = vi.fn()
 const setCenterMock = vi.fn()
 const getZoomMock = vi.fn(() => 0.82)
+let lastReactFlowProps: Record<string, unknown> | null = null
+let lastMiniMapProps: Record<string, unknown> | null = null
 
 vi.mock('reactflow', () => {
   return {
     __esModule: true,
-    default: ({
-      children,
-      nodes = [],
-      nodeTypes = {},
-    }: {
+    default: (props: {
       children?: React.ReactNode
       nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
       nodeTypes?: Record<string, React.ComponentType<any>>
-    }) =>
+      proOptions?: Record<string, unknown>
+    }) => {
+      lastReactFlowProps = props as Record<string, unknown>
+      const {
+        children,
+        nodes = [],
+        nodeTypes = {},
+      } = props
+
+      return (
       React.createElement(
         'div',
         { 'data-testid': 'reactflow' },
@@ -54,15 +65,19 @@ vi.mock('reactflow', () => {
           )
         }),
         children,
-      ),
+      )
+      )
+    },
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
     Background: () => null,
     Controls: () => React.createElement('div', { 'data-testid': 'reactflow-controls' }),
-    MiniMap: ({ onClick, ...props }: React.HTMLAttributes<HTMLDivElement> & { onClick?: (event: React.MouseEvent, position: { x: number; y: number }) => void }) =>
-      React.createElement('div', {
+    MiniMap: ({ onClick, ...props }: React.HTMLAttributes<HTMLDivElement> & { onClick?: (event: React.MouseEvent, position: { x: number; y: number }) => void }) => {
+      lastMiniMapProps = props as Record<string, unknown>
+      return React.createElement('div', {
         ...props,
         onClick: (event: React.MouseEvent) => onClick?.(event, { x: 420, y: 310 }),
-      }),
+      })
+    },
     Handle: () => null,
     applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
     applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
@@ -222,6 +237,8 @@ const renderBoard = (investigationId = 'investigation-1', sharedSocket: WebSocke
 describe('DetectiveBoard relationship legend', () => {
   beforeEach(() => {
     localStorage.clear()
+    lastReactFlowProps = null
+    lastMiniMapProps = null
     fitViewMock.mockReset()
     setCenterMock.mockReset()
     getZoomMock.mockReset()
@@ -248,20 +265,20 @@ describe('DetectiveBoard relationship legend', () => {
     renderBoard()
 
     expect(screen.queryByText('RELATIONSHIPS')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /relationships/i })).toBeInTheDocument()
+    expect(screen.getByTitle('Show relationship legend')).toBeInTheDocument()
   })
 
   it('collapses the legend to a reopen chip and persists the preference', async () => {
     const user = userEvent.setup()
     renderBoard()
 
-    await user.click(screen.getByRole('button', { name: /hide/i }))
+    await user.click(screen.getByRole('button', { name: /^Hide$/i }))
 
     expect(screen.queryByText('RELATIONSHIPS')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /relationships/i })).toBeInTheDocument()
+    expect(screen.getByTitle('Show relationship legend')).toBeInTheDocument()
     expect(localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY)).toBe('false')
 
-    await user.click(screen.getByRole('button', { name: /relationships/i }))
+    await user.click(screen.getByTitle('Show relationship legend'))
 
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY)).toBe('true')
@@ -291,12 +308,12 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(screen.getByText('EDIT: RELATED')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /hide/i }))
+    await user.click(screen.getByRole('button', { name: /^Hide$/i }))
 
     expect(screen.queryByText('EDIT: RELATED')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /relationships/i })).toBeInTheDocument()
+    expect(screen.getByTitle('Show relationship legend')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /relationships/i }))
+    await user.click(screen.getByTitle('Show relationship legend'))
 
     await waitFor(() => {
       expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
@@ -393,8 +410,19 @@ describe('DetectiveBoard relationship legend', () => {
     expect(screen.getByText('Navigator')).toBeInTheDocument()
     expect(screen.getByTestId('reactflow-minimap')).toBeInTheDocument()
     expect(screen.getByTestId('minimap-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('board-utility-rail')).toBeInTheDocument()
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
+  })
+
+  it('anchors the minimap to the top-left workstation position', () => {
+    renderBoard()
+
+    expect(lastMiniMapProps?.position).toBe('top-left')
+    expect(lastMiniMapProps?.offsetScale).toBe(2.5)
+    expect(lastMiniMapProps?.maskColor).toBe('rgba(129, 227, 255, 0.018)')
+    expect(lastMiniMapProps?.maskStrokeColor).toBe('rgba(152, 255, 255, 1)')
+    expect(lastMiniMapProps?.maskStrokeWidth).toBe(4)
   })
 
   it('does not render the default React Flow controls', () => {
@@ -403,18 +431,28 @@ describe('DetectiveBoard relationship legend', () => {
     expect(screen.queryByTestId('reactflow-controls')).not.toBeInTheDocument()
   })
 
+  it('passes React Flow pro options to hide attribution', () => {
+    renderBoard()
+
+    expect(lastReactFlowProps?.proOptions).toEqual({ hideAttribution: true })
+  })
+
   it('toggles the minimap size from the expand control', async () => {
     const user = userEvent.setup()
     renderBoard()
 
     const minimap = screen.getByTestId('reactflow-minimap')
-    expect(minimap).toHaveStyle({ width: '168px', height: '168px' })
+    const minimapPanel = screen.getByTestId('minimap-panel')
+    expect(minimapPanel).toHaveStyle({ width: '244px', height: '178px', left: '24px', top: '16px' })
+    expect(minimap).toHaveStyle({ width: '212px', height: '116px', left: '40px', top: '58px' })
 
     await user.click(screen.getByRole('button', { name: /enlarge minimap/i }))
-    expect(minimap).toHaveStyle({ width: '256px', height: '232px' })
+    expect(minimapPanel).toHaveStyle({ width: '320px', height: '238px', left: '24px', top: '16px' })
+    expect(minimap).toHaveStyle({ width: '288px', height: '176px', left: '40px', top: '58px' })
 
     await user.click(screen.getByRole('button', { name: /shrink minimap/i }))
-    expect(minimap).toHaveStyle({ width: '168px', height: '168px' })
+    expect(minimapPanel).toHaveStyle({ width: '244px', height: '178px', left: '24px', top: '16px' })
+    expect(minimap).toHaveStyle({ width: '212px', height: '116px', left: '40px', top: '58px' })
   })
 
   it('recenters the board when the minimap is clicked without changing board zoom', async () => {
@@ -427,6 +465,39 @@ describe('DetectiveBoard relationship legend', () => {
       zoom: 0.82,
       duration: 180,
     })
+  })
+
+  it('uses the right utility rail to trigger existing workspace actions', async () => {
+    const user = userEvent.setup()
+    const discoveryListener = vi.fn()
+    const synthesisListener = vi.fn()
+    window.addEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, discoveryListener as EventListener)
+    window.addEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, synthesisListener as EventListener)
+
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /toggle synthesis panel/i }))
+    await user.click(screen.getByRole('button', { name: /toggle discoveries panel/i }))
+
+    expect(synthesisListener).toHaveBeenCalledTimes(1)
+    expect(discoveryListener).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: /hide relationships legend/i }))
+    expect(screen.queryByText('RELATIONSHIPS')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show relationships legend/i }))
+    expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /recenter board viewport/i }))
+    expect(fitViewMock).toHaveBeenCalledWith({
+      duration: 220,
+      padding: 0.16,
+      minZoom: 0.98,
+      maxZoom: 1,
+    })
+
+    window.removeEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, discoveryListener as EventListener)
+    window.removeEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, synthesisListener as EventListener)
   })
 
   it('renders board controls in an overlay outside the action bar', async () => {

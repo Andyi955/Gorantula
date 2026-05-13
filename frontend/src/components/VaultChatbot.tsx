@@ -38,7 +38,10 @@ export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
                     setAvailableFiles(data);
                 }
             })
-            .catch(err => console.error("Failed to fetch vault files:", err));
+            .catch(err => {
+                console.debug('Vault files unavailable; backend may be offline.', err);
+                setAvailableFiles([]);
+            });
     }, []);
 
     useEffect(() => {
