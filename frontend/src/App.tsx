@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
-import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle } from 'lucide-react'
 import {
   buildSidebarInvestigationRows,
   createRootInvestigation,
@@ -11,7 +11,7 @@ import {
   removeInvestigationRecord,
   type InvestigationRecord,
 } from './utils/investigations'
-import { createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from './utils/hierarchicalCanvas'
+import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from './utils/hierarchicalCanvas'
 import { BROWSER_QA_CLEARED_EVENT, BROWSER_QA_SEEDED_EVENT, type BrowserQaSeedResult } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
@@ -48,6 +48,47 @@ interface TokenUsageReport {
   providerTotals?: Record<string, number>
 }
 
+interface PipelineProgressStepState {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'complete' | 'error'
+  startedAt?: string
+  completedAt?: string
+  durationMs?: number
+  detail?: string
+  error?: string
+}
+
+interface PipelineProgressPayload {
+  runId: string
+  vaultId?: string
+  mode: string
+  stepId: string
+  stepLabel: string
+  status: 'pending' | 'running' | 'complete' | 'error'
+  completedSteps: number
+  totalSteps: number
+  startedAt?: string
+  stepStartedAt?: string
+  completedAt?: string
+  elapsedMs: number
+  durationMs?: number
+  estimatedRemainingMs?: number
+  detail?: string
+  error?: string
+  steps?: PipelineProgressStepState[]
+}
+
+interface PipelineRunState extends PipelineProgressPayload {
+  updatedAt: number
+}
+
+interface AutosaveWarning {
+  investigationId?: string
+  errorName?: string
+  timestamp: number
+}
+
 interface ConfidenceCarrier {
   confidence?: number | null
 }
@@ -76,6 +117,82 @@ const formatCompactTokens = (value: number) => compactTokenFormatter.format(valu
 
 const clampSidebarWidth = (value: number) =>
   Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)))
+
+const createPipelineRunId = () => `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+const clampProgressPercent = (completedSteps: number, totalSteps: number) => {
+  if (!Number.isFinite(completedSteps) || !Number.isFinite(totalSteps) || totalSteps <= 0) {
+    return 0
+  }
+  return Math.max(0, Math.min(100, Math.round((completedSteps / totalSteps) * 100)))
+}
+
+const formatDuration = (milliseconds?: number | null) => {
+  if (!milliseconds || !Number.isFinite(milliseconds) || milliseconds <= 0) {
+    return '0s'
+  }
+
+  const totalSeconds = Math.max(1, Math.round(milliseconds / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes <= 0) {
+    return `${seconds}s`
+  }
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
+}
+
+const coercePipelineStatus = (value: unknown): PipelineProgressPayload['status'] => {
+  if (value === 'pending' || value === 'running' || value === 'complete' || value === 'error') {
+    return value
+  }
+  return 'running'
+}
+
+const coercePipelineProgressPayload = (payload: unknown): PipelineProgressPayload | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+
+  const candidate = payload as Record<string, unknown>
+  if (typeof candidate.runId !== 'string' || candidate.runId.trim() === '') {
+    return null
+  }
+
+  const rawSteps = Array.isArray(candidate.steps) ? candidate.steps : []
+  const steps = rawSteps
+    .filter((step): step is Record<string, unknown> => Boolean(step) && typeof step === 'object' && !Array.isArray(step))
+    .map((step) => ({
+      id: typeof step.id === 'string' ? step.id : '',
+      label: typeof step.label === 'string' ? step.label : 'Pipeline step',
+      status: coercePipelineStatus(step.status),
+      startedAt: typeof step.startedAt === 'string' ? step.startedAt : undefined,
+      completedAt: typeof step.completedAt === 'string' ? step.completedAt : undefined,
+      durationMs: parseTokenCount(step.durationMs),
+      detail: typeof step.detail === 'string' ? step.detail : undefined,
+      error: typeof step.error === 'string' ? step.error : undefined,
+    }))
+    .filter((step) => step.id)
+
+  return {
+    runId: candidate.runId.trim(),
+    vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId : undefined,
+    mode: typeof candidate.mode === 'string' ? candidate.mode : 'web',
+    stepId: typeof candidate.stepId === 'string' ? candidate.stepId : 'pipeline',
+    stepLabel: typeof candidate.stepLabel === 'string' ? candidate.stepLabel : 'Pipeline',
+    status: coercePipelineStatus(candidate.status),
+    completedSteps: parseTokenCount(candidate.completedSteps),
+    totalSteps: Math.max(1, parseTokenCount(candidate.totalSteps)),
+    startedAt: typeof candidate.startedAt === 'string' ? candidate.startedAt : undefined,
+    stepStartedAt: typeof candidate.stepStartedAt === 'string' ? candidate.stepStartedAt : undefined,
+    completedAt: typeof candidate.completedAt === 'string' ? candidate.completedAt : undefined,
+    elapsedMs: parseTokenCount(candidate.elapsedMs),
+    durationMs: parseTokenCount(candidate.durationMs),
+    estimatedRemainingMs: parseTokenCount(candidate.estimatedRemainingMs),
+    detail: typeof candidate.detail === 'string' ? candidate.detail : undefined,
+    error: typeof candidate.error === 'string' ? candidate.error : undefined,
+    steps,
+  }
+}
 
 const tabFallback = (label: string) => (
   <div className="flex h-full items-center justify-center bg-cyber-black text-xs font-bold uppercase tracking-[0.24em] text-cyber-cyan/70">
@@ -361,6 +478,11 @@ function App() {
   const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
+  const [pipelineRunsById, setPipelineRunsById] = useState<Record<string, PipelineRunState>>({})
+  const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
+  const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
+  const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
+  const [autosaveWarning, setAutosaveWarning] = useState<AutosaveWarning | null>(null)
 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -615,6 +737,24 @@ function App() {
     const handleMessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data)
+        if (msg.type === 'PIPELINE_PROGRESS') {
+          const progress = coercePipelineProgressPayload(msg.payload)
+          if (!progress) {
+            return
+          }
+
+          setPipelineRunsById((current) => ({
+            ...current,
+            [progress.runId]: {
+              ...(current[progress.runId] || {}),
+              ...progress,
+              updatedAt: Date.now(),
+            },
+          }))
+          setActivePipelineRunId(progress.runId)
+          return
+        }
+
         if (msg.type === 'TOKEN_USAGE') {
           const report = coerceTokenUsageReport(msg.payload)
           if (!report) {
@@ -665,6 +805,29 @@ function App() {
   }, [currentInvestigationId, socketConfig.socket])
 
   const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
+  const pipelineRuns = useMemo(
+    () => Object.values(pipelineRunsById).sort((left, right) => right.updatedAt - left.updatedAt),
+    [pipelineRunsById],
+  )
+  const activePipelineRun = activePipelineRunId ? pipelineRunsById[activePipelineRunId] || null : pipelineRuns[0] || null
+  const activePipelinePercent = activePipelineRun
+    ? clampProgressPercent(activePipelineRun.completedSteps, activePipelineRun.totalSteps)
+    : 0
+  const activePipelineEta = activePipelineRun?.status === 'complete'
+    ? 'done'
+    : activePipelineRun?.estimatedRemainingMs
+      ? formatDuration(activePipelineRun.estimatedRemainingMs)
+      : 'calibrating'
+  const activePipelineRailStatus: 'idle' | 'running' | 'complete' | 'error' = !activePipelineRun
+    ? 'idle'
+    : activePipelineRun.status === 'complete'
+      ? 'complete'
+      : activePipelineRun.status === 'error'
+        ? 'error'
+        : 'running'
+  const isPipelineChipDismissed = activePipelineRun
+    ? Boolean(dismissedPipelineChipRuns[activePipelineRun.runId])
+    : false
 
   useEffect(() => {
     const handleClearDiscoveries = (event: Event) => {
@@ -746,6 +909,20 @@ function App() {
     return () => window.removeEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardWorkspaceUpdate)
   }, [])
 
+  useEffect(() => {
+    const handlePersistFailure = (event: Event) => {
+      const detail = (event as CustomEvent<{ investigationId?: string; errorName?: string }>).detail || {}
+      setAutosaveWarning({
+        investigationId: detail.investigationId,
+        errorName: detail.errorName,
+        timestamp: Date.now(),
+      })
+    }
+
+    window.addEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
+    return () => window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
+  }, [])
+
   const runSpider = (customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
     const textToRun = customPrompt || prompt;
     const labelToUse = customLabel || textToRun;
@@ -753,6 +930,7 @@ function App() {
     const shouldScrapeImages = modeToUse === 'web' && imageScrapingEnabled
     if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
+      const runId = createPipelineRunId()
 
       // Extract folder name for better label
       let displayTopic = labelToUse;
@@ -768,8 +946,8 @@ function App() {
 
       socketConfig.socket.send(JSON.stringify(
         modeToUse === 'local'
-          ? { type: 'CRAWL_LOCAL', payload: textToRun }
-          : { type: 'CRAWL', payload: textToRun, vaultId: id, scrapeImages: shouldScrapeImages }
+          ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
+          : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
       ))
       if (!customPrompt) setPrompt('')
       setActiveTab('spider')
@@ -1355,6 +1533,10 @@ function App() {
                         confidenceScore: currentBoardSnapshot.confidenceScore,
                         lastActivityLabel: currentBoardSnapshot.lastActivityLabel,
                       }}
+                      pipelineStatus={activePipelineRailStatus}
+                      pipelineLabel={activePipelineRun?.stepLabel ?? 'Pipeline idle'}
+                      pipelineProgressPercent={activePipelinePercent}
+                      onOpenPipelineMonitor={() => setIsPipelineDrawerOpen(true)}
                     />
                   </Suspense>
                 )}
@@ -1575,6 +1757,47 @@ function App() {
           </div>
         </div>
 
+        {activePipelineRun && !isPipelineChipDismissed && (
+          <div
+            data-testid="pipeline-progress-chip"
+            className="forensic-pipeline-chip forensic-status-segment ml-4 shrink-0 text-left text-[10px]"
+            title={`${activePipelineRun.stepLabel} | elapsed ${formatDuration(activePipelineRun.elapsedMs)} | ETA ${activePipelineEta}`}
+          >
+            <button
+              type="button"
+              onClick={() => setIsPipelineDrawerOpen(true)}
+              className="forensic-pipeline-chip-main"
+              aria-label={`Open pipeline monitor: ${activePipelineRun.stepLabel}`}
+            >
+              <span className={`forensic-pipeline-chip-dot forensic-pipeline-chip-dot-${activePipelineRailStatus}`} aria-hidden="true" />
+              <span className="forensic-status-heading font-bold uppercase tracking-[0.18em]">Pipeline</span>
+              <strong>{activePipelinePercent}%</strong>
+              <span className="forensic-pipeline-chip-label">{activePipelineRun.stepLabel}</span>
+            </button>
+            <button
+              type="button"
+              className="forensic-pipeline-chip-dismiss"
+              aria-label="Dismiss pipeline status chip"
+              onClick={() => {
+                setDismissedPipelineChipRuns((current) => ({
+                  ...current,
+                  [activePipelineRun.runId]: true,
+                }))
+              }}
+            >
+              <X size={11} />
+            </button>
+          </div>
+        )}
+
+        {autosaveWarning && (
+          <div className="forensic-autosave-warning forensic-status-segment ml-4 flex shrink-0 items-center gap-2 pl-4 text-[10px]">
+            <AlertTriangle size={14} />
+            <span className="font-bold uppercase tracking-[0.18em]">Autosave warning</span>
+            <span>Storage quota blocked board persistence</span>
+          </div>
+        )}
+
         {!isBoardWorkspaceActive && currentBoardTokenUsage && (
           <div
             className="forensic-status-metric forensic-status-segment ml-4 flex shrink-0 items-center gap-3 pl-4 text-[10px]"
@@ -1607,6 +1830,88 @@ function App() {
           </div>
         )}
       </footer>
+
+      {isPipelineDrawerOpen && activePipelineRun && (
+        <aside data-testid="pipeline-progress-drawer" className="forensic-pipeline-drawer">
+          <div className="flex items-start justify-between gap-4 border-b border-[rgba(129,227,255,0.16)] pb-4">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-accent-muted)]">Pipeline Monitor</div>
+              <h2 className="mt-2 text-lg font-black text-[var(--forensic-text)]">{activePipelineRun.stepLabel}</h2>
+              <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">
+                {activePipelineRun.mode.toUpperCase()} / {activePipelineRun.vaultId || 'unassigned vault'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPipelineDrawerOpen(false)}
+              className="rounded-lg border border-white/10 p-2 text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
+              aria-label="Close pipeline monitor"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between text-xs font-bold text-[var(--forensic-accent)]">
+              <span>{activePipelinePercent}% complete</span>
+              <span>Elapsed {formatDuration(activePipelineRun.elapsedMs)} / ETA {activePipelineEta}</span>
+            </div>
+            <div className="forensic-pipeline-progress-track">
+              <div
+                data-testid="pipeline-progress-bar"
+                className="forensic-pipeline-progress-fill"
+                style={{ width: `${activePipelinePercent}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-2 overflow-y-auto pr-1">
+            {(activePipelineRun.steps && activePipelineRun.steps.length > 0
+              ? activePipelineRun.steps
+              : [{
+                id: activePipelineRun.stepId,
+                label: activePipelineRun.stepLabel,
+                status: activePipelineRun.status,
+                durationMs: activePipelineRun.durationMs,
+                detail: activePipelineRun.detail,
+                error: activePipelineRun.error,
+              } as PipelineProgressStepState]
+            ).map((step) => (
+              <div key={step.id} data-testid="pipeline-progress-step" className={`forensic-pipeline-step forensic-pipeline-step-${step.status}`}>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="forensic-pipeline-step-dot" />
+                    <strong>{step.label}</strong>
+                  </div>
+                  {(step.error || step.detail) && (
+                    <p>{step.error || step.detail}</p>
+                  )}
+                </div>
+                <span>{step.status === 'pending' ? '--' : formatDuration(step.durationMs)}</span>
+              </div>
+            ))}
+          </div>
+
+          {pipelineRuns.length > 1 && (
+            <div className="mt-5 border-t border-[rgba(129,227,255,0.12)] pt-4">
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-accent-muted)]">Recent Runs</div>
+              <div className="space-y-2">
+                {pipelineRuns.slice(0, 4).map((run) => (
+                  <button
+                    key={run.runId}
+                    type="button"
+                    onClick={() => setActivePipelineRunId(run.runId)}
+                    className="forensic-pipeline-run-row"
+                  >
+                    <span>{run.stepLabel}</span>
+                    <strong>{clampProgressPercent(run.completedSteps, run.totalSteps)}%</strong>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+      )}
 
       {showSummaryLog && (
         <div className="absolute inset-0 z-[80] flex items-center justify-center bg-black/70 px-6 py-8 backdrop-blur-sm">

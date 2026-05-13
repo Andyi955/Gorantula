@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
+import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import DiscoveryPanel from '../../src/components/DiscoveryPanel'
+import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../../src/utils/boardWorkspaceEvents'
 
 const discovery = {
   id: 'discovery-inv-1-0',
@@ -57,5 +59,37 @@ describe('DiscoveryPanel', () => {
 
     await user.click(screen.getByRole('button', { name: /node-1/i }))
     expect(onOpenDiscovery).toHaveBeenCalledWith('node-1')
+  })
+
+  it('marks discoveries read from board toggle events without render-phase parent updates', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const Harness = () => {
+      const [isRead, setIsRead] = useState(false)
+
+      return (
+        <DiscoveryPanel
+          currentInvestigationId="inv-1"
+          discoveries={[discovery]}
+          hasUnread={!isRead}
+          onOpenDiscovery={vi.fn()}
+          onClear={vi.fn()}
+          onMarkRead={() => setIsRead(true)}
+        />
+      )
+    }
+
+    render(<Harness />)
+
+    act(() => {
+      window.dispatchEvent(new Event(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT))
+    })
+
+    expect(screen.getByText('Cross-study bottleneck')).toBeInTheDocument()
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining('Cannot update a component'),
+    )
+
+    consoleError.mockRestore()
   })
 })

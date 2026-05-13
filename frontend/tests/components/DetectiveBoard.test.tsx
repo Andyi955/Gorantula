@@ -450,6 +450,21 @@ describe('DetectiveBoard relationship legend', () => {
     expect(lastReactFlowProps?.proOptions).toEqual({ hideAttribution: true })
   })
 
+  it('keeps React Flow node and edge type objects stable across board renders', () => {
+    const socket = new MockSocket()
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    const firstNodeTypes = lastReactFlowProps?.nodeTypes
+    const firstEdgeTypes = lastReactFlowProps?.edgeTypes
+
+    act(() => {
+      socket.emit('BRAIN_STATE', 'Synthesizing persona insights...')
+    })
+
+    expect(lastReactFlowProps?.nodeTypes).toBe(firstNodeTypes)
+    expect(lastReactFlowProps?.edgeTypes).toBe(firstEdgeTypes)
+  })
+
   it('toggles the minimap size from the expand control', async () => {
     const user = userEvent.setup()
     renderBoard()
@@ -1107,6 +1122,82 @@ describe('DetectiveBoard relationship legend', () => {
       randomSpy.mockRestore()
       vi.useRealTimers()
     }
+  })
+
+  it('propagates crawl run ids through auto reconnect and persists gathered nodes with relationships', async () => {
+    const socket = new MockSocket()
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    act(() => {
+      socket.emit('MEMORY_NODE_GATHERED', {
+        append: false,
+        vaultId: 'investigation-1',
+        node: {
+          id: 'node-a',
+          title: 'A',
+          summary: 'A',
+          fullText: 'A',
+          sourceURL: 'https://example.com/a',
+        },
+      })
+      socket.emit('MEMORY_NODE_GATHERED', {
+        append: false,
+        vaultId: 'investigation-1',
+        node: {
+          id: 'node-b',
+          title: 'B',
+          summary: 'B',
+          fullText: 'B',
+          sourceURL: 'https://example.com/b',
+        },
+      })
+      socket.emit('SYNTHESIS_COMPLETE', {
+        result: 'Unified report',
+        vaultPath: 'abdomen_vault/investigation-1/report.md',
+        vaultId: 'investigation-1',
+        append: false,
+        runId: 'run-flow-1',
+      })
+    })
+
+    await waitFor(() => {
+      expect(socket.sentMessages.some((message) => JSON.parse(message).type === 'CONNECT_DOTS')).toBe(true)
+    })
+
+    const reconnectMessage = socket.sentMessages
+      .map((message) => JSON.parse(message))
+      .find((message) => message.type === 'CONNECT_DOTS')
+    expect(reconnectMessage).toEqual(expect.objectContaining({
+      type: 'CONNECT_DOTS',
+      vaultId: 'investigation-1',
+      runId: 'run-flow-1',
+    }))
+
+    act(() => {
+      socket.emit('CONNECTIONS_FOUND', [
+        {
+          source: 'node-a',
+          target: 'node-b',
+          tag: 'RELATED',
+          reasoning: 'Shared evidence trail',
+        },
+      ])
+    })
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'node-a' }),
+          expect.objectContaining({ id: 'node-b' }),
+        ]),
+      )
+      expect(persisted.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
+        ]),
+      )
+    })
   })
 
   it('saves edited text without sending manual node analysis', async () => {

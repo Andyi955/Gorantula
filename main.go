@@ -29,8 +29,9 @@ var upgrader = websocket.Upgrader{
 }
 
 var (
-	clients   = make(map[*websocket.Conn]bool)
-	clientsMu sync.Mutex
+	clients          = make(map[*websocket.Conn]bool)
+	clientsMu        sync.Mutex
+	pipelineTrackers sync.Map
 )
 
 const maxNodeImageUploadBodyBytes = 12 << 20
@@ -57,6 +58,58 @@ func extractScrapeImagesPreference(msg map[string]interface{}) bool {
 
 	preference, ok := rawPreference.(bool)
 	return ok && preference
+}
+
+type pipelineRunMetadata struct {
+	RunID   string
+	VaultID string
+	Mode    string
+}
+
+func extractPipelineRunMetadata(msg map[string]interface{}, fallbackVaultID, mode string) pipelineRunMetadata {
+	runID := ""
+	if rawRunID, ok := msg["runId"].(string); ok {
+		runID = strings.TrimSpace(rawRunID)
+	}
+	if runID == "" {
+		runID = fmt.Sprintf("run-%d", time.Now().UnixNano())
+	}
+
+	vaultID := strings.TrimSpace(fallbackVaultID)
+	if rawVaultID, ok := msg["vaultId"].(string); ok && strings.TrimSpace(rawVaultID) != "" {
+		vaultID = strings.TrimSpace(rawVaultID)
+	}
+
+	return pipelineRunMetadata{
+		RunID:   runID,
+		VaultID: vaultID,
+		Mode:    strings.TrimSpace(mode),
+	}
+}
+
+func newPipelineTracker(meta pipelineRunMetadata, steps []models.PipelineProgressStep) *models.PipelineProgressTracker {
+	tracker := models.NewPipelineProgressTracker(meta.RunID, meta.VaultID, meta.Mode, steps)
+	if meta.RunID != "" {
+		pipelineTrackers.Store(meta.RunID, tracker)
+	}
+	return tracker
+}
+
+func getPipelineTracker(meta pipelineRunMetadata, steps []models.PipelineProgressStep) *models.PipelineProgressTracker {
+	if meta.RunID != "" {
+		if existing, ok := pipelineTrackers.Load(meta.RunID); ok {
+			if tracker, ok := existing.(*models.PipelineProgressTracker); ok {
+				return tracker
+			}
+		}
+	}
+	return newPipelineTracker(meta, steps)
+}
+
+func forgetPipelineTracker(runID string) {
+	if strings.TrimSpace(runID) != "" {
+		pipelineTrackers.Delete(runID)
+	}
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
@@ -86,7 +139,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 		// Support both legacy {"prompt": "..."} and new {"type": "CRAWL", "payload": "..."}
 		if prompt, ok := msg["prompt"].(string); ok {
-			triggerCrawl(br, prompt, "", false, false)
+			triggerCrawl(br, prompt, "", false, false, extractPipelineRunMetadata(msg, "", "web"))
 		} else if msgType, ok := msg["type"].(string); ok {
 			switch msgType {
 			case "CRAWL":
@@ -95,7 +148,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					if rawVaultID, ok := msg["vaultId"].(string); ok {
 						vaultID = strings.TrimSpace(rawVaultID)
 					}
-					triggerCrawl(br, prompt, vaultID, false, extractScrapeImagesPreference(msg))
+					triggerCrawl(br, prompt, vaultID, false, extractScrapeImagesPreference(msg), extractPipelineRunMetadata(msg, vaultID, "web"))
 				}
 			case "APPEND_CRAWL":
 				if prompt, ok := msg["payload"].(string); ok {
@@ -107,7 +160,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						broadcast(models.WSMessage{Type: "ERROR", Payload: "Append crawl requires a target investigation."})
 						continue
 					}
-					triggerCrawl(br, prompt, vaultID, true, extractScrapeImagesPreference(msg))
+					triggerCrawl(br, prompt, vaultID, true, extractScrapeImagesPreference(msg), extractPipelineRunMetadata(msg, vaultID, "web"))
 				}
 			case "CRAWL_LOCAL":
 				if payload, ok := msg["payload"].(string); ok {
@@ -125,7 +178,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					} else {
 						filePaths = []string{payload}
 					}
-					triggerLocalCrawl(br, filePaths)
+					triggerLocalCrawl(br, filePaths, extractPipelineRunMetadata(msg, "", "local"))
 				}
 			case "CONNECT_DOTS":
 				log.Println("[WS] Received CONNECT_DOTS request")
@@ -151,7 +204,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}
 				}
 
-				triggerConnectDotsAnalysis(br, vaultID, nodes, nil)
+				triggerConnectDotsAnalysis(br, vaultID, nodes, nil, extractPipelineRunMetadata(msg, vaultID, "analysis"))
 			case "CONNECT_DOTS_INCREMENTAL":
 				log.Println("[WS] Received CONNECT_DOTS_INCREMENTAL request")
 
@@ -195,7 +248,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}
 				}
 
-				triggerConnectDotsAnalysis(br, vaultID, payload.AllNodes, pendingNodeIDs)
+				triggerConnectDotsAnalysis(br, vaultID, payload.AllNodes, pendingNodeIDs, extractPipelineRunMetadata(msg, vaultID, "analysis"))
 			case "CHAT_RAG":
 				log.Println("[WS] Received CHAT_RAG request")
 				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
@@ -329,17 +382,20 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 	}
 }
 
-func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, scrapeImages bool) {
+func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, scrapeImages bool, meta pipelineRunMetadata) {
 	go func() {
+		tracker := newPipelineTracker(meta, models.DefaultPipelineProgressSteps())
 		var err error
 		if appendToVault {
-			_, err = br.ProcessPromptIntoVaultWithOptions(context.Background(), prompt, vaultID, scrapeImages)
+			_, err = br.ProcessPromptIntoVaultWithProgress(context.Background(), prompt, vaultID, scrapeImages, tracker)
 		} else if strings.TrimSpace(vaultID) != "" {
-			_, err = br.ProcessPromptForVaultWithOptions(context.Background(), prompt, vaultID, scrapeImages)
+			_, err = br.ProcessPromptForVaultWithProgress(context.Background(), prompt, vaultID, scrapeImages, tracker)
 		} else {
-			_, err = br.ProcessPromptWithOptions(context.Background(), prompt, scrapeImages)
+			_, err = br.ProcessPromptWithProgress(context.Background(), prompt, scrapeImages, tracker)
 		}
 		if err != nil {
+			broadcast(tracker.Error("complete", err.Error()))
+			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{
 				Type:    "ERROR",
 				Payload: err.Error(),
@@ -392,8 +448,9 @@ func filterNodesByIDs(nodes []models.MemoryNode, nodeIDs []string) []models.Memo
 	return filtered
 }
 
-func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string) {
+func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipelineRunMetadata) {
 	go func() {
+		tracker := getPipelineTracker(meta, models.DefaultPipelineProgressSteps())
 		isIncremental := len(pendingNodeIDs) > 0
 		if isIncremental {
 			log.Printf("[WS] Dispatching incremental persona analysis for %d nodes with %d pending nodes...", len(nodes), len(pendingNodeIDs))
@@ -401,6 +458,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			log.Printf("[WS] Dispatching multi-agent persona analysis for %d nodes...", len(nodes))
 		}
 
+		broadcast(tracker.Start("persona_analysis", "Running multi-agent persona analysis"))
 		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Running multi-agent persona analysis..."})
 
 		var (
@@ -414,6 +472,8 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 		if err != nil {
 			log.Printf("[WS Error] Persona analysis failed: %v", err)
+			broadcast(tracker.Error("persona_analysis", err.Error()))
+			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{Type: "ERROR", Payload: "Persona analysis failed: " + err.Error()})
 
 			connections, fallbackErr := br.AnalyzeConnections(context.Background(), nodes)
@@ -434,6 +494,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 
 		broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
+		broadcast(tracker.Complete("persona_analysis", fmt.Sprintf("Generated %d persona insight sets", len(insights))))
 
 		overlapCandidateNodes := nodes
 		if isIncremental {
@@ -441,10 +502,13 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 
 		log.Printf("[Synthesis] Triggering overlaps check with %d candidate nodes for %d total nodes", len(overlapCandidateNodes), len(nodes))
+		broadcast(tracker.Start("overlap_scan", "Scanning for cross-case overlap"))
 		if len(overlapCandidateNodes) > 0 && len(nodes) > 0 {
 			go br.Synthesis.AnalyzeOverlap(context.Background(), vaultID, overlapCandidateNodes, nodes, br)
 		}
+		broadcast(tracker.Complete("overlap_scan", "Unified theory scan queued"))
 
+		broadcast(tracker.Start("relationship_synthesis", "Synthesizing evidence relationships"))
 		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
 
 		var connections []models.BoardConnection
@@ -455,43 +519,59 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 		if err != nil {
 			log.Printf("[WS Error] Relationship workflow failed: %v", err)
+			broadcast(tracker.Error("relationship_synthesis", err.Error()))
+			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
 			return
 		}
 
 		log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
+		broadcast(tracker.Complete("relationship_synthesis", fmt.Sprintf("Found %d relationships", len(connections))))
 		broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
 
 		if isIncremental {
+			broadcast(tracker.Complete("complete", "Incremental integration complete"))
+			forgetPipelineTracker(meta.RunID)
 			return
 		}
 
 		nodesSnapshot := append([]models.MemoryNode(nil), nodes...)
 		insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
 		go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
+			broadcast(tracker.Start("discovery_review", "Reviewing breakthrough candidates"))
 			candidateDiscoveries, err := br.SynthesizeDiscoveries(context.Background(), vaultID, nodes, insights)
 			if err != nil {
 				log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
+				broadcast(tracker.Error("discovery_review", err.Error()))
+				forgetPipelineTracker(meta.RunID)
 				return
 			}
 
 			discoveries, err := br.ReviewDiscoveryCandidates(context.Background(), candidateDiscoveries, nodes)
 			if err != nil {
 				log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
+				broadcast(tracker.Error("discovery_review", err.Error()))
+				forgetPipelineTracker(meta.RunID)
 				return
 			}
 
 			if len(discoveries) > 0 {
 				broadcast(models.WSMessage{Type: "DISCOVERIES_FOUND", Payload: discoveries})
 			}
+			broadcast(tracker.Complete("discovery_review", fmt.Sprintf("Approved %d discoveries", len(discoveries))))
+			broadcast(tracker.Complete("complete", "Pipeline complete"))
+			forgetPipelineTracker(meta.RunID)
 		}(vaultID, nodesSnapshot, insightsSnapshot)
 	}()
 }
 
-func triggerLocalCrawl(br *brain.Brain, filePaths []string) {
+func triggerLocalCrawl(br *brain.Brain, filePaths []string, meta pipelineRunMetadata) {
 	go func() {
-		_, err := br.ProcessLocalFiles(context.Background(), filePaths)
+		tracker := newPipelineTracker(meta, models.LocalPipelineProgressSteps())
+		_, err := br.ProcessLocalFilesWithProgress(context.Background(), filePaths, tracker)
 		if err != nil {
+			broadcast(tracker.Error("complete", err.Error()))
+			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{
 				Type:    "ERROR",
 				Payload: err.Error(),

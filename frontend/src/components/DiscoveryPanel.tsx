@@ -33,18 +33,16 @@ export default function DiscoveryPanel({
 
   useEffect(() => {
     const handlePanelToggle = () => {
-      setIsOpen((current) => {
-        const next = !current
-        if (next) {
-          onMarkRead()
-        }
-        return next
-      })
+      const next = !isOpen
+      setIsOpen(next)
+      if (next) {
+        onMarkRead()
+      }
     }
 
     window.addEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, handlePanelToggle)
     return () => window.removeEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, handlePanelToggle)
-  }, [onMarkRead])
+  }, [isOpen, onMarkRead])
 
   if (!currentInvestigationId) {
     return null
