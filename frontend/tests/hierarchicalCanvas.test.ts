@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRootInvestigation } from '../src/utils/investigations';
-import { createMergedChildBoard, parsePersistedBoardState } from '../src/utils/hierarchicalCanvas';
+import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from '../src/utils/hierarchicalCanvas';
 
 describe('hierarchical canvas utilities', () => {
   it('builds a merged child board with provenance and portal nodes', () => {
@@ -77,5 +77,31 @@ describe('hierarchical canvas utilities', () => {
 
     expect(state?.mode).toBe('strict-grid');
     expect(state?.nodes).toHaveLength(1);
+  });
+
+  it('dispatches a board persistence failure event when storage quota is exceeded', () => {
+    const listener = vi.fn();
+    window.addEventListener(BOARD_PERSIST_FAILED_EVENT, listener as EventListener);
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+
+    try {
+      const saved = persistBoardStateForInvestigation('inv-quota', {
+        mode: 'strict-grid',
+        nodes: [],
+        edges: [],
+      });
+
+      expect(saved).toBe(false);
+      const event = listener.mock.calls[0]?.[0] as CustomEvent;
+      expect(event.detail).toEqual(expect.objectContaining({
+        investigationId: 'inv-quota',
+        errorName: 'QuotaExceededError',
+      }));
+    } finally {
+      setItemSpy.mockRestore();
+      window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, listener as EventListener);
+    }
   });
 });

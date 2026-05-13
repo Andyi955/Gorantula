@@ -13,6 +13,8 @@ export interface PersistedBoardState {
   synthesisAlerts?: PersistedSynthesisAlert[];
 }
 
+export const BOARD_PERSIST_FAILED_EVENT = 'gorantula:board-persist-failed';
+
 export interface PersistedSynthesisAlertNode {
   vaultId: string;
   nodeId: string;
@@ -121,6 +123,16 @@ export const persistBoardStateForInvestigation = (investigationId: string, state
     return true;
   } catch (error) {
     console.error('[HierarchicalCanvas] Failed to persist board state:', error);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(BOARD_PERSIST_FAILED_EVENT, {
+        detail: {
+          investigationId,
+          errorName: error && typeof error === 'object' && 'name' in error
+            ? String((error as { name?: unknown }).name || 'UnknownError')
+            : 'UnknownError',
+        },
+      }));
+    }
     return false;
   }
 };

@@ -553,6 +553,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const edgesRef = useRef<Edge[]>([]);
     const pendingIntegrationNodeIdsRef = useRef<string[]>([]);
     const analysisModeRef = useRef<AnalysisMode>(null);
+    const latestPipelineRunIdRef = useRef<string | null>(null);
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
     const dragRouteFrameRef = useRef<number | null>(null);
@@ -2366,6 +2367,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     ? msg.payload.vaultId
                     : investigationId;
                 const isAppendResult = Boolean(msg.payload?.append);
+                if (typeof msg.payload?.runId === 'string' && msg.payload.runId.trim()) {
+                    latestPipelineRunIdRef.current = msg.payload.runId;
+                }
 
                 setIsGathering(false);
                 setDeepDiveTopic(null);
@@ -2541,7 +2545,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     allNodes: nodeData,
                     pendingNodeIds: incrementalNodeIds,
                 },
-                vaultId: investigationId
+                vaultId: investigationId,
+                runId: latestPipelineRunIdRef.current || undefined,
             }));
             return;
         }
@@ -2549,7 +2554,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         sharedSocket.send(JSON.stringify({
             type: 'CONNECT_DOTS',
             payload: nodeData,
-            vaultId: investigationId
+            vaultId: investigationId,
+            runId: latestPipelineRunIdRef.current || undefined,
         }));
     };
 

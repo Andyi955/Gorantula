@@ -5,9 +5,27 @@ import {
   BROWSER_QA_SEEDED_EVENT,
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
+import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
 
 vi.mock('../src/components/SpiderVisualizer', () => ({
-  default: () => <div>SpiderVisualizer</div>,
+  default: ({
+    pipelineStatus = 'idle',
+    pipelineLabel = 'Pipeline idle',
+    pipelineProgressPercent = 0,
+    onOpenPipelineMonitor,
+  }: {
+    pipelineStatus?: string
+    pipelineLabel?: string
+    pipelineProgressPercent?: number
+    onOpenPipelineMonitor?: () => void
+  }) => (
+    <div>
+      SpiderVisualizer
+      <button type="button" data-testid="mock-spider-pipeline-rail" onClick={onOpenPipelineMonitor}>
+        Pipeline rail {pipelineStatus} {pipelineLabel} {pipelineProgressPercent}%
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('../src/components/DetectiveBoard', () => ({
@@ -292,7 +310,118 @@ describe('App', () => {
     expect(WebSocketMock.instances[0]?.send).toHaveBeenCalled()
     const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
     expect(crawlMessage.type).toBe('CRAWL')
+    expect(crawlMessage.runId).toMatch(/^run-/)
     expect(crawlMessage.scrapeImages).toBe(true)
+  })
+
+  it('shows global pipeline progress and keeps it visible across tabs', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    await user.type(screen.getByPlaceholderText(/enter crawl parameters/i), 'signal pattern research')
+    await user.click(screen.getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage.runId).toMatch(/^run-/)
+    expect(crawlMessage.vaultId).toMatch(/^inv-/)
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        mode: 'web',
+        stepId: 'dispatch_legs',
+        stepLabel: 'Dispatching legs',
+        status: 'running',
+        completedSteps: 2,
+        totalSteps: 8,
+        elapsedMs: 4200,
+        estimatedRemainingMs: 12600,
+        steps: [
+          { id: 'start', label: 'Starting crawl', status: 'complete', durationMs: 500 },
+          { id: 'plan_queries', label: 'Planning search queries', status: 'complete', durationMs: 3700 },
+          { id: 'dispatch_legs', label: 'Dispatching legs', status: 'running' },
+        ],
+      })
+    })
+
+    const chip = await screen.findByTestId('pipeline-progress-chip')
+    expect(chip).toHaveTextContent('25%')
+    expect(chip).toHaveTextContent('Dispatching legs')
+    expect(chip).toHaveAttribute('title', expect.stringContaining('elapsed 4s'))
+    expect(chip).toHaveAttribute('title', expect.stringContaining('ETA 13s'))
+    expect(within(chip).getByRole('button', { name: /dismiss pipeline status chip/i })).toBeInTheDocument()
+
+    const spiderPipelineRailButton = await screen.findByTestId('mock-spider-pipeline-rail')
+    expect(spiderPipelineRailButton).toHaveTextContent('running Dispatching legs 25%')
+
+    await user.click(spiderPipelineRailButton)
+    const drawer = screen.getByTestId('pipeline-progress-drawer')
+    expect(drawer).toHaveTextContent('Pipeline Monitor')
+    expect(screen.getByTestId('pipeline-progress-bar')).toHaveStyle({ width: '25%' })
+    expect(screen.getAllByTestId('pipeline-progress-step')).toHaveLength(3)
+
+    await user.click(screen.getByText('Detective Board'))
+    expect(await screen.findByText('DetectiveBoard')).toBeInTheDocument()
+    expect(screen.getByTestId('pipeline-progress-chip')).toHaveTextContent('Dispatching legs')
+  })
+
+  it('dismisses the compact pipeline chip without clearing the active rail status', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    await user.type(screen.getByPlaceholderText(/enter crawl parameters/i), 'compact status test')
+    await user.click(screen.getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        mode: 'web',
+        stepId: 'dispatch_legs',
+        stepLabel: 'Dispatching legs',
+        status: 'running',
+        completedSteps: 2,
+        totalSteps: 8,
+        elapsedMs: 4200,
+      })
+    })
+
+    const chip = await screen.findByTestId('pipeline-progress-chip')
+    await user.click(within(chip).getByRole('button', { name: /dismiss pipeline status chip/i }))
+
+    expect(screen.queryByTestId('pipeline-progress-chip')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-spider-pipeline-rail')).toHaveTextContent('running Dispatching legs 25%')
+  })
+
+  it('surfaces board autosave failures in the global status area', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(BOARD_PERSIST_FAILED_EVENT, {
+        detail: {
+          investigationId: 'inv-quota',
+          errorName: 'QuotaExceededError',
+        },
+      }))
+    })
+
+    expect(screen.getByText(/Autosave warning/i)).toBeInTheDocument()
+    expect(screen.getByText(/storage quota/i)).toBeInTheDocument()
   })
 
   it('keeps local crawl browsing inside the redesigned crawl console', async () => {

@@ -1,4 +1,5 @@
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import SpiderVisualizer from '../../src/components/SpiderVisualizer'
 
 vi.mock('@react-three/fiber', () => ({
@@ -89,5 +90,29 @@ describe('SpiderVisualizer', () => {
     })
 
     expect(screen.getByTestId('spider-leg-telemetry-4')).toHaveTextContent('Scraping source map')
+  })
+
+  it('renders a pipeline monitor rail button with a live status dot', async () => {
+    const user = userEvent.setup()
+    const onOpenPipelineMonitor = vi.fn()
+
+    render(
+      <SpiderVisualizer
+        sharedSocket={null}
+        pipelineStatus="running"
+        pipelineLabel="Dispatching legs"
+        pipelineProgressPercent={25}
+        onOpenPipelineMonitor={onOpenPipelineMonitor}
+      />,
+    )
+
+    const railButton = screen.getByTestId('spider-pipeline-rail-button')
+    expect(railButton).toHaveAccessibleName(/open pipeline monitor/i)
+    expect(railButton).toHaveAttribute('title', 'Pipeline: Dispatching legs (25%)')
+    expect(screen.getByTestId('spider-pipeline-status-dot')).toHaveClass('forensic-spider-pipeline-dot-running')
+
+    await user.click(railButton)
+
+    expect(onOpenPipelineMonitor).toHaveBeenCalledTimes(1)
   })
 })

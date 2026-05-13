@@ -4,6 +4,8 @@ import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import { Activity, BarChart3, Braces, CircuitBoard, Crosshair, DatabaseZap, Info, Network, RadioTower, ScanLine } from 'lucide-react';
 import { SpiderScene } from './SpiderScene';
 
+type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error';
+
 interface SpiderVisualizerProps {
     sharedSocket: WebSocket | null;
     displayMetrics?: {
@@ -14,6 +16,10 @@ interface SpiderVisualizerProps {
         confidenceScore?: number;
         lastActivityLabel?: string;
     };
+    pipelineStatus?: PipelineRailStatus;
+    pipelineLabel?: string;
+    pipelineProgressPercent?: number;
+    onOpenPipelineMonitor?: () => void;
 }
 
 const legRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
@@ -106,7 +112,14 @@ const MetricReadout = ({ label, value }: { label: string; value: string | number
     </div>
 );
 
-const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket, displayMetrics }) => {
+const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
+    sharedSocket,
+    displayMetrics,
+    pipelineStatus = 'idle',
+    pipelineLabel = 'Pipeline idle',
+    pipelineProgressPercent = 0,
+    onOpenPipelineMonitor,
+}) => {
     const [legStates, setLegStates] = useState<Record<number, string>>(resetLegStates);
     const [brainState, setBrainState] = useState<string>('Offline');
     const [systemLog, setSystemLog] = useState<string | null>(null);
@@ -155,6 +168,10 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket, displ
     const confidenceScore = Math.round((displayMetrics?.confidenceScore ?? 0) * 100);
     const uptime = sharedSocket ? '02:34:18' : '00:00:00';
     const throughput = activeLegCount > 0 ? `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps` : 'Standby';
+    const normalizedPipelinePercent = Math.max(0, Math.min(100, Math.round(pipelineProgressPercent)));
+    const pipelineTitle = normalizedPipelinePercent > 0
+        ? `Pipeline: ${pipelineLabel} (${normalizedPipelinePercent}%)`
+        : `Pipeline: ${pipelineLabel}`;
 
     return (
         <section data-testid="spider-view-root" className="forensic-board-root forensic-spider-root h-full overflow-hidden text-[var(--forensic-text)]">
@@ -240,6 +257,22 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket, displ
                     </aside>
 
                     <nav className="forensic-spider-utility-rail" aria-label="Spider lab readouts">
+                        <button
+                            type="button"
+                            data-testid="spider-pipeline-rail-button"
+                            aria-label={`Open pipeline monitor, ${pipelineTitle}`}
+                            title={pipelineTitle}
+                            onClick={onOpenPipelineMonitor}
+                            className={`forensic-spider-pipeline-rail-button forensic-spider-pipeline-rail-button-${pipelineStatus}`}
+                            disabled={!onOpenPipelineMonitor}
+                        >
+                            <Activity size={16} />
+                            <span
+                                data-testid="spider-pipeline-status-dot"
+                                className={`forensic-spider-pipeline-dot forensic-spider-pipeline-dot-${pipelineStatus}`}
+                                aria-hidden="true"
+                            />
+                        </button>
                         {[
                             { icon: Network, label: 'Topology' },
                             { icon: ScanLine, label: 'Scan beam' },

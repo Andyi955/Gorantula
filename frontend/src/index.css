@@ -527,10 +527,15 @@ body {
 
 .forensic-statusbar-shell {
   position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
 }
 
 .forensic-status-grid {
   display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
   grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 0.35rem;
   align-items: stretch;
@@ -604,6 +609,228 @@ body {
 .forensic-status-metric {
   border-left-color: rgba(129, 227, 255, 0.16) !important;
   color: var(--forensic-text-muted);
+}
+
+.forensic-pipeline-chip {
+  position: relative;
+  min-height: 2.28rem;
+  max-width: min(19rem, 30vw);
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(8, 15, 21, 0.84), rgba(4, 9, 14, 0.92)),
+    radial-gradient(circle at left center, rgba(89, 228, 255, 0.08), transparent 56%);
+  color: var(--forensic-text-muted);
+  transition: border-color 160ms ease, color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.forensic-pipeline-chip:hover {
+  border-color: rgba(89, 228, 255, 0.28);
+  box-shadow: 0 0 22px rgba(89, 228, 255, 0.08);
+  color: var(--forensic-text);
+}
+
+.forensic-pipeline-chip-main {
+  display: flex;
+  min-height: 2.28rem;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.48rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0.42rem 1.85rem 0.42rem 0.68rem;
+  text-align: left;
+}
+
+.forensic-pipeline-chip-main:hover {
+  color: var(--forensic-text);
+}
+
+.forensic-pipeline-chip strong {
+  color: var(--forensic-accent-strong);
+}
+
+.forensic-pipeline-chip-label {
+  min-width: 0;
+  max-width: 8.5rem;
+  overflow: hidden;
+  color: var(--forensic-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-pipeline-chip-dot {
+  width: 0.44rem;
+  height: 0.44rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--forensic-text-faint);
+}
+
+.forensic-pipeline-chip-dot-running {
+  background: var(--forensic-accent);
+  box-shadow: 0 0 12px rgba(89, 228, 255, 0.56);
+  animation: forensicPipelineRailPulse 1.15s ease-in-out infinite;
+}
+
+.forensic-pipeline-chip-dot-complete {
+  background: var(--forensic-success);
+  box-shadow: 0 0 10px rgba(33, 255, 113, 0.46);
+}
+
+.forensic-pipeline-chip-dot-error {
+  background: var(--forensic-danger);
+  box-shadow: 0 0 10px rgba(255, 140, 134, 0.5);
+}
+
+.forensic-pipeline-chip-dismiss {
+  position: absolute;
+  top: 0.32rem;
+  right: 0.32rem;
+  display: inline-flex;
+  width: 1.06rem;
+  height: 1.06rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  background: rgba(3, 8, 12, 0.86);
+  color: var(--forensic-text-faint);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.forensic-pipeline-chip:hover .forensic-pipeline-chip-dismiss,
+.forensic-pipeline-chip-dismiss:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.forensic-pipeline-chip-dismiss:hover {
+  border-color: rgba(255, 140, 134, 0.46);
+  color: var(--forensic-danger);
+}
+
+.forensic-autosave-warning {
+  min-height: 2.7rem;
+  border: 1px solid rgba(255, 140, 134, 0.24);
+  background: rgba(255, 140, 134, 0.08);
+  color: var(--forensic-danger);
+}
+
+.forensic-pipeline-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 75;
+  display: flex;
+  width: min(27rem, calc(100vw - 2rem));
+  flex-direction: column;
+  border-left: 1px solid rgba(129, 227, 255, 0.2);
+  background:
+    linear-gradient(180deg, rgba(7, 13, 19, 0.98), rgba(4, 8, 13, 0.98)),
+    radial-gradient(circle at top right, rgba(188, 19, 254, 0.12), transparent 42%);
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.48), inset 1px 0 0 rgba(255,255,255,0.02);
+  color: var(--forensic-text);
+  padding: 1.1rem;
+}
+
+.forensic-pipeline-progress-track {
+  height: 0.62rem;
+  overflow: hidden;
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(3, 8, 12, 0.72);
+}
+
+.forensic-pipeline-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(188, 19, 254, 0.95), rgba(89, 228, 255, 0.9));
+  box-shadow: 0 0 16px rgba(89, 228, 255, 0.28);
+  transition: width 180ms ease;
+}
+
+.forensic-pipeline-step {
+  display: flex;
+  min-height: 3.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgba(129, 227, 255, 0.11);
+  background: rgba(6, 11, 17, 0.74);
+  padding: 0.72rem;
+  color: var(--forensic-text-muted);
+}
+
+.forensic-pipeline-step strong {
+  color: var(--forensic-text);
+  font-size: 0.72rem;
+}
+
+.forensic-pipeline-step p {
+  margin-top: 0.28rem;
+  color: var(--forensic-text-faint);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.forensic-pipeline-step > span {
+  color: var(--forensic-accent-muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.forensic-pipeline-step-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--forensic-text-faint);
+}
+
+.forensic-pipeline-step-running {
+  border-color: rgba(89, 228, 255, 0.28);
+  background: rgba(89, 228, 255, 0.07);
+}
+
+.forensic-pipeline-step-running .forensic-pipeline-step-dot {
+  background: var(--forensic-accent);
+  box-shadow: 0 0 12px rgba(89, 228, 255, 0.44);
+}
+
+.forensic-pipeline-step-complete .forensic-pipeline-step-dot {
+  background: var(--forensic-success);
+}
+
+.forensic-pipeline-step-error {
+  border-color: rgba(255, 140, 134, 0.28);
+  background: rgba(255, 140, 134, 0.08);
+}
+
+.forensic-pipeline-step-error .forensic-pipeline-step-dot {
+  background: var(--forensic-danger);
+}
+
+.forensic-pipeline-run-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid rgba(129, 227, 255, 0.1);
+  background: rgba(3, 8, 12, 0.58);
+  color: var(--forensic-text-muted);
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+}
+
+.forensic-pipeline-run-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .forensic-status-metric strong,
@@ -1340,6 +1567,7 @@ body {
 }
 
 .forensic-spider-utility-rail button {
+  position: relative;
   display: inline-flex;
   width: 2.65rem;
   height: 2.65rem;
@@ -1349,6 +1577,64 @@ body {
   background: rgba(8, 14, 20, 0.94);
   color: var(--forensic-accent-muted);
   opacity: 0.82;
+}
+
+.forensic-spider-utility-rail button:not(:disabled) {
+  cursor: pointer;
+}
+
+.forensic-spider-utility-rail button:not(:disabled):hover {
+  border-color: rgba(89, 228, 255, 0.36);
+  color: var(--forensic-accent);
+  opacity: 1;
+}
+
+.forensic-spider-pipeline-rail-button {
+  border-color: rgba(188, 19, 254, 0.36) !important;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(188, 19, 254, 0.16), transparent 58%),
+    rgba(8, 14, 20, 0.94) !important;
+  color: var(--forensic-accent) !important;
+  opacity: 1 !important;
+}
+
+.forensic-spider-pipeline-dot {
+  position: absolute;
+  top: 0.42rem;
+  right: 0.42rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--forensic-text-faint);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.forensic-spider-pipeline-dot-running {
+  background: var(--forensic-accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 14px rgba(89, 228, 255, 0.72);
+  animation: forensicPipelineRailPulse 1.15s ease-in-out infinite;
+}
+
+.forensic-spider-pipeline-dot-complete {
+  background: var(--forensic-success);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 12px rgba(33, 255, 113, 0.62);
+}
+
+.forensic-spider-pipeline-dot-error {
+  background: var(--forensic-danger);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 140, 134, 0.68);
+}
+
+@keyframes forensicPipelineRailPulse {
+  0%, 100% {
+    transform: scale(0.86);
+    opacity: 0.64;
+  }
+
+  50% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
 }
 
 .forensic-spider-crawl-console {

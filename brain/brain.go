@@ -146,7 +146,11 @@ func (b *Brain) ProcessPrompt(ctx context.Context, prompt string) (string, error
 }
 
 func (b *Brain) ProcessPromptWithOptions(ctx context.Context, prompt string, scrapeImages bool) (string, error) {
-	return b.processPrompt(ctx, prompt, "", false, scrapeImages)
+	return b.processPrompt(ctx, prompt, "", false, scrapeImages, nil)
+}
+
+func (b *Brain) ProcessPromptWithProgress(ctx context.Context, prompt string, scrapeImages bool, progress *models.PipelineProgressTracker) (string, error) {
+	return b.processPrompt(ctx, prompt, "", false, scrapeImages, progress)
 }
 
 // ProcessPromptForVault runs a new investigation crawl while targeting a specific investigation vault ID.
@@ -155,7 +159,11 @@ func (b *Brain) ProcessPromptForVault(ctx context.Context, prompt, vaultID strin
 }
 
 func (b *Brain) ProcessPromptForVaultWithOptions(ctx context.Context, prompt, vaultID string, scrapeImages bool) (string, error) {
-	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), false, scrapeImages)
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), false, scrapeImages, nil)
+}
+
+func (b *Brain) ProcessPromptForVaultWithProgress(ctx context.Context, prompt, vaultID string, scrapeImages bool, progress *models.PipelineProgressTracker) (string, error) {
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), false, scrapeImages, progress)
 }
 
 // ProcessPromptIntoVault appends a web crawl into an existing investigation vault.
@@ -164,7 +172,11 @@ func (b *Brain) ProcessPromptIntoVault(ctx context.Context, prompt, vaultID stri
 }
 
 func (b *Brain) ProcessPromptIntoVaultWithOptions(ctx context.Context, prompt, vaultID string, scrapeImages bool) (string, error) {
-	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true, scrapeImages)
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true, scrapeImages, nil)
+}
+
+func (b *Brain) ProcessPromptIntoVaultWithProgress(ctx context.Context, prompt, vaultID string, scrapeImages bool, progress *models.PipelineProgressTracker) (string, error) {
+	return b.processPrompt(ctx, prompt, strings.TrimSpace(vaultID), true, scrapeImages, progress)
 }
 
 func notifyImageReviewUnavailable(provider ModelProvider, broadcast models.Broadcaster) {
@@ -185,7 +197,37 @@ func notifyImageReviewUnavailable(provider ModelProvider, broadcast models.Broad
 	}
 }
 
-func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool) (string, error) {
+func (b *Brain) broadcastPipelineProgress(progress *models.PipelineProgressTracker, message models.WSMessage) {
+	if progress == nil || b == nil || b.NS == nil || b.NS.Broadcast == nil {
+		return
+	}
+	b.NS.Broadcast(message)
+}
+
+func progressMessage(progress *models.PipelineProgressTracker, stepID, status, detail string) models.WSMessage {
+	if progress == nil {
+		return models.WSMessage{}
+	}
+	switch status {
+	case models.PipelineStatusRunning:
+		return progress.Start(stepID, detail)
+	case models.PipelineStatusComplete:
+		return progress.Complete(stepID, detail)
+	case models.PipelineStatusError:
+		return progress.Error(stepID, detail)
+	default:
+		return progress.Start(stepID, detail)
+	}
+}
+
+func pipelineRunID(progress *models.PipelineProgressTracker) string {
+	if progress == nil {
+		return ""
+	}
+	return progress.RunID()
+}
+
+func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool, progress *models.PipelineProgressTracker) (string, error) {
 	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
 		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
 	} else {
@@ -193,12 +235,15 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	}
 
 	// --- STEP 1: Break down into 8 queries ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "running", "Operator submitted crawl"))
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
 			Payload: "Thinking (Generating sub-queries)",
 		})
 	}
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "complete", "Crawl accepted"))
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "plan_queries", "running", "Generating search angles"))
 
 	b.Model.ResponseMIMEType = "application/json"
 
@@ -243,8 +288,10 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	if len(subQ.Queries) > numQueries {
 		subQ.Queries = subQ.Queries[:numQueries]
 	}
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "plan_queries", "complete", fmt.Sprintf("Prepared %d search angles", len(subQ.Queries))))
 
 	// --- STEP 2: Dispatch Queries to Nervous System ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "dispatch_legs", "running", "Dispatching work to spider legs"))
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -305,8 +352,11 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 	// Start working Goroutines (The Legs)
 	b.NS.StartLegs()
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "dispatch_legs", "complete", fmt.Sprintf("Dispatched %d leg tasks", totalLegs)))
 
 	// --- STEP 3: Wait for Nutrients and Store in Abdomen ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "running", "Gathering and summarizing evidence"))
+	reviewedImages := 0
 	for i := 0; i < totalLegs; i++ {
 		nutrient := <-b.NS.NutrientChannel
 
@@ -331,6 +381,7 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 				}
 				if scrapeImages {
 					node.Images = b.PersistRemoteNodeImages(ctx, provider, vaultID, node.ID, nutrient.SourceURL, title, summary, nutrient.Content, nutrient.ImageURLs)
+					reviewedImages += len(node.Images)
 				}
 
 				if b.NS.Broadcast != nil {
@@ -353,8 +404,15 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 	// Ensure legs have finished executing cleanly
 	b.NS.WaitGroup.Wait()
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "complete", fmt.Sprintf("Gathered %d evidence memories", len(b.Abdomen.MemoryContext))))
+	if scrapeImages {
+		b.broadcastPipelineProgress(progress, progressMessage(progress, "image_review", "complete", fmt.Sprintf("Reviewed %d images", reviewedImages)))
+	} else {
+		b.broadcastPipelineProgress(progress, progressMessage(progress, "image_review", "complete", "Image review skipped"))
+	}
 
 	// --- STEP 4: Synthesize Final Response ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "running", "Synthesizing final intelligence report"))
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -401,11 +459,17 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 			return "", fmt.Errorf("fallback failed to generate final synthesis: %w", err)
 		}
 	}
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "complete", "Final intelligence report generated"))
 
 	// Save to Vault
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "running", "Persisting report to vault"))
 	vaultPath, err := saveVaultMemory(prompt, contextText, finalSynthesis, vaultID, isAppend)
 	if err != nil {
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
+	}
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "complete", "Vault memory saved"))
+	if vaultID == "" || isAppend {
+		b.broadcastPipelineProgress(progress, progressMessage(progress, "complete", "complete", "Crawl pipeline complete"))
 	}
 
 	if b.NS.Broadcast != nil {
@@ -421,6 +485,7 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 				"vaultId":   vaultID,
 				"append":    isAppend,
 				"prompt":    prompt,
+				"runId":     pipelineRunID(progress),
 			},
 		})
 	}
@@ -464,7 +529,13 @@ func (b *Brain) ProcessLocalDirectory(ctx context.Context, dirPath string) (stri
 
 // ProcessLocalFiles takes specific absolute file paths and dispatches them to Legs.
 func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (string, error) {
+	return b.ProcessLocalFilesWithProgress(ctx, filePaths, nil)
+}
+
+func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []string, progress *models.PipelineProgressTracker) (string, error) {
 	fmt.Printf("[Brain] Processing %d local files\n", len(filePaths))
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "running", "Operator submitted local files"))
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "complete", "Local crawl accepted"))
 
 	supportedFiles := make([]string, 0, len(filePaths))
 	for _, path := range filePaths {
@@ -482,6 +553,7 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 	}
 
 	// --- STEP 2: Pre-parse and slice into Chunks ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "plan_queries", "running", "Parsing local files into chunks"))
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -530,8 +602,10 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 	if len(allChunks) == 0 {
 		return "", fmt.Errorf("failed to extract any content from the selected files")
 	}
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "plan_queries", "complete", fmt.Sprintf("Prepared %d document chunks", len(allChunks))))
 
 	// --- STEP 3: Dispatch Queries to Nervous System ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "dispatch_legs", "running", "Dispatching document chunks to legs"))
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -552,8 +626,10 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 
 	// Start working Goroutines (The Legs)
 	b.NS.StartLegs()
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "dispatch_legs", "complete", fmt.Sprintf("Dispatched %d chunks", len(allChunks))))
 
 	// --- STEP 4: Wait for Nutrients and Store in Abdomen ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "running", "Summarizing local document chunks"))
 	// Wait for exactly as many chunks as we dispatched
 	expected := len(allChunks)
 	for i := 0; i < expected; i++ {
@@ -594,8 +670,10 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 	}
 
 	b.NS.WaitGroup.Wait()
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "complete", fmt.Sprintf("Gathered %d local evidence memories", len(b.Abdomen.MemoryContext))))
 
 	// --- STEP 4: Synthesize Final Response ---
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "running", "Synthesizing local report"))
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -625,8 +703,10 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 	}
 
 	finalSynthesis := fmt.Sprintf("%v", finalResp.Candidates[0].Content.Parts[0])
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "complete", "Local report generated"))
 
 	// Save to Vault
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "running", "Persisting local report to vault"))
 	var vaultPrefix string
 	if len(filePaths) == 1 {
 		vaultPrefix = "local_file_" + filepath.Base(filePaths[0])
@@ -637,6 +717,8 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 	if err != nil {
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
 	}
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "complete", "Local vault memory saved"))
+	b.broadcastPipelineProgress(progress, progressMessage(progress, "complete", "complete", "Local pipeline complete"))
 
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
@@ -648,6 +730,7 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 			Payload: map[string]interface{}{
 				"result":    finalSynthesis,
 				"vaultPath": vaultPath,
+				"runId":     pipelineRunID(progress),
 			},
 		})
 	}
