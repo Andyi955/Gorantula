@@ -234,6 +234,19 @@ const renderBoard = (investigationId = 'investigation-1', sharedSocket: WebSocke
     />,
   )
 
+const seedExportableBoard = () => {
+  localStorage.setItem(
+    'inv_data_investigation-1',
+    JSON.stringify({
+      mode: 'legacy',
+      nodes: [
+        { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+      ],
+      edges: [],
+    }),
+  )
+}
+
 describe('DetectiveBoard relationship legend', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -528,18 +541,57 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('renders export options in an overlay outside the action bar', async () => {
+    const user = userEvent.setup()
+    seedExportableBoard()
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /export/i }))
+
+    const overlay = screen.getByTestId('export-menu-overlay')
+    const actionBar = screen.getByTestId('board-action-bar')
+
+    expect(overlay).toBeInTheDocument()
+    expect(actionBar.contains(overlay)).toBe(false)
+    expect(within(overlay).getByRole('button', { name: /snapshot \(png\)/i })).toBeInTheDocument()
+    expect(within(overlay).getByRole('button', { name: /vector \(svg\)/i })).toBeInTheDocument()
+    expect(within(overlay).getByRole('button', { name: /full report \(pdf\)/i })).toBeInTheDocument()
+  })
+
+  it('closes the export overlay when clicking outside it', async () => {
+    const user = userEvent.setup()
+    seedExportableBoard()
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /export/i }))
+    expect(screen.getByTestId('export-menu-overlay')).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('export-menu-overlay')).not.toBeInTheDocument()
+    })
+  })
+
+  it('closes export when board controls are opened', async () => {
+    const user = userEvent.setup()
+    seedExportableBoard()
+    renderBoard()
+
+    await user.click(screen.getByRole('button', { name: /export/i }))
+    expect(screen.getByTestId('export-menu-overlay')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /board controls/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('export-menu-overlay')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('board-controls-overlay')).toBeInTheDocument()
+  })
+
   it('closes board controls when export is opened', async () => {
     const user = userEvent.setup()
-    localStorage.setItem(
-      'inv_data_investigation-1',
-      JSON.stringify({
-        mode: 'legacy',
-        nodes: [
-          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
-        ],
-        edges: [],
-      }),
-    )
+    seedExportableBoard()
 
     renderBoard()
 
