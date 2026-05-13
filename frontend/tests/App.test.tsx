@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
@@ -205,6 +205,43 @@ describe('App', () => {
     expect(screen.getByText('Evidence Items')).toBeInTheDocument()
     expect(screen.getByText('Confidence Score')).toBeInTheDocument()
     expect(screen.queryByText('Current Board')).not.toBeInTheDocument()
+  })
+
+  it('collapses and expands the investigations sidebar with the arrow control', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-1', topic: 'Nightfall Ledger' }]),
+    )
+
+    render(<App />)
+
+    const sidebar = screen.getByTestId('app-sidebar')
+    expect(sidebar).toHaveStyle({ width: '288px' })
+    expect(screen.getByPlaceholderText(/search investigations/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /collapse sidebar/i }))
+
+    expect(sidebar).toHaveStyle({ width: '64px' })
+    expect(screen.queryByPlaceholderText(/search investigations/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /expand sidebar/i }))
+
+    expect(sidebar).toHaveStyle({ width: '288px' })
+    expect(screen.getByPlaceholderText(/search investigations/i)).toBeInTheDocument()
+  })
+
+  it('resizes the investigations sidebar by dragging the resize handle', () => {
+    render(<App />)
+
+    const sidebar = screen.getByTestId('app-sidebar')
+    const handle = screen.getByRole('separator', { name: /resize sidebar/i })
+
+    fireEvent.mouseDown(handle, { clientX: 288 })
+    fireEvent.mouseMove(document, { clientX: 380 })
+    fireEvent.mouseUp(document)
+
+    expect(sidebar).toHaveStyle({ width: '380px' })
   })
 
   it('lets operators toggle image scraping for web crawls', async () => {
