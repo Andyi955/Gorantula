@@ -126,6 +126,22 @@ func TestPersistReviewedRemoteNodeImagesKeepsOnlyApprovedImages(t *testing.T) {
 	}
 }
 
+func TestImageReviewCandidateLimitDefaultsLowAndCanBeRaised(t *testing.T) {
+	if got := imageReviewCandidateLimit(); got != 1 {
+		t.Fatalf("default image review candidate limit = %d, want 1", got)
+	}
+
+	t.Setenv("GORANTULA_IMAGE_REVIEW_CANDIDATE_LIMIT", "3")
+	if got := imageReviewCandidateLimit(); got != 3 {
+		t.Fatalf("configured image review candidate limit = %d, want 3", got)
+	}
+
+	t.Setenv("GORANTULA_IMAGE_REVIEW_CANDIDATE_LIMIT", "99")
+	if got := imageReviewCandidateLimit(); got != maxNodeImageCount {
+		t.Fatalf("image review candidate limit should clamp to max node images, got %d", got)
+	}
+}
+
 func TestAttachManualNodeImageRejectsUnsupportedImageType(t *testing.T) {
 	brain := &Brain{}
 	_, err := brain.AttachManualNodeImage(

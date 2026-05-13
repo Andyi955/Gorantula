@@ -51,8 +51,11 @@ vi.mock('../src/components/SynthesisPanel', () => ({
 }))
 
 vi.mock('../src/components/DiscoveryPanel', () => ({
-  default: ({ showHandle = true }: { showHandle?: boolean }) => (
-    <div>{showHandle ? 'DiscoveryPanel Handle' : null}</div>
+  default: ({ showHandle = true, discoveries = [] }: { showHandle?: boolean, discoveries?: Array<{ title: string }> }) => (
+    <div>
+      {showHandle ? 'DiscoveryPanel Handle' : null}
+      {discoveries.map((discovery) => <span key={discovery.title}>{discovery.title}</span>)}
+    </div>
   ),
 }))
 
@@ -407,6 +410,72 @@ describe('App', () => {
     expect(screen.getByTestId('mock-spider-pipeline-rail')).toHaveTextContent('running Dispatching legs 25%')
   })
 
+  it('renders saved pipeline performance profiles in the monitor drawer', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/pipeline-runs')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            {
+              runId: 'run-flow-1',
+              vaultId: 'inv-flow-1',
+              mode: 'web',
+              status: 'complete',
+              totalElapsedMs: 186000,
+              bottlenecks: [
+                { kind: 'span', id: 'node_summary', label: 'Node summary', durationMs: 82000, percentOfTotal: 44 },
+                { kind: 'token', id: 'persona_analysis', label: 'Persona analysis', totalTokens: 14200 },
+              ],
+              tokenUsage: [
+                { operation: 'persona_analysis', provider: 'gemini', callCount: 7, totalTokens: 14200 },
+              ],
+            },
+          ]),
+        } as Response)
+      }
+
+      return Promise.resolve({ ok: false, json: () => Promise.resolve({}) } as Response)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: 'run-flow-1',
+        vaultId: 'inv-flow-1',
+        mode: 'web',
+        stepId: 'complete',
+        stepLabel: 'Pipeline complete',
+        status: 'complete',
+        completedSteps: 12,
+        totalSteps: 12,
+        elapsedMs: 186000,
+      })
+    })
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROFILE_SAVED', {
+        runId: 'run-flow-1',
+      })
+    })
+
+    await user.click(await screen.findByTestId('mock-spider-pipeline-rail'))
+
+    const drawer = screen.getByTestId('pipeline-progress-drawer')
+    expect(await within(drawer).findByText('Performance')).toBeInTheDocument()
+    expect(within(drawer).getByText('Node summary')).toBeInTheDocument()
+    expect(within(drawer).getByText(/44% of run/i)).toBeInTheDocument()
+    expect(within(drawer).getByText(/14\.2K tokens/i)).toBeInTheDocument()
+    expect(within(drawer).getByText(/3m 06s total/i)).toBeInTheDocument()
+  })
+
   it('surfaces board autosave failures in the global status area', async () => {
     render(<App />)
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
@@ -422,6 +491,51 @@ describe('App', () => {
 
     expect(screen.getByText(/Autosave warning/i)).toBeInTheDocument()
     expect(screen.getByText(/storage quota/i)).toBeInTheDocument()
+  })
+
+  it('keeps incoming discoveries visible when discovery persistence hits quota', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-quota', topic: 'Quota Case' }]),
+    )
+    const originalSetItem = window.localStorage.setItem.bind(window.localStorage)
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation((key: string, value: string) => {
+      if (key === 'gorantula_discoveries_by_investigation') {
+        throw new DOMException('Quota exceeded', 'QuotaExceededError')
+      }
+      return originalSetItem(key, value)
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('DISCOVERIES_FOUND', [
+        {
+          id: 'discovery-1',
+          title: 'Signal compression finding',
+          claim: 'The evidence shows a repeated compression pattern.',
+          impact: 'This narrows the investigation path.',
+          confidence: 0.91,
+          sourceNodeIDs: ['node-1', 'node-2'],
+          sourceVaultID: 'inv-quota',
+          createdAt: new Date().toISOString(),
+          nodeKind: 'discovery',
+        },
+      ])
+    })
+
+    expect(screen.getByText(/Autosave warning/i)).toBeInTheDocument()
+    expect(setItemSpy).toHaveBeenCalledWith('gorantula_discoveries_by_investigation', expect.any(String))
+
+    await userEvent.click(screen.getByText('Vault Chat'))
+    expect(await screen.findByText('DiscoveryPanel Handle')).toBeInTheDocument()
+    expect(await screen.findByText('Signal compression finding')).toBeInTheDocument()
   })
 
   it('keeps local crawl browsing inside the redesigned crawl console', async () => {

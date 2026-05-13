@@ -304,7 +304,7 @@ func (b *Brain) generateSynthesizedRelationshipCandidates(ctx context.Context, n
 
 	var nodeBuilder strings.Builder
 	for _, node := range nodes {
-		nodeBuilder.WriteString(fmt.Sprintf("[NodeID: %s]\nTitle: %s\nSummary: %s\nFull Text: %s\n\n", node.ID, node.Title, node.Summary, node.FullText))
+		nodeBuilder.WriteString(formatCompactEvidenceNode(node, relationshipEvidenceExcerptLength))
 	}
 
 	var insightBuilder strings.Builder
@@ -382,7 +382,7 @@ func (b *Brain) generateIncrementalSynthesizedRelationshipCandidates(ctx context
 	var contextBuilder strings.Builder
 	for _, node := range nodes {
 		if _, ok := pendingNodeIDSet[node.ID]; ok {
-			pendingBuilder.WriteString(fmt.Sprintf("[NodeID: %s]\nTitle: %s\nSummary: %s\nFull Text: %s\n\n", node.ID, node.Title, node.Summary, node.FullText))
+			pendingBuilder.WriteString(formatCompactEvidenceNode(node, relationshipEvidenceExcerptLength))
 			continue
 		}
 

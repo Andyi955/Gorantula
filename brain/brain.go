@@ -263,7 +263,11 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 	fullPrompt := systemInstruction + "\n\nUser Prompt: " + prompt
 	var subQ SubQueries
-	if err := provider.GenerateJSON(ctx, fullPrompt, &subQ); err != nil {
+	planCtx, planScopeID := b.StartPipelineTokenScope(ctx, "pipeline-plan", "plan_queries")
+	if progress != nil {
+		progress.StartSpan("plan_queries_llm", "plan_queries", "Search query planning", "LLM query decomposition")
+	}
+	if err := provider.GenerateJSON(planCtx, fullPrompt, &subQ); err != nil {
 		fmt.Printf("[Brain Error] Selected provider %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
@@ -272,9 +276,17 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 			})
 		}
 		fallbackProvider, ok := b.GetRouter("gemini")
-		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &subQ) != nil {
+		if !ok || fallbackProvider.GenerateJSON(planCtx, fullPrompt, &subQ) != nil {
+			if progress != nil {
+				progress.CompleteSpan("plan_queries_llm", "query planning failed")
+				b.RecordPipelineTokenUsage(progress, planScopeID)
+			}
 			return "", fmt.Errorf("failed to generate sub-queries format (even after fallback): %w", err)
 		}
+	}
+	if progress != nil {
+		progress.CompleteSpan("plan_queries_llm", "generated search queries")
+		b.RecordPipelineTokenUsage(progress, planScopeID)
 	}
 
 	numQueries := len(subQ.Queries)
@@ -287,6 +299,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	// Ensure slice matches the validated length
 	if len(subQ.Queries) > numQueries {
 		subQ.Queries = subQ.Queries[:numQueries]
+	}
+	if progress != nil {
+		progress.RecordCounter("queries", len(subQ.Queries))
 	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "plan_queries", "complete", fmt.Sprintf("Prepared %d search angles", len(subQ.Queries))))
 
@@ -356,54 +371,56 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 	// --- STEP 3: Wait for Nutrients and Store in Abdomen ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "running", "Gathering and summarizing evidence"))
-	reviewedImages := 0
+	nutrients := make([]models.NutrientFlow, 0, totalLegs)
 	for i := 0; i < totalLegs; i++ {
-		nutrient := <-b.NS.NutrientChannel
-
-		b.Abdomen.Mutex.Lock()
-		if nutrient.Error == nil && nutrient.Content != "" {
-			// Generate a 2-sentence summary and title for the node
-			title, summary, err := b.summarizeNode(ctx, nutrient.Content)
-
-			// Skip node if summary fails or indicates junk content (e.g. security block or empty page)
-			if err != nil || title == "" || strings.Contains(strings.ToLower(summary), "security access") || strings.Contains(strings.ToLower(summary), "failed to extract") {
-				fmt.Printf("[Brain info] Skipping node for Leg %d due to low quality content or extraction failure.\n", nutrient.LegID)
-			} else {
-				memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
-				b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
-
-				node := models.MemoryNode{
-					ID:        fmt.Sprintf("node-%d-%d", time.Now().UnixNano(), i),
-					Title:     title,
-					Summary:   summary,
-					FullText:  nutrient.Content,
-					SourceURL: nutrient.SourceURL,
-				}
-				if scrapeImages {
-					node.Images = b.PersistRemoteNodeImages(ctx, provider, vaultID, node.ID, nutrient.SourceURL, title, summary, nutrient.Content, nutrient.ImageURLs)
-					reviewedImages += len(node.Images)
-				}
-
-				if b.NS.Broadcast != nil {
-					b.NS.Broadcast(models.WSMessage{
-						Type: "MEMORY_NODE_GATHERED",
-						Payload: map[string]interface{}{
-							"node":    node,
-							"total":   len(b.Abdomen.MemoryContext),
-							"vaultId": vaultID,
-							"append":  isAppend,
-						},
-					})
-				}
-			}
-		} else if nutrient.Error != nil {
-			fmt.Printf("[Brain Warning] Leg %d returned error: %v\n", nutrient.LegID, nutrient.Error)
-		}
-		b.Abdomen.Mutex.Unlock()
+		nutrients = append(nutrients, <-b.NS.NutrientChannel)
 	}
 
 	// Ensure legs have finished executing cleanly
 	b.NS.WaitGroup.Wait()
+	summaryCtx, summaryScopeID := b.StartPipelineTokenScope(ctx, "pipeline-node-summary", "node_summary")
+	imageCtx, imageScopeID := b.StartPipelineTokenScope(ctx, "pipeline-image-review", "image_review")
+	if progress != nil {
+		progress.StartSpan("node_summary", "gather_evidence", "Node summary", fmt.Sprintf("summarizing %d nutrients", len(nutrients)))
+	}
+	processedNutrients := b.processNutrients(summaryCtx, nutrients, nutrientProcessingOptions{
+		VaultID:            vaultID,
+		ScrapeImages:       scrapeImages,
+		Provider:           provider,
+		ImageReviewContext: imageCtx,
+		Progress:           progress,
+	})
+	if progress != nil {
+		progress.CompleteSpan("node_summary", fmt.Sprintf("summarized %d nodes", len(processedNutrients)))
+		b.RecordPipelineTokenUsage(progress, summaryScopeID)
+		if scrapeImages {
+			b.RecordPipelineTokenUsage(progress, imageScopeID)
+		}
+		progress.RecordCounter("legTasks", totalLegs)
+		progress.RecordCounter("nodesCreated", len(processedNutrients))
+	}
+	reviewedImages := 0
+	for _, result := range processedNutrients {
+		reviewedImages += result.reviewedImages
+		b.Abdomen.Mutex.Lock()
+		b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, result.memory)
+		totalMemories := len(b.Abdomen.MemoryContext)
+		b.Abdomen.Mutex.Unlock()
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type: "MEMORY_NODE_GATHERED",
+				Payload: map[string]interface{}{
+					"node":    result.node,
+					"total":   totalMemories,
+					"vaultId": vaultID,
+					"append":  isAppend,
+				},
+			})
+		}
+	}
+	if progress != nil {
+		progress.RecordCounter("imagesStored", reviewedImages)
+	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "complete", fmt.Sprintf("Gathered %d evidence memories", len(b.Abdomen.MemoryContext))))
 	if scrapeImages {
 		b.broadcastPipelineProgress(progress, progressMessage(progress, "image_review", "complete", fmt.Sprintf("Reviewed %d images", reviewedImages)))
@@ -425,7 +442,15 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	b.Abdomen.Mutex.RUnlock()
 
 	// Rank and filter facts to prevent token overflow (Generation 2: Selective Memory)
-	contextText, err := b.RankAndFilterFacts(ctx, prompt, rawFacts)
+	rankCtx, rankScopeID := b.StartPipelineTokenScope(ctx, "pipeline-rank", "rank_facts")
+	if progress != nil {
+		progress.StartSpan("rank_facts", "final_report", "Fact ranking", fmt.Sprintf("ranking %d facts", len(rawFacts)))
+	}
+	contextText, err := b.RankAndFilterFacts(rankCtx, prompt, rawFacts)
+	if progress != nil {
+		progress.CompleteSpan("rank_facts", "ranked gathered facts")
+		b.RecordPipelineTokenUsage(progress, rankScopeID)
+	}
 	if err != nil {
 		fmt.Printf("[Brain Warning] Ranking failed, falling back to raw join: %v\n", err)
 		contextText = strings.Join(rawFacts, "\n\n")
@@ -441,7 +466,11 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		synthesisInstruction, prompt, contextText,
 	)
 
-	finalSynthesis, err := provider.GenerateContent(ctx, synthesisPrompt)
+	finalCtx, finalScopeID := b.StartPipelineTokenScope(ctx, "pipeline-final-report", "final_report")
+	if progress != nil {
+		progress.StartSpan("final_report_llm", "final_report", "Final report LLM", "generating final report")
+	}
+	finalSynthesis, err := provider.GenerateContent(finalCtx, synthesisPrompt)
 	if err != nil {
 		fmt.Printf("[Brain Error] Selected provider %s failed synthesis: %v. Attempting Gemini fallback...\n", provider.Name(), err)
 		if b.NS.Broadcast != nil {
@@ -454,10 +483,18 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		if !ok {
 			return "", fmt.Errorf("failed to generate final synthesis and no fallback available: %w", err)
 		}
-		finalSynthesis, err = fallbackProvider.GenerateContent(ctx, synthesisPrompt)
+		finalSynthesis, err = fallbackProvider.GenerateContent(finalCtx, synthesisPrompt)
 		if err != nil {
+			if progress != nil {
+				progress.CompleteSpan("final_report_llm", "final report failed")
+				b.RecordPipelineTokenUsage(progress, finalScopeID)
+			}
 			return "", fmt.Errorf("fallback failed to generate final synthesis: %w", err)
 		}
+	}
+	if progress != nil {
+		progress.CompleteSpan("final_report_llm", "generated final report")
+		b.RecordPipelineTokenUsage(progress, finalScopeID)
 	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "complete", "Final intelligence report generated"))
 
@@ -632,44 +669,38 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "running", "Summarizing local document chunks"))
 	// Wait for exactly as many chunks as we dispatched
 	expected := len(allChunks)
+	nutrients := make([]models.NutrientFlow, 0, expected)
 	for i := 0; i < expected; i++ {
-		nutrient := <-b.NS.NutrientChannel
-
-		b.Abdomen.Mutex.Lock()
-		if nutrient.Error == nil && nutrient.Content != "" {
-			title, summary, err := b.summarizeNode(ctx, nutrient.Content)
-
-			if err != nil || title == "" || strings.Contains(strings.ToLower(summary), "security access") || strings.Contains(strings.ToLower(summary), "failed to extract") {
-				fmt.Printf("[Brain info] Skipping node for Leg %d due to low quality content or extraction failure.\n", nutrient.LegID)
-			} else {
-				memory := fmt.Sprintf("Source: %s\nContent: %s", nutrient.SourceURL, nutrient.Content)
-				b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, memory)
-
-				node := models.MemoryNode{
-					ID:        fmt.Sprintf("node-%d-%d", time.Now().UnixNano(), i),
-					Title:     title,
-					Summary:   summary,
-					FullText:  nutrient.Content,
-					SourceURL: nutrient.SourceURL,
-				}
-
-				if b.NS.Broadcast != nil {
-					b.NS.Broadcast(models.WSMessage{
-						Type: "MEMORY_NODE_GATHERED",
-						Payload: map[string]interface{}{
-							"node":  node,
-							"total": len(b.Abdomen.MemoryContext),
-						},
-					})
-				}
-			}
-		} else if nutrient.Error != nil {
-			fmt.Printf("[Brain Warning] Leg %d returned error: %v\n", nutrient.LegID, nutrient.Error)
-		}
-		b.Abdomen.Mutex.Unlock()
+		nutrients = append(nutrients, <-b.NS.NutrientChannel)
 	}
 
 	b.NS.WaitGroup.Wait()
+	summaryCtx, summaryScopeID := b.StartPipelineTokenScope(ctx, "pipeline-local-node-summary", "node_summary")
+	if progress != nil {
+		progress.StartSpan("node_summary", "gather_evidence", fmt.Sprintf("Local node summary (%d workers)", nodeSummaryConcurrency()), fmt.Sprintf("summarizing %d chunks", len(nutrients)))
+	}
+	processedNutrients := b.processNutrients(summaryCtx, nutrients, nutrientProcessingOptions{Progress: progress})
+	if progress != nil {
+		progress.CompleteSpan("node_summary", fmt.Sprintf("summarized %d local nodes", len(processedNutrients)))
+		progress.RecordCounter("documentChunks", len(allChunks))
+		progress.RecordCounter("nodesCreated", len(processedNutrients))
+		b.RecordPipelineTokenUsage(progress, summaryScopeID)
+	}
+	for _, result := range processedNutrients {
+		b.Abdomen.Mutex.Lock()
+		b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, result.memory)
+		totalMemories := len(b.Abdomen.MemoryContext)
+		b.Abdomen.Mutex.Unlock()
+		if b.NS.Broadcast != nil {
+			b.NS.Broadcast(models.WSMessage{
+				Type: "MEMORY_NODE_GATHERED",
+				Payload: map[string]interface{}{
+					"node":  result.node,
+					"total": totalMemories,
+				},
+			})
+		}
+	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "complete", fmt.Sprintf("Gathered %d local evidence memories", len(b.Abdomen.MemoryContext))))
 
 	// --- STEP 4: Synthesize Final Response ---
@@ -697,12 +728,32 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 		strings.Join(filePaths, ", "), contextText,
 	)
 
+	if progress != nil {
+		progress.StartSpan("local_final_report_llm", "final_report", "Local final report LLM", "generating local report")
+	}
 	finalResp, err := b.Model.GenerateContent(ctx, genai.Text(synthesisPrompt))
 	if err != nil {
+		if progress != nil {
+			progress.CompleteSpan("local_final_report_llm", "local report failed")
+		}
 		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
 	}
 
 	finalSynthesis := fmt.Sprintf("%v", finalResp.Candidates[0].Content.Parts[0])
+	if progress != nil {
+		promptTokens := estimateTextTokens(synthesisPrompt)
+		completionTokens := estimateTextTokens(finalSynthesis)
+		progress.CompleteSpan("local_final_report_llm", "generated local report")
+		progress.RecordTokenUsage(models.PipelineProfileTokenUsage{
+			Operation:          "final_report",
+			Provider:           "gemini",
+			CallCount:          1,
+			EstimatedCallCount: 1,
+			PromptTokens:       promptTokens,
+			CompletionTokens:   completionTokens,
+			TotalTokens:        promptTokens + completionTokens,
+		})
+	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "complete", "Local report generated"))
 
 	// Save to Vault
@@ -903,6 +954,14 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 
 // AnalyzeWithPersonas runs multi-agent persona analysis on the gathered findings
 func (b *Brain) AnalyzeWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode) ([]PersonaInsight, error) {
+	return b.analyzeWithPersonas(ctx, investigationID, nodes, nil)
+}
+
+func (b *Brain) AnalyzeWithPersonasWithProgress(ctx context.Context, investigationID string, nodes []models.MemoryNode, progress *models.PipelineProgressTracker) ([]PersonaInsight, error) {
+	return b.analyzeWithPersonas(ctx, investigationID, nodes, progress)
+}
+
+func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode, progress *models.PipelineProgressTracker) ([]PersonaInsight, error) {
 	personas := GetDefaultPersonas()
 	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(personas))
 
@@ -939,7 +998,9 @@ func (b *Brain) AnalyzeWithPersonas(ctx context.Context, investigationID string,
 	}
 
 	fmt.Printf("[Brain] Persona analysis complete. Collected %d insights.\n", len(insights))
-	b.broadcastTokenUsageSummary(investigationID, "Full-board persona analysis", b.summarizeTokenUsageScope(scopeID))
+	tokenSummary := b.summarizeTokenUsageScope(scopeID)
+	b.broadcastTokenUsageSummary(investigationID, "Full-board persona analysis", tokenSummary)
+	b.RecordPipelineTokenUsage(progress, scopeID)
 	return insights, nil
 }
 
@@ -969,6 +1030,14 @@ func buildIncrementalPersonaFindings(nodes []models.MemoryNode, pendingNodeIDs [
 }
 
 func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode, pendingNodeIDs []string) ([]PersonaInsight, error) {
+	return b.analyzeIncrementalWithPersonas(ctx, investigationID, nodes, pendingNodeIDs, nil)
+}
+
+func (b *Brain) AnalyzeIncrementalWithPersonasWithProgress(ctx context.Context, investigationID string, nodes []models.MemoryNode, pendingNodeIDs []string, progress *models.PipelineProgressTracker) ([]PersonaInsight, error) {
+	return b.analyzeIncrementalWithPersonas(ctx, investigationID, nodes, pendingNodeIDs, progress)
+}
+
+func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode, pendingNodeIDs []string, progress *models.PipelineProgressTracker) ([]PersonaInsight, error) {
 	fmt.Printf("[Brain] Running incremental persona analysis with %d personas across %d nodes (%d pending)...\n", len(GetDefaultPersonas()), len(nodes), len(pendingNodeIDs))
 
 	pendingFindings, contextFindings, validPendingNodeIDs := buildIncrementalPersonaFindings(nodes, pendingNodeIDs)
@@ -1004,7 +1073,9 @@ func (b *Brain) AnalyzeIncrementalWithPersonas(ctx context.Context, investigatio
 	}
 
 	fmt.Printf("[Brain] Incremental multi-agent analysis complete. Generated %d valid persona insights.\n", len(insights))
-	b.broadcastTokenUsageSummary(investigationID, "Incremental persona analysis", b.summarizeTokenUsageScope(scopeID))
+	tokenSummary := b.summarizeTokenUsageScope(scopeID)
+	b.broadcastTokenUsageSummary(investigationID, "Incremental persona analysis", tokenSummary)
+	b.RecordPipelineTokenUsage(progress, scopeID)
 	return insights, nil
 }
 

@@ -56,6 +56,43 @@ func TestSynthesizeDiscoveriesReturnsCandidateDiscoveries(t *testing.T) {
 	}
 }
 
+func TestSynthesizeDiscoveriesCapsCandidatesByConfidence(t *testing.T) {
+	t.Setenv("GORANTULA_DISCOVERY_CANDIDATE_LIMIT", "2")
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response, ok := target.(*discoveryJSONResponse)
+			if !ok {
+				t.Fatalf("unexpected target type %T", target)
+			}
+			response.Discoveries = []models.Discovery{
+				{Title: "Beta routing shift", Claim: "Beta routing reduces support handoff volume.", Impact: "This can reduce repeated operator triage.", Confidence: 0.90, SourceNodeIDs: []string{"node-1", "node-2"}},
+				{Title: "Alpha queue pressure", Claim: "Alpha queue pressure increases after retry spikes.", Impact: "This can slow downstream evidence review.", Confidence: 0.97, SourceNodeIDs: []string{"node-1", "node-2"}},
+				{Title: "Gamma cache drift", Claim: "Gamma cache drift appears when duplicate payloads persist.", Impact: "This can increase stale relationship candidates.", Confidence: 0.88, SourceNodeIDs: []string{"node-1", "node-2"}},
+			}
+			return nil
+		},
+	}
+
+	brain := &Brain{ModelRouter: map[string]ModelProvider{"mock": mock}}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	discoveries, err := brain.SynthesizeDiscoveries(context.Background(), "inv-1", []models.MemoryNode{
+		{ID: "node-1", Title: "Queue", Summary: "Alpha queue pressure and Beta routing", FullText: "Alpha queue pressure increases after retry spikes. Beta routing reduces support handoff volume."},
+		{ID: "node-2", Title: "Cache", Summary: "Gamma cache drift and evidence review", FullText: "Gamma cache drift appears when duplicate payloads persist. Downstream evidence review slows."},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SynthesizeDiscoveries failed: %v", err)
+	}
+
+	if len(discoveries) != 2 {
+		t.Fatalf("expected 2 capped discoveries, got %d", len(discoveries))
+	}
+	if discoveries[0].Title != "Alpha Queue Pressure" {
+		t.Fatalf("expected highest-confidence candidate first, got %q", discoveries[0].Title)
+	}
+}
+
 func TestBuildDiscoveryReviewTeamUsesHybridTopicExperts(t *testing.T) {
 	reviewers := buildDiscoveryReviewTeam("llm-architecture")
 	if len(reviewers) != 5 {

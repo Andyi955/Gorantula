@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"spider-agent/models"
@@ -24,6 +25,12 @@ type SearchResponse struct {
 			URL string `json:"url"`
 		} `json:"results"`
 	} `json:"web"`
+}
+
+type sourceScrapeResult struct {
+	index     int
+	texts     []string
+	imageURLs []string
 }
 
 // ExecuteLegTask handles searching Brave and using goquery to extract text from the top 2 sites.
@@ -98,49 +105,13 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		})
 	}
 
+	scrapeClient := &http.Client{Timeout: 15 * time.Second} // Quality gate: timeout slow sites
+	scrapedSources := scrapeSources(scrapeClient, topURLs)
 	var extractedTexts []string
 	var imageCandidates []string
-	scrapeClient := &http.Client{Timeout: 15 * time.Second} // Quality gate: timeout slow sites
-	for _, targetURL := range topURLs {
-		var scrapeResp *http.Response
-		var scrapeErr error
-		for i := 0; i < 2; i++ { // Inner retry for individual sites
-			scrapeResp, scrapeErr = scrapeClient.Get(targetURL)
-			if scrapeErr == nil && scrapeResp.StatusCode == 200 {
-				break
-			}
-			if scrapeResp != nil {
-				scrapeResp.Body.Close()
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-
-		if scrapeErr != nil || (scrapeResp != nil && scrapeResp.StatusCode != 200) {
-			continue
-		}
-
-		doc, err := goquery.NewDocumentFromReader(scrapeResp.Body)
-		scrapeResp.Body.Close()
-		if err != nil {
-			continue
-		}
-
-		imageCandidates = append(imageCandidates, extractCandidateImageURLs(doc, targetURL)...)
-
-		// 404 / Dead Link Detection
-		title := strings.ToLower(doc.Find("title").Text())
-		bodyText := strings.ToLower(doc.Find("body").Text())
-		if strings.Contains(title, "404") || strings.Contains(title, "not found") ||
-			strings.Contains(title, "access denied") || strings.Contains(bodyText, "404 not found") {
-			continue
-		}
-
-		doc.Find("p").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if len(text) > 80 { // Increased threshold for quality
-				extractedTexts = append(extractedTexts, text)
-			}
-		})
+	for _, result := range scrapedSources {
+		extractedTexts = append(extractedTexts, result.texts...)
+		imageCandidates = append(imageCandidates, result.imageURLs...)
 	}
 
 	fullContext := TruncateContent(strings.Join(extractedTexts, "\n"), 4000)
@@ -170,6 +141,82 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		ImageURLs: imageCandidates,
 		Error:     nil,
 	}
+}
+
+func scrapeSources(scrapeClient *http.Client, targetURLs []string) []sourceScrapeResult {
+	if len(targetURLs) == 0 {
+		return nil
+	}
+
+	results := make([]sourceScrapeResult, 0, len(targetURLs))
+	resultCh := make(chan sourceScrapeResult, len(targetURLs))
+	var waitGroup sync.WaitGroup
+	for index, targetURL := range targetURLs {
+		waitGroup.Add(1)
+		go func(resultIndex int, resultURL string) {
+			defer waitGroup.Done()
+			resultCh <- scrapeSingleSource(scrapeClient, resultIndex, resultURL)
+		}(index, targetURL)
+	}
+	waitGroup.Wait()
+	close(resultCh)
+
+	for result := range resultCh {
+		if len(result.texts) == 0 && len(result.imageURLs) == 0 {
+			continue
+		}
+		results = append(results, result)
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].index < results[j].index
+	})
+	return results
+}
+
+func scrapeSingleSource(scrapeClient *http.Client, index int, targetURL string) sourceScrapeResult {
+	var scrapeResp *http.Response
+	var scrapeErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		scrapeResp, scrapeErr = scrapeClient.Get(targetURL)
+		if scrapeErr == nil && scrapeResp != nil && scrapeResp.StatusCode == http.StatusOK {
+			break
+		}
+		if scrapeResp != nil {
+			scrapeResp.Body.Close()
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if scrapeErr != nil || scrapeResp == nil || scrapeResp.StatusCode != http.StatusOK {
+		return sourceScrapeResult{index: index}
+	}
+	defer scrapeResp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(scrapeResp.Body)
+	if err != nil {
+		return sourceScrapeResult{index: index}
+	}
+
+	result := sourceScrapeResult{
+		index:     index,
+		imageURLs: extractCandidateImageURLs(doc, targetURL),
+	}
+
+	// 404 / Dead Link Detection
+	title := strings.ToLower(doc.Find("title").Text())
+	bodyText := strings.ToLower(doc.Find("body").Text())
+	if strings.Contains(title, "404") || strings.Contains(title, "not found") ||
+		strings.Contains(title, "access denied") || strings.Contains(bodyText, "404 not found") {
+		return result
+	}
+
+	doc.Find("p").Each(func(i int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		if len(text) > 80 { // Increased threshold for quality
+			result.texts = append(result.texts, text)
+		}
+	})
+	return result
 }
 
 // ExecuteLocalFileTask reads a local file using the document parsing package.
