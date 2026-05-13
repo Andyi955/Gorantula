@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
 import { parsePersistedBoardState, persistBoardStateForInvestigation, type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
+import { BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT } from '../utils/boardWorkspaceEvents';
 
 interface NodeContextPayload {
     vaultId: string;
@@ -231,9 +232,10 @@ interface SynthesisPanelProps {
     returnVaultId: string | null;
     investigations?: { id: string; topic: string; displayTopic?: string }[];
     onMergeInvestigations?: (entity: string, connectedCases: string[], relevantNodes: MergeCandidateNode[]) => void;
+    showHandle?: boolean;
 }
 
-export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations }: SynthesisPanelProps) {
+export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations, showHandle = true }: SynthesisPanelProps) {
     const [alertsByInvestigation, setAlertsByInvestigation] = useState<AlertBuckets>({});
     const [isOpen, setIsOpen] = useState(false);
     const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
@@ -243,12 +245,12 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     const hasUnread = currentInvestigationId ? Boolean(unreadByInvestigation[currentInvestigationId]) : false;
 
     useEffect(() => {
-        console.log('[SynthesisPanel] Mounted with current investigation:', currentInvestigationId);
+        console.debug('[SynthesisPanel] Mounted with current investigation:', currentInvestigationId);
         setAlertsByInvestigation(migrateLegacyAlerts());
     }, []);
 
     useEffect(() => {
-        console.log('[SynthesisPanel] Investigation state changed', {
+        console.debug('[SynthesisPanel] Investigation state changed', {
             currentInvestigationId,
             alertCount: currentAlerts.length,
             hasUnread,
@@ -274,7 +276,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 return prev;
             }
 
-            console.log('[SynthesisPanel] Rehydrating synthesis alerts from persisted board state', {
+            console.debug('[SynthesisPanel] Rehydrating synthesis alerts from persisted board state', {
                 currentInvestigationId,
                 count: persistedAlerts.length,
             });
@@ -304,7 +306,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'SYNTHESIS_ALERT') {
                     const newAlert = normalizeAlert(msg.payload as SynthesisAlert);
-                    console.log('[SynthesisPanel] Received SYNTHESIS_ALERT', {
+                    console.debug('[SynthesisPanel] Received SYNTHESIS_ALERT', {
                         currentInvestigationId,
                         alertCurrentVaultId: newAlert.currentVaultId,
                         alertKey: newAlert.alertKey,
@@ -318,7 +320,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                     setAlertsByInvestigation(prev => {
                         const currentAlertsForVault = prev[newAlert.currentVaultId] || [];
                         const updatedBucket = upsertAlertBucket(currentAlertsForVault, newAlert);
-                        console.log('[SynthesisPanel] Updating alert bucket', {
+                        console.debug('[SynthesisPanel] Updating alert bucket', {
                             targetVaultId: newAlert.currentVaultId,
                             previousCount: currentAlertsForVault.length,
                             nextCount: updatedBucket.length,
@@ -337,7 +339,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                         [newAlert.currentVaultId]: true,
                     }));
                     if (newAlert.currentVaultId === currentInvestigationId) {
-                        console.log('[SynthesisPanel] Auto-opening panel for active investigation alert', {
+                        console.debug('[SynthesisPanel] Auto-opening panel for active investigation alert', {
                             currentInvestigationId,
                             alertKey: newAlert.alertKey,
                         });
@@ -348,7 +350,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                             [newAlert.currentVaultId]: false,
                         }));
                     } else {
-                        console.log('[SynthesisPanel] Alert stored for non-active investigation', {
+                        console.debug('[SynthesisPanel] Alert stored for non-active investigation', {
                             currentInvestigationId,
                             alertCurrentVaultId: newAlert.currentVaultId,
                         });
@@ -366,7 +368,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             return;
         }
 
-        console.log('[SynthesisPanel] Starting toast auto-dismiss timer', {
+        console.debug('[SynthesisPanel] Starting toast auto-dismiss timer', {
             alertKey: activeToast.alertKey,
             currentInvestigationId,
         });
@@ -379,7 +381,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
 
     useEffect(() => {
         if (activeToast && activeToast.currentVaultId !== currentInvestigationId) {
-            console.log('[SynthesisPanel] Clearing toast because investigation changed', {
+            console.debug('[SynthesisPanel] Clearing toast because investigation changed', {
                 toastVaultId: activeToast.currentVaultId,
                 currentInvestigationId,
             });
@@ -396,6 +398,24 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             }));
         }
     };
+
+    useEffect(() => {
+        const handlePanelToggle = () => {
+            setIsOpen((current) => {
+                const next = !current;
+                if (next && currentInvestigationId) {
+                    setUnreadByInvestigation(prev => ({
+                        ...prev,
+                        [currentInvestigationId]: false,
+                    }));
+                }
+                return next;
+            });
+        };
+
+        window.addEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, handlePanelToggle);
+        return () => window.removeEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, handlePanelToggle);
+    }, [currentInvestigationId]);
 
     const clearAlerts = () => {
         if (!currentInvestigationId) {
@@ -426,7 +446,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     };
 
     const handleReviewToast = () => {
-        console.log('[SynthesisPanel] Review toast clicked', {
+        console.debug('[SynthesisPanel] Review toast clicked', {
             currentInvestigationId,
             alertKey: activeToast?.alertKey || null,
         });
@@ -446,7 +466,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         ? currentAlerts
         : (showToast && activeToast ? [activeToast] : []);
     const hasPanelAlerts = displayedAlerts.length > 0;
-    const showPanelHandle = Boolean(currentInvestigationId);
+    const showPanelHandle = Boolean(currentInvestigationId) && showHandle;
 
     if (!currentInvestigationId) return null;
 

@@ -80,7 +80,7 @@ const SettingsDashboard = () => {
                 setLoading(false);
             })
             .catch(err => {
-                console.error('Failed to load settings', err);
+                console.debug('Settings unavailable; backend may be offline.', err);
                 setLoading(false);
             });
     }, []);

@@ -2,6 +2,37 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const BACKEND_STATUS_ENDPOINT = '/__gorantula_backend_status'
+
+const canReachBackend = async () => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 250)
+
+  try {
+    await fetch('http://127.0.0.1:8080/', {
+      method: 'HEAD',
+      signal: controller.signal,
+    })
+    return true
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+const backendStatusPlugin = () => ({
+  name: 'gorantula-backend-status',
+  configureServer(server: import('vite').ViteDevServer) {
+    server.middlewares.use(BACKEND_STATUS_ENDPOINT, async (_req, res) => {
+      const ready = await canReachBackend()
+      res.statusCode = 200
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ ready }))
+    })
+  },
+})
+
 const getNodeModulePackageName = (id: string) => {
   const normalized = id.replace(/\\/g, '/')
   const nodeModulesIndex = normalized.lastIndexOf('/node_modules/')
@@ -20,6 +51,7 @@ const getNodeModulePackageName = (id: string) => {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    backendStatusPlugin(),
     react(),
     tailwindcss(),
   ],

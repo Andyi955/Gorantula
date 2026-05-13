@@ -113,6 +113,38 @@ describe('CustomNode', () => {
     )
   })
 
+  it('does not request backend-served node images while the backend is offline', () => {
+    render(
+      <CustomNode
+        id="node-backend-image"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-backend-image',
+          title: 'Offline Image Node',
+          summary: 'Summary',
+          onReadFull: vi.fn(),
+          images: [
+            {
+              id: 'img-backend',
+              path: 'http://localhost:8080/vault-assets/inv-1/images/evidence.jpg',
+              caption: 'Backend evidence',
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('node-image-preview')).toBeInTheDocument()
+    expect(screen.getByText('Backend offline')).toBeInTheDocument()
+    expect(screen.queryByAltText('Backend evidence')).not.toBeInTheDocument()
+  })
+
   it('shows attach and remove image controls while editing', async () => {
     const user = userEvent.setup()
     const onAttachImage = vi.fn().mockResolvedValue(undefined)

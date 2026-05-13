@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
@@ -87,6 +87,14 @@ describe('App', () => {
     expect(screen.getByText('Detective Board')).toBeInTheDocument()
   })
 
+  it('does not mount backend-only inactive tabs on first load', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.queryByText('VaultChatbot')).not.toBeInTheDocument()
+    expect(screen.queryByText('SettingsDashboard')).not.toBeInTheDocument()
+  })
+
   it('loads saved investigations and switches tabs', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
@@ -102,6 +110,101 @@ describe('App', () => {
     await user.click(screen.getByText('Vault Chat'))
 
     expect(await screen.findByText('VaultChatbot')).toBeInTheDocument()
+  })
+
+  it('filters sidebar investigations locally without mutating stored data', async () => {
+    const user = userEvent.setup()
+    const storedInvestigations = [
+      { id: 'inv-1', topic: 'Alpha Thread' },
+      { id: 'merge-2', topic: 'Merged Signal' },
+    ]
+    localStorage.setItem('gorantula_investigations', JSON.stringify(storedInvestigations))
+
+    render(<App />)
+
+    const filterInput = screen.getByPlaceholderText(/search investigations/i)
+    await user.type(filterInput, 'merged')
+
+    const sidebar = filterInput.closest('aside') as HTMLElement
+    expect(within(sidebar).getByText('Merged Signal')).toBeInTheDocument()
+    expect(within(sidebar).queryByText('Alpha Thread')).not.toBeInTheDocument()
+    expect(localStorage.getItem('gorantula_investigations')).toBe(JSON.stringify(storedInvestigations))
+  })
+
+  it('renders a mockup-style investigation summary and functional sidebar controls in detective board mode', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-1', topic: 'Nightfall Ledger' },
+        { id: 'inv-2', topic: 'Signal Cache' },
+      ]),
+    )
+    localStorage.setItem(
+      'inv_data_inv-1',
+      JSON.stringify({
+        nodes: [
+          { id: 'node-1', data: { images: [{ url: 'https://example.com/1.png' }] } },
+          { id: 'node-2', data: {} },
+        ],
+        edges: [{ id: 'edge-1', source: 'node-1', target: 'node-2' }],
+      }),
+    )
+    localStorage.setItem(
+      'inv_data_inv-2',
+      JSON.stringify({
+        nodes: [
+          { id: 'node-a', data: {} },
+          { id: 'node-b', data: {} },
+          { id: 'node-c', data: {} },
+          { id: 'node-d', data: {} },
+        ],
+        edges: [],
+      }),
+    )
+    localStorage.setItem(
+      'vault_result_inv-1',
+      JSON.stringify({
+        result: [
+          '**INTELLIGENCE REPORT**',
+          '**TO:** Internal Distribution',
+          '**FROM:** Senior Intelligence Analyst',
+          '**DATE:** Thursday, April 2, 2026',
+          '**SUBJECT:** Comprehensive Status Report',
+          '',
+          '### Executive Summary',
+          'A coordinated financial intelligence operation involving offshore transfers and shell entities.',
+          '',
+          'Follow-on evidence suggests multiple connections to AI infrastructure groups.',
+        ].join('\n'),
+      }),
+    )
+
+    render(<App />)
+    await user.click(screen.getByText('Detective Board'))
+
+    const summaryHeading = await screen.findByText('Investigation Summary')
+    const summaryCard = summaryHeading.closest('.forensic-sidebar-summary-card') as HTMLElement
+    expect(within(summaryCard).getByText(/A coordinated financial intelligence operation/i)).toBeInTheDocument()
+    expect(within(summaryCard).queryByText(/\*\*/)).not.toBeInTheDocument()
+    expect(within(summaryCard).queryByText(/Internal Distribution/i)).not.toBeInTheDocument()
+    expect(within(summaryCard).queryByText(/Board index/i)).not.toBeInTheDocument()
+    expect(within(summaryCard).getByText(/View Full Log/i)).toBeInTheDocument()
+
+    const signalCacheRow = screen.getByText('Signal Cache').closest('.forensic-sidebar-item') as HTMLElement
+    expect(within(signalCacheRow).getByText('4')).toBeInTheDocument()
+
+    const filterInput = screen.getByPlaceholderText(/search investigations/i)
+    await user.type(filterInput, 'signal')
+    const clearFilterButton = screen.getByRole('button', { name: /clear investigation filter/i })
+    await user.click(clearFilterButton)
+    expect(filterInput).toHaveValue('')
+
+    expect(screen.getByText('Graph Nodes')).toBeInTheDocument()
+    expect(screen.getByText('Relationships')).toBeInTheDocument()
+    expect(screen.getByText('Evidence Items')).toBeInTheDocument()
+    expect(screen.getByText('Confidence Score')).toBeInTheDocument()
+    expect(screen.queryByText('Current Board')).not.toBeInTheDocument()
   })
 
   it('lets operators toggle image scraping for web crawls', async () => {
