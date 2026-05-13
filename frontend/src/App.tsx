@@ -1,6 +1,7 @@
 import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
-import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter } from 'lucide-react'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react'
 import {
   buildSidebarInvestigationRows,
   createRootInvestigation,
@@ -60,6 +61,11 @@ const BACKEND_STATUS_ENDPOINT = '/__gorantula_backend_status'
 const BACKEND_WS_URL = 'ws://localhost:8080/ws'
 const WEBSOCKET_RETRY_DELAY_MS = 5000
 const SHOULD_PROBE_BACKEND = import.meta.env.DEV && import.meta.env.MODE !== 'test'
+const SIDEBAR_DEFAULT_WIDTH = 288
+const SIDEBAR_BOARD_DEFAULT_WIDTH = 336
+const SIDEBAR_MIN_WIDTH = 240
+const SIDEBAR_MAX_WIDTH = 424
+const SIDEBAR_COLLAPSED_WIDTH = 64
 const compactTokenFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -67,6 +73,9 @@ const compactTokenFormatter = new Intl.NumberFormat('en-US', {
 const investigationTimestampPattern = /(?:inv|merge)-(\d{10,})$/i
 
 const formatCompactTokens = (value: number) => compactTokenFormatter.format(value)
+
+const clampSidebarWidth = (value: number) =>
+  Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)))
 
 const tabFallback = (label: string) => (
   <div className="flex h-full items-center justify-center bg-cyber-black text-xs font-bold uppercase tracking-[0.24em] text-cyber-cyan/70">
@@ -337,6 +346,9 @@ function App() {
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
   const [imageScrapingEnabled, setImageScrapingEnabled] = useState(() => readImageScrapingPreference())
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState('')
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
+  const [hasCustomSidebarWidth, setHasCustomSidebarWidth] = useState(false)
   const [boardWorkspaceRevision, setBoardWorkspaceRevision] = useState(0)
   const [showSummaryLog, setShowSummaryLog] = useState(false)
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
@@ -356,9 +368,14 @@ function App() {
   const backendOfflineNoticeShownRef = useRef(false);
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
+  const sidebarResizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
+  const expandedSidebarWidth = hasCustomSidebarWidth
+    ? sidebarWidth
+    : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
+  const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
 
   const filteredSidebarRows = useMemo(() => {
     const query = sidebarSearchQuery.trim().toLowerCase()
@@ -960,6 +977,60 @@ function App() {
       ? `forensic-app-tab ${activeTab === tab ? `forensic-app-tab-active ${activeClassName}` : ''}`
       : `flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === tab ? activeClassName : 'text-gray-500 hover:text-white'}`
   )
+  const startSidebarResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (isSidebarCollapsed) {
+      return
+    }
+
+    event.preventDefault()
+    sidebarResizeStartRef.current = {
+      startX: event.clientX,
+      startWidth: expandedSidebarWidth,
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const start = sidebarResizeStartRef.current
+      if (!start) {
+        return
+      }
+
+      setHasCustomSidebarWidth(true)
+      setSidebarWidth(clampSidebarWidth(start.startWidth + (moveEvent.clientX - start.startX)))
+    }
+
+    const stopResize = () => {
+      sidebarResizeStartRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', stopResize)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', stopResize)
+  }, [expandedSidebarWidth, isSidebarCollapsed])
+  const handleSidebarResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isSidebarCollapsed) {
+      return
+    }
+
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      setHasCustomSidebarWidth(true)
+      setSidebarWidth((current) => clampSidebarWidth((hasCustomSidebarWidth ? current : expandedSidebarWidth) + (event.key === 'ArrowLeft' ? -16 : 16)))
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      setHasCustomSidebarWidth(true)
+      setSidebarWidth(SIDEBAR_MIN_WIDTH)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      setHasCustomSidebarWidth(true)
+      setSidebarWidth(SIDEBAR_MAX_WIDTH)
+    }
+  }, [expandedSidebarWidth, hasCustomSidebarWidth, isSidebarCollapsed])
 
   return (
     <div className={appShellClassName}>
@@ -1010,7 +1081,73 @@ function App() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className={`forensic-sidebar forensic-sidebar-shell ${isBoardWorkspaceActive ? 'w-[21rem] xl:w-[22rem]' : 'w-72'} shrink-0 flex flex-col`}>
+        <aside
+          data-testid="app-sidebar"
+          aria-label="Investigations sidebar"
+          className={`forensic-sidebar forensic-sidebar-shell ${isSidebarCollapsed ? 'forensic-sidebar-collapsed' : ''} shrink-0 flex flex-col`}
+          style={{ width: `${renderedSidebarWidth}px` }}
+        >
+          <button
+            type="button"
+            aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => setIsSidebarCollapsed((current) => !current)}
+            className="forensic-sidebar-toggle"
+          >
+            {isSidebarCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+          </button>
+          {!isSidebarCollapsed && (
+            <div
+              role="separator"
+              aria-label="Resize sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={SIDEBAR_MIN_WIDTH}
+              aria-valuemax={SIDEBAR_MAX_WIDTH}
+              aria-valuenow={expandedSidebarWidth}
+              tabIndex={0}
+              onMouseDown={startSidebarResize}
+              onKeyDown={handleSidebarResizeKeyDown}
+              className="forensic-sidebar-resize-handle"
+              title="Resize sidebar"
+            >
+              <GripVertical size={14} />
+            </div>
+          )}
+
+          {isSidebarCollapsed ? (
+            <div className="forensic-sidebar-collapsed-rail flex flex-1 flex-col items-center gap-3 px-2 py-4">
+              <button
+                type="button"
+                aria-label="Open spider input"
+                onClick={() => {
+                  setActiveTab('spider')
+                  focusSpiderInput()
+                }}
+                className="forensic-sidebar-plus rounded-md p-2 transition-colors"
+              >
+                <Plus size={15} />
+              </button>
+              <div className="flex w-full flex-1 flex-col items-center gap-2 overflow-y-auto">
+                {filteredSidebarRows.map(({ investigation }) => (
+                  <button
+                    key={investigation.id}
+                    type="button"
+                    aria-label={`Open ${investigation.displayTopic}`}
+                    title={investigation.displayTopic}
+                    onClick={() => {
+                      setCurrentInvestigationId(investigation.id);
+                      setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
+                    }}
+                    className={`forensic-sidebar-collapsed-item ${currentInvestigationId === investigation.id ? 'forensic-sidebar-collapsed-item-active' : ''}`}
+                  >
+                    <Folder size={16} />
+                    <span className="sr-only">{investigation.displayTopic}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
           <div className="forensic-sidebar-header p-4">
             <div className="flex items-center justify-between gap-3">
               <span className="forensic-sidebar-label text-[10px] font-bold uppercase">Investigations</span>
@@ -1150,6 +1287,8 @@ function App() {
               </button>
             </div>
           </div>
+            </>
+          )}
         </aside>
 
         {/* Main Content Area */}
