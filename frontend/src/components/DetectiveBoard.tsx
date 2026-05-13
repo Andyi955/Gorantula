@@ -457,6 +457,7 @@ const MINIMAP_PANEL_LAYOUT = {
     },
 } as const;
 const MINIMAP_PANEL_OFFSET = { left: 24, top: 16, padding: 16, header: 42, toolbarGap: 20 };
+const EXPORT_MENU_WIDTH = 224;
 const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
 const BOARD_CONTROLS_PANEL_MARGIN = 16;
 const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
@@ -504,6 +505,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
     const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [exportMenuPosition, setExportMenuPosition] = useState<{ top: number; left: number; width: number }>({
+        top: 0,
+        left: 0,
+        width: EXPORT_MENU_WIDTH,
+    });
     const [showBoardControls, setShowBoardControls] = useState(false);
     const [boardControlsPosition, setBoardControlsPosition] = useState<{ top: number; left: number; width: number }>({
         top: 0,
@@ -538,7 +544,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const lightboxDialogRef = useRef<HTMLDivElement>(null);
     const previousFocusedElementRef = useRef<HTMLElement | null>(null);
     const boardContainerRef = useRef<HTMLDivElement>(null);
-    const exportMenuRef = useRef<HTMLDivElement>(null);
+    const exportButtonRef = useRef<HTMLButtonElement>(null);
+    const exportMenuPanelRef = useRef<HTMLDivElement>(null);
     const boardControlsButtonRef = useRef<HTMLButtonElement>(null);
     const boardControlsPanelRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
@@ -1363,11 +1370,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as unknown as globalThis.Node)) {
+            const targetNode = event.target as unknown as globalThis.Node;
+            const clickedExportButton = exportButtonRef.current?.contains(targetNode);
+            const clickedExportPanel = exportMenuPanelRef.current?.contains(targetNode);
+            if (!clickedExportButton && !clickedExportPanel) {
                 setShowExportMenu(false);
             }
 
-            const targetNode = event.target as unknown as globalThis.Node;
             const clickedBoardControlsButton = boardControlsButtonRef.current?.contains(targetNode);
             const clickedBoardControlsPanel = boardControlsPanelRef.current?.contains(targetNode);
             if (!clickedBoardControlsButton && !clickedBoardControlsPanel) {
@@ -1376,6 +1385,28 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const updateExportMenuPosition = useCallback(() => {
+        const container = boardContainerRef.current;
+        const button = exportButtonRef.current;
+        if (!container || !button) {
+            return;
+        }
+
+        const containerRect = container.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        const availableWidth = Math.max(180, Math.min(EXPORT_MENU_WIDTH, containerRect.width - (BOARD_CONTROLS_PANEL_MARGIN * 2)));
+        const unclampedLeft = buttonRect.left - containerRect.left;
+        const maxLeft = Math.max(BOARD_CONTROLS_PANEL_MARGIN, containerRect.width - availableWidth - BOARD_CONTROLS_PANEL_MARGIN);
+        const nextLeft = Math.min(Math.max(unclampedLeft, BOARD_CONTROLS_PANEL_MARGIN), maxLeft);
+        const nextTop = buttonRect.bottom - containerRect.top + 12;
+
+        setExportMenuPosition({
+            top: nextTop,
+            left: nextLeft,
+            width: availableWidth,
+        });
     }, []);
 
     const updateBoardControlsPosition = useCallback(() => {
@@ -1401,6 +1432,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, []);
 
     useEffect(() => {
+        if (!showExportMenu) {
+            return;
+        }
+
+        updateExportMenuPosition();
+
+        const handleViewportChange = () => updateExportMenuPosition();
+        window.addEventListener('resize', handleViewportChange);
+        window.addEventListener('scroll', handleViewportChange, true);
+
+        return () => {
+            window.removeEventListener('resize', handleViewportChange);
+            window.removeEventListener('scroll', handleViewportChange, true);
+        };
+    }, [showExportMenu, updateExportMenuPosition]);
+
+    useEffect(() => {
         if (!showBoardControls) {
             return;
         }
@@ -1416,6 +1464,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             window.removeEventListener('scroll', handleViewportChange, true);
         };
     }, [showBoardControls, updateBoardControlsPosition]);
+
+    const toggleExportMenu = useCallback(() => {
+        if (!canExport) {
+            return;
+        }
+
+        setShowBoardControls(false);
+        updateExportMenuPosition();
+        setShowExportMenu((current) => !current);
+    }, [canExport, updateExportMenuPosition]);
 
     const toggleBoardControlsPanel = useCallback(() => {
         setShowExportMenu(false);
@@ -2701,12 +2759,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                         )}
 
                         <div className="forensic-toolbar-cluster flex items-center gap-2">
-                            <div className="relative" ref={exportMenuRef}>
+                            <div className="relative">
                                 <button
-                                    onClick={() => {
-                                        setShowBoardControls(false);
-                                        setShowExportMenu((current) => !current);
-                                    }}
+                                    ref={exportButtonRef}
+                                    onClick={toggleExportMenu}
                                     disabled={!canExport}
                                     className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-bold tracking-[0.18em] transition-all ${canExport
                                         ? 'border-white/14 bg-white/[0.045] text-[var(--forensic-text)] hover:border-white/28 hover:bg-white/12 hover:text-white'
@@ -2717,29 +2773,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                                     Export
                                     <ChevronDown size={14} className={`transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
                                 </button>
-
-                                {showExportMenu && (
-                                    <div className="forensic-board-dialog absolute left-0 top-[calc(100%+0.75rem)] z-50 w-56 overflow-hidden rounded-2xl backdrop-blur-xl">
-                                        <button
-                                            onClick={() => handleExport('png')}
-                                            className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
-                                        >
-                                            <ImageIcon size={14} className="text-[var(--forensic-accent)]" /> Snapshot (PNG)
-                                        </button>
-                                        <button
-                                            onClick={() => handleExport('svg')}
-                                            className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
-                                        >
-                                            <Box size={14} className="text-cyber-green" /> Vector (SVG)
-                                        </button>
-                                        <button
-                                            onClick={() => handleExport('pdf')}
-                                            className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
-                                        >
-                                            <FileText size={14} className="text-cyber-purple" /> Full Report (PDF)
-                                        </button>
-                                    </div>
-                                )}
                             </div>
 
                             <div className="relative">
@@ -2922,6 +2955,39 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     </div>
                 )}
             </div>
+
+            {showExportMenu && (
+                <div
+                    ref={exportMenuPanelRef}
+                    data-testid="export-menu-overlay"
+                    className="forensic-board-dialog absolute z-50 overflow-hidden rounded-2xl backdrop-blur-xl"
+                    style={{
+                        top: `${exportMenuPosition.top}px`,
+                        left: `${exportMenuPosition.left}px`,
+                        width: `${exportMenuPosition.width}px`,
+                        maxWidth: `calc(100vw - ${BOARD_CONTROLS_PANEL_MARGIN * 2}px)`,
+                    }}
+                >
+                    <button
+                        onClick={() => handleExport('png')}
+                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
+                    >
+                        <ImageIcon size={14} className="text-[var(--forensic-accent)]" /> Snapshot (PNG)
+                    </button>
+                    <button
+                        onClick={() => handleExport('svg')}
+                        className="flex w-full items-center gap-3 border-b border-white/6 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
+                    >
+                        <Box size={14} className="text-cyber-green" /> Vector (SVG)
+                    </button>
+                    <button
+                        onClick={() => handleExport('pdf')}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-[11px] font-semibold text-[var(--forensic-text-muted)] transition-colors hover:bg-white/8 hover:text-white"
+                    >
+                        <FileText size={14} className="text-cyber-purple" /> Full Report (PDF)
+                    </button>
+                </div>
+            )}
 
             <div
                 ref={flowWrapperRef}
