@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,11 +24,12 @@ import (
 )
 
 const (
-	maxNodeImageCount               = 3
-	maxNodeImageBytes               = 8 << 20
-	maxNodeImageRedirects           = 3
-	maxReviewedScrapedImagesPerNode = 1
-	imageReviewExcerptLimit         = 1400
+	maxNodeImageCount                = 3
+	maxNodeImageBytes                = 8 << 20
+	maxNodeImageRedirects            = 3
+	maxReviewedScrapedImagesPerNode  = 1
+	defaultImageReviewCandidateLimit = 1
+	imageReviewExcerptLimit          = 1400
 )
 
 type downloadedRemoteNodeImage struct {
@@ -171,6 +173,21 @@ func clampImageReviewExcerpt(text string) string {
 	}
 
 	return strings.TrimSpace(string(runes[:imageReviewExcerptLimit])) + "... [TRUNCATED]"
+}
+
+func imageReviewCandidateLimit() int {
+	raw := strings.TrimSpace(os.Getenv("GORANTULA_IMAGE_REVIEW_CANDIDATE_LIMIT"))
+	if raw == "" {
+		return defaultImageReviewCandidateLimit
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return defaultImageReviewCandidateLimit
+	}
+	if parsed > maxNodeImageCount {
+		return maxNodeImageCount
+	}
+	return parsed
 }
 
 func buildScrapedImageReviewPrompt(pageURL, nodeTitle, nodeSummary, nodeFullText string) string {
@@ -321,8 +338,8 @@ func (b *Brain) PersistRemoteNodeImages(ctx context.Context, provider ModelProvi
 	candidates := make([]downloadedRemoteNodeImage, 0, len(imageURLs))
 	seen := make(map[string]struct{}, len(imageURLs))
 	maxCandidateDownloads := maxNodeImageCount
-	if maxReviewedScrapedImagesPerNode > maxCandidateDownloads {
-		maxCandidateDownloads = maxReviewedScrapedImagesPerNode
+	if provider != nil && provider.SupportsImageReview() {
+		maxCandidateDownloads = imageReviewCandidateLimit()
 	}
 
 	for _, imageURL := range imageURLs {

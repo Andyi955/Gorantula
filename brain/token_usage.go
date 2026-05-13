@@ -111,6 +111,53 @@ func (t *tokenUsageTracker) summarize(scopeID string) tokenUsageSummary {
 	return summary
 }
 
+func (t *tokenUsageTracker) summarizeByOperation(scopeID string) []models.PipelineProfileTokenUsage {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	byKey := make(map[string]models.PipelineProfileTokenUsage)
+	for _, record := range t.records {
+		if scopeID != "" && record.ScopeID != scopeID {
+			continue
+		}
+
+		operation := strings.TrimSpace(record.Operation)
+		if operation == "" {
+			operation = "unknown"
+		}
+		provider := strings.TrimSpace(record.Provider)
+		if provider == "" {
+			provider = "unknown"
+		}
+		key := operation + "\x00" + provider
+		summary := byKey[key]
+		summary.Operation = operation
+		summary.Provider = provider
+		summary.CallCount++
+		if record.Estimated {
+			summary.EstimatedCallCount++
+		} else {
+			summary.ReportedCallCount++
+		}
+		summary.PromptTokens += record.PromptTokens
+		summary.CompletionTokens += record.CompletionTokens
+		summary.TotalTokens += record.TotalTokens
+		byKey[key] = summary
+	}
+
+	summaries := make([]models.PipelineProfileTokenUsage, 0, len(byKey))
+	for _, summary := range byKey {
+		summaries = append(summaries, summary)
+	}
+	sort.SliceStable(summaries, func(i, j int) bool {
+		if summaries[i].TotalTokens == summaries[j].TotalTokens {
+			return summaries[i].Operation < summaries[j].Operation
+		}
+		return summaries[i].TotalTokens > summaries[j].TotalTokens
+	})
+	return summaries
+}
+
 func withTokenUsageTracking(ctx context.Context, scopeID, operation string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -203,6 +250,22 @@ func (b *Brain) summarizeTokenUsageScope(scopeID string) tokenUsageSummary {
 	}
 
 	return tracker.summarize(scopeID)
+}
+
+func (b *Brain) StartPipelineTokenScope(ctx context.Context, prefix, operation string) (context.Context, string) {
+	scopeID := b.newTokenUsageScope(prefix)
+	return withTokenUsageTracking(ctx, scopeID, operation), scopeID
+}
+
+func (b *Brain) RecordPipelineTokenUsage(progress *models.PipelineProgressTracker, scopeID string) {
+	if progress == nil || strings.TrimSpace(scopeID) == "" {
+		return
+	}
+	tracker := b.ensureTokenUsageTracker()
+	if tracker == nil {
+		return
+	}
+	progress.RecordTokenUsage(tracker.summarizeByOperation(scopeID)...)
 }
 
 func (b *Brain) recordProviderTokenUsage(ctx context.Context, providerName, fallbackOperation, prompt, completion string, usage *llmTokenUsage) {

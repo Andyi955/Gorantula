@@ -471,6 +471,20 @@ const stripTransientNodeData = (node: Node): Node => ({
     data: {
         ...node.data,
         isRecentlyImported: false,
+        personaInsights: Array.isArray(node.data?.personaInsights)
+            ? node.data.personaInsights.map((insight: any) => ({
+                personaName: insight?.personaName,
+                perspective: insight?.perspective,
+                confidence: insight?.confidence,
+                keyFindings: Array.isArray(insight?.keyFindings) ? insight.keyFindings.slice(0, 4) : [],
+                observations: Array.isArray(insight?.observations) ? insight.observations.slice(0, 4) : [],
+                hypotheses: Array.isArray(insight?.hypotheses) ? insight.hypotheses.slice(0, 3) : [],
+                connections: Array.isArray(insight?.connections) ? insight.connections.slice(0, 4) : [],
+                questions: Array.isArray(insight?.questions) ? insight.questions.slice(0, 3) : [],
+                nodeIDs: Array.isArray(insight?.nodeIDs) ? insight.nodeIDs.slice(0, 12) : [],
+                proposedConnections: Array.isArray(insight?.proposedConnections) ? insight.proposedConnections.slice(0, 6) : [],
+            }))
+            : node.data?.personaInsights,
     }
 });
 

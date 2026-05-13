@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,13 +16,15 @@ import (
 )
 
 const (
-	discoveryConfidenceThreshold   float32 = 0.86
-	discoveryReviewConfidenceFloor float32 = 0.78
-	discoveryCandidateStatus               = "candidate"
-	discoveryApprovedStatus                = "approved"
-	discoveryVerdictApprove                = "approve"
-	discoveryVerdictRevise                 = "revise"
-	discoveryVerdictReject                 = "reject"
+	discoveryConfidenceThreshold      float32 = 0.86
+	discoveryReviewConfidenceFloor    float32 = 0.78
+	discoveryCandidateStatus                  = "candidate"
+	discoveryApprovedStatus                   = "approved"
+	discoveryVerdictApprove                   = "approve"
+	discoveryVerdictRevise                    = "revise"
+	discoveryVerdictReject                    = "reject"
+	defaultDiscoveryCandidateLimit            = 4
+	defaultDiscoveryReviewConcurrency         = 4
 )
 
 var (
@@ -53,6 +56,36 @@ type discoveryReviewTrace struct {
 	DebugNotes      []string
 }
 
+func discoveryCandidateLimit() int {
+	raw := strings.TrimSpace(os.Getenv("GORANTULA_DISCOVERY_CANDIDATE_LIMIT"))
+	if raw == "" {
+		return defaultDiscoveryCandidateLimit
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return defaultDiscoveryCandidateLimit
+	}
+	if parsed > 12 {
+		return 12
+	}
+	return parsed
+}
+
+func discoveryReviewConcurrency() int {
+	raw := strings.TrimSpace(os.Getenv("GORANTULA_DISCOVERY_REVIEW_CONCURRENCY"))
+	if raw == "" {
+		return defaultDiscoveryReviewConcurrency
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return defaultDiscoveryReviewConcurrency
+	}
+	if parsed > 6 {
+		return 6
+	}
+	return parsed
+}
+
 // SynthesizeDiscoveries generates candidate discoveries from the evidence before review.
 func (b *Brain) SynthesizeDiscoveries(ctx context.Context, vaultID string, nodes []models.MemoryNode, insights []PersonaInsight) ([]models.Discovery, error) {
 	if len(nodes) < 2 {
@@ -66,7 +99,7 @@ func (b *Brain) SynthesizeDiscoveries(ctx context.Context, vaultID string, nodes
 
 	var findingsBuilder strings.Builder
 	for _, node := range nodes {
-		findingsBuilder.WriteString(fmt.Sprintf("[NodeID: %s]\nTitle: %s\nSummary: %s\nFull Text: %s\n\n", node.ID, node.Title, node.Summary, node.FullText))
+		findingsBuilder.WriteString(formatCompactEvidenceNode(node, discoveryEvidenceExcerptLength))
 	}
 
 	if len(insights) > 0 {
@@ -121,7 +154,14 @@ Evidence and insights:
 		return nil, fmt.Errorf("failed to synthesize candidate discoveries: %w", err)
 	}
 
-	return normalizeDiscoveries(response.Discoveries, vaultID, nodes, discoveryCandidateStatus), nil
+	discoveries := normalizeDiscoveries(response.Discoveries, vaultID, nodes, discoveryCandidateStatus)
+	sort.SliceStable(discoveries, func(i, j int) bool {
+		return discoveries[i].Confidence > discoveries[j].Confidence
+	})
+	if limit := discoveryCandidateLimit(); len(discoveries) > limit {
+		discoveries = discoveries[:limit]
+	}
+	return discoveries, nil
 }
 
 // ReviewDiscoveryCandidates runs a temporary expert cell on each candidate and returns only approved discoveries.
@@ -130,14 +170,52 @@ func (b *Brain) ReviewDiscoveryCandidates(ctx context.Context, candidates []mode
 		return nil, nil
 	}
 
-	approved := make([]models.Discovery, 0, len(candidates))
-	traces := make([]discoveryReviewTrace, 0, len(candidates))
-	for _, candidate := range candidates {
-		trace, err := b.reviewSingleCandidate(ctx, candidate, nodes)
-		if err != nil {
-			return nil, err
+	workerCount := discoveryReviewConcurrency()
+	if len(candidates) < workerCount {
+		workerCount = len(candidates)
+	}
+
+	type reviewJob struct {
+		index     int
+		candidate models.Discovery
+	}
+	type reviewResult struct {
+		index int
+		trace discoveryReviewTrace
+		err   error
+	}
+
+	jobs := make(chan reviewJob)
+	results := make(chan reviewResult, len(candidates))
+	var waitGroup sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			for job := range jobs {
+				trace, err := b.reviewSingleCandidate(ctx, job.candidate, nodes)
+				results <- reviewResult{index: job.index, trace: trace, err: err}
+			}
+		}()
+	}
+
+	for index, candidate := range candidates {
+		jobs <- reviewJob{index: index, candidate: candidate}
+	}
+	close(jobs)
+	waitGroup.Wait()
+	close(results)
+
+	traces := make([]discoveryReviewTrace, len(candidates))
+	for result := range results {
+		if result.err != nil {
+			return nil, result.err
 		}
-		traces = append(traces, trace)
+		traces[result.index] = result.trace
+	}
+
+	approved := make([]models.Discovery, 0, len(candidates))
+	for _, trace := range traces {
 		if trace.Approved {
 			approved = append(approved, trace.Final)
 		}
@@ -165,6 +243,7 @@ func (b *Brain) reviewSingleCandidate(ctx context.Context, candidate models.Disc
 		trace.RejectionReason = "missing_source_corpus"
 		return trace, nil
 	}
+	reviewCorpus := buildDiscoveryReviewCorpus(candidate.SourceNodeIDs, nodeLookup)
 
 	candidate.Topic = classifyDiscoveryTopic(candidate, sourceCorpus)
 	trace.Candidate.Topic = candidate.Topic
@@ -182,7 +261,7 @@ func (b *Brain) reviewSingleCandidate(ctx context.Context, candidate models.Disc
 		waitGroup.Add(1)
 		go func(index int, spec reviewerSpec) {
 			defer waitGroup.Done()
-			review, err := runDiscoveryReview(ctx, provider, spec, candidate, sourceCorpus)
+			review, err := runDiscoveryReview(ctx, provider, spec, candidate, reviewCorpus)
 			if err != nil {
 				errChan <- err
 				return
@@ -755,6 +834,18 @@ func buildDiscoverySourceCorpus(sourceNodeIDs []string, nodeLookup map[string]mo
 		builder.WriteString(strings.ToLower(node.FullText))
 	}
 
+	return builder.String()
+}
+
+func buildDiscoveryReviewCorpus(sourceNodeIDs []string, nodeLookup map[string]models.MemoryNode) string {
+	var builder strings.Builder
+	for _, nodeID := range sourceNodeIDs {
+		node, ok := nodeLookup[nodeID]
+		if !ok {
+			continue
+		}
+		builder.WriteString(formatCompactEvidenceNode(node, discoveryReviewExcerptLength))
+	}
 	return builder.String()
 }
 

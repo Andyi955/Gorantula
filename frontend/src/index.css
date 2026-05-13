@@ -833,6 +833,44 @@ body {
   white-space: nowrap;
 }
 
+.forensic-pipeline-performance {
+  color: var(--forensic-text-muted);
+}
+
+.forensic-pipeline-profile-card {
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  background: linear-gradient(180deg, rgba(9, 18, 25, 0.82), rgba(4, 9, 14, 0.76));
+  padding: 0.7rem;
+}
+
+.forensic-pipeline-profile-card span {
+  display: block;
+  color: var(--forensic-text-faint);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.forensic-pipeline-profile-card strong {
+  display: block;
+  margin-top: 0.28rem;
+  color: var(--forensic-text);
+  font-size: 0.78rem;
+}
+
+.forensic-pipeline-profile-card p {
+  margin-top: 0.2rem;
+  color: var(--forensic-accent-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.forensic-pipeline-profile-card-positive {
+  border-color: rgba(65, 255, 122, 0.24);
+  background: rgba(65, 255, 122, 0.07);
+}
+
 .forensic-status-metric strong,
 .forensic-status-metric .forensic-status-heading {
   color: var(--forensic-accent-muted);

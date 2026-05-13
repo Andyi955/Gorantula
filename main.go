@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ var (
 )
 
 const maxNodeImageUploadBodyBytes = 12 << 20
+const pipelineProfileRetention = 100
 
 func broadcast(msg models.WSMessage) {
 	clientsMu.Lock()
@@ -110,6 +112,34 @@ func forgetPipelineTracker(runID string) {
 	if strings.TrimSpace(runID) != "" {
 		pipelineTrackers.Delete(runID)
 	}
+}
+
+func pipelineProfileStore() *models.PipelineProfileStore {
+	return models.NewPipelineProfileStore(filepath.Join("abdomen_vault", "pipeline_runs"), pipelineProfileRetention)
+}
+
+func saveAndBroadcastPipelineProfile(tracker *models.PipelineProgressTracker) {
+	if tracker == nil {
+		return
+	}
+
+	profile := tracker.Profile()
+	if strings.TrimSpace(profile.RunID) == "" {
+		return
+	}
+	if err := pipelineProfileStore().Save(profile); err != nil {
+		log.Printf("[PipelineProfile] failed to save profile for %s: %v", profile.RunID, err)
+		return
+	}
+	broadcast(models.WSMessage{
+		Type: models.PipelineProfileSavedMessageType,
+		Payload: map[string]interface{}{
+			"runId":          profile.RunID,
+			"vaultId":        profile.VaultID,
+			"status":         profile.Status,
+			"totalElapsedMs": profile.TotalElapsedMs,
+		},
+	})
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
@@ -395,12 +425,15 @@ func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, s
 		}
 		if err != nil {
 			broadcast(tracker.Error("complete", err.Error()))
+			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{
 				Type:    "ERROR",
 				Payload: err.Error(),
 			})
+			return
 		}
+		saveAndBroadcastPipelineProfile(tracker)
 	}()
 }
 
@@ -465,14 +498,17 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			insights []brain.PersonaInsight
 			err      error
 		)
+		tracker.StartSpan("persona_fanout", "persona_analysis", "Persona fanout", fmt.Sprintf("running %d personas", len(brain.GetDefaultPersonas())))
 		if isIncremental {
-			insights, err = br.AnalyzeIncrementalWithPersonas(context.Background(), vaultID, nodes, pendingNodeIDs)
+			insights, err = br.AnalyzeIncrementalWithPersonasWithProgress(context.Background(), vaultID, nodes, pendingNodeIDs, tracker)
 		} else {
-			insights, err = br.AnalyzeWithPersonas(context.Background(), vaultID, nodes)
+			insights, err = br.AnalyzeWithPersonasWithProgress(context.Background(), vaultID, nodes, tracker)
 		}
+		tracker.CompleteSpan("persona_fanout", fmt.Sprintf("generated %d persona insight sets", len(insights)))
 		if err != nil {
 			log.Printf("[WS Error] Persona analysis failed: %v", err)
 			broadcast(tracker.Error("persona_analysis", err.Error()))
+			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{Type: "ERROR", Payload: "Persona analysis failed: " + err.Error()})
 
@@ -495,6 +531,8 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 
 		broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
 		broadcast(tracker.Complete("persona_analysis", fmt.Sprintf("Generated %d persona insight sets", len(insights))))
+		tracker.RecordCounter("personaInsightSets", len(insights))
+		saveAndBroadcastPipelineProfile(tracker)
 
 		overlapCandidateNodes := nodes
 		if isIncremental {
@@ -512,14 +550,19 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
 
 		var connections []models.BoardConnection
+		relationshipCtx, relationshipScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-relationships", "relationship_synthesis")
+		tracker.StartSpan("relationship_generation", "relationship_synthesis", "Relationship synthesis", fmt.Sprintf("linking %d nodes", len(nodes)))
 		if isIncremental {
-			connections, _, err = br.RunIncrementalRelationshipWorkflow(context.Background(), vaultID, nodes, pendingNodeIDs, insights)
+			connections, _, err = br.RunIncrementalRelationshipWorkflow(relationshipCtx, vaultID, nodes, pendingNodeIDs, insights)
 		} else {
-			connections, _, err = br.RunRelationshipWorkflow(context.Background(), vaultID, nodes, insights)
+			connections, _, err = br.RunRelationshipWorkflow(relationshipCtx, vaultID, nodes, insights)
 		}
+		tracker.CompleteSpan("relationship_generation", fmt.Sprintf("found %d relationships", len(connections)))
+		br.RecordPipelineTokenUsage(tracker, relationshipScopeID)
 		if err != nil {
 			log.Printf("[WS Error] Relationship workflow failed: %v", err)
 			broadcast(tracker.Error("relationship_synthesis", err.Error()))
+			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
 			return
@@ -527,10 +570,13 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 
 		log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
 		broadcast(tracker.Complete("relationship_synthesis", fmt.Sprintf("Found %d relationships", len(connections))))
+		tracker.RecordCounter("relationships", len(connections))
 		broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+		saveAndBroadcastPipelineProfile(tracker)
 
 		if isIncremental {
 			broadcast(tracker.Complete("complete", "Incremental integration complete"))
+			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 			return
 		}
@@ -539,18 +585,29 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
 		go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
 			broadcast(tracker.Start("discovery_review", "Reviewing breakthrough candidates"))
-			candidateDiscoveries, err := br.SynthesizeDiscoveries(context.Background(), vaultID, nodes, insights)
+			discoveryCtx, discoveryScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-discovery", "discovery_synthesis")
+			tracker.StartSpan("discovery_synthesis", "discovery_review", "Discovery candidate synthesis", fmt.Sprintf("reviewing %d nodes", len(nodes)))
+			candidateDiscoveries, err := br.SynthesizeDiscoveries(discoveryCtx, vaultID, nodes, insights)
+			tracker.CompleteSpan("discovery_synthesis", fmt.Sprintf("generated %d candidate discoveries", len(candidateDiscoveries)))
+			br.RecordPipelineTokenUsage(tracker, discoveryScopeID)
 			if err != nil {
 				log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
 				broadcast(tracker.Error("discovery_review", err.Error()))
+				saveAndBroadcastPipelineProfile(tracker)
 				forgetPipelineTracker(meta.RunID)
 				return
 			}
+			tracker.RecordCounter("discoveryCandidates", len(candidateDiscoveries))
 
-			discoveries, err := br.ReviewDiscoveryCandidates(context.Background(), candidateDiscoveries, nodes)
+			reviewCtx, reviewScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-discovery-review", "discovery_review")
+			tracker.StartSpan("discovery_candidate_review", "discovery_review", "Discovery expert review", fmt.Sprintf("reviewing %d candidates", len(candidateDiscoveries)))
+			discoveries, err := br.ReviewDiscoveryCandidates(reviewCtx, candidateDiscoveries, nodes)
+			tracker.CompleteSpan("discovery_candidate_review", fmt.Sprintf("approved %d discoveries", len(discoveries)))
+			br.RecordPipelineTokenUsage(tracker, reviewScopeID)
 			if err != nil {
 				log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
 				broadcast(tracker.Error("discovery_review", err.Error()))
+				saveAndBroadcastPipelineProfile(tracker)
 				forgetPipelineTracker(meta.RunID)
 				return
 			}
@@ -558,8 +615,10 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			if len(discoveries) > 0 {
 				broadcast(models.WSMessage{Type: "DISCOVERIES_FOUND", Payload: discoveries})
 			}
+			tracker.RecordCounter("discoveries", len(discoveries))
 			broadcast(tracker.Complete("discovery_review", fmt.Sprintf("Approved %d discoveries", len(discoveries))))
 			broadcast(tracker.Complete("complete", "Pipeline complete"))
+			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 		}(vaultID, nodesSnapshot, insightsSnapshot)
 	}()
@@ -571,12 +630,15 @@ func triggerLocalCrawl(br *brain.Brain, filePaths []string, meta pipelineRunMeta
 		_, err := br.ProcessLocalFilesWithProgress(context.Background(), filePaths, tracker)
 		if err != nil {
 			broadcast(tracker.Error("complete", err.Error()))
+			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{
 				Type:    "ERROR",
 				Payload: err.Error(),
 			})
+			return
 		}
+		saveAndBroadcastPipelineProfile(tracker)
 	}()
 }
 
@@ -684,6 +746,49 @@ func handleVaultAsset(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, targetPath)
 }
 
+func handlePipelineRuns(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimRight(r.URL.Path, "/")
+	store := pipelineProfileStore()
+	if path == "/api/pipeline-runs" {
+		limit := 20
+		if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+			if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		if limit > 100 {
+			limit = 100
+		}
+		profiles, err := store.List(limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(profiles)
+		return
+	}
+
+	runID := strings.TrimPrefix(path, "/api/pipeline-runs/")
+	if runID == "" || runID == path {
+		http.NotFound(w, r)
+		return
+	}
+	profile, err := store.Load(runID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	json.NewEncoder(w).Encode(profile)
+}
+
 func main() {
 	_ = godotenv.Load() // Loads .env if it exists
 
@@ -699,6 +804,8 @@ func main() {
 		handleConnections(w, r, br)
 	})
 	http.HandleFunc("/vault-assets/", handleVaultAsset)
+	http.HandleFunc("/api/pipeline-runs", handlePipelineRuns)
+	http.HandleFunc("/api/pipeline-runs/", handlePipelineRuns)
 	http.HandleFunc("/api/investigations/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/images") {
 			handleNodeImageUpload(w, r, br)

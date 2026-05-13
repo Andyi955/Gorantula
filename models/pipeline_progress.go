@@ -51,14 +51,18 @@ type PipelineProgressPayload struct {
 }
 
 type PipelineProgressTracker struct {
-	mu        sync.Mutex
-	runID     string
-	vaultID   string
-	mode      string
-	startedAt time.Time
-	steps     []PipelineProgressStepState
-	now       func() time.Time
-	currentID string
+	mu          sync.Mutex
+	runID       string
+	vaultID     string
+	mode        string
+	startedAt   time.Time
+	steps       []PipelineProgressStepState
+	spans       []PipelineProfileSpan
+	activeSpans map[string]PipelineProfileSpan
+	counters    map[string]int
+	tokenUsage  map[string]PipelineProfileTokenUsage
+	now         func() time.Time
+	currentID   string
 }
 
 func DefaultPipelineProgressSteps() []PipelineProgressStep {
@@ -110,12 +114,16 @@ func NewPipelineProgressTrackerWithClock(runID, vaultID, mode string, steps []Pi
 	}
 
 	return &PipelineProgressTracker{
-		runID:     runID,
-		vaultID:   vaultID,
-		mode:      mode,
-		startedAt: startedAt,
-		steps:     stepStates,
-		now:       now,
+		runID:       runID,
+		vaultID:     vaultID,
+		mode:        mode,
+		startedAt:   startedAt,
+		steps:       stepStates,
+		spans:       []PipelineProfileSpan{},
+		activeSpans: make(map[string]PipelineProfileSpan),
+		counters:    make(map[string]int),
+		tokenUsage:  make(map[string]PipelineProfileTokenUsage),
+		now:         now,
 	}
 }
 

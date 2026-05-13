@@ -83,6 +83,40 @@ interface PipelineRunState extends PipelineProgressPayload {
   updatedAt: number
 }
 
+interface PipelineProfileBottleneck {
+  kind: 'step' | 'span' | 'token'
+  id: string
+  label: string
+  stepId?: string
+  durationMs?: number
+  totalTokens?: number
+  percentOfTotal?: number
+}
+
+interface PipelineProfileTokenUsage {
+  operation: string
+  provider: string
+  callCount: number
+  reportedCallCount?: number
+  estimatedCallCount?: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens: number
+}
+
+interface PipelinePerformanceProfile {
+  runId: string
+  vaultId?: string
+  mode?: string
+  status?: string
+  startedAt?: string
+  completedAt?: string
+  totalElapsedMs: number
+  counters?: Record<string, number>
+  bottlenecks: PipelineProfileBottleneck[]
+  tokenUsage: PipelineProfileTokenUsage[]
+}
+
 interface AutosaveWarning {
   investigationId?: string
   errorName?: string
@@ -100,6 +134,7 @@ interface SidebarRowMetrics {
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
 const BACKEND_STATUS_ENDPOINT = '/__gorantula_backend_status'
 const BACKEND_WS_URL = 'ws://localhost:8080/ws'
+const PIPELINE_RUNS_ENDPOINT = 'http://localhost:8080/api/pipeline-runs'
 const WEBSOCKET_RETRY_DELAY_MS = 5000
 const SHOULD_PROBE_BACKEND = import.meta.env.DEV && import.meta.env.MODE !== 'test'
 const SIDEBAR_DEFAULT_WIDTH = 288
@@ -257,6 +292,90 @@ const coerceTokenUsageReport = (payload: unknown): TokenUsageReport | null => {
     totalTokens: parseTokenCount(candidate.totalTokens),
     providerTotals,
   }
+}
+
+const coercePipelineProfile = (payload: unknown): PipelinePerformanceProfile | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+
+  const candidate = payload as Record<string, unknown>
+  if (typeof candidate.runId !== 'string' || candidate.runId.trim() === '') {
+    return null
+  }
+
+  const rawCounters = candidate.counters && typeof candidate.counters === 'object' && !Array.isArray(candidate.counters)
+    ? candidate.counters as Record<string, unknown>
+    : {}
+  const counters = Object.entries(rawCounters).reduce<Record<string, number>>((accumulator, [key, value]) => {
+    accumulator[key] = parseTokenCount(value)
+    return accumulator
+  }, {})
+
+  const bottlenecks = (Array.isArray(candidate.bottlenecks) ? candidate.bottlenecks : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((item): PipelineProfileBottleneck => ({
+      kind: item.kind === 'step' || item.kind === 'span' || item.kind === 'token' ? item.kind : 'span',
+      id: typeof item.id === 'string' ? item.id : '',
+      label: typeof item.label === 'string' && item.label.trim() ? item.label : 'Pipeline bottleneck',
+      stepId: typeof item.stepId === 'string' ? item.stepId : undefined,
+      durationMs: parseTokenCount(item.durationMs),
+      totalTokens: parseTokenCount(item.totalTokens),
+      percentOfTotal: parseTokenCount(item.percentOfTotal),
+    }))
+    .filter((item) => item.id || item.label)
+
+  const tokenUsage = (Array.isArray(candidate.tokenUsage) ? candidate.tokenUsage : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => ({
+      operation: typeof item.operation === 'string' && item.operation.trim() ? item.operation : 'unknown',
+      provider: typeof item.provider === 'string' && item.provider.trim() ? item.provider : 'unknown',
+      callCount: parseTokenCount(item.callCount),
+      reportedCallCount: parseTokenCount(item.reportedCallCount),
+      estimatedCallCount: parseTokenCount(item.estimatedCallCount),
+      promptTokens: parseTokenCount(item.promptTokens),
+      completionTokens: parseTokenCount(item.completionTokens),
+      totalTokens: parseTokenCount(item.totalTokens),
+    }))
+    .sort((left, right) => right.totalTokens - left.totalTokens)
+
+  return {
+    runId: candidate.runId.trim(),
+    vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId : undefined,
+    mode: typeof candidate.mode === 'string' ? candidate.mode : undefined,
+    status: typeof candidate.status === 'string' ? candidate.status : undefined,
+    startedAt: typeof candidate.startedAt === 'string' ? candidate.startedAt : undefined,
+    completedAt: typeof candidate.completedAt === 'string' ? candidate.completedAt : undefined,
+    totalElapsedMs: parseTokenCount(candidate.totalElapsedMs),
+    counters,
+    bottlenecks,
+    tokenUsage,
+  }
+}
+
+const coercePipelineProfiles = (payload: unknown): PipelinePerformanceProfile[] => {
+  if (!Array.isArray(payload)) {
+    return []
+  }
+  return payload
+    .map(coercePipelineProfile)
+    .filter((profile): profile is PipelinePerformanceProfile => Boolean(profile))
+}
+
+const getTopPipelineDurationBottleneck = (profile?: PipelinePerformanceProfile | null) =>
+  profile?.bottlenecks.find((bottleneck) => bottleneck.kind === 'span' || bottleneck.kind === 'step') || null
+
+const getTopPipelineTokenBottleneck = (profile?: PipelinePerformanceProfile | null) =>
+  profile?.bottlenecks.find((bottleneck) => bottleneck.kind === 'token' && (bottleneck.totalTokens || 0) > 0) || null
+
+const getTopPipelineTokenUsage = (profile?: PipelinePerformanceProfile | null) =>
+  profile?.tokenUsage[0] || null
+
+const formatPipelinePercent = (value?: number | null) => {
+  if (!value || !Number.isFinite(value)) {
+    return '0%'
+  }
+  return `${Math.round(value)}%`
 }
 
 const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport): TokenUsageReport => {
@@ -479,6 +598,7 @@ function App() {
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
   const [pipelineRunsById, setPipelineRunsById] = useState<Record<string, PipelineRunState>>({})
+  const [pipelineProfiles, setPipelineProfiles] = useState<PipelinePerformanceProfile[]>([])
   const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
   const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
   const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
@@ -626,6 +746,21 @@ function App() {
     localStorage.setItem(INVESTIGATIONS_STORAGE_KEY, JSON.stringify(nextInvestigations));
   }, []);
 
+  const refreshPipelineProfiles = useCallback(async () => {
+    try {
+      const response = await fetch(`${PIPELINE_RUNS_ENDPOINT}?limit=20`, { cache: 'no-store' })
+      if (!response.ok) {
+        return
+      }
+      const data = await response.json()
+      setPipelineProfiles(coercePipelineProfiles(data))
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.debug('[App] Pipeline profile history unavailable', error)
+      }
+    }
+  }, [])
+
   const scheduleReconnect = (delay = WEBSOCKET_RETRY_DELAY_MS) => {
     if (isUnmounted.current) {
       return
@@ -730,6 +865,10 @@ function App() {
   }, [])
 
   useEffect(() => {
+    void refreshPipelineProfiles()
+  }, [refreshPipelineProfiles])
+
+  useEffect(() => {
     if (!socketConfig.socket) {
       return
     }
@@ -752,6 +891,11 @@ function App() {
             },
           }))
           setActivePipelineRunId(progress.runId)
+          return
+        }
+
+        if (msg.type === 'PIPELINE_PROFILE_SAVED') {
+          void refreshPipelineProfiles()
           return
         }
 
@@ -785,7 +929,18 @@ function App() {
             ...prev,
             [vaultId]: incoming,
           }
-          localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+          try {
+            localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+          } catch (error) {
+            console.warn('[App] Failed to persist discoveries; keeping them in memory for this session.', error)
+            setAutosaveWarning({
+              investigationId: vaultId,
+              errorName: error && typeof error === 'object' && 'name' in error
+                ? String((error as { name?: unknown }).name || 'UnknownError')
+                : 'UnknownError',
+              timestamp: Date.now(),
+            })
+          }
           return next
         })
 
@@ -802,7 +957,7 @@ function App() {
 
     socketConfig.socket.addEventListener('message', handleMessage)
     return () => socketConfig.socket?.removeEventListener('message', handleMessage)
-  }, [currentInvestigationId, socketConfig.socket])
+  }, [currentInvestigationId, refreshPipelineProfiles, socketConfig.socket])
 
   const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
   const pipelineRuns = useMemo(
@@ -810,6 +965,28 @@ function App() {
     [pipelineRunsById],
   )
   const activePipelineRun = activePipelineRunId ? pipelineRunsById[activePipelineRunId] || null : pipelineRuns[0] || null
+  const pipelineProfilesByRunId = useMemo(() => {
+    return pipelineProfiles.reduce<Record<string, PipelinePerformanceProfile>>((profiles, profile) => {
+      profiles[profile.runId] = profile
+      return profiles
+    }, {})
+  }, [pipelineProfiles])
+  const activePipelineProfile = activePipelineRun
+    ? pipelineProfilesByRunId[activePipelineRun.runId] || null
+    : pipelineProfiles[0] || null
+  const comparisonPipelineProfile = activePipelineProfile
+    ? pipelineProfiles.find((profile) => (
+      profile.runId !== activePipelineProfile.runId &&
+      profile.vaultId === activePipelineProfile.vaultId &&
+      profile.mode === activePipelineProfile.mode
+    )) || null
+    : null
+  const activePipelineDurationBottleneck = getTopPipelineDurationBottleneck(activePipelineProfile)
+  const activePipelineTokenBottleneck = getTopPipelineTokenBottleneck(activePipelineProfile)
+  const activePipelineTokenUsageHotspot = getTopPipelineTokenUsage(activePipelineProfile)
+  const activePipelineImpactMs = comparisonPipelineProfile && activePipelineProfile
+    ? comparisonPipelineProfile.totalElapsedMs - activePipelineProfile.totalElapsedMs
+    : 0
   const activePipelinePercent = activePipelineRun
     ? clampProgressPercent(activePipelineRun.completedSteps, activePipelineRun.totalSteps)
     : 0
@@ -1891,6 +2068,46 @@ function App() {
               </div>
             ))}
           </div>
+
+          {activePipelineProfile && (
+            <section className="forensic-pipeline-performance mt-5 border-t border-[rgba(129,227,255,0.12)] pt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-accent-muted)]">Performance</div>
+                <strong className="text-xs text-[var(--forensic-text)]">{formatDuration(activePipelineProfile.totalElapsedMs)} total</strong>
+              </div>
+
+              <div className="grid gap-2">
+                {activePipelineDurationBottleneck && (
+                  <div className="forensic-pipeline-profile-card">
+                    <span>Slowest measured span</span>
+                    <strong>{activePipelineDurationBottleneck.label}</strong>
+                    <p>
+                      {formatDuration(activePipelineDurationBottleneck.durationMs)} / {formatPipelinePercent(activePipelineDurationBottleneck.percentOfTotal)} of run
+                    </p>
+                  </div>
+                )}
+
+                {(activePipelineTokenBottleneck || activePipelineTokenUsageHotspot) && (
+                  <div className="forensic-pipeline-profile-card">
+                    <span>Token hotspot</span>
+                    <strong>{activePipelineTokenBottleneck?.label || activePipelineTokenUsageHotspot?.operation}</strong>
+                    <p>
+                      {formatCompactTokens(activePipelineTokenBottleneck?.totalTokens || activePipelineTokenUsageHotspot?.totalTokens || 0)} tokens
+                      {activePipelineTokenUsageHotspot ? ` / ${activePipelineTokenUsageHotspot.provider}` : ''}
+                    </p>
+                  </div>
+                )}
+
+                {comparisonPipelineProfile && (
+                  <div className={`forensic-pipeline-profile-card ${activePipelineImpactMs > 0 ? 'forensic-pipeline-profile-card-positive' : ''}`}>
+                    <span>Optimization impact</span>
+                    <strong>{activePipelineImpactMs > 0 ? `${formatDuration(activePipelineImpactMs)} faster` : 'No speedup yet'}</strong>
+                    <p>Previous similar run: {formatDuration(comparisonPipelineProfile.totalElapsedMs)} total</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           {pipelineRuns.length > 1 && (
             <div className="mt-5 border-t border-[rgba(129,227,255,0.12)] pt-4">
