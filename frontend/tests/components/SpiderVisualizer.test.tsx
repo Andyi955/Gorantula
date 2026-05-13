@@ -11,7 +11,12 @@ vi.mock('@react-three/postprocessing', () => ({
 }))
 
 vi.mock('../../src/components/SpiderScene', () => ({
-  SpiderScene: () => <div>SpiderScene</div>,
+  SpiderScene: ({ brainState }: { brainState: string }) => (
+    <div>
+      <span>SpiderScene</span>
+      <span>{brainState}</span>
+    </div>
+  ),
 }))
 
 describe('SpiderVisualizer', () => {
@@ -42,6 +47,17 @@ describe('SpiderVisualizer', () => {
     expect(screen.getByText('SpiderScene')).toBeInTheDocument()
   })
 
+  it('renders the forensic lab shell with eight leg telemetry cards', () => {
+    render(<SpiderVisualizer sharedSocket={null} />)
+
+    expect(screen.getByTestId('spider-view-root')).toBeInTheDocument()
+    expect(screen.getByTestId('spider-lab-stage')).toBeInTheDocument()
+    expect(screen.getByTestId('spider-evidence-intake')).toHaveTextContent('Evidence Intake')
+    expect(screen.getAllByTestId(/spider-leg-telemetry-/)).toHaveLength(8)
+    expect(screen.getByTestId('spider-leg-telemetry-1')).toHaveTextContent('Leg 1')
+    expect(screen.getByTestId('spider-leg-telemetry-8')).toHaveTextContent('Leg 8')
+  })
+
   it('switches to connected when a websocket is provided', () => {
     const sharedSocket = {
       addEventListener: vi.fn(),
@@ -62,5 +78,16 @@ describe('SpiderVisualizer', () => {
     })
 
     expect(screen.getByText(/does not support multimodal image review/i)).toBeInTheDocument()
+  })
+
+  it('updates leg telemetry from websocket leg events', () => {
+    const sharedSocket = new MockSocket()
+    render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
+
+    act(() => {
+      sharedSocket.emit('LEG_UPDATE', { legId: 3, state: 'Scraping source map' })
+    })
+
+    expect(screen.getByTestId('spider-leg-telemetry-4')).toHaveTextContent('Scraping source map')
   })
 })

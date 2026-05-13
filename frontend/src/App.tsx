@@ -376,6 +376,7 @@ function App() {
     ? sidebarWidth
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
+  const showFloatingPanelHandles = activeTab !== 'spider' && !isBoardWorkspaceActive
 
   const filteredSidebarRows = useMemo(() => {
     const query = sidebarSearchQuery.trim().toLowerCase()
@@ -961,19 +962,23 @@ function App() {
   }
 
   const headerClassName = isBoardWorkspaceActive
+    || activeTab === 'spider'
     ? 'forensic-app-shell-header'
     : 'flex items-center justify-between border-b border-cyber-gray bg-cyber-black px-6 py-4 z-50'
   const appShellClassName = isBoardWorkspaceActive
+    || activeTab === 'spider'
     ? 'forensic-app-shell flex h-screen w-screen flex-col overflow-hidden font-mono'
     : 'flex h-screen w-screen flex-col overflow-hidden bg-cyber-black font-mono'
   const brandClassName = isBoardWorkspaceActive
+    || activeTab === 'spider'
     ? 'forensic-app-brand text-2xl font-black tracking-tighter italic'
     : 'text-2xl font-black tracking-tighter italic text-cyber-green'
   const tabRailClassName = isBoardWorkspaceActive
+    || activeTab === 'spider'
     ? 'forensic-app-tab-rail'
     : 'flex gap-4'
   const getTabClassName = (tab: 'spider' | 'board' | 'timeline' | 'chat' | 'settings', activeClassName: string) => (
-    isBoardWorkspaceActive
+    isBoardWorkspaceActive || activeTab === 'spider'
       ? `forensic-app-tab ${activeTab === tab ? `forensic-app-tab-active ${activeClassName}` : ''}`
       : `flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === tab ? activeClassName : 'text-gray-500 hover:text-white'}`
   )
@@ -1037,7 +1042,7 @@ function App() {
       {/* Top Header */}
       <header className={headerClassName}>
         <h1 className={brandClassName}>
-          GORANTULA <span className={`ml-2 text-sm not-italic font-normal ${isBoardWorkspaceActive ? 'forensic-app-brand-meta' : 'text-white opacity-50'}`}>v2.0 // ARCHITECT</span>
+          GORANTULA <span className={`ml-2 text-sm not-italic font-normal ${isBoardWorkspaceActive || activeTab === 'spider' ? 'forensic-app-brand-meta' : 'text-white opacity-50'}`}>v2.0 // ARCHITECT</span>
         </h1>
 
         <div className={tabRailClassName}>
@@ -1298,7 +1303,7 @@ function App() {
               currentInvestigationId={currentInvestigationId}
               discoveries={currentInvestigationId ? (discoveriesByInvestigation[currentInvestigationId] || []) : []}
               hasUnread={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
-              showHandle={!isBoardWorkspaceActive}
+              showHandle={showFloatingPanelHandles}
               onOpenDiscovery={(nodeId?: string) => {
                 if (!currentInvestigationId) return
                 handleNavigateDiscovery(currentInvestigationId, nodeId)
@@ -1331,91 +1336,145 @@ function App() {
               returnVaultId={returnVaultId}
               investigations={investigations}
               onMergeInvestigations={handleMergeInvestigations}
-              showHandle={!isBoardWorkspaceActive}
+              showHandle={showFloatingPanelHandles}
             />
           </Suspense>
 
           <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'spider' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             <div className="h-full flex flex-col">
               <div className="flex-1 overflow-hidden">
-                <Suspense fallback={tabFallback('Spider View')}>
-                  <SpiderVisualizer sharedSocket={socketConfig.socket} />
-                </Suspense>
+                {activeTab === 'spider' && (
+                  <Suspense fallback={tabFallback('Spider View')}>
+                    <SpiderVisualizer
+                      sharedSocket={socketConfig.socket}
+                      displayMetrics={{
+                        nodeCount: currentBoardSnapshot.nodeCount,
+                        edgeCount: currentBoardSnapshot.edgeCount,
+                        evidenceCount: currentBoardSnapshot.evidenceCount,
+                        imageCount: currentBoardSnapshot.imageCount,
+                        confidenceScore: currentBoardSnapshot.confidenceScore,
+                        lastActivityLabel: currentBoardSnapshot.lastActivityLabel,
+                      }}
+                    />
+                  </Suspense>
+                )}
               </div>
 
               {/* Input Footer */}
-              <div className="p-6 bg-cyber-gray/30 border-t border-cyber-gray backdrop-blur-sm">
-                <div className="max-w-4xl mx-auto flex gap-4 items-center">
-                  <div className="flex bg-black border border-cyber-gray overflow-hidden shrink-0">
-                    <button
-                      onClick={() => setCrawlMode('web')}
-                      className={`px-4 py-3 text-xs font-bold transition-colors ${crawlMode === 'web' ? 'bg-cyber-purple text-white shadow-[0_0_10px_rgba(188,19,254,0.5)]' : 'text-gray-500 hover:text-white'}`}
-                    >
-                      WEB
-                    </button>
-                    <button
-                      onClick={() => setCrawlMode('local')}
-                      className={`px-4 py-3 text-xs font-bold transition-colors border-l border-cyber-gray ${crawlMode === 'local' ? 'bg-cyber-cyan text-black shadow-[0_0_10px_rgba(0,243,255,0.5)]' : 'text-gray-500 hover:text-white'}`}
-                    >
-                      LOCAL
-                    </button>
-                  </div>
-
-                  {crawlMode === 'web' && (
-                    <label className="flex shrink-0 cursor-pointer items-center gap-3 border border-cyber-cyan/25 bg-black/75 px-4 py-3 text-[10px] font-bold uppercase tracking-[0.24em] text-cyber-cyan transition-colors hover:border-cyber-cyan/45">
-                      <span className="text-gray-400">Scrape Images</span>
+              <div data-testid="spider-crawl-console" className="forensic-spider-crawl-console">
+                <div className="forensic-spider-console-grid">
+                  <section className="forensic-spider-console-panel forensic-spider-console-panel-mode">
+                    <div className="forensic-spider-console-label">Crawl Console</div>
+                    <div className="forensic-spider-mode-toggle" role="group" aria-label="Crawl mode">
                       <button
                         type="button"
-                        role="switch"
-                        aria-checked={imageScrapingEnabled}
-                        aria-label="Scrape images"
-                        onClick={() => setImageScrapingEnabled((current) => !current)}
-                        className={`relative h-5 w-10 rounded-full border transition-colors ${imageScrapingEnabled ? 'border-cyber-cyan bg-cyber-cyan/20' : 'border-cyber-gray bg-cyber-gray/40'}`}
+                        onClick={() => setCrawlMode('web')}
+                        className={crawlMode === 'web' ? 'forensic-spider-mode-active' : ''}
                       >
-                        <span
-                          className={`absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all ${imageScrapingEnabled ? 'left-[22px] bg-cyber-cyan shadow-[0_0_10px_rgba(0,243,255,0.55)]' : 'left-[4px] bg-gray-400'}`}
-                        />
+                        WEB
                       </button>
-                    </label>
-                  )}
-
-                  <div className="flex-1 flex gap-2 relative">
-                    <input
-                      ref={crawlInputRef}
-                      type="text"
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && runSpider()}
-                      placeholder={crawlMode === 'web' ? "ENTER CRAWL PARAMETERS..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
-                      className="w-full bg-black border border-cyber-gray px-4 py-3 text-cyber-green focus:border-cyber-green outline-none transition-colors"
-                    />
-
-                    {crawlMode === 'local' && (
                       <button
-                        onClick={async () => {
-                          try {
-                            const res = await fetch('http://localhost:8080/api/pick-files');
-                            if (!res.ok) throw new Error('Failed to open file picker');
-                            const paths = await res.json();
-                            if (paths && paths.length > 0) {
-                              setPrompt(paths.join('|'));
-                            }
-                          } catch (err) {
-                            console.error(err);
-                          }
-                        }}
-                        className="absolute right-0 top-0 bottom-0 bg-cyber-gray/20 hover:bg-cyber-cyan/20 text-cyber-cyan px-4 font-bold border-l border-cyber-gray transition-colors flex items-center gap-2 text-xs"
+                        type="button"
+                        onClick={() => setCrawlMode('local')}
+                        className={crawlMode === 'local' ? 'forensic-spider-mode-active' : ''}
                       >
-                        <Folder size={14} /> BROWSE...
+                        LOCAL
                       </button>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => runSpider()}
-                    className="bg-cyber-green text-black px-8 py-3 font-bold hover:bg-white transition-colors"
-                  >
-                    EXECUTE
-                  </button>
+                    </div>
+                    <div className="forensic-spider-console-meta">
+                      <span>Mode: {crawlMode === 'web' ? 'Web Crawl' : 'Local Vault'}</span>
+                      <span>Depth Limit <strong>3</strong></span>
+                      <span>Rate Limit <strong>150</strong></span>
+                    </div>
+                  </section>
+
+                  <section className="forensic-spider-console-panel forensic-spider-console-panel-options">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="forensic-spider-console-label">Scrape Images</div>
+                      {crawlMode === 'web' ? (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={imageScrapingEnabled}
+                          aria-label="Scrape images"
+                          onClick={() => setImageScrapingEnabled((current) => !current)}
+                          className={`forensic-spider-switch ${imageScrapingEnabled ? 'forensic-spider-switch-on' : ''}`}
+                        >
+                          <span />
+                        </button>
+                      ) : (
+                        <span className="forensic-spider-console-chip">Local</span>
+                      )}
+                    </div>
+                    <div className="forensic-spider-console-select">
+                      <span>User Agent</span>
+                      <strong>Gorantula/2.0</strong>
+                    </div>
+                    <div className="forensic-spider-console-select">
+                      <span>Proxy Pool</span>
+                      <strong>Default Pool</strong>
+                    </div>
+                  </section>
+
+                  <section className="forensic-spider-console-panel forensic-spider-console-panel-params">
+                    <div className="forensic-spider-console-label">Crawl Parameters</div>
+                    <pre aria-hidden="true">{`{
+  "start_urls": [],
+  "allowed_domains": [],
+  "follow_external": true,
+  "respect_robots": true,
+  "max_pages": 10000,
+  "max_depth": 3
+}`}</pre>
+                  </section>
+
+                  <section className="forensic-spider-console-panel forensic-spider-console-panel-command">
+                    <div className="forensic-spider-console-label">Command</div>
+                    <div className="forensic-spider-command-input-wrap">
+                      <input
+                        ref={crawlInputRef}
+                        type="text"
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && runSpider()}
+                        placeholder={crawlMode === 'web' ? "ENTER CRAWL PARAMETERS..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
+                        className="forensic-spider-command-input"
+                      />
+
+                      {crawlMode === 'local' && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('http://localhost:8080/api/pick-files');
+                              if (!res.ok) throw new Error('Failed to open file picker');
+                              const paths = await res.json();
+                              if (paths && paths.length > 0) {
+                                setPrompt(paths.join('|'));
+                              }
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                          className="forensic-spider-browse-button"
+                        >
+                          <Folder size={14} /> Browse
+                        </button>
+                      )}
+                    </div>
+                    <div className="forensic-spider-command-actions">
+                      <button
+                        type="button"
+                        onClick={() => runSpider()}
+                        className="forensic-spider-execute-button"
+                      >
+                        Execute
+                      </button>
+                      <button type="button" className="forensic-spider-command-more" aria-label="Command options">
+                        <ChevronRight size={15} />
+                      </button>
+                    </div>
+                  </section>
                 </div>
               </div>
             </div>

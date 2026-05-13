@@ -27,11 +27,15 @@ vi.mock('../src/components/VaultChatbot', () => ({
 }))
 
 vi.mock('../src/components/SynthesisPanel', () => ({
-  default: () => <div>SynthesisPanel</div>,
+  default: ({ showHandle = true }: { showHandle?: boolean }) => (
+    <div>{showHandle ? 'SynthesisPanel Handle' : null}</div>
+  ),
 }))
 
 vi.mock('../src/components/DiscoveryPanel', () => ({
-  default: () => <div>DiscoveryPanel</div>,
+  default: ({ showHandle = true }: { showHandle?: boolean }) => (
+    <div>{showHandle ? 'DiscoveryPanel Handle' : null}</div>
+  ),
 }))
 
 class WebSocketMock {
@@ -95,6 +99,14 @@ describe('App', () => {
     expect(screen.queryByText('SettingsDashboard')).not.toBeInTheDocument()
   })
 
+  it('hides floating synthesis and discovery handles on spider view', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.queryByText('SynthesisPanel Handle')).not.toBeInTheDocument()
+    expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
+  })
+
   it('loads saved investigations and switches tabs', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
@@ -110,6 +122,19 @@ describe('App', () => {
     await user.click(screen.getByText('Vault Chat'))
 
     expect(await screen.findByText('VaultChatbot')).toBeInTheDocument()
+  })
+
+  it('unmounts the spider visualizer when switching to detective board', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await user.click(screen.getByText('Detective Board'))
+
+    expect(await screen.findByText('DetectiveBoard')).toBeInTheDocument()
+    expect(screen.queryByText('SpiderVisualizer')).not.toBeInTheDocument()
   })
 
   it('filters sidebar investigations locally without mutating stored data', async () => {
@@ -249,6 +274,7 @@ describe('App', () => {
 
     render(<App />)
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.getByTestId('spider-crawl-console')).toBeInTheDocument()
 
     await act(async () => {
       WebSocketMock.instances[0]?.onopen?.()
@@ -267,6 +293,24 @@ describe('App', () => {
     const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
     expect(crawlMessage.type).toBe('CRAWL')
     expect(crawlMessage.scrapeImages).toBe(true)
+  })
+
+  it('keeps local crawl browsing inside the redesigned crawl console', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /local/i }))
+
+    expect(screen.getByPlaceholderText(/enter absolute os paths/i)).toBeInTheDocument()
+    expect(within(crawlConsole).getByRole('button', { name: /browse/i })).toBeInTheDocument()
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /web/i }))
+
+    expect(within(crawlConsole).queryByRole('button', { name: /browse/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /scrape images/i })).toBeInTheDocument()
   })
 
   it('renders current board and session token usage from websocket events', async () => {

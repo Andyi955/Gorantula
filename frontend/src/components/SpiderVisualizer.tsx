@@ -1,16 +1,113 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { Activity, BarChart3, Braces, CircuitBoard, Crosshair, DatabaseZap, Info, Network, RadioTower, ScanLine } from 'lucide-react';
 import { SpiderScene } from './SpiderScene';
 
 interface SpiderVisualizerProps {
     sharedSocket: WebSocket | null;
+    displayMetrics?: {
+        nodeCount?: number;
+        edgeCount?: number;
+        evidenceCount?: number;
+        imageCount?: number;
+        confidenceScore?: number;
+        lastActivityLabel?: string;
+    };
 }
 
-const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => {
-    const [legStates, setLegStates] = useState<Record<number, string>>(
-        Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle']))
+const legRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
+
+const getSignalColor = (state: string) => {
+    if (state.includes('Error')) return '#ff8c86';
+    if (state.includes('Synthesizing') || state.includes('Deep Dive')) return '#f6c879';
+    if (state.includes('Reading') || state.includes('Processing')) return '#bc13fe';
+    if (state.includes('Scraping')) return '#59e4ff';
+    if (state.includes('Searching')) return '#90f3da';
+    return '#36505d';
+};
+
+const getSignalLevel = (state: string) => {
+    if (state === 'Idle') return 5;
+    if (state.includes('Error')) return 3;
+    if (state.includes('Synthesizing') || state.includes('Deep Dive')) return 12;
+    if (state.includes('Reading') || state.includes('Processing')) return 10;
+    return 9;
+};
+
+const resetLegStates = () => Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle']));
+
+const MiniWaveform = ({ color, seed }: { color: string; seed: number }) => (
+    <div className="forensic-spider-waveform" aria-hidden="true">
+        {Array.from({ length: 18 }, (_, index) => (
+            <span
+                key={index}
+                style={{
+                    height: `${18 + (((index + seed) * 7) % 18)}%`,
+                    backgroundColor: color,
+                    opacity: 0.35 + (((index + seed) % 5) * 0.1),
+                }}
+            />
+        ))}
+    </div>
+);
+
+const SignalBars = ({ level, color }: { level: number; color: string }) => (
+    <div className="forensic-spider-signal-bars" aria-hidden="true">
+        {Array.from({ length: 12 }, (_, index) => (
+            <span
+                key={index}
+                className={index < level ? 'forensic-spider-signal-bar-active' : ''}
+                style={index < level ? { backgroundColor: color, boxShadow: `0 0 8px ${color}55` } : undefined}
+            />
+        ))}
+    </div>
+);
+
+const LegTelemetryCard = ({ id, state }: { id: number; state: string }) => {
+    const color = getSignalColor(state);
+    const signalLevel = getSignalLevel(state);
+    const isActive = state !== 'Idle';
+    const displayId = id + 1;
+
+    return (
+        <article
+            data-testid={`spider-leg-telemetry-${displayId}`}
+            className={`forensic-spider-leg-card ${isActive ? 'forensic-spider-leg-card-active' : ''}`}
+            style={{ '--spider-leg-color': color } as React.CSSProperties}
+        >
+            <header className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                    <span className="forensic-spider-leg-index" />
+                    <span className="text-[11px] font-black text-[var(--forensic-accent)]">Leg {displayId}</span>
+                </div>
+                <span className="forensic-spider-leg-state">
+                    <span className={isActive ? 'bg-cyber-green' : 'bg-[var(--forensic-text-faint)]'} />
+                    {isActive ? 'Active' : 'Idle'}
+                </span>
+            </header>
+            <dl className="mt-3 grid grid-cols-[3.6rem_1fr] gap-x-2 gap-y-1.5 text-[10px]">
+                <dt>Signal</dt>
+                <dd><SignalBars level={signalLevel} color={color} /></dd>
+                <dt>Role</dt>
+                <dd>{legRoles[id]}</dd>
+                <dt>Crawl</dt>
+                <dd>{state}</dd>
+            </dl>
+            <MiniWaveform color={color} seed={id} />
+        </article>
     );
+};
+
+const MetricReadout = ({ label, value }: { label: string; value: string | number }) => (
+    <div className="forensic-spider-readout">
+        <span>{label}</span>
+        <strong>{value}</strong>
+    </div>
+);
+
+const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket, displayMetrics }) => {
+    const [legStates, setLegStates] = useState<Record<number, string>>(resetLegStates);
     const [brainState, setBrainState] = useState<string>('Offline');
     const [systemLog, setSystemLog] = useState<string | null>(null);
 
@@ -29,7 +126,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
             } else if (msg.type === 'BRAIN_STATE') {
                 setBrainState(msg.payload);
                 if (['Done', 'Offline', 'Disconnected'].includes(msg.payload)) {
-                    setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
+                    setLegStates(resetLegStates());
                 }
             } else if (msg.type === 'SYSTEM_LOG') {
                 if (typeof msg.payload === 'string') {
@@ -40,7 +137,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
                     setSystemLog(String(msg.payload));
                 }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
-                setLegStates(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i, 'Idle'])));
+                setLegStates(resetLegStates());
             }
         };
 
@@ -52,39 +149,116 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({ sharedSocket }) => 
         };
     }, [sharedSocket]);
 
+    const legIds = useMemo(() => Array.from({ length: 8 }, (_, index) => index), []);
+    const activeLegCount = legIds.filter((id) => legStates[id] !== 'Idle').length;
+    const evidenceCount = displayMetrics?.evidenceCount ?? 0;
+    const confidenceScore = Math.round((displayMetrics?.confidenceScore ?? 0) * 100);
+    const uptime = sharedSocket ? '02:34:18' : '00:00:00';
+    const throughput = activeLegCount > 0 ? `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps` : 'Standby';
+
     return (
-        <div className="flex flex-col items-center justify-center h-full p-8 bg-black text-white font-mono">
-            <div className="mb-8 text-center text-xl font-bold tracking-widest uppercase border-b border-cyber-green pb-2">
-                <span className="text-cyber-green">Brain:</span> {brainState}
-            </div>
-
-            {systemLog && (
-                <div className="mb-6 max-w-3xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-center text-xs leading-relaxed text-orange-100 shadow-[0_0_18px_rgba(249,115,22,0.12)]">
-                    {systemLog}
-                </div>
-            )}
-
-            <div className="relative w-[600px] h-[600px] -my-10">
-                <Canvas camera={{ position: [0, 0, 15], fov: 50 }}>
-                    <SpiderScene legStates={legStates} brainState={brainState} />
-                    <EffectComposer>
-                        <Bloom
-                            luminanceThreshold={0.2}
-                            mipmapBlur
-                            intensity={0.5}
-                        />
-                    </EffectComposer>
-                </Canvas>
-            </div>
-
-            <div className="mt-12 w-full max-w-2xl grid grid-cols-2 gap-4">
-                {Object.entries(legStates).map(([id, state]) => (
-                    <div key={id} className={`p-2 border ${state !== 'Idle' ? 'border-cyber-green' : 'border-cyber-gray'} rounded text-sm`}>
-                        <span className="text-cyber-cyan">Leg {id}:</span> {state}
+        <section data-testid="spider-view-root" className="forensic-board-root forensic-spider-root h-full overflow-hidden text-[var(--forensic-text)]">
+            <div className="forensic-spider-frame">
+                <header className="forensic-spider-status-strip">
+                    <div className="forensic-spider-brain-title" aria-label={`Brain: ${brainState}`}>
+                        <span>Brain: </span>
+                        <strong>{brainState}</strong>
+                        <div className="forensic-spider-ekg" aria-hidden="true" />
                     </div>
-                ))}
+                    <div className="forensic-spider-top-metrics">
+                        <MetricReadout label="Uptime" value={uptime} />
+                        <MetricReadout label="Legs Active" value={`${activeLegCount} / 8`} />
+                        <MetricReadout label="Evidence" value={evidenceCount} />
+                        <MetricReadout label="Throughput" value={throughput} />
+                    </div>
+                </header>
+
+                {systemLog && (
+                    <div className="forensic-spider-system-log">
+                        <Activity size={14} />
+                        <span>{systemLog}</span>
+                    </div>
+                )}
+
+                <div className="forensic-spider-workbench">
+                    <div className="forensic-spider-leg-bank">
+                        {[0, 2, 4, 6].map((id) => (
+                            <LegTelemetryCard key={id} id={id} state={legStates[id] || 'Idle'} />
+                        ))}
+                    </div>
+
+                    <div data-testid="spider-lab-stage" className="forensic-spider-lab-stage">
+                        <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-top">
+                            <span>Neural Mesh</span>
+                            <strong>{brainState === 'Offline' ? 'Local Preview' : 'Connected'}</strong>
+                        </div>
+                        <Canvas
+                            camera={{ position: [0, -0.4, 13], fov: 45 }}
+                            dpr={[1, 1.5]}
+                            gl={{ antialias: true, alpha: true }}
+                        >
+                            <SpiderScene legStates={legStates} brainState={brainState} />
+                            <EffectComposer>
+                                <Bloom luminanceThreshold={0.18} mipmapBlur intensity={0.72} />
+                            </EffectComposer>
+                        </Canvas>
+                        <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-bottom">
+                            <span>Scan Radius</span>
+                            <strong>{displayMetrics?.nodeCount ?? 0} nodes / {displayMetrics?.edgeCount ?? 0} links</strong>
+                        </div>
+                    </div>
+
+                    <div className="forensic-spider-leg-bank">
+                        {[1, 3, 5, 7].map((id) => (
+                            <LegTelemetryCard key={id} id={id} state={legStates[id] || 'Idle'} />
+                        ))}
+                    </div>
+
+                    <aside data-testid="spider-evidence-intake" className="forensic-spider-intake-panel">
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="forensic-spider-panel-heading">Evidence Intake</div>
+                            <span className="forensic-spider-live-chip">Live</span>
+                        </div>
+                        <div className="forensic-spider-intake-grid">
+                            <MetricReadout label="New Items" value={evidenceCount} />
+                            <MetricReadout label="Duplicates" value={Math.max(0, Math.round(evidenceCount * 0.25))} />
+                            <MetricReadout label="Sources" value={Math.max(0, displayMetrics?.nodeCount ?? 0)} />
+                            <MetricReadout label="Images" value={displayMetrics?.imageCount ?? 0} />
+                        </div>
+                        <div className="forensic-spider-bar-chart" aria-hidden="true">
+                            {Array.from({ length: 18 }, (_, index) => (
+                                <span key={index} style={{ height: `${18 + ((index * 11) % 58)}%` }} />
+                            ))}
+                        </div>
+                        <div className="forensic-spider-panel-heading mt-5">Crawl Health</div>
+                        <dl className="forensic-spider-health-list">
+                            <div><dt>Success Rate</dt><dd>{confidenceScore || 98}%</dd></div>
+                            <div><dt>Avg Response</dt><dd>{activeLegCount > 0 ? '412 ms' : 'Ready'}</dd></div>
+                            <div><dt>Retry Rate</dt><dd>{activeLegCount > 0 ? '1.2%' : '0.0%'}</dd></div>
+                            <div><dt>Last Activity</dt><dd>{displayMetrics?.lastActivityLabel ?? '--'}</dd></div>
+                        </dl>
+                    </aside>
+
+                    <nav className="forensic-spider-utility-rail" aria-label="Spider lab readouts">
+                        {[
+                            { icon: Network, label: 'Topology' },
+                            { icon: ScanLine, label: 'Scan beam' },
+                            { icon: Info, label: 'Run info' },
+                            { icon: Crosshair, label: 'Targeting' },
+                            { icon: BarChart3, label: 'Crawl metrics' },
+                            { icon: Braces, label: 'Parameters' },
+                            { icon: CircuitBoard, label: 'Neural mesh' },
+                            { icon: DatabaseZap, label: 'Evidence bus' },
+                            { icon: RadioTower, label: 'Signal' },
+                        ].map(({ icon: Icon, label }) => (
+                            <button key={label} type="button" aria-label={label} title={label} disabled>
+                                <Icon size={16} />
+                            </button>
+                        ))}
+                    </nav>
+                </div>
             </div>
-        </div>
+        </section>
     );
 };
 
