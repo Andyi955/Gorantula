@@ -721,18 +721,21 @@ func handleVaultAsset(w http.ResponseWriter, r *http.Request) {
 
 	pathParts := strings.Split(strings.ReplaceAll(relativePath, "\\", "/"), "/")
 	if len(pathParts) < 3 {
+		log.Printf("[VaultAssets] Invalid asset path: %s", r.URL.Path)
 		http.NotFound(w, r)
 		return
 	}
 
 	vaultID := strings.TrimSpace(pathParts[0])
-	if vaultID == "" || pathParts[1] != "images" {
+	if !models.ValidInvestigationID(vaultID) || pathParts[1] != "images" {
+		log.Printf("[VaultAssets] Invalid vault asset request: vault=%q path=%s", vaultID, r.URL.Path)
 		http.NotFound(w, r)
 		return
 	}
 
 	imageSubPath := strings.Join(pathParts[2:], "/")
 	if imageSubPath == "" {
+		log.Printf("[VaultAssets] Missing image asset path for vault=%s", vaultID)
 		http.NotFound(w, r)
 		return
 	}
@@ -741,11 +744,23 @@ func handleVaultAsset(w http.ResponseWriter, r *http.Request) {
 	vaultImagesRoot := filepath.Clean(filepath.Join(root, filepath.FromSlash(vaultID), "images"))
 	targetPath := filepath.Clean(filepath.Join(vaultImagesRoot, filepath.FromSlash(imageSubPath)))
 	if !strings.HasPrefix(targetPath, vaultImagesRoot+string(filepath.Separator)) && targetPath != vaultImagesRoot {
+		log.Printf("[VaultAssets] Rejected traversal asset path: vault=%s subPath=%s", vaultID, imageSubPath)
 		http.Error(w, "Invalid asset path", http.StatusBadRequest)
 		return
 	}
 	if !isAllowedVaultImageExtension(filepath.Ext(targetPath)) {
+		log.Printf("[VaultAssets] Rejected unsupported asset type: vault=%s subPath=%s", vaultID, imageSubPath)
 		http.Error(w, "Unsupported asset type", http.StatusBadRequest)
+		return
+	}
+	if _, err := os.Stat(targetPath); err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("[VaultAssets] Missing image asset: vault=%s path=%s", vaultID, targetPath)
+			http.NotFound(w, r)
+			return
+		}
+		log.Printf("[VaultAssets] Failed to stat image asset: vault=%s path=%s err=%v", vaultID, targetPath, err)
+		http.Error(w, "Failed to load asset", http.StatusInternalServerError)
 		return
 	}
 
