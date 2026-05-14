@@ -52,7 +52,7 @@ type PersonaInsight struct {
 func GetDefaultPersonas() []Persona {
 	prefModel := os.Getenv("DEFAULT_PERSONA_MODEL")
 
-	defaultModel := "gemini"
+	defaultModel := "deepseek"
 	if prefModel != "" {
 		defaultModel = prefModel
 	}

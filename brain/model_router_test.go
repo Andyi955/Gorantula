@@ -114,3 +114,46 @@ func TestGetSearchProviderFallsBackWhenGeminiIsUnavailable(t *testing.T) {
 		t.Fatalf("expected openai fallback, got %q", provider.Name())
 	}
 }
+
+func TestGetSearchProviderDefaultsToDeepSeekWhenAvailable(t *testing.T) {
+	t.Setenv("DEFAULT_SEARCH_MODEL", "")
+
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{
+			"gemini":   &OpenAICompatibleProvider{NameID: "gemini"},
+			"deepseek": &OpenAICompatibleProvider{NameID: "deepseek"},
+		},
+	}
+
+	provider := brain.GetSearchProvider()
+	if provider == nil {
+		t.Fatal("expected a provider")
+	}
+	if provider.Name() != "deepseek" {
+		t.Fatalf("expected deepseek default, got %q", provider.Name())
+	}
+}
+
+func TestNewModelRouter_HonorsProviderActivationSwitches(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "deepseek-key")
+	t.Setenv("DEEPSEEK_ENABLED", "false")
+	t.Setenv("OPENAI_API_KEY", "openai-key")
+	t.Setenv("OPENAI_ENABLED", "true")
+	t.Setenv("OLLAMA_HOST", "http://localhost:11434")
+	t.Setenv("OLLAMA_ENABLED", "false")
+
+	router, err := NewModelRouter(&Brain{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if _, exists := router["deepseek"]; exists {
+		t.Fatal("did not expect deepseek to register when DEEPSEEK_ENABLED=false")
+	}
+	if _, exists := router["ollama"]; exists {
+		t.Fatal("did not expect ollama to register when OLLAMA_ENABLED=false")
+	}
+	if _, exists := router["openai"]; !exists {
+		t.Fatal("expected openai to register when OPENAI_ENABLED=true and key is present")
+	}
+}

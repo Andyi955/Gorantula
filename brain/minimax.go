@@ -337,21 +337,23 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 	router := make(map[string]ModelProvider)
 
 	// Add Gemini provider
-	if brain != nil && brain.Model != nil {
+	if brain != nil && brain.Model != nil && providerEnabled("GEMINI_ENABLED") {
 		router["gemini"] = &GeminiProvider{brain: brain}
 	}
 
 	// Add MiniMax provider if available
-	minimax, err := NewMiniMaxClient()
-	if err != nil {
-		fmt.Printf("[Brain] Warning: MiniMax not available: %v\n", err)
-	} else {
-		router["minimax"] = &MiniMaxProvider{client: minimax, brain: brain}
+	if providerEnabled("MINIMAX_ENABLED") && strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")) != "" {
+		minimax, err := NewMiniMaxClient()
+		if err != nil {
+			fmt.Printf("[Brain] Warning: MiniMax not available: %v\n", err)
+		} else {
+			router["minimax"] = &MiniMaxProvider{client: minimax, brain: brain}
+		}
 	}
 
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" && providerEnabled("OPENAI_ENABLED") {
 		router["openai"] = &OpenAICompatibleProvider{
 			NameID:     "openai",
 			APIKey:     key,
@@ -362,7 +364,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" && providerEnabled("ANTHROPIC_ENABLED") {
 		router["anthropic"] = &OpenAICompatibleProvider{
 			NameID:     "anthropic",
 			APIKey:     key,
@@ -373,7 +375,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
+	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" && providerEnabled("DEEPSEEK_ENABLED") {
 		router["deepseek"] = &OpenAICompatibleProvider{
 			NameID:     "deepseek",
 			APIKey:     key,
@@ -384,7 +386,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	if key := os.Getenv("DASHSCOPE_API_KEY"); key != "" {
+	if key := os.Getenv("DASHSCOPE_API_KEY"); key != "" && providerEnabled("DASHSCOPE_ENABLED") {
 		router["qwen"] = &OpenAICompatibleProvider{
 			NameID:     "qwen",
 			APIKey:     key,
@@ -395,7 +397,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	if key := os.Getenv("ZHIPUAI_API_KEY"); key != "" {
+	if key := os.Getenv("ZHIPUAI_API_KEY"); key != "" && providerEnabled("ZHIPUAI_ENABLED") {
 		router["zhipuai"] = &OpenAICompatibleProvider{
 			NameID:     "zhipuai",
 			APIKey:     key,
@@ -406,7 +408,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	if key := os.Getenv("MOONSHOT_API_KEY"); key != "" {
+	if key := os.Getenv("MOONSHOT_API_KEY"); key != "" && providerEnabled("MOONSHOT_ENABLED") {
 		router["moonshot"] = &OpenAICompatibleProvider{
 			NameID:     "moonshot",
 			APIKey:     key,
@@ -417,7 +419,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	if host := os.Getenv("OLLAMA_HOST"); host != "" {
+	if host := os.Getenv("OLLAMA_HOST"); host != "" && providerEnabled("OLLAMA_ENABLED") {
 		router["ollama"] = &OpenAICompatibleProvider{
 			NameID:     "ollama",
 			BaseURL:    host + "/v1",
@@ -428,7 +430,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 	}
 
 	lmStudioBaseURL := envOrDefault("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-	if token := os.Getenv("LM_API_TOKEN"); token != "" || strings.TrimSpace(os.Getenv("LMSTUDIO_BASE_URL")) != "" {
+	if token := os.Getenv("LM_API_TOKEN"); providerEnabled("LMSTUDIO_ENABLED") && (token != "" || strings.TrimSpace(os.Getenv("LMSTUDIO_BASE_URL")) != "") {
 		router["lmstudio"] = &OpenAICompatibleProvider{
 			NameID:     "lmstudio",
 			APIKey:     token,

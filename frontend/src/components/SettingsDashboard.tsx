@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Lock, Bot, Cpu, FlaskConical, RotateCcw } from 'lucide-react';
+import { Save, Lock, Bot, Cpu, FlaskConical, RotateCcw, Power } from 'lucide-react';
 import {
     BROWSER_QA_CLEARED_EVENT,
     BROWSER_QA_SEEDED_EVENT,
@@ -47,6 +47,19 @@ const ROUTING_OPTIONS = [
     { id: 'lmstudio', name: 'LM Studio Local' }
 ];
 
+const PROVIDER_ACTIVATION_FIELDS = [
+    { id: 'gemini', enabledKey: 'GEMINI_ENABLED', name: 'Google Gemini', setupKey: 'GEMINI_API_KEY' },
+    { id: 'openai', enabledKey: 'OPENAI_ENABLED', name: 'OpenAI', setupKey: 'OPENAI_API_KEY' },
+    { id: 'anthropic', enabledKey: 'ANTHROPIC_ENABLED', name: 'Anthropic Claude', setupKey: 'ANTHROPIC_API_KEY' },
+    { id: 'deepseek', enabledKey: 'DEEPSEEK_ENABLED', name: 'DeepSeek', setupKey: 'DEEPSEEK_API_KEY', recommended: true },
+    { id: 'qwen', enabledKey: 'DASHSCOPE_ENABLED', name: 'Qwen (DashScope)', setupKey: 'DASHSCOPE_API_KEY' },
+    { id: 'zhipuai', enabledKey: 'ZHIPUAI_ENABLED', name: 'GLM (Zhipu AI)', setupKey: 'ZHIPUAI_API_KEY' },
+    { id: 'moonshot', enabledKey: 'MOONSHOT_ENABLED', name: 'Kimi (Moonshot)', setupKey: 'MOONSHOT_API_KEY' },
+    { id: 'minimax', enabledKey: 'MINIMAX_ENABLED', name: 'MiniMax', setupKey: 'MINIMAX_API_KEY' },
+    { id: 'ollama', enabledKey: 'OLLAMA_ENABLED', name: 'Ollama Local', setupKey: 'OLLAMA_HOST' },
+    { id: 'lmstudio', enabledKey: 'LMSTUDIO_ENABLED', name: 'LM Studio Local', setupKey: 'LMSTUDIO_BASE_URL' },
+];
+
 const ROUTING_SETTINGS = [
     { id: 'DEFAULT_SEARCH_MODEL', name: 'Internet Browsing & Search', desc: 'Synthesizing information' },
     { id: 'DEFAULT_PERSONA_MODEL', name: 'Background Personas', desc: 'Multi-agent reasoning' }
@@ -64,6 +77,11 @@ const ROUTING_REQUIREMENTS: Record<string, string> = {
     ollama: 'OLLAMA_HOST',
     lmstudio: 'LMSTUDIO_BASE_URL',
 };
+
+const PROVIDER_ACTIVATION_KEYS = PROVIDER_ACTIVATION_FIELDS.reduce<Record<string, string>>((keys, provider) => {
+    keys[provider.id] = provider.enabledKey;
+    return keys;
+}, {});
 
 const SettingsDashboard = () => {
     const [keys, setKeys] = useState<Record<string, string>>({});
@@ -92,6 +110,30 @@ const SettingsDashboard = () => {
 
     const handleChange = (id: string, value: string) => {
         setKeys(prev => ({ ...prev, [id]: value }));
+    };
+
+    const isProviderEnabled = (providerId: string) => {
+        const enabledKey = PROVIDER_ACTIVATION_KEYS[providerId];
+        const rawValue = enabledKey ? keys[enabledKey] : '';
+        if (rawValue === 'true') return true;
+        if (rawValue === 'false') return false;
+
+        const requirementKey = ROUTING_REQUIREMENTS[providerId];
+        return requirementKey ? Boolean(keys[requirementKey]) : true;
+    };
+
+    const hasProviderSetup = (providerId: string) => {
+        const requirementKey = ROUTING_REQUIREMENTS[providerId];
+        return requirementKey ? Boolean(keys[requirementKey]) : true;
+    };
+
+    const isProviderExplicitlyDisabled = (providerId: string) => {
+        const enabledKey = PROVIDER_ACTIVATION_KEYS[providerId];
+        return enabledKey ? keys[enabledKey] === 'false' : false;
+    };
+
+    const toggleProvider = (enabledKey: string, nextEnabled: boolean) => {
+        handleChange(enabledKey, nextEnabled ? 'true' : 'false');
     };
 
     const handleSave = async () => {
@@ -155,7 +197,7 @@ const SettingsDashboard = () => {
                     <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
                         <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
                         <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Cpu size={20} /> Model Routing</h3>
-                        <p className="text-sm text-gray-400 mb-6">Select the default provider route for each task. Autoselect prefers Gemini when configured and otherwise falls back to the next available provider.</p>
+                        <p className="text-sm text-gray-400 mb-6">Select the default provider route for each task. Autoselect prefers DeepSeek V4 Flash when activated and otherwise falls back to the next available provider.</p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {ROUTING_SETTINGS.map(r => (
@@ -170,12 +212,12 @@ const SettingsDashboard = () => {
                                     >
                                         <option value="">-- Autoselect (Best Available) --</option>
                                         {ROUTING_OPTIONS.map(opt => {
-                                            const requirementKey = ROUTING_REQUIREMENTS[opt.id];
-                                            const disabled = requirementKey ? !keys[requirementKey] : false;
+                                            const disabled = !isProviderEnabled(opt.id) || !hasProviderSetup(opt.id);
+                                            const disabledReason = isProviderExplicitlyDisabled(opt.id) ? 'Disabled' : 'Requires Setup';
 
                                             return (
                                                 <option key={opt.id} value={opt.id} disabled={disabled}>
-                                                    {opt.name} {disabled ? '(Requires Setup)' : ''}
+                                                    {opt.name} {disabled ? `(${disabledReason})` : ''}
                                                 </option>
                                             )
                                         })}
@@ -183,6 +225,43 @@ const SettingsDashboard = () => {
                                     <span className="text-[10px] text-gray-600 font-mono">ENV: {r.id} | {r.desc}</span>
                                 </div>
                             ))}
+                        </div>
+                    </div>
+
+                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-green"></div>
+                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Power size={20} /> Provider Activation</h3>
+                        <p className="text-sm text-gray-400 mb-6">Turn provider routes on or off explicitly. A provider still needs its matching API key or local host before it can run.</p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {PROVIDER_ACTIVATION_FIELDS.map(provider => {
+                                const enabled = isProviderEnabled(provider.id);
+                                const configured = hasProviderSetup(provider.id);
+                                return (
+                                    <button
+                                        key={provider.id}
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={enabled}
+                                        aria-label={`${provider.name} ${enabled ? 'enabled' : 'disabled'}`}
+                                        onClick={() => toggleProvider(provider.enabledKey, !enabled)}
+                                        className={`flex items-center justify-between gap-3 border px-3 py-2 text-left transition-colors ${enabled ? 'border-cyber-green/50 bg-cyber-green/10 text-cyber-green' : 'border-cyber-gray/60 bg-black text-gray-400'}`}
+                                    >
+                                        <span className="min-w-0">
+                                            <span className="block text-xs font-bold uppercase tracking-[0.16em]">
+                                                {provider.name}
+                                                {provider.recommended ? ' (Default)' : ''}
+                                            </span>
+                                            <span className="mt-1 block text-[10px] uppercase tracking-[0.14em] text-gray-500">
+                                                {configured ? 'Setup present' : `Needs ${provider.setupKey}`}
+                                            </span>
+                                        </span>
+                                        <span className={`h-5 w-9 rounded-full border p-0.5 transition-colors ${enabled ? 'border-cyber-green bg-cyber-green/30' : 'border-cyber-gray bg-cyber-black'}`}>
+                                            <span className={`block h-3.5 w-3.5 rounded-full transition-transform ${enabled ? 'translate-x-4 bg-cyber-green' : 'translate-x-0 bg-gray-500'}`} />
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 

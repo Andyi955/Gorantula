@@ -1184,6 +1184,16 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 		}
 
 		passthroughKeys := []string{
+			"GEMINI_ENABLED",
+			"OPENAI_ENABLED",
+			"ANTHROPIC_ENABLED",
+			"DEEPSEEK_ENABLED",
+			"DASHSCOPE_ENABLED",
+			"ZHIPUAI_ENABLED",
+			"MOONSHOT_ENABLED",
+			"MINIMAX_ENABLED",
+			"OLLAMA_ENABLED",
+			"LMSTUDIO_ENABLED",
 			"OLLAMA_HOST",
 			"LMSTUDIO_BASE_URL",
 			"DEFAULT_SEARCH_MODEL",
