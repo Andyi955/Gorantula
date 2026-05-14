@@ -73,10 +73,43 @@ describe('hierarchical canvas utilities', () => {
       mode: 'strict-grid',
       nodes: [{ id: 'node-1' }],
       edges: [],
+      timelineSnapshot: {
+        generatedAt: '2026-05-14T12:00:00.000Z',
+        sourceFingerprint: 'tl-valid',
+        events: [
+          {
+            id: 'timeline-event-1',
+            timestamp: '2024-01-15',
+            event: 'Shipment departed.',
+            sourceNodeId: 'node-1',
+            sourceTitle: 'Intel Node',
+            provenance: 'text-date',
+            parsedDate: 1705276800000,
+            datePrecision: 'day',
+          },
+        ],
+      },
     }));
 
     expect(state?.mode).toBe('strict-grid');
     expect(state?.nodes).toHaveLength(1);
+    expect(state?.timelineSnapshot?.events).toHaveLength(1);
+  });
+
+  it('drops invalid timeline snapshots while preserving the board', () => {
+    const state = parsePersistedBoardState(JSON.stringify({
+      mode: 'strict-grid',
+      nodes: [{ id: 'node-1' }],
+      edges: [],
+      timelineSnapshot: {
+        generatedAt: '',
+        sourceFingerprint: '',
+        events: [{ event: 'missing required fields' }],
+      },
+    }));
+
+    expect(state?.nodes).toHaveLength(1);
+    expect(state?.timelineSnapshot).toBeUndefined();
   });
 
   it('dispatches a board persistence failure event when storage quota is exceeded', () => {

@@ -63,6 +63,52 @@ const localGet = (key: string) => {
   }
 }
 
+const getLocalBoardStateForInvestigation = (investigationId: string) =>
+  parsePersistedBoardState(localGet(`inv_data_${investigationId}`))
+
+const preserveExistingTimelineSnapshot = (
+  investigationId: string,
+  state: PersistedBoardState,
+) => {
+  if (state.timelineSnapshot) {
+    return state
+  }
+
+  const existingState = boardStateCache.get(investigationId) || getLocalBoardStateForInvestigation(investigationId)
+  if (!existingState?.timelineSnapshot) {
+    return state
+  }
+
+  return {
+    ...state,
+    timelineSnapshot: existingState.timelineSnapshot,
+  }
+}
+
+const hasBoardEvidence = (state: PersistedBoardState) =>
+  state.nodes.length > 0 ||
+  state.edges.length > 0 ||
+  Boolean(state.pendingIntegrationNodeIds?.length) ||
+  Boolean(state.synthesisAlerts?.length)
+
+const reconcileLoadedBoardState = (
+  investigationId: string,
+  backendState: PersistedBoardState,
+) => {
+  const localState = getLocalBoardStateForInvestigation(investigationId)
+  if (!hasBoardEvidence(backendState) && localState && hasBoardEvidence(localState)) {
+    return {
+      state: preserveExistingTimelineSnapshot(investigationId, localState),
+      shouldBackfillBackend: true,
+    }
+  }
+
+  return {
+    state: preserveExistingTimelineSnapshot(investigationId, backendState),
+    shouldBackfillBackend: false,
+  }
+}
+
 const localSet = (key: string, value: unknown, investigationId?: string) => {
   if (!isBrowser()) {
     return false
@@ -216,7 +262,7 @@ export const saveInvestigations = async (records: InvestigationRecord[]) => {
 }
 
 export const getCachedBoardStateForInvestigation = (investigationId: string) => {
-  const localState = parsePersistedBoardState(localGet(`inv_data_${investigationId}`))
+  const localState = getLocalBoardStateForInvestigation(investigationId)
   if (import.meta.env.MODE === 'test') {
     return localState || boardStateCache.get(investigationId) || null
   }
@@ -229,22 +275,28 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
       const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`)
       const parsed = parsePersistedBoardState(JSON.stringify(payload))
       if (parsed) {
-        boardStateCache.set(investigationId, parsed)
-        return parsed
+        const { state: hydrated, shouldBackfillBackend } = reconcileLoadedBoardState(investigationId, parsed)
+        boardStateCache.set(investigationId, hydrated)
+        if (shouldBackfillBackend) {
+          void saveBoardStateForInvestigation(investigationId, hydrated, { skipFallback: true })
+        }
+        return hydrated
       }
     } catch (error) {
       console.warn('[InvestigationPersistence] Backend board load unavailable; using browser fallback.', error)
     }
   }
 
-  const fallback = parsePersistedBoardState(localGet(`inv_data_${investigationId}`))
+  const fallback = getLocalBoardStateForInvestigation(investigationId)
   if (fallback) {
-    boardStateCache.set(investigationId, fallback)
-    void saveBoardStateForInvestigation(investigationId, fallback, { skipFallback: true })
+    const hydrated = preserveExistingTimelineSnapshot(investigationId, fallback)
+    boardStateCache.set(investigationId, hydrated)
+    void saveBoardStateForInvestigation(investigationId, hydrated, { skipFallback: true })
+    return hydrated
   } else {
     boardStateCache.delete(investigationId)
   }
-  return fallback
+  return null
 }
 
 export const saveBoardStateForInvestigation = async (
@@ -256,23 +308,25 @@ export const saveBoardStateForInvestigation = async (
     return false
   }
 
-  boardStateCache.set(investigationId, state)
+  const stateToPersist = preserveExistingTimelineSnapshot(investigationId, state)
+
+  boardStateCache.set(investigationId, stateToPersist)
   emitBoardUpdate()
 
   if (!shouldUseBackendPersistence()) {
     if (!options.skipFallback) {
-      localSet(`inv_data_${investigationId}`, state, investigationId)
+      localSet(`inv_data_${investigationId}`, stateToPersist, investigationId)
     }
     return true
   }
 
   try {
-    await putJSON(`${API_BASE}/${encodeURIComponent(investigationId)}/board`, state)
+    await putJSON(`${API_BASE}/${encodeURIComponent(investigationId)}/board`, stateToPersist)
     return true
   } catch (error) {
     console.warn('[InvestigationPersistence] Failed to save board state to backend.', error)
     if (!options.skipFallback) {
-      localSet(`inv_data_${investigationId}`, state, investigationId)
+      localSet(`inv_data_${investigationId}`, stateToPersist, investigationId)
       emitPersistFailure(investigationId, error)
     }
     return false
