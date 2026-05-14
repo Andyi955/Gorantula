@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import CustomNode from '../../src/components/CustomNode'
@@ -13,6 +13,10 @@ vi.mock('@reactflow/node-resizer', () => ({
 }))
 
 describe('CustomNode', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('fires read and expand actions from the footer and header', async () => {
     const user = userEvent.setup()
     const onReadFull = vi.fn()
@@ -113,7 +117,7 @@ describe('CustomNode', () => {
     )
   })
 
-  it('does not request backend-served node images while the backend is offline', () => {
+  it('renders backend-served node images while the websocket reconnects', () => {
     render(
       <CustomNode
         id="node-backend-image"
@@ -141,8 +145,57 @@ describe('CustomNode', () => {
     )
 
     expect(screen.getByTestId('node-image-preview')).toBeInTheDocument()
-    expect(screen.getByText('Backend offline')).toBeInTheDocument()
-    expect(screen.queryByAltText('Backend evidence')).not.toBeInTheDocument()
+    expect(screen.getByAltText('Backend evidence')).toHaveAttribute(
+      'src',
+      'http://localhost:8080/vault-assets/inv-1/images/evidence.jpg',
+    )
+    expect(screen.queryByText('Backend offline')).not.toBeInTheDocument()
+  })
+
+  it('retries backend-served node images before showing an unavailable state', async () => {
+    vi.useFakeTimers()
+
+    render(
+      <CustomNode
+        id="node-backend-retry"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-backend-retry',
+          title: 'Retry Image Node',
+          summary: 'Summary',
+          onReadFull: vi.fn(),
+          images: [
+            {
+              id: 'img-retry',
+              path: 'http://localhost:8080/vault-assets/inv-1/images/retry.jpg',
+              caption: 'Retry evidence',
+            },
+          ],
+        }}
+      />,
+    )
+
+    const image = screen.getByAltText('Retry evidence')
+    fireEvent.error(image)
+
+    expect(screen.getByText('Retrying evidence image')).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650)
+    })
+
+    expect(screen.getByAltText('Retry evidence')).toHaveAttribute(
+      'src',
+      'http://localhost:8080/vault-assets/inv-1/images/retry.jpg?gorantulaImageRetry=1',
+    )
+
+    vi.useRealTimers()
   })
 
   it('shows attach and remove image controls while editing', async () => {

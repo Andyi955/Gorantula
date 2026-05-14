@@ -155,6 +155,25 @@ const logNodeResizeDebug = (nodeId: string | undefined, stage: string, payload: 
 const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(6 * 1.65em + 0.75rem)';
 const isBackendServedImage = (path?: string) =>
     Boolean(path && /^https?:\/\/localhost:8080\/vault-assets\//i.test(path));
+const BACKEND_IMAGE_MAX_RETRIES = 3;
+const BACKEND_IMAGE_RETRY_DELAYS_MS = [600, 1200, 2400];
+
+type NodeImageLoadState = 'idle' | 'loading' | 'loaded' | 'retrying' | 'error';
+
+const withImageRetryParam = (path: string, attempt: number) => {
+    if (attempt <= 0) {
+        return path;
+    }
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}gorantulaImageRetry=${attempt}`;
+};
+
+const logNodeImageDebug = (stage: string, payload: Record<string, unknown>) => {
+    if (!import.meta.env.DEV || import.meta.env.MODE === 'test') {
+        return;
+    }
+    console.debug(`[CustomNode][Image:${stage}]`, payload);
+};
 
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
@@ -186,6 +205,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const contentRef = useRef<HTMLDivElement>(null);
     const chatContentRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const previewImageRef = useRef<HTMLImageElement>(null);
+    const imageRetryTimeoutRef = useRef<number | null>(null);
+    const [imageLoadState, setImageLoadState] = useState<NodeImageLoadState>('idle');
+    const [imageRetryAttempt, setImageRetryAttempt] = useState(0);
 
     // Let the browser handle the smooth scrolling natively!
     // All we do is stop the event from bubbling up to React Flow to prevent canvas zooming.
@@ -251,9 +274,14 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const images = data.images || [];
     const hasImages = nodeHasImages(images);
     const primaryImage = hasImages ? images[0] : null;
-    const isBackendImageUnavailable = primaryImage
-        ? isBackendServedImage(primaryImage.path) && (!sharedSocket || sharedSocket.readyState !== WebSocket.OPEN)
-        : false;
+    const primaryImagePath = primaryImage?.path || '';
+    const isBackendImage = isBackendServedImage(primaryImagePath);
+    const previewImageSrc = primaryImagePath ? withImageRetryParam(primaryImagePath, isBackendImage ? imageRetryAttempt : 0) : '';
+    const imageOverlayLabel = imageLoadState === 'retrying'
+        ? 'Retrying evidence image'
+        : imageLoadState === 'error'
+            ? 'Image unavailable'
+            : 'Loading evidence image';
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
@@ -276,6 +304,94 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
     const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
     const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
+
+    useEffect(() => {
+        if (imageRetryTimeoutRef.current) {
+            window.clearTimeout(imageRetryTimeoutRef.current);
+            imageRetryTimeoutRef.current = null;
+        }
+
+        setImageRetryAttempt(0);
+        setImageLoadState(primaryImage ? 'loading' : 'idle');
+        if (primaryImage) {
+            logNodeImageDebug('start', {
+                nodeId: data.id,
+                imageId: primaryImage.id,
+                path: primaryImage.path,
+                backendServed: isBackendImage,
+            });
+        }
+
+        return () => {
+            if (imageRetryTimeoutRef.current) {
+                window.clearTimeout(imageRetryTimeoutRef.current);
+                imageRetryTimeoutRef.current = null;
+            }
+        };
+    }, [data.id, isBackendImage, primaryImage?.id, primaryImage?.path]);
+
+    const handlePreviewImageLoad = () => {
+        if (!primaryImage) {
+            return;
+        }
+        if (imageRetryTimeoutRef.current) {
+            window.clearTimeout(imageRetryTimeoutRef.current);
+            imageRetryTimeoutRef.current = null;
+        }
+        setImageLoadState('loaded');
+        logNodeImageDebug('loaded', {
+            nodeId: data.id,
+            imageId: primaryImage.id,
+            path: primaryImage.path,
+            attempt: imageRetryAttempt,
+        });
+    };
+
+    useEffect(() => {
+        const image = previewImageRef.current;
+        if (!primaryImage || !image) {
+            return;
+        }
+        if (image.complete && image.naturalWidth > 0) {
+            handlePreviewImageLoad();
+        }
+    }, [previewImageSrc, primaryImage?.id]);
+
+    const handlePreviewImageError = () => {
+        if (!primaryImage) {
+            return;
+        }
+
+        if (isBackendImage && imageRetryAttempt < BACKEND_IMAGE_MAX_RETRIES) {
+            const nextAttempt = imageRetryAttempt + 1;
+            const delay = BACKEND_IMAGE_RETRY_DELAYS_MS[Math.min(imageRetryAttempt, BACKEND_IMAGE_RETRY_DELAYS_MS.length - 1)];
+            setImageLoadState('retrying');
+            logNodeImageDebug('retry', {
+                nodeId: data.id,
+                imageId: primaryImage.id,
+                path: primaryImage.path,
+                attempt: nextAttempt,
+                delay,
+            });
+            if (imageRetryTimeoutRef.current) {
+                window.clearTimeout(imageRetryTimeoutRef.current);
+            }
+            imageRetryTimeoutRef.current = window.setTimeout(() => {
+                imageRetryTimeoutRef.current = null;
+                setImageRetryAttempt(nextAttempt);
+                setImageLoadState('loading');
+            }, delay);
+            return;
+        }
+
+        setImageLoadState('error');
+        logNodeImageDebug('error', {
+            nodeId: data.id,
+            imageId: primaryImage.id,
+            path: primaryImage.path,
+            attempt: imageRetryAttempt,
+        });
+    };
 
     const handleSave = (mode: NodeSaveMode) => (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -703,18 +819,20 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         style={{ height: NODE_IMAGE_PREVIEW_HEIGHT }}
                                         title={images.length > 1 ? `View ${images.length} attached images` : 'View attached image'}
                                     >
-                                        {isBackendImageUnavailable ? (
-                                            <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[rgba(4,9,14,0.78)] px-3 text-center text-[10px] font-black uppercase tracking-[0.16em] text-[var(--forensic-text-faint)]">
+                                        <img
+                                            ref={previewImageRef}
+                                            src={previewImageSrc}
+                                            alt={primaryImage.caption || `Attached evidence for ${data.title || 'node'}`}
+                                            crossOrigin="anonymous"
+                                            onLoad={handlePreviewImageLoad}
+                                            onError={handlePreviewImageError}
+                                            className={`h-full w-full object-cover transition-opacity duration-300 ${imageLoadState === 'loaded' ? 'opacity-100' : 'opacity-35'}`}
+                                        />
+                                        {imageLoadState !== 'loaded' && (
+                                            <div className="pointer-events-none absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-2 bg-[rgba(4,9,14,0.62)] px-3 text-center text-[10px] font-black uppercase tracking-[0.16em] text-[var(--forensic-text-faint)]">
                                                 <ImageIcon size={18} className="text-[var(--forensic-accent-muted)]" />
-                                                Backend offline
+                                                {imageOverlayLabel}
                                             </div>
-                                        ) : (
-                                            <img
-                                                src={primaryImage.path}
-                                                alt={primaryImage.caption || `Attached evidence for ${data.title || 'node'}`}
-                                                crossOrigin="anonymous"
-                                                className="h-full w-full object-cover"
-                                            />
                                         )}
                                         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-[rgba(4,9,14,0.94)] via-[rgba(4,9,14,0.58)] to-transparent px-2 py-1.5">
                                             <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">
