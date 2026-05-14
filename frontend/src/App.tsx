@@ -5,16 +5,27 @@ import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquar
 import {
   buildSidebarInvestigationRows,
   createRootInvestigation,
-  INVESTIGATIONS_STORAGE_KEY,
-  normalizeInvestigations,
   registerMergedChildInvestigation,
   removeInvestigationRecord,
   type InvestigationRecord,
 } from './utils/investigations'
-import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, parsePersistedBoardState, persistBoardStateForInvestigation } from './utils/hierarchicalCanvas'
+import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard } from './utils/hierarchicalCanvas'
 import { BROWSER_QA_CLEARED_EVENT, BROWSER_QA_SEEDED_EVENT, type BrowserQaSeedResult } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
+import {
+  deleteInvestigationPersistence,
+  getCachedBoardStateForInvestigation,
+  getCachedVaultResultForInvestigation,
+  loadBoardStateForInvestigation,
+  loadDiscoveriesForInvestigations,
+  loadInvestigations,
+  loadInvestigationsFromBrowserStorage,
+  loadVaultResultForInvestigation,
+  saveBoardStateForInvestigation,
+  saveDiscoveriesForInvestigation,
+  saveInvestigations,
+} from './utils/investigationPersistence'
 
 const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
 const DetectiveBoard = lazy(() => import('./components/DetectiveBoard'))
@@ -131,7 +142,6 @@ interface SidebarRowMetrics {
   evidenceCount: number
 }
 
-const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
 const BACKEND_STATUS_ENDPOINT = '/__gorantula_backend_status'
 const BACKEND_WS_URL = 'ws://localhost:8080/ws'
 const PIPELINE_RUNS_ENDPOINT = 'http://localhost:8080/api/pipeline-runs'
@@ -397,19 +407,7 @@ const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport
   }
 }
 
-const loadInvestigationsFromStorage = () => {
-  const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY)
-  if (!saved) {
-    return []
-  }
-
-  try {
-    return normalizeInvestigations(JSON.parse(saved))
-  } catch (error) {
-    console.error('[App] Failed to parse investigations from storage', error)
-    return []
-  }
-}
+const loadInvestigationsFromStorage = loadInvestigationsFromBrowserStorage
 
 const getInvestigationTimestamp = (investigationId: string): number | null => {
   const match = investigationId.match(investigationTimestampPattern)
@@ -557,6 +555,13 @@ const formatWorkspaceTimestamp = (investigationId: string | null) => {
 const isFiniteConfidence = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
 
+const shouldFetchPipelineProfiles = () => {
+  if (import.meta.env.MODE !== 'test') {
+    return true
+  }
+  return Boolean((fetch as unknown as { mock?: unknown }).mock)
+}
+
 const isBackendReachable = async () => {
   if (!SHOULD_PROBE_BACKEND) {
     return true
@@ -577,6 +582,11 @@ const isBackendReachable = async () => {
 }
 
 function App() {
+  const initialInvestigationsRef = useRef<InvestigationRecord[] | null>(null)
+  if (initialInvestigationsRef.current === null) {
+    initialInvestigationsRef.current = loadInvestigationsFromStorage()
+  }
+
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
@@ -589,8 +599,8 @@ function App() {
   const [showSummaryLog, setShowSummaryLog] = useState(false)
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
-  const [investigations, setInvestigations] = useState<InvestigationRecord[]>([])
-  const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(null)
+  const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
+  const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => initialInvestigationsRef.current?.[0]?.id || null)
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
@@ -644,7 +654,7 @@ function App() {
         return metrics
       }
 
-      const savedBoardState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigation.id}`))
+      const savedBoardState = getCachedBoardStateForInvestigation(investigation.id)
       const nodes = savedBoardState?.nodes || []
       metrics[investigation.id] = {
         evidenceCount: nodes.filter((node) => !node.data?.portalKind).length,
@@ -668,8 +678,8 @@ function App() {
       }
     }
 
-    const savedBoardState = parsePersistedBoardState(localStorage.getItem(`inv_data_${currentInvestigationId}`))
-    const savedVaultResult = localStorage.getItem(`vault_result_${currentInvestigationId}`)
+    const savedBoardState = getCachedBoardStateForInvestigation(currentInvestigationId)
+    const savedVaultResult = getCachedVaultResultForInvestigation(currentInvestigationId)
     const savedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
     const nodes = savedBoardState?.nodes || []
     const edges = savedBoardState?.edges || []
@@ -694,8 +704,7 @@ function App() {
     let fullReport = summary
     if (savedVaultResult) {
       try {
-        const parsed = JSON.parse(savedVaultResult)
-        const rawResult = typeof parsed?.result === 'string' ? parsed.result : ''
+        const rawResult = typeof savedVaultResult?.result === 'string' ? savedVaultResult.result : ''
         if (rawResult.trim()) {
           const readableReport = cleanReportBody(rawResult)
           const readableSummary = extractReadableSummary(rawResult)
@@ -743,10 +752,21 @@ function App() {
 
   const persistInvestigations = useCallback((nextInvestigations: InvestigationRecord[]) => {
     setInvestigations(nextInvestigations);
-    localStorage.setItem(INVESTIGATIONS_STORAGE_KEY, JSON.stringify(nextInvestigations));
+    void saveInvestigations(nextInvestigations).catch((error) => {
+      console.warn('[App] Failed to persist investigations to backend.', error)
+      setAutosaveWarning({
+        errorName: error && typeof error === 'object' && 'name' in error
+          ? String((error as { name?: unknown }).name || 'BackendPersistenceError')
+          : 'BackendPersistenceError',
+        timestamp: Date.now(),
+      })
+    });
   }, []);
 
   const refreshPipelineProfiles = useCallback(async () => {
+    if (!shouldFetchPipelineProfiles()) {
+      return
+    }
     try {
       const response = await fetch(`${PIPELINE_RUNS_ENDPOINT}?limit=20`, { cache: 'no-store' })
       if (!response.ok) {
@@ -806,15 +826,9 @@ function App() {
       console.debug('[App] WebSocket Connected');
       setSocketConfig({ socket: s, ready: true });
       
-      const saved = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY);
-      if (saved) {
-        try {
-          const data = normalizeInvestigations(JSON.parse(saved));
-          const ids = data.map((inv) => inv.id);
-          s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
-        } catch (e) {
-          console.error('[App] Failed to parse investigations for sync', e);
-        }
+      const ids = investigations.map((inv) => inv.id);
+      if (ids.length > 0) {
+        s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
       }
     };
 
@@ -838,24 +852,25 @@ function App() {
       void connect();
     }, 0);
 
-    // Load list from local storage if any
-    const data = loadInvestigationsFromStorage()
-    if (data.length > 0) {
-      setInvestigations(data)
-      setCurrentInvestigationId(data[0].id)
-    }
-
-    const savedDiscoveries = localStorage.getItem(DISCOVERIES_STORAGE_KEY)
-    if (savedDiscoveries) {
-      try {
-        const parsed = JSON.parse(savedDiscoveries)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          setDiscoveriesByInvestigation(parsed)
-        }
-      } catch (error) {
-        console.error('[App] Failed to parse saved discoveries', error)
+    void (async () => {
+      const data = await loadInvestigations()
+      if (isUnmounted.current) {
+        return
       }
-    }
+      if (data.length > 0) {
+        setInvestigations(data)
+        setCurrentInvestigationId(data[0].id)
+        const [discoveries] = await Promise.all([
+          loadDiscoveriesForInvestigations(data),
+          ...data.map((investigation) => loadBoardStateForInvestigation(investigation.id)),
+          ...data.map((investigation) => loadVaultResultForInvestigation(investigation.id)),
+        ])
+        if (!isUnmounted.current) {
+          setDiscoveriesByInvestigation(discoveries as unknown as Record<string, DiscoveryRecord[]>)
+          setBoardWorkspaceRevision((current) => current + 1)
+        }
+      }
+    })()
 
     return () => {
       isUnmounted.current = true;
@@ -929,9 +944,7 @@ function App() {
             ...prev,
             [vaultId]: incoming,
           }
-          try {
-            localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
-          } catch (error) {
+          void saveDiscoveriesForInvestigation(vaultId, incoming as unknown as Record<string, unknown>[]).catch((error) => {
             console.warn('[App] Failed to persist discoveries; keeping them in memory for this session.', error)
             setAutosaveWarning({
               investigationId: vaultId,
@@ -940,7 +953,7 @@ function App() {
                 : 'UnknownError',
               timestamp: Date.now(),
             })
-          }
+          })
           return next
         })
 
@@ -1019,7 +1032,7 @@ function App() {
           ...prev,
           [vaultId]: [],
         }
-        localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+        void saveDiscoveriesForInvestigation(vaultId, [])
         return next
       })
       setUnreadDiscoveriesByInvestigation(prev => ({
@@ -1087,6 +1100,25 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!currentInvestigationId) {
+      return
+    }
+    void Promise.all([
+      loadBoardStateForInvestigation(currentInvestigationId),
+      loadVaultResultForInvestigation(currentInvestigationId),
+      loadDiscoveriesForInvestigations(investigations.filter((investigation) => investigation.id === currentInvestigationId)),
+    ]).then(([_, __, discoveries]) => {
+      if (discoveries[currentInvestigationId]) {
+        setDiscoveriesByInvestigation((current) => ({
+          ...current,
+        [currentInvestigationId]: discoveries[currentInvestigationId] as unknown as DiscoveryRecord[],
+        }))
+      }
+      setBoardWorkspaceRevision((current) => current + 1)
+    })
+  }, [currentInvestigationId, investigations])
+
+  useEffect(() => {
     const handlePersistFailure = (event: Event) => {
       const detail = (event as CustomEvent<{ investigationId?: string; errorName?: string }>).detail || {}
       setAutosaveWarning({
@@ -1139,9 +1171,8 @@ function App() {
     const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`, 'web');
     if (newInvId && currentInvestigationId) {
       // Update original board to link to this new investigation
-      const saved = localStorage.getItem(`inv_data_${currentInvestigationId}`);
-      if (saved) {
-        const savedState = parsePersistedBoardState(saved);
+      const savedState = getCachedBoardStateForInvestigation(currentInvestigationId);
+      if (savedState) {
         if (!savedState) {
           return;
         }
@@ -1149,7 +1180,7 @@ function App() {
         const updatedNodes = nodes.map((n: any) =>
           n.id === sourceNodeId ? { ...n, data: { ...n.data, linkedInvestigationId: newInvId, isDeepDiveSource: false } } : n
         );
-        persistBoardStateForInvestigation(currentInvestigationId, {
+        void saveBoardStateForInvestigation(currentInvestigationId, {
           mode,
           nodes: updatedNodes,
           edges,
@@ -1209,7 +1240,7 @@ function App() {
     const primaryParentId = parentIds.includes(currentInvestigationId || '') ? currentInvestigationId! : parentIds[0];
     const parentBoards = parentIds.map((parentId) => {
       const investigation = investigations.find((entry) => entry.id === parentId);
-      const board = parsePersistedBoardState(localStorage.getItem(`inv_data_${parentId}`));
+      const board = getCachedBoardStateForInvestigation(parentId);
       return investigation && board ? { investigation, board } : null;
     }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
@@ -1237,9 +1268,9 @@ function App() {
     });
 
     Object.entries(updatedParentBoards).forEach(([parentId, board]) => {
-      persistBoardStateForInvestigation(parentId, board);
+      void saveBoardStateForInvestigation(parentId, board);
     });
-    persistBoardStateForInvestigation(childId, childBoard);
+    void saveBoardStateForInvestigation(childId, childBoard);
     persistInvestigations(updatedInvestigations);
 
     if (socketConfig.socket && socketConfig.ready) {
@@ -1275,29 +1306,27 @@ function App() {
     const removal = removeInvestigationRecord(investigations, idToRemove)
     persistInvestigations(removal.investigations)
     removal.removedIds.forEach((removedId) => {
-      localStorage.removeItem(`inv_data_${removedId}`)
-      localStorage.removeItem(`vault_result_${removedId}`)
+      void deleteInvestigationPersistence(removedId).catch((error) => {
+        console.warn('[App] Failed to delete persisted investigation data', error)
+      })
     })
 
     removal.investigations.forEach((investigation) => {
-      const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigation.id}`))
+      const savedState = getCachedBoardStateForInvestigation(investigation.id)
       if (!savedState) {
         return
       }
 
       const cleanedNodes = savedState.nodes.filter((node) => !node.data?.portalKind || !removal.removedIds.includes(node.data?.linkedInvestigationId))
       if (cleanedNodes.length !== savedState.nodes.length) {
-        persistBoardStateForInvestigation(investigation.id, { ...savedState, nodes: cleanedNodes })
+        void saveBoardStateForInvestigation(investigation.id, { ...savedState, nodes: cleanedNodes })
       }
     })
 
     let vaultPathToRemove = "";
-    const vaultResultStr = localStorage.getItem(`vault_result_${idToRemove}`);
-    if (vaultResultStr) {
-      try {
-        const vaultResult = JSON.parse(vaultResultStr);
-        vaultPathToRemove = vaultResult.vaultPath || "";
-      } catch (err) {}
+    const vaultResult = getCachedVaultResultForInvestigation(idToRemove);
+    if (vaultResult) {
+      vaultPathToRemove = typeof vaultResult.vaultPath === 'string' ? vaultResult.vaultPath : "";
     }
     if (socketConfig.socket && socketConfig.ready) {
       socketConfig.socket.send(JSON.stringify({ 
@@ -1668,7 +1697,7 @@ function App() {
 
                 setDiscoveriesByInvestigation(prev => {
                   const next = { ...prev, [currentInvestigationId]: [] }
-                  localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(next))
+                  void saveDiscoveriesForInvestigation(currentInvestigationId, [])
                   return next
                 })
                 setUnreadDiscoveriesByInvestigation(prev => ({

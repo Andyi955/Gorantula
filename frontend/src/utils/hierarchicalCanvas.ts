@@ -84,11 +84,11 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
 
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed?.nodes) && Array.isArray(parsed?.edges)) {
+    if (Array.isArray(parsed?.nodes)) {
       return {
         mode: parsed.mode === 'legacy' ? 'legacy' : 'strict-grid',
         nodes: parsed.nodes,
-        edges: parsed.edges,
+        edges: Array.isArray(parsed.edges) ? parsed.edges : [],
         pendingIntegrationNodeIds: Array.isArray(parsed.pendingIntegrationNodeIds)
           ? parsed.pendingIntegrationNodeIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
           : [],
