@@ -1260,6 +1260,45 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('does not auto reconnect a board when another investigation completes synthesis', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_merge-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          { id: 'merge-node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'merge-node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    try {
+      renderBoard('merge-1', socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('SYNTHESIS_COMPLETE', {
+          result: 'Different investigation report',
+          vaultPath: 'abdomen_vault/investigation-2/report.md',
+          vaultId: 'investigation-2',
+          append: false,
+          runId: 'run-other-vault',
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+
+      expect(socket.sentMessages.map((message) => JSON.parse(message).type)).not.toContain('CONNECT_DOTS')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('saves edited text without sending manual node analysis', async () => {
     const user = userEvent.setup()
     const socket = new MockSocket()

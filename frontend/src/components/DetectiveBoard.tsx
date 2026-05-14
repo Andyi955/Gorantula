@@ -2470,20 +2470,31 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     setIsGathering(true);
                 }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
-                const vaultId = typeof msg.payload?.vaultId === 'string' && msg.payload.vaultId
-                    ? msg.payload.vaultId
-                    : investigationId;
+                const explicitVaultId = typeof msg.payload?.vaultId === 'string'
+                    ? msg.payload.vaultId.trim()
+                    : '';
+                const vaultId = explicitVaultId || investigationId;
                 const isAppendResult = Boolean(msg.payload?.append);
-                if (typeof msg.payload?.runId === 'string' && msg.payload.runId.trim()) {
-                    latestPipelineRunIdRef.current = msg.payload.runId;
-                }
 
                 setIsGathering(false);
                 setDeepDiveTopic(null);
                 if (vaultId) {
                     void saveVaultResultForInvestigation(vaultId, msg.payload);
                 }
-                if (isAppendResult && vaultId === investigationId) {
+
+                if (explicitVaultId && explicitVaultId !== investigationId) {
+                    console.debug('[Board] Ignoring auto reconnect for completed investigation:', {
+                        completedVaultId: explicitVaultId,
+                        currentInvestigationId: investigationId,
+                    });
+                    return;
+                }
+
+                if (typeof msg.payload?.runId === 'string' && msg.payload.runId.trim()) {
+                    latestPipelineRunIdRef.current = msg.payload.runId;
+                }
+
+                if (isAppendResult) {
                     return;
                 }
                 // Trigger auto connect dots for full new-investigation crawls
