@@ -11,6 +11,7 @@ export interface PersistedBoardState {
   edges: Edge[];
   pendingIntegrationNodeIds?: string[];
   synthesisAlerts?: PersistedSynthesisAlert[];
+  timelineSnapshot?: PersistedTimelineSnapshot;
 }
 
 export const BOARD_PERSIST_FAILED_EVENT = 'gorantula:board-persist-failed';
@@ -31,6 +32,26 @@ export interface PersistedSynthesisAlert {
   analysis: string;
   timestamp: string;
   score?: number;
+}
+
+export type PersistedTimelineEventProvenance = 'persona' | 'date-tag' | 'text-date';
+export type PersistedTimelineDatePrecision = 'day' | 'month' | 'year' | 'unknown';
+
+export interface PersistedTimelineEvent {
+  id: string;
+  timestamp: string;
+  event: string;
+  sourceNodeId: string;
+  sourceTitle: string;
+  provenance: PersistedTimelineEventProvenance;
+  parsedDate: number | null;
+  datePrecision: PersistedTimelineDatePrecision;
+}
+
+export interface PersistedTimelineSnapshot {
+  generatedAt: string;
+  sourceFingerprint: string;
+  events: PersistedTimelineEvent[];
 }
 
 export interface MergeSourceBoard {
@@ -77,6 +98,57 @@ const BOARD_BASE_Y = 96;
 const BOARD_ROW_GAP = 224;
 const BOARD_PARENT_COLUMN_GAP = 400;
 
+const isTimelineProvenance = (value: unknown): value is PersistedTimelineEventProvenance =>
+  value === 'persona' || value === 'date-tag' || value === 'text-date';
+
+const isTimelineDatePrecision = (value: unknown): value is PersistedTimelineDatePrecision =>
+  value === 'day' || value === 'month' || value === 'year' || value === 'unknown';
+
+const parseTimelineSnapshot = (value: unknown): PersistedTimelineSnapshot | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const snapshot = value as PersistedTimelineSnapshot;
+  if (
+    typeof snapshot.generatedAt !== 'string' ||
+    snapshot.generatedAt.trim().length === 0 ||
+    typeof snapshot.sourceFingerprint !== 'string' ||
+    snapshot.sourceFingerprint.trim().length === 0 ||
+    !Array.isArray(snapshot.events)
+  ) {
+    return undefined;
+  }
+
+  const events = snapshot.events.filter((event: unknown): event is PersistedTimelineEvent => {
+    if (!event || typeof event !== 'object') {
+      return false;
+    }
+
+    const candidate = event as PersistedTimelineEvent;
+    return (
+      typeof candidate.id === 'string' &&
+      candidate.id.trim().length > 0 &&
+      typeof candidate.timestamp === 'string' &&
+      candidate.timestamp.trim().length > 0 &&
+      typeof candidate.event === 'string' &&
+      candidate.event.trim().length > 0 &&
+      typeof candidate.sourceNodeId === 'string' &&
+      candidate.sourceNodeId.trim().length > 0 &&
+      typeof candidate.sourceTitle === 'string' &&
+      isTimelineProvenance(candidate.provenance) &&
+      (typeof candidate.parsedDate === 'number' || candidate.parsedDate === null) &&
+      isTimelineDatePrecision(candidate.datePrecision)
+    );
+  });
+
+  return {
+    generatedAt: snapshot.generatedAt,
+    sourceFingerprint: snapshot.sourceFingerprint,
+    events,
+  };
+};
+
 export const parsePersistedBoardState = (raw: string | null): PersistedBoardState | null => {
   if (!raw) {
     return null;
@@ -85,6 +157,8 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed?.nodes)) {
+      const timelineSnapshot = parseTimelineSnapshot(parsed.timelineSnapshot);
+
       return {
         mode: parsed.mode === 'legacy' ? 'legacy' : 'strict-grid',
         nodes: parsed.nodes,
@@ -104,6 +178,7 @@ export const parsePersistedBoardState = (raw: string | null): PersistedBoardStat
             )
           ))
           : [],
+        ...(timelineSnapshot ? { timelineSnapshot } : {}),
       };
     }
   } catch (error) {

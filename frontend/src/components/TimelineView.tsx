@@ -1,85 +1,300 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Clock, AlertTriangle, ArrowRight, ZoomIn, ZoomOut } from 'lucide-react';
-import { loadBoardStateForInvestigation } from '../utils/investigationPersistence';
-
-interface TimelineEvent {
-    timestamp: string;
-    event: string;
-    sourceNodeId: string;
-}
-
-interface ParsedEvent extends TimelineEvent {
-    parsedDate: number | null;
-    nodeTitle?: string;
-}
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+    Activity,
+    AlertTriangle,
+    BarChart3,
+    Clock,
+    Database,
+    ExternalLink,
+    FileText,
+    Search,
+    Tag,
+    Zap,
+    ZoomIn,
+    ZoomOut,
+    RotateCcw,
+} from 'lucide-react';
+import {
+    loadBoardStateForInvestigation,
+    saveBoardStateForInvestigation,
+} from '../utils/investigationPersistence';
+import type { PersistedBoardState, PersistedTimelineEvent, PersistedTimelineSnapshot } from '../utils/hierarchicalCanvas';
+import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../utils/boardWorkspaceEvents';
+import {
+    buildTimelineSnapshotFromNodes,
+    computeTimelineSourceFingerprint,
+} from '../utils/timelineExtraction';
 
 interface TimelineViewProps {
     investigationId: string | null;
+    investigationTitle?: string | null;
     onNavigateToNode?: (nodeId: string) => void;
 }
 
-const parseDateOrNull = (dateStr: string): number | null => {
-    if (!dateStr || dateStr.toLowerCase().includes('unknown')) return null;
-    const parsed = Date.parse(dateStr);
-    if (!isNaN(parsed)) return parsed;
+type TimelineProvenanceFilter = 'all' | PersistedTimelineEvent['provenance'];
 
-    // Fallback: try to extract a 4-digit year
-    const yearMatch = dateStr.match(/\b(18|19|20)\d{2}\b/);
-    if (yearMatch) return new Date(`${yearMatch[0]}-01-01`).getTime();
+interface TimelineFilters {
+    startDate: string;
+    endDate: string;
+    provenance: TimelineProvenanceFilter;
+    sourceNodeId: string;
+    minConfidence: number;
+}
 
-    return null;
+const DEFAULT_TIMELINE_FILTERS: TimelineFilters = {
+    startDate: '',
+    endDate: '',
+    provenance: 'all',
+    sourceNodeId: 'all',
+    minConfidence: 0,
 };
 
-const getYearColor = (date: number | null) => {
-    const defaultColor = {
-        border: 'border-cyber-cyan',
-        text: 'text-cyber-cyan',
-        line: 'bg-cyber-cyan',
-        dotActive: 'group-hover/card:bg-cyber-cyan',
-        shadow: 'shadow-[0_0_15px_rgba(0,243,255,0.3)]'
-    };
-    if (!date) return defaultColor;
-    const year = new Date(date).getFullYear();
-
-    // Cyclic color based on year
-    const colors = [
-        defaultColor,
-        { border: 'border-cyber-green', text: 'text-cyber-green', line: 'bg-cyber-green', dotActive: 'group-hover/card:bg-cyber-green', shadow: 'shadow-[0_0_15px_rgba(0,255,65,0.3)]' },
-        { border: 'border-cyber-purple', text: 'text-cyber-purple', line: 'bg-cyber-purple', dotActive: 'group-hover/card:bg-cyber-purple', shadow: 'shadow-[0_0_15px_rgba(188,19,254,0.3)]' },
-        { border: 'border-yellow-400', text: 'text-yellow-400', line: 'bg-yellow-400', dotActive: 'group-hover/card:bg-yellow-400', shadow: 'shadow-[0_0_15px_rgba(250,204,21,0.3)]' },
-        { border: 'border-pink-500', text: 'text-pink-500', line: 'bg-pink-500', dotActive: 'group-hover/card:bg-pink-500', shadow: 'shadow-[0_0_15px_rgba(236,72,153,0.3)]' },
-    ];
-    return colors[Math.abs(year) % colors.length];
+const formatGeneratedAt = (value: string | null) => {
+    if (!value) {
+        return 'Not generated';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+    return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
 };
 
-const TimelineView: React.FC<TimelineViewProps> = ({ investigationId, onNavigateToNode }) => {
-    const [events, setEvents] = useState<ParsedEvent[]>([]);
+const formatDateRange = (events: PersistedTimelineEvent[]) => {
+    const dated = events
+        .filter((event) => event.parsedDate !== null)
+        .map((event) => event.parsedDate as number);
+    if (dated.length === 0) {
+        return 'No dated events';
+    }
+    const formatCompactDate = (value: number) => new Date(value).toISOString().slice(0, 10);
+    return `${formatCompactDate(Math.min(...dated))} -> ${formatCompactDate(Math.max(...dated))}`;
+};
+
+const getSourceCount = (events: PersistedTimelineEvent[]) =>
+    new Set(events.map((event) => event.sourceNodeId)).size;
+
+const getEventTone = (event: PersistedTimelineEvent) => {
+    if (event.datePrecision === 'unknown') return 'unknown';
+    if (event.provenance === 'persona') return 'persona';
+    if (event.provenance === 'date-tag') return 'verified';
+    return 'extracted';
+};
+
+const getEventStatusLabel = (event: PersistedTimelineEvent) => {
+    const combinedText = `${event.sourceTitle} ${event.event}`.toLowerCase();
+    if (event.datePrecision === 'unknown') return 'Unknown';
+    if (combinedText.match(/\b(risk|security|warning|threat|breach|exposure)\b/)) return 'Risk';
+    if (combinedText.match(/\b(regulation|policy|act|law|compliance|governance)\b/)) return 'Regulation';
+    if (combinedText.match(/\b(research|paper|study|experiment|model)\b/)) return 'Research';
+    if (combinedText.match(/\b(launch|released|release|deploy|debut)\b/)) return 'Launch';
+    if (combinedText.match(/\b(partner|partnership|alliance|collaboration)\b/)) return 'Partnership';
+    if (combinedText.match(/\b(market|earnings|analysis|analyst|forecast|outlook)\b/)) return 'Analysis';
+    if (event.provenance === 'persona') return 'Insight';
+    if (event.provenance === 'date-tag') return 'Verified';
+    return 'Evidence';
+};
+
+const getDatePrecisionLabel = (event: PersistedTimelineEvent) => {
+    if (event.datePrecision === 'day') return 'Exact Date';
+    if (event.datePrecision === 'month') return 'Month';
+    if (event.datePrecision === 'year') return 'Year';
+    return 'Unknown Date';
+};
+
+const getProvenanceLabel = (event: PersistedTimelineEvent) => {
+    if (event.provenance === 'persona') return 'Insight';
+    if (event.provenance === 'date-tag') return 'Date Tag';
+    return 'Text Match';
+};
+
+const getTimelineEventSizeClass = (event: PersistedTimelineEvent) => {
+    const longTokens = event.event.match(/\[[^\]]+\]/g) || [];
+    const estimatedLineWeight = event.event.length + longTokens.join('').length * 0.18;
+    if (estimatedLineWeight >= 190) return 'forensic-timeline-event-extra-wide';
+    if (estimatedLineWeight >= 120) return 'forensic-timeline-event-wide';
+    return '';
+};
+
+const getEventConfidence = (event: PersistedTimelineEvent) => {
+    if (event.datePrecision === 'day') return 95;
+    if (event.datePrecision === 'month') return 72;
+    if (event.datePrecision === 'year') return 50;
+    return 15;
+};
+
+const getEventIcon = (event: PersistedTimelineEvent) => {
+    const status = getEventStatusLabel(event);
+    if (status === 'Analysis') return <BarChart3 size={16} aria-hidden="true" />;
+    if (status === 'Launch' || status === 'Partnership') return <Zap size={16} aria-hidden="true" />;
+    if (status === 'Research') return <Search size={16} aria-hidden="true" />;
+    if (status === 'Regulation' || status === 'Verified') return <Tag size={16} aria-hidden="true" />;
+    if (event.provenance === 'persona') return <Activity size={16} aria-hidden="true" />;
+    return <FileText size={16} aria-hidden="true" />;
+};
+
+const formatDateInputValue = (value: number | null) => {
+    if (value === null) {
+        return '';
+    }
+    return new Date(value).toISOString().slice(0, 10);
+};
+
+const parseDateInputValue = (value: string, endOfDay = false) => {
+    if (!value) {
+        return null;
+    }
+    const parsed = Date.parse(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`);
+    return Number.isNaN(parsed) ? null : parsed;
+};
+
+const timelineFiltersAreActive = (filters: TimelineFilters) =>
+    filters.startDate !== DEFAULT_TIMELINE_FILTERS.startDate ||
+    filters.endDate !== DEFAULT_TIMELINE_FILTERS.endDate ||
+    filters.provenance !== DEFAULT_TIMELINE_FILTERS.provenance ||
+    filters.sourceNodeId !== DEFAULT_TIMELINE_FILTERS.sourceNodeId ||
+    filters.minConfidence !== DEFAULT_TIMELINE_FILTERS.minConfidence;
+
+const eventMatchesFilters = (event: PersistedTimelineEvent, filters: TimelineFilters) => {
+    if (filters.provenance !== 'all' && event.provenance !== filters.provenance) {
+        return false;
+    }
+    if (filters.sourceNodeId !== 'all' && event.sourceNodeId !== filters.sourceNodeId) {
+        return false;
+    }
+    if (getEventConfidence(event) < filters.minConfidence) {
+        return false;
+    }
+
+    const start = parseDateInputValue(filters.startDate);
+    const end = parseDateInputValue(filters.endDate, true);
+    if (event.parsedDate === null) {
+        return start === null && end === null;
+    }
+    if (start !== null && event.parsedDate < start) {
+        return false;
+    }
+    if (end !== null && event.parsedDate > end) {
+        return false;
+    }
+    return true;
+};
+
+const TimelineView: React.FC<TimelineViewProps> = ({
+    investigationId,
+    investigationTitle,
+    onNavigateToNode,
+}) => {
+    const [boardState, setBoardState] = useState<PersistedBoardState | null>(null);
+    const [snapshot, setSnapshot] = useState<PersistedTimelineSnapshot | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const [zoomLevel, setZoomLevel] = useState(1);
+    const [translateX, setTranslateX] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
-
-    const pointerHistoryRef = useRef<{ t: number, x: number }[]>([]);
-    const dragStartXRef = useRef(0);
-    const dragStartTranslateXRef = useRef(0);
-    const animationFrameRef = useRef<number | null>(null);
+    const [draftFilters, setDraftFilters] = useState<TimelineFilters>(() => ({ ...DEFAULT_TIMELINE_FILTERS }));
+    const [appliedFilters, setAppliedFilters] = useState<TimelineFilters>(() => ({ ...DEFAULT_TIMELINE_FILTERS }));
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const canvasRef = useRef<HTMLDivElement>(null);
-    const translateXRef = useRef(0);
+    const trackRef = useRef<HTMLDivElement>(null);
+    const dragStartXRef = useRef(0);
+    const dragStartTranslateXRef = useRef(0);
+    const pointerHistoryRef = useRef<{ t: number; x: number }[]>([]);
+    const animationFrameRef = useRef<number | null>(null);
     const zoomLevelRef = useRef(zoomLevel);
+    const translateXRef = useRef(translateX);
+
+    const resetViewport = useCallback(() => {
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+        }
+        setZoomLevel(1);
+        setTranslateX(0);
+    }, []);
+
+    const clampTranslate = useCallback((value: number, zoom = zoomLevelRef.current) => {
+        const container = containerRef.current;
+        const track = trackRef.current;
+        if (!container || !track) {
+            return value;
+        }
+
+        const scaledTrackWidth = track.scrollWidth * zoom;
+        const containerWidth = container.clientWidth;
+        if (scaledTrackWidth <= containerWidth) {
+            return 0;
+        }
+
+        const minTranslate = containerWidth - scaledTrackWidth;
+        return Math.min(0, Math.max(minTranslate, value));
+    }, []);
+
+    const loadTimelineState = useCallback(async () => {
+        if (!investigationId) {
+            setBoardState(null);
+            setSnapshot(null);
+            setError(null);
+            return;
+        }
+
+        setIsLoading(true);
+        setError(null);
+        try {
+            const savedState = await loadBoardStateForInvestigation(investigationId);
+            setBoardState(savedState);
+            setSnapshot(savedState?.timelineSnapshot || null);
+        } catch (loadError) {
+            console.error('[TimelineView] Failed to load timeline board state:', loadError);
+            setBoardState(null);
+            setSnapshot(null);
+            setError('Timeline board data is unavailable.');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [investigationId]);
+
+    useEffect(() => {
+        setBoardState(null);
+        setSnapshot(null);
+        setError(null);
+        setDraftFilters({ ...DEFAULT_TIMELINE_FILTERS });
+        setAppliedFilters({ ...DEFAULT_TIMELINE_FILTERS });
+        resetViewport();
+        void loadTimelineState();
+    }, [loadTimelineState, resetViewport]);
+
+    useEffect(() => {
+        if (!investigationId) {
+            return undefined;
+        }
+        const handleBoardUpdate = () => {
+            window.setTimeout(() => {
+                void loadTimelineState();
+            }, 0);
+        };
+        window.addEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardUpdate);
+        return () => window.removeEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardUpdate);
+    }, [investigationId, loadTimelineState]);
 
     useEffect(() => {
         zoomLevelRef.current = zoomLevel;
-        if (canvasRef.current) {
-            canvasRef.current.style.transform = `translateX(${translateXRef.current}px) scale(${zoomLevel})`;
-        }
     }, [zoomLevel]);
 
-    // Auto focus container so arrow keys work instantly
     useEffect(() => {
-        if (containerRef.current) containerRef.current.focus();
-    }, []);
+        translateXRef.current = translateX;
+    }, [translateX]);
 
-    // Clean up animation frame on unmount
+    useEffect(() => {
+        setTranslateX((current) => clampTranslate(current, zoomLevel));
+    }, [clampTranslate, zoomLevel]);
+
     useEffect(() => {
         return () => {
             if (animationFrameRef.current) {
@@ -89,327 +304,561 @@ const TimelineView: React.FC<TimelineViewProps> = ({ investigationId, onNavigate
     }, []);
 
     useEffect(() => {
+        const handleWheel = (event: WheelEvent) => {
+            if (!snapshot || snapshot.events.length === 0) {
+                return;
+            }
+            event.preventDefault();
+            if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+                const delta = Math.max(-0.05, Math.min(0.05, event.deltaY * -0.0005));
+                setZoomLevel((current) => Math.min(Math.max(0.35, current + delta), 2.4));
+            } else {
+                setTranslateX((current) => clampTranslate(current - event.deltaX));
+            }
+        };
+
+        const current = containerRef.current;
+        current?.addEventListener('wheel', handleWheel, { passive: false });
+        return () => current?.removeEventListener('wheel', handleWheel);
+    }, [clampTranslate, snapshot]);
+
+    const sourceFingerprint = useMemo(() => (
+        boardState ? computeTimelineSourceFingerprint(boardState.nodes) : null
+    ), [boardState]);
+
+    const events = snapshot?.events || [];
+    const isStale = Boolean(snapshot && sourceFingerprint && snapshot.sourceFingerprint !== sourceFingerprint);
+    const filteredEvents = useMemo(() => (
+        events.filter((event) => eventMatchesFilters(event, appliedFilters))
+    ), [appliedFilters, events]);
+    const knownEvents = filteredEvents.filter((event) => event.parsedDate !== null);
+    const unknownEvents = filteredEvents.filter((event) => event.parsedDate === null);
+    const hasUnknownEvents = unknownEvents.length > 0;
+    const dateRange = formatDateRange(filteredEvents);
+    const sourceCount = getSourceCount(filteredEvents);
+    const title = investigationTitle || 'Current Investigation';
+    const actionLabel = snapshot ? 'Refresh Timeline' : 'Generate Timeline';
+    const filtersActive = timelineFiltersAreActive(appliedFilters);
+    const dateBounds = useMemo(() => {
+        const dated = events
+            .filter((event) => event.parsedDate !== null)
+            .map((event) => event.parsedDate as number);
+        if (dated.length === 0) {
+            return { min: '', max: '' };
+        }
+        return {
+            min: formatDateInputValue(Math.min(...dated)),
+            max: formatDateInputValue(Math.max(...dated)),
+        };
+    }, [events]);
+    const sourceOptions = useMemo(() => {
+        const sources = new Map<string, string>();
+        events.forEach((event) => {
+            if (!sources.has(event.sourceNodeId)) {
+                sources.set(event.sourceNodeId, event.sourceTitle);
+            }
+        });
+        return Array.from(sources.entries())
+            .map(([nodeId, sourceTitle]) => ({ nodeId, sourceTitle }))
+            .sort((a, b) => a.sourceTitle.localeCompare(b.sourceTitle));
+    }, [events]);
+    const sourceBreakdown = useMemo(() => {
+        const counts = new Map<string, { nodeId: string; title: string; count: number }>();
+        filteredEvents.forEach((event) => {
+            const current = counts.get(event.sourceNodeId);
+            if (current) {
+                current.count += 1;
+                return;
+            }
+            counts.set(event.sourceNodeId, {
+                nodeId: event.sourceNodeId,
+                title: event.sourceTitle,
+                count: 1,
+            });
+        });
+        return Array.from(counts.values())
+            .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
+    }, [filteredEvents]);
+
+    const getMeterWidth = (count: number) => `${filteredEvents.length > 0 ? Math.max(7, (count / filteredEvents.length) * 100) : 0}%`;
+
+    const applyFilters = () => {
+        setAppliedFilters(draftFilters);
+        resetViewport();
+    };
+
+    const resetFilters = () => {
+        const nextFilters = { ...DEFAULT_TIMELINE_FILTERS };
+        setDraftFilters(nextFilters);
+        setAppliedFilters(nextFilters);
+        resetViewport();
+    };
+
+    const handleGenerateTimeline = useCallback(async () => {
         if (!investigationId) {
-            setEvents([]);
             return;
         }
 
-        let cancelled = false;
-        void (async () => {
-            try {
-            const savedState = await loadBoardStateForInvestigation(investigationId);
-            if (cancelled) {
-                return;
-            }
-            const nodes = savedState?.nodes || [];
-            const extractedEvents: ParsedEvent[] = [];
-
-            nodes.forEach((node: any) => {
-                const nodeTitle = node.data?.title || 'Unknown Source';
-                const insights = node.data?.personaInsights || [];
-
-                insights.forEach((insight: any) => {
-                    if (insight.timelineEvents && Array.isArray(insight.timelineEvents)) {
-                        insight.timelineEvents.forEach((te: any) => {
-                            extractedEvents.push({
-                                timestamp: te.timestamp,
-                                event: te.event,
-                                sourceNodeId: te.sourceNodeId || node.id,
-                                parsedDate: parseDateOrNull(te.timestamp),
-                                nodeTitle
-                            });
-                        });
-                    }
-                });
-            });
-
-            // Sort events: known dates first (chronological), then unknown dates
-            extractedEvents.sort((a, b) => {
-                if (a.parsedDate !== null && b.parsedDate !== null) {
-                    return a.parsedDate - b.parsedDate;
-                }
-                if (a.parsedDate !== null) return -1;
-                if (b.parsedDate !== null) return 1;
-                return 0; // retain original order for unknowns
-            });
-
-            // Deduplicate exact events to avoid clutter
-            const uniqueEvents = extractedEvents.filter((ev, index, self) =>
-                index === self.findIndex((t) => (
-                    t.timestamp === ev.timestamp && t.event === ev.event
-                ))
-            );
-
-            setEvents(uniqueEvents);
-            } catch (err) {
-                console.error('[TimelineView] Error parsing investigation data:', err);
-                if (!cancelled) {
-                    setEvents([]);
-                }
-            }
-        })();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [investigationId]);
-
-    useEffect(() => {
-        const handleWheel = (e: WheelEvent) => {
-            if (events.length === 0) return;
-
-            // Determine if the scroll is primarily vertical or horizontal
-            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-                // Vertical scrolling = Zoom
-                e.preventDefault();
-                let zDelta = e.deltaY * -0.0005;
-                if (zDelta > 0.05) zDelta = 0.05;
-                if (zDelta < -0.05) zDelta = -0.05;
-                setZoomLevel(z => Math.min(Math.max(0.1, z + zDelta), 5));
-            } else {
-                // Horizontal scroll (trackpad)
-                e.preventDefault();
-                translateXRef.current -= e.deltaX;
-                if (canvasRef.current) {
-                    canvasRef.current.style.transform = `translateX(${translateXRef.current}px) scale(${zoomLevelRef.current})`;
-                }
-            }
-        };
-        const el = containerRef.current;
-        if (el) {
-            el.addEventListener('wheel', handleWheel, { passive: false });
+        setIsGenerating(true);
+        setError(null);
+        try {
+            const latestBoardState = boardState || await loadBoardStateForInvestigation(investigationId);
+            const baseState: PersistedBoardState = latestBoardState || { mode: 'strict-grid', nodes: [], edges: [] };
+            const nextSnapshot = buildTimelineSnapshotFromNodes(baseState.nodes);
+            const nextState: PersistedBoardState = {
+                ...baseState,
+                timelineSnapshot: nextSnapshot,
+            };
+            setBoardState(nextState);
+            setSnapshot(nextSnapshot);
+            resetViewport();
+            await saveBoardStateForInvestigation(investigationId, nextState);
+        } catch (generateError) {
+            console.error('[TimelineView] Failed to generate timeline:', generateError);
+            setError('Timeline generation failed.');
+        } finally {
+            setIsGenerating(false);
         }
-        return () => {
-            if (el) {
-                el.removeEventListener('wheel', handleWheel);
+    }, [boardState, investigationId, resetViewport]);
+
+    const handlePointerDown = (event: React.PointerEvent) => {
+        if (!snapshot || snapshot.events.length === 0) {
+            return;
+        }
+        if (typeof event.currentTarget.setPointerCapture === 'function') {
+            event.currentTarget.setPointerCapture(event.pointerId);
+        }
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+        }
+        setIsDragging(true);
+        const now = performance.now();
+        dragStartXRef.current = event.pageX;
+        dragStartTranslateXRef.current = translateXRef.current;
+        pointerHistoryRef.current = [{ t: now, x: event.pageX }];
+    };
+
+    const handlePointerMove = (event: React.PointerEvent) => {
+        if (!isDragging) {
+            return;
+        }
+        event.preventDefault();
+        setTranslateX(clampTranslate(dragStartTranslateXRef.current + event.pageX - dragStartXRef.current));
+        const now = performance.now();
+        pointerHistoryRef.current = [
+            ...pointerHistoryRef.current,
+            { t: now, x: event.pageX },
+        ].filter((point) => now - point.t < 100);
+    };
+
+    const handlePointerUpOrCancel = (event: React.PointerEvent) => {
+        if (!isDragging) {
+            return;
+        }
+        setIsDragging(false);
+        if (typeof event.currentTarget.releasePointerCapture === 'function') {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+
+        const now = performance.now();
+        const history = pointerHistoryRef.current.filter((point) => now - point.t < 100);
+        if (history.length < 2) {
+            return;
+        }
+
+        const oldest = history[0];
+        const newest = history[history.length - 1];
+        const dt = newest.t - oldest.t;
+        let velocity = dt > 0 ? (newest.x - oldest.x) / dt : 0;
+        if (Math.abs(velocity) <= 0.05) {
+            return;
+        }
+
+        const applyInertia = () => {
+            setTranslateX((current) => clampTranslate(current + velocity * 16));
+            velocity *= 0.9;
+            if (Math.abs(velocity) > 0.01) {
+                animationFrameRef.current = requestAnimationFrame(applyInertia);
             }
         };
-    }, [events.length]);
+        animationFrameRef.current = requestAnimationFrame(applyInertia);
+    };
+
+    const handleKeyDown = (event: React.KeyboardEvent) => {
+        if (!snapshot || snapshot.events.length === 0) {
+            return;
+        }
+        const panAmount = 52 / zoomLevelRef.current;
+        if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            setTranslateX((current) => clampTranslate(current + panAmount));
+        }
+        if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            setTranslateX((current) => clampTranslate(current - panAmount));
+        }
+    };
 
     if (!investigationId) {
         return (
-            <div className="w-full h-full flex items-center justify-center bg-cyber-black text-gray-500 font-mono text-sm tracking-widest">
-                NO INVESTIGATION SELECTED
-            </div>
-        );
-    }
-
-    if (events.length === 0) {
-        return (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-cyber-black text-cyber-cyan font-mono text-sm gap-4">
-                <AlertTriangle className="text-yellow-500 w-12 h-12 animate-pulse" />
-                <div className="tracking-widest uppercase text-center">
-                    <p>No timeline events extracted yet.</p>
-                    <p className="text-[10px] text-gray-500 mt-2">The Timeline Analyst persona will automatically populate this view during data gathering.</p>
+            <section className="forensic-timeline-root forensic-board-root">
+                <div className="forensic-timeline-empty">
+                    <Clock size={22} />
+                    <span>No Investigation Selected</span>
                 </div>
-            </div>
+            </section>
         );
     }
-
-    const handlePointerDown = (e: React.PointerEvent) => {
-        if (!containerRef.current) return;
-
-        e.currentTarget.setPointerCapture(e.pointerId);
-
-        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-        setIsDragging(true);
-
-        const now = performance.now();
-        dragStartXRef.current = e.pageX;
-        dragStartTranslateXRef.current = translateXRef.current;
-        pointerHistoryRef.current = [{ t: now, x: e.pageX }];
-
-        console.log('[TimelineView] Virtual Drag Started:', { startX: e.pageX, translateX: translateXRef.current });
-    };
-
-    const handlePointerMove = (e: React.PointerEvent) => {
-        if (!isDragging) return;
-        e.preventDefault();
-
-        // 1:1 absolute math binds screen exactly to mouse travel
-        const walk = e.pageX - dragStartXRef.current;
-        translateXRef.current = dragStartTranslateXRef.current + walk;
-
-        if (canvasRef.current) {
-            canvasRef.current.style.transform = `translateX(${translateXRef.current}px) scale(${zoomLevelRef.current})`;
-        }
-
-        const now = performance.now();
-        const history = pointerHistoryRef.current;
-        history.push({ t: now, x: e.pageX });
-        // Keep only points from the last 100ms
-        pointerHistoryRef.current = history.filter(p => now - p.t < 100);
-    };
-
-    const handlePointerUpOrCancel = (e: React.PointerEvent) => {
-        if (!isDragging) return;
-        setIsDragging(false);
-        e.currentTarget.releasePointerCapture(e.pointerId);
-
-        const now = performance.now();
-        const history = pointerHistoryRef.current.filter(p => now - p.t < 100);
-
-        let velocity = 0;
-        if (history.length > 1) {
-            const oldest = history[0];
-            const newest = history[history.length - 1];
-            const dt = newest.t - oldest.t;
-            if (dt > 0) {
-                // Compute average velocity over the trailing 100ms window
-                velocity = (newest.x - oldest.x) / dt;
-            }
-        }
-
-        console.log(`[TimelineView] Virtual Drag Ended (${e.type}). Computed Velocity:`, velocity);
-
-        if (Math.abs(velocity) > 0.05) {
-            const applyInertia = () => {
-                translateXRef.current += velocity * 16; // 16ms roughly 1 frame
-                if (canvasRef.current) {
-                    canvasRef.current.style.transform = `translateX(${translateXRef.current}px) scale(${zoomLevelRef.current})`;
-                }
-
-                velocity *= 0.92; // Slightly stronger friction to prevent gliding forever
-
-                if (Math.abs(velocity) > 0.01) {
-                    animationFrameRef.current = requestAnimationFrame(applyInertia);
-                }
-            };
-            animationFrameRef.current = requestAnimationFrame(applyInertia);
-        }
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (!containerRef.current) return;
-        const panAmount = 50 / zoomLevelRef.current; // Pan faster when zoomed out
-
-        if (e.key === 'ArrowLeft') {
-            e.preventDefault();
-            translateXRef.current += panAmount;
-            if (canvasRef.current) {
-                canvasRef.current.style.transform = `translateX(${translateXRef.current}px) scale(${zoomLevelRef.current})`;
-            }
-        } else if (e.key === 'ArrowRight') {
-            e.preventDefault();
-            translateXRef.current -= panAmount;
-            if (canvasRef.current) {
-                canvasRef.current.style.transform = `translateX(${translateXRef.current}px) scale(${zoomLevelRef.current})`;
-            }
-        }
-    };
-
-    const { knownEvents, unknownEvents } = events.reduce((acc, ev) => {
-        if (ev.parsedDate !== null) acc.knownEvents.push(ev);
-        else acc.unknownEvents.push(ev);
-        return acc;
-    }, { knownEvents: [] as ParsedEvent[], unknownEvents: [] as ParsedEvent[] });
 
     return (
-        <div className="w-full h-full relative bg-cyber-black flex flex-col font-mono overflow-hidden">
-            {/* HUD Header */}
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2">
-                <div className="flex items-center gap-2 px-6 py-2 bg-black border border-cyber-cyan text-cyber-cyan font-black uppercase tracking-widest text-xs shadow-[0_0_15px_rgba(0,243,255,0.3)]">
-                    <Clock size={14} /> Chronological Timeline Analysis
+        <section className="forensic-timeline-root forensic-board-root" data-testid="timeline-view-root">
+            <div className="forensic-timeline-frame">
+                <header className="forensic-timeline-status-strip">
+                    <div className="forensic-timeline-title-block">
+                        <span>Chronology Analysis</span>
+                        <strong title={title}>{title}</strong>
+                    </div>
+                    <div className="forensic-timeline-metrics" aria-label="Timeline metrics">
+                        <div>
+                            <span>Events</span>
+                            <strong>{filtersActive ? `${filteredEvents.length}/${events.length}` : events.length}</strong>
+                        </div>
+                        <div>
+                            <span>Sources</span>
+                            <strong>{sourceCount}</strong>
+                        </div>
+                        <div>
+                            <span>Date Span</span>
+                            <strong title={dateRange}>{dateRange}</strong>
+                        </div>
+                        <div>
+                            <span>Status</span>
+                            <strong className={isStale ? 'forensic-timeline-warning-text' : ''}>
+                                {isStale ? 'Needs Refresh' : snapshot ? 'Generated' : 'Ready'}
+                            </strong>
+                        </div>
+                    </div>
+                </header>
+
+                <div className="forensic-timeline-command-bar">
+                    <div className="forensic-timeline-command-copy">
+                        <Database size={15} />
+                        <span>{snapshot ? `Generated ${formatGeneratedAt(snapshot.generatedAt)}` : 'Manual board-data generation'}</span>
+                    </div>
+                    <div className="forensic-timeline-actions">
+                        <button
+                            type="button"
+                            className="forensic-timeline-primary-button"
+                            onClick={handleGenerateTimeline}
+                            disabled={isGenerating || isLoading}
+                        >
+                            <RotateCcw size={15} />
+                            {isGenerating ? 'Generating...' : actionLabel}
+                        </button>
+                        <button
+                            type="button"
+                            className="forensic-timeline-icon-button"
+                            onClick={() => setZoomLevel((current) => Math.max(0.35, current - 0.15))}
+                            title="Zoom out"
+                            aria-label="Zoom out"
+                            disabled={!snapshot || events.length === 0}
+                        >
+                            <ZoomOut size={15} />
+                        </button>
+                        <span className="forensic-timeline-zoom-readout">{Math.round(zoomLevel * 100)}%</span>
+                        <button
+                            type="button"
+                            className="forensic-timeline-icon-button"
+                            onClick={() => setZoomLevel((current) => Math.min(2.4, current + 0.15))}
+                            title="Zoom in"
+                            aria-label="Zoom in"
+                            disabled={!snapshot || events.length === 0}
+                        >
+                            <ZoomIn size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="forensic-timeline-icon-button"
+                            onClick={resetViewport}
+                            title="Recenter timeline"
+                            aria-label="Recenter timeline"
+                            disabled={!snapshot || events.length === 0}
+                        >
+                            <Clock size={15} />
+                        </button>
+                    </div>
                 </div>
-                <div className="flex items-center gap-3 border border-cyber-cyan/30 bg-black/90 px-3 py-1 rounded shadow-[0_0_10px_rgba(0,243,255,0.1)]">
-                    <button onClick={() => setZoomLevel(z => Math.max(0.2, z - 0.2))} className="text-cyber-cyan hover:text-white transition-colors p-1" title="Zoom Out"><ZoomOut size={14} /></button>
-                    <span className="text-cyber-cyan text-[10px] font-mono w-8 text-center select-none">{Math.round(zoomLevel * 100)}%</span>
-                    <button onClick={() => setZoomLevel(z => Math.min(5, z + 0.2))} className="text-cyber-cyan hover:text-white transition-colors p-1" title="Zoom In"><ZoomIn size={14} /></button>
-                </div>
-            </div>
 
-            {/* Main Timeline Virtual Canvas Area */}
-            <div
-                ref={containerRef}
-                tabIndex={0}
-                onKeyDown={handleKeyDown}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUpOrCancel}
-                onPointerCancel={handlePointerUpOrCancel}
-                onDragStart={(e) => e.preventDefault()}
-                className={`flex-1 overflow-hidden touch-none relative bg-[linear-gradient(rgba(0,243,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(0,243,255,0.03)_1px,transparent_1px)] bg-[size:20px_20px] focus:outline-none focus:ring-1 focus:ring-cyber-cyan/30 ${isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
-            >
-                {/* Floating Canvas */}
-                <div
-                    ref={canvasRef}
-                    className="absolute top-0 bottom-0 flex flex-col justify-center origin-left will-change-transform"
-                    style={{ left: '50vw', transform: 'translateX(0px) scale(1)' }}
-                >
-                    <div className="flex items-center h-1 bg-cyber-cyan/30 shrink-0">
-                        {/* Event Nodes on Timeline */}
-                        {knownEvents.map((ev, i) => {
-                            const isTop = i % 2 === 0;
-                            const colors = getYearColor(ev.parsedDate);
+                {error ? (
+                    <div className="forensic-timeline-alert">
+                        <AlertTriangle size={16} />
+                        {error}
+                    </div>
+                ) : null}
 
-                            return (
-                                <div key={`ev-${i}`} className="relative group shrink-0 w-64 flex flex-col items-center group/card">
-                                    {/* Dot on the line */}
-                                    <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-black border-2 ${colors.border} z-10 transition-transform group-hover/card:scale-150 ${colors.dotActive} shadow-[0_0_10px_rgba(0,0,0,0.5)]`} />
-
-                                    {/* Connector Line */}
-                                    <div className={`absolute left-1/2 w-0.5 ${colors.line} opacity-40 h-24 ${isTop ? 'bottom-1/2 origin-bottom' : 'top-1/2 origin-top'} transition-all group-hover/card:opacity-100 group-hover/card:shadow-[0_0_10px_rgba(0,243,255,0.5)]`} />
-
-                                    {/* Event Card */}
+                <div className="forensic-timeline-workspace">
+                    <div className="forensic-timeline-main-stack">
+                        {!snapshot ? (
+                            <div className="forensic-timeline-empty">
+                                <Clock size={26} />
+                                <span>No Timeline Generated</span>
+                                <p>Generate a chronology from this investigation's saved board evidence when you are ready.</p>
+                            </div>
+                        ) : events.length === 0 ? (
+                            <div className="forensic-timeline-empty">
+                                <AlertTriangle size={26} />
+                                <span>No Timeline Events Found</span>
+                                <p>This board does not contain dated evidence yet. Add dated evidence, then refresh the timeline.</p>
+                            </div>
+                        ) : filteredEvents.length === 0 ? (
+                            <div className="forensic-timeline-empty">
+                                <AlertTriangle size={26} />
+                                <span>No Matching Timeline Events</span>
+                                <p>Adjust the filters to bring more evidence back into the chronology.</p>
+                            </div>
+                        ) : (
+                            <>
+                                <div
+                                    ref={containerRef}
+                                    tabIndex={0}
+                                    className={`forensic-timeline-canvas ${isDragging ? 'forensic-timeline-canvas-dragging' : ''}`}
+                                    onKeyDown={handleKeyDown}
+                                    onPointerDown={handlePointerDown}
+                                    onPointerMove={handlePointerMove}
+                                    onPointerUp={handlePointerUpOrCancel}
+                                    onPointerCancel={handlePointerUpOrCancel}
+                                    onDragStart={(event) => event.preventDefault()}
+                                >
                                     <div
-                                        onPointerDown={(e) => e.stopPropagation()}
-                                        className={`absolute left-1/2 -translate-x-1/2 ${isTop ? 'bottom-[calc(50%+6rem)]' : 'top-[calc(50%+6rem)]'} w-64 bg-black/90 border ${colors.border} opacity-80 p-4 transition-all hover:bg-black hover:opacity-100 shadow-[0_0_10px_rgba(0,0,0,0.8)] hover:${colors.shadow} flex flex-col gap-2 z-20`}
+                                        ref={trackRef}
+                                        className="forensic-timeline-track"
+                                        style={{ transform: `translateX(${translateX}px) scale(${zoomLevel})` }}
                                     >
-                                        <div className={`${colors.text} font-black text-[11px] tracking-widest uppercase border-b border-white/20 pb-1 break-words`}>
-                                            {ev.timestamp}
-                                        </div>
-                                        <div className="text-gray-300 text-xs leading-relaxed max-h-32 overflow-y-auto custom-scrollbar">
-                                            {ev.event}
-                                        </div>
-                                        <div className="mt-2 flex justify-between items-center text-[9px] text-gray-500 uppercase tracking-tighter pt-2 border-t border-white/10">
-                                            <span className="truncate max-w-[150px]" title={ev.nodeTitle}>Ref: {ev.nodeTitle}</span>
-                                            {onNavigateToNode && (
-                                                <button
-                                                    onClick={() => onNavigateToNode(ev.sourceNodeId)}
-                                                    className="text-cyber-purple hover:text-white flex items-center gap-1"
+                                        <div className="forensic-timeline-spine" />
+                                        {knownEvents.map((event, index) => (
+                                            <article
+                                                key={event.id}
+                                                className={`forensic-timeline-event forensic-timeline-event-${getEventTone(event)} ${getTimelineEventSizeClass(event)} ${index % 2 === 0 ? 'forensic-timeline-event-top' : 'forensic-timeline-event-bottom'}`}
+                                            >
+                                                <div className="forensic-timeline-pin" />
+                                                <div className="forensic-timeline-stem" />
+                                                <div
+                                                    className="forensic-timeline-event-card"
+                                                    onPointerDown={(event) => event.stopPropagation()}
                                                 >
-                                                    SOURCE <ArrowRight size={10} />
-                                                </button>
-                                            )}
-                                        </div>
+                                                    <div className="forensic-timeline-event-card-head">
+                                                        <div className="forensic-timeline-event-icon">{getEventIcon(event)}</div>
+                                                        <div className="forensic-timeline-event-card-meta">
+                                                            <div className="forensic-timeline-event-date">{event.timestamp}</div>
+                                                            <span className={`forensic-timeline-event-status forensic-timeline-event-status-${getEventTone(event)}`}>
+                                                                {getEventStatusLabel(event)}
+                                                            </span>
+                                                        </div>
+                                                        <span className="forensic-timeline-card-open" aria-hidden="true">
+                                                            <ExternalLink size={12} />
+                                                        </span>
+                                                    </div>
+                                                    <h3 title={event.sourceTitle}>{event.sourceTitle}</h3>
+                                                    <div className="forensic-timeline-event-tags" aria-label="Timeline event metadata">
+                                                        <span>{getProvenanceLabel(event)}</span>
+                                                        <span>{getDatePrecisionLabel(event)}</span>
+                                                        <span>{getEventConfidence(event)}% Confidence</span>
+                                                    </div>
+                                                    <p>{event.event}</p>
+                                                    <div className="forensic-timeline-event-footer">
+                                                        <span title={event.sourceTitle}>Source: {event.sourceTitle}</span>
+                                                        {onNavigateToNode ? (
+                                                            <button
+                                                                type="button"
+                                                                aria-label={`Source ${event.sourceTitle}`}
+                                                                onClick={() => onNavigateToNode(event.sourceNodeId)}
+                                                            >
+                                                                Source
+                                                            </button>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+                                            </article>
+                                        ))}
                                     </div>
                                 </div>
-                            );
-                        })}
+
+                                <aside className={`forensic-timeline-unknown-tray ${hasUnknownEvents ? '' : 'forensic-timeline-unknown-tray-compact'}`}>
+                                    <div className="forensic-timeline-tray-heading">
+                                        <AlertTriangle size={14} />
+                                        <span>Unknown / Imprecise Dates</span>
+                                        <strong>{unknownEvents.length}</strong>
+                                    </div>
+                                    {hasUnknownEvents ? (
+                                        <div className="forensic-timeline-unknown-list">
+                                            {unknownEvents.map((event) => (
+                                                <article key={event.id} className={`forensic-timeline-unknown-card forensic-timeline-event-${getEventTone(event)}`}>
+                                                    <div className="forensic-timeline-unknown-head">
+                                                        <div className="forensic-timeline-event-icon">{getEventIcon(event)}</div>
+                                                        <div>
+                                                            <strong>{event.timestamp}</strong>
+                                                            <span>{getEventStatusLabel(event)}</span>
+                                                        </div>
+                                                        <ExternalLink size={12} aria-hidden="true" />
+                                                    </div>
+                                                    <h3 title={event.sourceTitle}>{event.sourceTitle}</h3>
+                                                    <div className="forensic-timeline-event-tags" aria-label="Timeline event metadata">
+                                                        <span>{getProvenanceLabel(event)}</span>
+                                                        <span>{getDatePrecisionLabel(event)}</span>
+                                                        <span>{getEventConfidence(event)}% Confidence</span>
+                                                    </div>
+                                                    <p>{event.event}</p>
+                                                    <div className="forensic-timeline-unknown-footer">
+                                                        <span title={event.sourceTitle}>Source: {event.sourceTitle}</span>
+                                                        {onNavigateToNode ? (
+                                                            <button
+                                                                type="button"
+                                                                aria-label={`Source ${event.sourceTitle}`}
+                                                                onClick={() => onNavigateToNode(event.sourceNodeId)}
+                                                            >
+                                                                Source
+                                                            </button>
+                                                        ) : null}
+                                                    </div>
+                                                </article>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="forensic-timeline-unknown-empty-compact">All extracted events have usable dates.</div>
+                                    )}
+                                </aside>
+                            </>
+                        )}
                     </div>
+
+                    <aside className="forensic-timeline-side-panel" aria-label="Timeline filters and sources">
+                        <section className="forensic-timeline-side-section forensic-timeline-filter-section">
+                            <div className="forensic-timeline-side-heading">
+                                <span>Filters</span>
+                                <strong>{filteredEvents.length}/{events.length}</strong>
+                            </div>
+
+                            <label className="forensic-timeline-filter-control">
+                                <span>Date Range</span>
+                                <div className="forensic-timeline-date-range">
+                                    <input
+                                        type="date"
+                                        aria-label="Timeline start date"
+                                        value={draftFilters.startDate}
+                                        min={dateBounds.min}
+                                        max={dateBounds.max}
+                                        onChange={(event) => setDraftFilters((current) => ({ ...current, startDate: event.target.value }))}
+                                        disabled={!snapshot || events.length === 0}
+                                    />
+                                    <input
+                                        type="date"
+                                        aria-label="Timeline end date"
+                                        value={draftFilters.endDate}
+                                        min={dateBounds.min}
+                                        max={dateBounds.max}
+                                        onChange={(event) => setDraftFilters((current) => ({ ...current, endDate: event.target.value }))}
+                                        disabled={!snapshot || events.length === 0}
+                                    />
+                                </div>
+                            </label>
+
+                            <label className="forensic-timeline-filter-control">
+                                <span>Event Type</span>
+                                <select
+                                    aria-label="Timeline event type"
+                                    value={draftFilters.provenance}
+                                    onChange={(event) => setDraftFilters((current) => ({
+                                        ...current,
+                                        provenance: event.target.value as TimelineProvenanceFilter,
+                                    }))}
+                                    disabled={!snapshot || events.length === 0}
+                                >
+                                    <option value="all">All Types</option>
+                                    <option value="persona">Persona</option>
+                                    <option value="date-tag">Date Tags</option>
+                                    <option value="text-date">Text Dates</option>
+                                </select>
+                            </label>
+
+                            <label className="forensic-timeline-filter-control">
+                                <span>Sources</span>
+                                <select
+                                    aria-label="Timeline source"
+                                    value={draftFilters.sourceNodeId}
+                                    onChange={(event) => setDraftFilters((current) => ({ ...current, sourceNodeId: event.target.value }))}
+                                    disabled={!snapshot || events.length === 0}
+                                >
+                                    <option value="all">All Sources</option>
+                                    {sourceOptions.map((source) => (
+                                        <option key={source.nodeId} value={source.nodeId}>{source.sourceTitle}</option>
+                                    ))}
+                                </select>
+                            </label>
+
+                            <label className="forensic-timeline-filter-control">
+                                <span>Date Confidence</span>
+                                <div className="forensic-timeline-confidence-row">
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        step="5"
+                                        aria-label="Timeline date confidence"
+                                        value={draftFilters.minConfidence}
+                                        onChange={(event) => setDraftFilters((current) => ({
+                                            ...current,
+                                            minConfidence: Number(event.target.value),
+                                        }))}
+                                        disabled={!snapshot || events.length === 0}
+                                    />
+                                    <strong>{draftFilters.minConfidence}%</strong>
+                                </div>
+                            </label>
+
+                            <div className="forensic-timeline-filter-actions">
+                                <button
+                                    type="button"
+                                    onClick={applyFilters}
+                                    disabled={!snapshot || events.length === 0}
+                                >
+                                    Apply Filters
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={resetFilters}
+                                    disabled={!snapshot || events.length === 0 || (!filtersActive && !timelineFiltersAreActive(draftFilters))}
+                                >
+                                    Reset
+                                </button>
+                            </div>
+                        </section>
+
+                        <section className="forensic-timeline-side-section forensic-timeline-source-section">
+                            <div className="forensic-timeline-side-heading">
+                                <span>Source Overview</span>
+                                <strong>{sourceCount}</strong>
+                            </div>
+                            {sourceBreakdown.length === 0 ? (
+                                <div className="forensic-timeline-side-empty">No matching sources yet.</div>
+                            ) : (
+                                <div className="forensic-timeline-source-list">
+                                    {sourceBreakdown.map((source) => (
+                                        <div key={source.nodeId} className="forensic-timeline-source-row">
+                                            <span title={source.title}>{source.title}</span>
+                                            <strong>{source.count}</strong>
+                                            <div className="forensic-timeline-source-meter">
+                                                <i style={{ width: getMeterWidth(source.count) }} />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </section>
+                    </aside>
                 </div>
             </div>
-
-            {/* Unknown Dates / Imprecise Tray */}
-            {unknownEvents.length > 0 && (
-                <div className="h-48 border-t border-cyber-purple/30 bg-black/80 flex flex-col shrink-0 p-4">
-                    <h3 className="text-cyber-purple font-black text-[10px] uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <AlertTriangle size={12} /> Unknown or Imprecise Dates ({unknownEvents.length})
-                    </h3>
-                    <div className="flex-1 flex gap-4 overflow-x-auto pb-2 custom-scrollbar">
-                        {unknownEvents.map((ev, i) => (
-                            <div key={`unk-${i}`} className="w-64 shrink-0 bg-cyber-gray/30 border border-cyber-purple/30 p-3 hover:border-cyber-purple/80 transition-colors flex flex-col gap-1">
-                                <span className="text-cyber-purple font-bold text-[10px] break-words">{ev.timestamp}</span>
-                                <p className="text-gray-300 text-[11px] flex-1 overflow-y-auto custom-scrollbar leading-relaxed">
-                                    {ev.event}
-                                </p>
-                                <div className="text-[9px] text-gray-500 uppercase flex justify-between items-center pt-1 mt-1 border-t border-cyber-purple/10">
-                                    <span className="truncate max-w-[120px]" title={ev.nodeTitle}>{ev.nodeTitle}</span>
-                                    {onNavigateToNode && (
-                                        <button
-                                            onClick={() => onNavigateToNode(ev.sourceNodeId)}
-                                            className="text-cyber-purple hover:text-white flex items-center gap-1"
-                                        >
-                                            SOURCE <ArrowRight size={10} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
+        </section>
     );
 };
 

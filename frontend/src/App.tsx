@@ -634,12 +634,12 @@ function App() {
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
-  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'settings'
+  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'settings'
   const expandedSidebarWidth = hasCustomSidebarWidth
     ? sidebarWidth
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
-  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && !isBoardWorkspaceActive
+  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && !isBoardWorkspaceActive
 
   const filteredSidebarRows = useMemo(() => {
     const query = sidebarSearchQuery.trim().toLowerCase()
@@ -1475,7 +1475,7 @@ function App() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="forensic-app-main-row flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside
           data-testid="app-sidebar"
@@ -1688,7 +1688,7 @@ function App() {
         </aside>
 
         {/* Main Content Area */}
-        <main className="flex-1 relative">
+        <main className="forensic-app-main-content flex-1 relative">
           <Suspense fallback={null}>
             <DiscoveryPanel
               currentInvestigationId={currentInvestigationId}
@@ -1894,6 +1894,7 @@ function App() {
             <Suspense fallback={tabFallback('Timeline')}>
               <TimelineView
                 investigationId={currentInvestigationId}
+                investigationTitle={currentInvestigation?.displayTopic || null}
                 onNavigateToNode={(nodeId) => {
                   setFocusedNodeId(nodeId);
                   setActiveTab('board');

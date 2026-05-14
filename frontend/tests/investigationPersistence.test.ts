@@ -1,6 +1,7 @@
 import { createRootInvestigation, INVESTIGATIONS_STORAGE_KEY } from '../src/utils/investigations'
 import {
   loadInvestigations,
+  loadBoardStateForInvestigation,
   saveBoardStateForInvestigation,
 } from '../src/utils/investigationPersistence'
 import { BOARD_PERSIST_FAILED_EVENT, parsePersistedBoardState, type PersistedBoardState } from '../src/utils/hierarchicalCanvas'
@@ -87,5 +88,73 @@ describe('investigation persistence', () => {
     expect(saved).toBe(false)
     expect(parsePersistedBoardState(localStorage.getItem('inv_data_inv-fallback'))?.nodes).toHaveLength(1)
     expect(failedEvents).toHaveLength(1)
+  })
+
+  it('uses browser board evidence when the backend still has an empty board', async () => {
+    const boardState = buildBoardState()
+    localStorage.setItem('inv_data_inv-local-rich', JSON.stringify(boardState))
+
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        return { ok: true, json: async () => ({}) } as Response
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          mode: 'strict-grid',
+          nodes: [],
+          edges: [],
+          pendingIntegrationNodeIds: [],
+          synthesisAlerts: [],
+        }),
+      } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const loaded = await loadBoardStateForInvestigation('inv-local-rich')
+
+    expect(loaded?.nodes).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/investigations/inv-local-rich/board',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+  })
+
+  it('preserves an existing timeline snapshot when board saves omit it', async () => {
+    delete backendFlag.__GORANTULA_BACKEND_PERSISTENCE_TEST__
+    const existingState: PersistedBoardState = {
+      mode: 'strict-grid',
+      nodes: [{ id: 'node-1', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'Original' } }],
+      edges: [],
+      timelineSnapshot: {
+        generatedAt: '2026-05-14T12:00:00.000Z',
+        sourceFingerprint: 'tl-existing',
+        events: [
+          {
+            id: 'event-1',
+            timestamp: '2024-01-15',
+            event: 'Shipment departed.',
+            sourceNodeId: 'node-1',
+            sourceTitle: 'Original',
+            provenance: 'persona',
+            parsedDate: 1705276800000,
+            datePrecision: 'day',
+          },
+        ],
+      },
+    }
+
+    localStorage.setItem('inv_data_inv-timeline', JSON.stringify(existingState))
+    await loadBoardStateForInvestigation('inv-timeline')
+
+    await saveBoardStateForInvestigation('inv-timeline', {
+      mode: 'strict-grid',
+      nodes: [{ id: 'node-1', type: 'custom', position: { x: 1, y: 1 }, data: { title: 'Updated' } }],
+      edges: [],
+    })
+
+    const saved = parsePersistedBoardState(localStorage.getItem('inv_data_inv-timeline'))
+    expect(saved?.timelineSnapshot?.events).toHaveLength(1)
+    expect(saved?.timelineSnapshot?.sourceFingerprint).toBe('tl-existing')
   })
 })
