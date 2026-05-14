@@ -229,6 +229,30 @@ const mergeIncrementalEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge
 
 type AnalysisMode = 'full' | 'incremental' | null;
 
+type ConnectionsFoundPayload = {
+    connections: any[];
+    vaultId?: string;
+};
+
+const coerceConnectionsFoundPayload = (payload: unknown): ConnectionsFoundPayload => {
+    if (Array.isArray(payload)) {
+        return { connections: payload };
+    }
+
+    if (payload && typeof payload === 'object') {
+        const candidate = payload as { connections?: unknown; vaultId?: unknown };
+        return {
+            connections: Array.isArray(candidate.connections) ? candidate.connections : [],
+            vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId.trim() : undefined,
+        };
+    }
+
+    return { connections: [] };
+};
+
+const connectionVaultId = (connection: any) =>
+    typeof connection?.vaultId === 'string' ? connection.vaultId.trim() : '';
+
 export const detectiveBoardTestUtils = {
     getStrictGridLayoutedNodes,
 };
@@ -2142,8 +2166,44 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         return () => window.removeEventListener('keyup', handleKeyUp);
     }, [finalizeMarqueeSelection, marquee]);
 
-    const handleNewConnections = useCallback((connections: any[]) => {
-        console.debug('[Board] Received connections:', connections);
+    const handleNewConnections = useCallback((payload: unknown) => {
+        const { connections, vaultId: payloadVaultId } = coerceConnectionsFoundPayload(payload);
+        const payloadVaultMismatch = Boolean(payloadVaultId && investigationId && payloadVaultId !== investigationId);
+        if (payloadVaultMismatch) {
+            console.debug('[Board] Ignoring relationship batch for another investigation:', {
+                payloadVaultId,
+                investigationId,
+                count: connections.length,
+            });
+            return;
+        }
+
+        const scopedConnections = connections.filter((connection) => {
+            const scopedVaultId = connectionVaultId(connection);
+            const matches = !scopedVaultId || !investigationId || scopedVaultId === investigationId;
+            if (!matches) {
+                console.debug('[Board] Ignoring relationship for another investigation:', {
+                    connectionVaultId: scopedVaultId,
+                    investigationId,
+                    source: connection?.source,
+                    target: connection?.target,
+                    tag: connection?.tag,
+                });
+            }
+            return matches;
+        });
+
+        if (connections.length > 0 && scopedConnections.length === 0) {
+            return;
+        }
+
+        console.debug('[Board] Received connections:', {
+            total: connections.length,
+            scoped: scopedConnections.length,
+            investigationId,
+            payloadVaultId,
+            connections: scopedConnections,
+        });
         const currentNodes = nodesRef.current;
         const activeAnalysisMode = analysisModeRef.current;
         const activePendingNodeIds = pendingIntegrationNodeIdsRef.current;
@@ -2151,16 +2211,24 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
 
         // Filter connections to only include those where source and target exist
         const nodeIds = new Set(currentNodes.map(n => n.id));
-        const validConnections = connections.filter(c => {
+        const validConnections = scopedConnections.filter(c => {
             const sourceExists = nodeIds.has(c.source);
             const targetExists = nodeIds.has(c.target);
             if (!sourceExists || !targetExists) {
-                console.debug('[Board] Skipping invalid connection:', c.source, '->', c.target, '| Valid:', sourceExists, targetExists);
+                console.warn('[Board] Skipping relationship with missing local node:', {
+                    source: c.source,
+                    target: c.target,
+                    tag: c.tag,
+                    sourceExists,
+                    targetExists,
+                    investigationId,
+                    availableNodeIds: Array.from(nodeIds),
+                });
             }
             return sourceExists && targetExists;
         });
 
-        console.debug('[Board] Valid connections:', validConnections.length, 'of', connections.length);
+        console.debug('[Board] Valid connections:', validConnections.length, 'of', scopedConnections.length);
 
         const nextStyles = { ...tagStyles };
         let stylesUpdated = false;
@@ -2264,7 +2332,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         setHasConnectedDots(true);
         setIsAnalyzing(false);
         setAnalysisMode(null);
-    }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
+    }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, investigationId, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
     useEffect(() => {
         if (!sharedSocket) return;
