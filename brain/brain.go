@@ -19,7 +19,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-// SubQueries encapsulates the JSON response expected from Gemini
+// SubQueries encapsulates the JSON response expected from the planning model.
 type SubQueries struct {
 	Queries []string `json:"queries"`
 }
@@ -28,6 +28,19 @@ type SubQueries struct {
 type RankResult struct {
 	Score  int    `json:"score"`
 	Reason string `json:"reason"`
+}
+
+var providerFallbackOrder = []string{
+	"deepseek",
+	"openai",
+	"anthropic",
+	"qwen",
+	"zhipuai",
+	"moonshot",
+	"minimax",
+	"ollama",
+	"lmstudio",
+	"gemini",
 }
 
 // Brain controls the LLM generation and orchestration of the Nervous System
@@ -79,8 +92,6 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 			return nil, err
 		}
 		model = client.GenerativeModel(envOrDefault("GEMINI_MODEL", DefaultGeminiModel))
-	} else {
-		log.Println("[Brain] GEMINI_API_KEY not set. Starting without Gemini and relying on other configured providers.")
 	}
 
 	brain := &Brain{
@@ -115,6 +126,81 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	return brain, nil
 }
 
+func (b *Brain) firstAvailableProvider(excludedNames ...string) (ModelProvider, bool) {
+	excluded := make(map[string]struct{}, len(excludedNames))
+	for _, name := range excludedNames {
+		if name = strings.TrimSpace(name); name != "" {
+			excluded[name] = struct{}{}
+		}
+	}
+
+	b.routerMu.RLock()
+	defer b.routerMu.RUnlock()
+
+	for _, name := range providerFallbackOrder {
+		if _, skip := excluded[name]; skip {
+			continue
+		}
+		if provider, ok := b.ModelRouter[name]; ok && provider != nil {
+			return provider, true
+		}
+	}
+	for name, provider := range b.ModelRouter {
+		if _, skip := excluded[name]; !skip && provider != nil {
+			return provider, true
+		}
+	}
+	return nil, false
+}
+
+func (b *Brain) fallbackProviderAfter(provider ModelProvider) (ModelProvider, bool) {
+	if provider == nil {
+		return b.firstAvailableProvider()
+	}
+	return b.firstAvailableProvider(provider.Name())
+}
+
+func (b *Brain) generateJSONWithFallback(ctx context.Context, operation string, provider ModelProvider, prompt string, target interface{}) error {
+	if provider == nil {
+		return fmt.Errorf("no model providers available")
+	}
+	if err := provider.GenerateJSON(ctx, prompt, target); err != nil {
+		fmt.Printf("[Brain Error] %s provider %s failed: %v. Attempting generic provider fallback...\n", operation, provider.Name(), err)
+		fallbackProvider, ok := b.fallbackProviderAfter(provider)
+		if !ok {
+			return err
+		}
+		if fallbackErr := fallbackProvider.GenerateJSON(ctx, prompt, target); fallbackErr != nil {
+			fmt.Printf("[Brain Error] %s fallback provider %s failed: %v\n", operation, fallbackProvider.Name(), fallbackErr)
+			return err
+		}
+		fmt.Printf("[Brain] %s recovered using fallback provider %s\n", operation, fallbackProvider.Name())
+	}
+	return nil
+}
+
+func (b *Brain) generateContentWithFallback(ctx context.Context, operation string, provider ModelProvider, prompt string) (string, error) {
+	if provider == nil {
+		return "", fmt.Errorf("no model providers available")
+	}
+	content, err := provider.GenerateContent(ctx, prompt)
+	if err == nil {
+		return content, nil
+	}
+	fmt.Printf("[Brain Error] %s provider %s failed: %v. Attempting generic provider fallback...\n", operation, provider.Name(), err)
+	fallbackProvider, ok := b.fallbackProviderAfter(provider)
+	if !ok {
+		return "", err
+	}
+	content, fallbackErr := fallbackProvider.GenerateContent(ctx, prompt)
+	if fallbackErr != nil {
+		fmt.Printf("[Brain Error] %s fallback provider %s failed: %v\n", operation, fallbackProvider.Name(), fallbackErr)
+		return "", err
+	}
+	fmt.Printf("[Brain] %s recovered using fallback provider %s\n", operation, fallbackProvider.Name())
+	return content, nil
+}
+
 func (b *Brain) GetSearchProvider() ModelProvider {
 	pref := os.Getenv("DEFAULT_SEARCH_MODEL")
 	if pref == "" {
@@ -129,9 +215,7 @@ func (b *Brain) GetSearchProvider() ModelProvider {
 
 	// Safe Fallback: if the preferred provider is missing, use any available provider.
 	if provider == nil {
-		b.routerMu.RLock()
-		defer b.routerMu.RUnlock()
-		for _, p := range b.ModelRouter {
+		if p, ok := b.firstAvailableProvider(); ok {
 			fmt.Printf("[Brain Warning] Preferred search provider '%s' unavailable. Using '%s' as generic search fallback.\n", pref, p.Name())
 			return p
 		}
@@ -245,8 +329,6 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "complete", "Crawl accepted"))
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "plan_queries", "running", "Generating search angles"))
 
-	b.Model.ResponseMIMEType = "application/json"
-
 	currentDate := time.Now().Format("Monday, January 2, 2006")
 	provider := b.GetSearchProvider()
 	if provider == nil {
@@ -267,22 +349,18 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	if progress != nil {
 		progress.StartSpan("plan_queries_llm", "plan_queries", "Search query planning", "LLM query decomposition")
 	}
-	if err := provider.GenerateJSON(planCtx, fullPrompt, &subQ); err != nil {
-		fmt.Printf("[Brain Error] Selected provider %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+	if err := b.generateJSONWithFallback(planCtx, "query planning", provider, fullPrompt, &subQ); err != nil {
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
-				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+				Payload: fmt.Sprintf("Provider %s failed while planning search queries.", provider.Name()),
 			})
 		}
-		fallbackProvider, ok := b.GetRouter("gemini")
-		if !ok || fallbackProvider.GenerateJSON(planCtx, fullPrompt, &subQ) != nil {
-			if progress != nil {
-				progress.CompleteSpan("plan_queries_llm", "query planning failed")
-				b.RecordPipelineTokenUsage(progress, planScopeID)
-			}
-			return "", fmt.Errorf("failed to generate sub-queries format (even after fallback): %w", err)
+		if progress != nil {
+			progress.CompleteSpan("plan_queries_llm", "query planning failed")
+			b.RecordPipelineTokenUsage(progress, planScopeID)
 		}
+		return "", fmt.Errorf("failed to generate sub-queries format: %w", err)
 	}
 	if progress != nil {
 		progress.CompleteSpan("plan_queries_llm", "generated search queries")
@@ -470,27 +548,19 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	if progress != nil {
 		progress.StartSpan("final_report_llm", "final_report", "Final report LLM", "generating final report")
 	}
-	finalSynthesis, err := provider.GenerateContent(finalCtx, synthesisPrompt)
+	finalSynthesis, err := b.generateContentWithFallback(finalCtx, "final report", provider, synthesisPrompt)
 	if err != nil {
-		fmt.Printf("[Brain Error] Selected provider %s failed synthesis: %v. Attempting Gemini fallback...\n", provider.Name(), err)
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
-				Payload: fmt.Sprintf("Provider %s failed synthesis, falling back to Gemini...", provider.Name()),
+				Payload: fmt.Sprintf("Provider %s failed while generating final report.", provider.Name()),
 			})
 		}
-		fallbackProvider, ok := b.GetRouter("gemini")
-		if !ok {
-			return "", fmt.Errorf("failed to generate final synthesis and no fallback available: %w", err)
+		if progress != nil {
+			progress.CompleteSpan("final_report_llm", "final report failed")
+			b.RecordPipelineTokenUsage(progress, finalScopeID)
 		}
-		finalSynthesis, err = fallbackProvider.GenerateContent(finalCtx, synthesisPrompt)
-		if err != nil {
-			if progress != nil {
-				progress.CompleteSpan("final_report_llm", "final report failed")
-				b.RecordPipelineTokenUsage(progress, finalScopeID)
-			}
-			return "", fmt.Errorf("fallback failed to generate final synthesis: %w", err)
-		}
+		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
 	}
 	if progress != nil {
 		progress.CompleteSpan("final_report_llm", "generated final report")
@@ -716,22 +786,21 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 	contextText := strings.Join(b.Abdomen.MemoryContext, "\n\n")
 	b.Abdomen.Mutex.RUnlock()
 
-	b.Model.ResponseMIMEType = "text/plain"
-
 	currentDate := time.Now().Format("Monday, January 2, 2006")
-	b.Model.SystemInstruction = genai.NewUserContent(genai.Text(
-		fmt.Sprintf("You are an expert intelligence analyst compiling a final report. Today's current date is %s. Contextualize all findings chronologically based on this date.", currentDate),
-	))
-
+	provider := b.GetSearchProvider()
+	if provider == nil {
+		return "", fmt.Errorf("no model providers available")
+	}
+	synthesisInstruction := fmt.Sprintf("You are an expert intelligence analyst compiling a final report. Today's current date is %s. Contextualize all findings chronologically based on this date.", currentDate)
 	synthesisPrompt := fmt.Sprintf(
-		"Based on the following facts gathered from local files, provide a comprehensive summary of the documents' contents.\n\nLocal Files: %s\n\nGathered Facts:\n%s",
-		strings.Join(filePaths, ", "), contextText,
+		"%s\n\nBased on the following facts gathered from local files, provide a comprehensive summary of the documents' contents.\n\nLocal Files: %s\n\nGathered Facts:\n%s",
+		synthesisInstruction, strings.Join(filePaths, ", "), contextText,
 	)
 
 	if progress != nil {
 		progress.StartSpan("local_final_report_llm", "final_report", "Local final report LLM", "generating local report")
 	}
-	finalResp, err := b.Model.GenerateContent(ctx, genai.Text(synthesisPrompt))
+	finalSynthesis, err := b.generateContentWithFallback(ctx, "local final report", provider, synthesisPrompt)
 	if err != nil {
 		if progress != nil {
 			progress.CompleteSpan("local_final_report_llm", "local report failed")
@@ -739,14 +808,13 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
 	}
 
-	finalSynthesis := fmt.Sprintf("%v", finalResp.Candidates[0].Content.Parts[0])
 	if progress != nil {
 		promptTokens := estimateTextTokens(synthesisPrompt)
 		completionTokens := estimateTextTokens(finalSynthesis)
 		progress.CompleteSpan("local_final_report_llm", "generated local report")
 		progress.RecordTokenUsage(models.PipelineProfileTokenUsage{
 			Operation:          "final_report",
-			Provider:           "gemini",
+			Provider:           provider.Name(),
 			CallCount:          1,
 			EstimatedCallCount: 1,
 			PromptTokens:       promptTokens,
@@ -873,19 +941,14 @@ func (b *Brain) summarizeNode(ctx context.Context, content string) (string, stri
 		Title   string `json:"title"`
 		Summary string `json:"summary"`
 	}
-	if err := provider.GenerateJSON(ctx, fullPrompt, &res); err != nil {
-		fmt.Printf("[Brain Error] summarizeNode provider %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+	if err := b.generateJSONWithFallback(ctx, "node summary", provider, fullPrompt, &res); err != nil {
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
-				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+				Payload: fmt.Sprintf("Provider %s failed while summarizing a node.", provider.Name()),
 			})
 		}
-		fallbackProvider, ok := b.GetRouter("gemini")
-		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &res) != nil {
-			fmt.Printf("[Brain Error] summarizeNode fallback failed or disabled\n")
-			return "", "", err
-		}
+		return "", "", err
 	}
 	return res.Title, res.Summary, nil
 }
@@ -929,19 +992,14 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 	fullPrompt := systemInstruction + "\n\nEvidence Nodes:\n" + combinedText
 
 	var connections []models.BoardConnection
-	if err := provider.GenerateJSON(ctx, fullPrompt, &connections); err != nil {
-		fmt.Printf("[Brain Error] Connection analysis %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+	if err := b.generateJSONWithFallback(ctx, "connection analysis", provider, fullPrompt, &connections); err != nil {
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
-				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+				Payload: fmt.Sprintf("Provider %s failed while analyzing connections.", provider.Name()),
 			})
 		}
-		fallbackProvider, ok := b.GetRouter("gemini")
-		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &connections) != nil {
-			fmt.Printf("[Brain Error] Connection analysis fallback failed\n")
-			return nil, err
-		}
+		return nil, err
 	}
 
 	for i := range connections {
@@ -1089,23 +1147,12 @@ func (b *Brain) runPersonaAnalysisWithPrompt(ctx context.Context, persona Person
 	// Get the appropriate model provider
 	provider, ok := b.GetRouter(persona.ModelPref)
 	if !ok {
-		// Fall back to gemini if preferred model not available
-		provider, _ = b.GetRouter("gemini")
-	}
-
-	// Safe Fallback: If gemini is also missing, pick any available provider
-	if provider == nil {
-		b.routerMu.RLock()
-		for _, p := range b.ModelRouter {
-			provider = p
-			break
-		}
-		b.routerMu.RUnlock()
-
-		if provider == nil {
+		var found bool
+		provider, found = b.firstAvailableProvider()
+		if !found {
 			return PersonaInsight{PersonaName: persona.Name, Confidence: 0}, fmt.Errorf("no model providers available to run persona analysis")
 		}
-		fmt.Printf("[Brain Warning] Preferred model '%s' and 'gemini' unavailable. Using '%s' for Persona '%s'\n", persona.ModelPref, provider.Name(), persona.Name)
+		fmt.Printf("[Brain Warning] Preferred model '%s' unavailable. Using '%s' for Persona '%s'\n", persona.ModelPref, provider.Name(), persona.Name)
 	}
 
 	fmt.Printf("[Brain] Running persona %s with model %s\n", persona.Name, provider.Name())
@@ -1183,19 +1230,14 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 	fullPrompt := systemInstruction + "\n\nInsights Summary to Synthesize:\n" + insightsSummary
 
 	var connections []models.BoardConnection
-	if err := provider.GenerateJSON(ctx, fullPrompt, &connections); err != nil {
-		fmt.Printf("[Brain Error] Persona synthesis %s failed: %v. Attempting Gemini fallback...\n", provider.Name(), err)
+	if err := b.generateJSONWithFallback(ctx, "persona synthesis", provider, fullPrompt, &connections); err != nil {
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
-				Payload: fmt.Sprintf("Provider %s failed, falling back to active provider...", provider.Name()),
+				Payload: fmt.Sprintf("Provider %s failed while synthesizing persona findings.", provider.Name()),
 			})
 		}
-		fallbackProvider, ok := b.GetRouter("gemini")
-		if !ok || fallbackProvider.GenerateJSON(ctx, fullPrompt, &connections) != nil {
-			fmt.Printf("[Brain Error] Persona synthesis fallback failed\n")
-			return nil, err
-		}
+		return nil, err
 	}
 
 	for i := range connections {

@@ -134,6 +134,16 @@ interface AutosaveWarning {
   timestamp: number
 }
 
+const formatAutosaveWarningMessage = (warning: AutosaveWarning) => {
+  if (/quota/i.test(warning.errorName || '')) {
+    return 'Storage quota blocked board persistence'
+  }
+  if (/backend|network|fetch/i.test(warning.errorName || '')) {
+    return 'Backend persistence unavailable; using browser fallback'
+  }
+  return 'Board persistence needs attention'
+}
+
 interface ConfidenceCarrier {
   confidence?: number | null
 }
@@ -1997,7 +2007,7 @@ function App() {
           <div className="forensic-autosave-warning forensic-status-segment ml-4 flex shrink-0 items-center gap-2 pl-4 text-[10px]">
             <AlertTriangle size={14} />
             <span className="font-bold uppercase tracking-[0.18em]">Autosave warning</span>
-            <span>Storage quota blocked board persistence</span>
+            <span>{formatAutosaveWarningMessage(autosaveWarning)}</span>
           </div>
         )}
 
