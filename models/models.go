@@ -99,6 +99,8 @@ type MemoryNode struct {
 
 // BoardConnection represents an edge between two nodes with its reasoning
 type BoardConnection struct {
+	VaultID            string   `json:"vaultId,omitempty"`
+	RunID              string   `json:"runId,omitempty"`
 	Source             string   `json:"source"`
 	Target             string   `json:"target"`
 	Tag                string   `json:"tag"`       // Short relationship tag (e.g., "INTEGRATION")

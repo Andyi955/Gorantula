@@ -487,6 +487,23 @@ func filterNodesByIDs(nodes []models.MemoryNode, nodeIDs []string) []models.Memo
 	return filtered
 }
 
+func annotateConnectionsForVault(connections []models.BoardConnection, vaultID, runID string) []models.BoardConnection {
+	annotated := make([]models.BoardConnection, len(connections))
+	copy(annotated, connections)
+	for idx := range annotated {
+		annotated[idx].VaultID = strings.TrimSpace(vaultID)
+		annotated[idx].RunID = strings.TrimSpace(runID)
+	}
+	return annotated
+}
+
+func relationshipDebugSummary(debugRun models.RelationshipDebugRun) string {
+	if len(debugRun.Notes) == 0 {
+		return "none"
+	}
+	return strings.Join(debugRun.Notes, "; ")
+}
+
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipelineRunMetadata) {
 	go func() {
 		tracker := getPipelineTracker(meta, models.DefaultPipelineProgressSteps())
@@ -522,10 +539,19 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			if fallbackErr != nil {
 				broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + fallbackErr.Error()})
 			} else {
-				validatedConnections, _ := br.ValidateFallbackConnections(vaultID, nodes, connections)
+				validatedConnections, debugRun := br.ValidateFallbackConnections(vaultID, nodes, connections)
 				if isIncremental {
 					validatedConnections = filterConnectionsByPendingNodeIDs(validatedConnections, pendingNodeIDs)
 				}
+				validatedConnections = annotateConnectionsForVault(validatedConnections, vaultID, meta.RunID)
+				log.Printf("[WS] Fallback relationship workflow vault=%s run=%s nodes=%d candidates=%d accepted=%d notes=%s",
+					vaultID,
+					meta.RunID,
+					len(nodes),
+					len(debugRun.Candidates),
+					len(validatedConnections),
+					relationshipDebugSummary(debugRun),
+				)
 				broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: validatedConnections})
 			}
 			return
@@ -556,12 +582,13 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Synthesizing persona insights..."})
 
 		var connections []models.BoardConnection
+		var debugRun models.RelationshipDebugRun
 		relationshipCtx, relationshipScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-relationships", "relationship_synthesis")
 		tracker.StartSpan("relationship_generation", "relationship_synthesis", "Relationship synthesis", fmt.Sprintf("linking %d nodes", len(nodes)))
 		if isIncremental {
-			connections, _, err = br.RunIncrementalRelationshipWorkflow(relationshipCtx, vaultID, nodes, pendingNodeIDs, insights)
+			connections, debugRun, err = br.RunIncrementalRelationshipWorkflow(relationshipCtx, vaultID, nodes, pendingNodeIDs, insights)
 		} else {
-			connections, _, err = br.RunRelationshipWorkflow(relationshipCtx, vaultID, nodes, insights)
+			connections, debugRun, err = br.RunRelationshipWorkflow(relationshipCtx, vaultID, nodes, insights)
 		}
 		tracker.CompleteSpan("relationship_generation", fmt.Sprintf("found %d relationships", len(connections)))
 		br.RecordPipelineTokenUsage(tracker, relationshipScopeID)
@@ -573,8 +600,19 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
 			return
 		}
+		connections = annotateConnectionsForVault(connections, vaultID, meta.RunID)
 
-		log.Printf("[WS] Analysis complete. Broadcasting %d connections.", len(connections))
+		log.Printf("[WS] Relationship workflow complete vault=%s run=%s incremental=%t nodes=%d pending=%d candidates=%d accepted=%d notes=%s",
+			vaultID,
+			meta.RunID,
+			isIncremental,
+			len(nodes),
+			len(pendingNodeIDs),
+			len(debugRun.Candidates),
+			len(connections),
+			relationshipDebugSummary(debugRun),
+		)
+		log.Printf("[WS] Analysis complete. Broadcasting %d connections for vault=%s run=%s.", len(connections), vaultID, meta.RunID)
 		broadcast(tracker.Complete("relationship_synthesis", fmt.Sprintf("Found %d relationships", len(connections))))
 		tracker.RecordCounter("relationships", len(connections))
 		broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})

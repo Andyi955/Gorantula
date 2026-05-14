@@ -930,6 +930,66 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('ignores relationship results scoped to another investigation', async () => {
+    const user = userEvent.setup()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await user.click(screen.getByRole('button', { name: /connect the dots/i }))
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        vaultId: 'investigation-2',
+        source: 'node-a',
+        target: 'node-b',
+        tag: 'WRONG BOARD',
+        reasoning: 'This belongs to another investigation.',
+      },
+    ])
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.edges || []).toEqual([])
+    })
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        vaultId: 'investigation-1',
+        source: 'node-a',
+        target: 'node-b',
+        tag: 'RIGHT BOARD',
+        reasoning: 'This belongs to the active investigation.',
+      },
+    ])
+
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'e-node-a-node-b-RIGHT BOARD' }),
+        ]),
+      )
+      expect(persisted.edges).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'e-node-a-node-b-WRONG BOARD' }),
+        ]),
+      )
+    })
+  })
+
   it('replaces only AI edges touching pending nodes during incremental integration', async () => {
     const user = userEvent.setup()
     const socket = new MockSocket()
