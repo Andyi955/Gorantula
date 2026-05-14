@@ -29,7 +29,15 @@ import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
 import { getLayoutedElements } from './detectiveBoardLayout';
-import { parsePersistedBoardState, persistBoardStateForInvestigation, type PersistedBoardState } from '../utils/hierarchicalCanvas';
+import { type PersistedBoardState } from '../utils/hierarchicalCanvas';
+import {
+    getCachedBoardStateForInvestigation,
+    getCachedInvestigations,
+    getCachedVaultResultForInvestigation,
+    loadBoardStateForInvestigation,
+    saveBoardStateForInvestigation,
+    saveVaultResultForInvestigation,
+} from '../utils/investigationPersistence';
 import { readImageScrapingPreference } from '../utils/searchPreferences';
 import {
     createTagStyle,
@@ -42,7 +50,6 @@ import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/
 import {
     BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
     BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
-    BOARD_WORKSPACE_STATE_UPDATED_EVENT,
     emitBoardWorkspaceEvent,
 } from '../utils/boardWorkspaceEvents';
 
@@ -1650,77 +1657,97 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         if (!investigationId || loadedInvestigationId === investigationId) return;
 
         console.debug('[DetectiveBoard] Loading investigation:', investigationId);
-        const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
-        if (savedState) {
-            const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
-            const savedNodes = savedState.nodes.filter((node: Node) => node.data?.nodeKind !== 'discovery');
-            const savedEdges = savedState.edges.filter((edge: Edge) => edge.data?.generatedBy !== 'discovery');
-            const savedNodeIdSet = new Set(savedNodes.map((node: Node) => node.id));
-            const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
-                .filter((nodeId) => savedNodeIdSet.has(nodeId));
-            const restoredNodes = savedNodes.map((n: Node) => {
-                const autoFrame = calculateNodeFrame(
-                    n.data?.summary || '',
-                    n.data?.fullText || '',
-                    Boolean(n.data?.expanded),
-                    nodeHasImages(n.data?.images)
-                );
-                const persistedWidth = typeof n.style?.width === 'number' ? n.style.width : 288;
-                const persistedHeight = typeof n.style?.height === 'number' ? n.style.height : 192;
-                const normalizedFrame = normalizeNodeFrame(
-                    Math.max(persistedWidth, autoFrame.width),
-                    Math.max(persistedHeight, autoFrame.height)
-                );
+        let cancelled = false;
 
-                return {
-                    ...n,
-                    style: {
-                        ...n.style,
-                        ...normalizedFrame,
-                    },
-                data: {
-                    ...n.data,
-                    onReadFull: () => setSelectedContent(n.data.fullText),
-                    onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
-                    onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
-                    onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
-                    onDelete: (id: string) => handleDeleteNode(id),
-                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
-                    onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
-                    onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
-                    onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
-                    onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
-                    isDeepDiveSource: !!n.data?.isDeepDiveSource,
-                    isRecentlyImported: false,
-                    boardMode: savedMode,
-                }
-            }});
-            const restoredEdges = savedEdges.map((e: Edge) => ({
-                ...e,
-                type: 'customEdge',
-                updatable: true,
-                interactionWidth: 20,
-                data: { ...e.data, snapEnabled: snapConnectionLabels, boardMode: savedMode }
-            }));
-
-            setBoardMode(savedMode);
-            if (savedMode === 'strict-grid') {
-                syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
-            } else {
-                const { edges: finalEdges, handledNodes } = distributeEdges(restoredEdges, restoredNodes);
-                setNodes(handledNodes);
-                setEdges(finalEdges);
+        const applyBoardState = (savedState: PersistedBoardState | null) => {
+            if (cancelled) {
+                return;
             }
-            setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
-            setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
-        } else {
-            setBoardMode('strict-grid');
-            setNodes([]);
-            setEdges([]);
-            setPendingIntegrationNodeIds([]);
-            setHasConnectedDots(false);
-        }
-        setLoadedInvestigationId(investigationId);
+            if (savedState) {
+                const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
+                const savedNodes = savedState.nodes.filter((node: Node) => node.data?.nodeKind !== 'discovery');
+                const savedEdges = savedState.edges.filter((edge: Edge) => edge.data?.generatedBy !== 'discovery');
+                const savedNodeIdSet = new Set(savedNodes.map((node: Node) => node.id));
+                const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
+                    .filter((nodeId) => savedNodeIdSet.has(nodeId));
+                const restoredNodes = savedNodes.map((n: Node) => {
+                    const autoFrame = calculateNodeFrame(
+                        n.data?.summary || '',
+                        n.data?.fullText || '',
+                        Boolean(n.data?.expanded),
+                        nodeHasImages(n.data?.images)
+                    );
+                    const persistedWidth = typeof n.style?.width === 'number' ? n.style.width : 288;
+                    const persistedHeight = typeof n.style?.height === 'number' ? n.style.height : 192;
+                    const normalizedFrame = normalizeNodeFrame(
+                        Math.max(persistedWidth, autoFrame.width),
+                        Math.max(persistedHeight, autoFrame.height)
+                    );
+
+                    return {
+                        ...n,
+                        style: {
+                            ...n.style,
+                            ...normalizedFrame,
+                        },
+                        data: {
+                            ...n.data,
+                            onReadFull: () => setSelectedContent(n.data.fullText),
+                            onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                            onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                            onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                            onDelete: (id: string) => handleDeleteNode(id),
+                            onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                            onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                            onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                            onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                            onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                            isDeepDiveSource: !!n.data?.isDeepDiveSource,
+                            isRecentlyImported: false,
+                            boardMode: savedMode,
+                        }
+                    };
+                });
+                const restoredEdges = savedEdges.map((e: Edge) => ({
+                    ...e,
+                    type: 'customEdge',
+                    updatable: true,
+                    interactionWidth: 20,
+                    data: { ...e.data, snapEnabled: snapConnectionLabels, boardMode: savedMode }
+                }));
+
+                setBoardMode(savedMode);
+                if (savedMode === 'strict-grid') {
+                    syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
+                } else {
+                    const { edges: finalEdges, handledNodes } = distributeEdges(restoredEdges, restoredNodes);
+                    setNodes(handledNodes);
+                    setEdges(finalEdges);
+                }
+                setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
+                setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
+            } else {
+                setBoardMode('strict-grid');
+                setNodes([]);
+                setEdges([]);
+                setPendingIntegrationNodeIds([]);
+                setHasConnectedDots(false);
+            }
+            setLoadedInvestigationId(investigationId);
+        };
+
+        const immediateState = getCachedBoardStateForInvestigation(investigationId);
+        applyBoardState(immediateState);
+
+        void loadBoardStateForInvestigation(investigationId).then((backendState) => {
+            if (backendState && backendState !== immediateState) {
+                applyBoardState(backendState);
+            }
+        });
+
+        return () => {
+            cancelled = true;
+        };
     }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
 
     useEffect(() => {
@@ -1733,15 +1760,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         persistTimerRef.current = window.setTimeout(() => {
-            const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
-            persistBoardStateForInvestigation(investigationId, {
+            const existingState = getCachedBoardStateForInvestigation(investigationId);
+            void saveBoardStateForInvestigation(investigationId, {
                 mode: boardMode,
                 nodes: sanitizeNodesForPersistence(nodes),
                 edges,
                 pendingIntegrationNodeIds,
                 synthesisAlerts: existingState?.synthesisAlerts || [],
             });
-            emitBoardWorkspaceEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT);
             persistTimerRef.current = null;
         }, 250);
 
@@ -1761,15 +1787,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
             persistTimerRef.current = null;
         }
 
-        const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
-        persistBoardStateForInvestigation(investigationId, {
+        const existingState = getCachedBoardStateForInvestigation(investigationId);
+        void saveBoardStateForInvestigation(investigationId, {
             mode: boardMode,
             nodes: sanitizeNodesForPersistence(nodesRef.current),
             edges: edgesRef.current,
             pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current,
             synthesisAlerts: existingState?.synthesisAlerts || [],
         });
-        emitBoardWorkspaceEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT);
     }, [boardMode, investigationId, loadedInvestigationId]);
 
     useEffect(() => () => {
@@ -2252,7 +2277,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 const { node, vaultId, append } = msg.payload;
                 const frame = calculateNodeFrame(node.summary || '', node.fullText || '', false, nodeHasImages(node.images));
                 const targetBoardMode = vaultId && vaultId !== investigationId
-                    ? (parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`))?.mode === 'legacy' ? 'legacy' : 'strict-grid')
+                    ? (getCachedBoardStateForInvestigation(vaultId)?.mode === 'legacy' ? 'legacy' : 'strict-grid')
                     : boardMode;
                 const isImported = isImportedEvidenceNode(node);
 
@@ -2287,7 +2312,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 // Check if this node is meant for a different investigation (Pull Node flow)
                 if (vaultId && vaultId !== investigationId) {
                     console.debug(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
-                    const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
+                    const savedState = getCachedBoardStateForInvestigation(vaultId);
                     let vaultData: PersistedBoardState = savedState || { mode: targetBoardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
 
                     const nodeExists = (vaultData.nodes || []).some((n: any) => n.id === node.id);
@@ -2298,8 +2323,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                             const currentIds = vaultData.pendingIntegrationNodeIds || [];
                             vaultData.pendingIntegrationNodeIds = currentIds.includes(node.id) ? currentIds : [...currentIds, node.id];
                         }
-                        const existingState = parsePersistedBoardState(localStorage.getItem(`inv_data_${vaultId}`));
-                        persistBoardStateForInvestigation(vaultId, {
+                        const existingState = getCachedBoardStateForInvestigation(vaultId);
+                        void saveBoardStateForInvestigation(vaultId, {
                             ...vaultData,
                             synthesisAlerts: existingState?.synthesisAlerts || [],
                         });
@@ -2388,7 +2413,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 setIsGathering(false);
                 setDeepDiveTopic(null);
                 if (vaultId) {
-                    localStorage.setItem(`vault_result_${vaultId}`, JSON.stringify(msg.payload));
+                    void saveVaultResultForInvestigation(vaultId, msg.payload);
                 }
                 if (isAppendResult && vaultId === investigationId) {
                     return;
@@ -2669,22 +2694,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         } else if (type === 'svg') {
             await exportUtils.exportAsSvg(boardElementId);
         } else if (type === 'pdf') {
-            const currentInv = JSON.parse(localStorage.getItem('gorantula_investigations') || '[]')
+            const currentInv = getCachedInvestigations()
                 .find((i: any) => i.id === investigationId);
 
-            const saved = localStorage.getItem(`inv_data_${investigationId}`);
-            let nodesData = [];
+            const saved = investigationId ? getCachedBoardStateForInvestigation(investigationId) : null;
+            let nodesData: Array<{ title: string; summary: string; sourceURL: string }> = [];
             if (saved) {
-                const { nodes: savedNodes } = JSON.parse(saved);
+                const { nodes: savedNodes } = saved;
                 nodesData = savedNodes.map((n: any) => ({
-                    title: n.data.title,
-                    summary: n.data.summary,
-                    sourceURL: n.data.sourceURL
+                    title: String(n.data?.title || ''),
+                    summary: String(n.data?.summary || ''),
+                    sourceURL: String(n.data?.sourceURL || '')
                 }));
             }
 
-            const vaultSaved = localStorage.getItem(`vault_result_${investigationId}`);
-            const finalSynthesis = vaultSaved ? JSON.parse(vaultSaved).result : "No synthesis available for this investigation.";
+            const vaultSaved = investigationId ? getCachedVaultResultForInvestigation(investigationId) : null;
+            const finalSynthesis = typeof vaultSaved?.result === 'string' ? vaultSaved.result : "No synthesis available for this investigation.";
 
             await exportUtils.exportAsPdf({
                 topic: currentInv?.topic || 'Unknown Investigation',

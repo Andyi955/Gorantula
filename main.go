@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -116,6 +118,10 @@ func forgetPipelineTracker(runID string) {
 
 func pipelineProfileStore() *models.PipelineProfileStore {
 	return models.NewPipelineProfileStore(filepath.Join("abdomen_vault", "pipeline_runs"), pipelineProfileRetention)
+}
+
+func investigationStore() *models.InvestigationStore {
+	return models.NewInvestigationStore("abdomen_vault")
 }
 
 func saveAndBroadcastPipelineProfile(tracker *models.PipelineProgressTracker) {
@@ -789,6 +795,180 @@ func handlePipelineRuns(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(profile)
 }
 
+func handleInvestigationAPI(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,PUT,DELETE,OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	path := strings.Trim(r.URL.Path, "/")
+	if path == "api/investigations" {
+		handleInvestigationCatalog(w, r)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	if len(parts) == 6 &&
+		parts[0] == "api" &&
+		parts[1] == "investigations" &&
+		parts[3] == "nodes" &&
+		parts[5] == "images" {
+		if !models.ValidInvestigationID(strings.TrimSpace(parts[2])) {
+			http.Error(w, "invalid investigation id", http.StatusBadRequest)
+			return
+		}
+		handleNodeImageUpload(w, r, br)
+		return
+	}
+
+	if len(parts) < 3 || parts[0] != "api" || parts[1] != "investigations" {
+		http.NotFound(w, r)
+		return
+	}
+
+	investigationID := strings.TrimSpace(parts[2])
+	if !models.ValidInvestigationID(investigationID) {
+		http.Error(w, "invalid investigation id", http.StatusBadRequest)
+		return
+	}
+
+	if len(parts) == 3 {
+		handleInvestigationMetadata(w, r, investigationID)
+		return
+	}
+
+	if len(parts) != 4 {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch parts[3] {
+	case "board":
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationBoardFilename, json.RawMessage(`{"mode":"strict-grid","nodes":[],"edges":[]}`))
+	case "result":
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationResultFilename, json.RawMessage(`{}`))
+	case "discoveries":
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationDiscoveryFilename, json.RawMessage(`[]`))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func handleInvestigationCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	records, err := investigationStore().List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(records)
+}
+
+func handleInvestigationMetadata(w http.ResponseWriter, r *http.Request, investigationID string) {
+	store := investigationStore()
+
+	switch r.Method {
+	case http.MethodGet:
+		record, err := store.LoadMetadata(investigationID)
+		if err != nil {
+			if errors.Is(err, models.ErrInvestigationNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(record)
+	case http.MethodPut:
+		var record models.InvestigationRecord
+		if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+			http.Error(w, "invalid metadata json", http.StatusBadRequest)
+			return
+		}
+		if record.ID == "" {
+			record.ID = investigationID
+		}
+		if record.ID != investigationID {
+			http.Error(w, "metadata id does not match route", http.StatusBadRequest)
+			return
+		}
+		if err := store.SaveMetadata(record); err != nil {
+			if errors.Is(err, models.ErrInvalidInvestigationID) {
+				http.Error(w, "invalid investigation id", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		normalized, _ := store.LoadMetadata(investigationID)
+		json.NewEncoder(w).Encode(normalized)
+	case http.MethodDelete:
+		if err := store.Delete(investigationID); err != nil {
+			if errors.Is(err, models.ErrInvalidInvestigationID) {
+				http.Error(w, "invalid investigation id", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleInvestigationJSON(w http.ResponseWriter, r *http.Request, investigationID, filename string, emptyPayload json.RawMessage) {
+	store := investigationStore()
+
+	switch r.Method {
+	case http.MethodGet:
+		payload, err := store.LoadJSON(investigationID, filename)
+		if err != nil {
+			if errors.Is(err, models.ErrInvestigationNotFound) {
+				w.Write(emptyPayload)
+				return
+			}
+			if errors.Is(err, models.ErrInvalidInvestigationID) {
+				http.Error(w, "invalid investigation id", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Write(payload)
+	case http.MethodPut:
+		body, err := io.ReadAll(io.LimitReader(r.Body, 25<<20))
+		if err != nil {
+			http.Error(w, "failed to read payload", http.StatusBadRequest)
+			return
+		}
+		if len(body) == 0 || !json.Valid(body) {
+			http.Error(w, "payload must be valid json", http.StatusBadRequest)
+			return
+		}
+		if err := store.SaveJSON(investigationID, filename, body); err != nil {
+			if errors.Is(err, models.ErrInvalidInvestigationID) {
+				http.Error(w, "invalid investigation id", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Write(body)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func main() {
 	_ = godotenv.Load() // Loads .env if it exists
 
@@ -806,12 +986,11 @@ func main() {
 	http.HandleFunc("/vault-assets/", handleVaultAsset)
 	http.HandleFunc("/api/pipeline-runs", handlePipelineRuns)
 	http.HandleFunc("/api/pipeline-runs/", handlePipelineRuns)
+	http.HandleFunc("/api/investigations", func(w http.ResponseWriter, r *http.Request) {
+		handleInvestigationAPI(w, r, br)
+	})
 	http.HandleFunc("/api/investigations/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/images") {
-			handleNodeImageUpload(w, r, br)
-			return
-		}
-		http.NotFound(w, r)
+		handleInvestigationAPI(w, r, br)
 	})
 
 	http.HandleFunc("/api/pick-files", func(w http.ResponseWriter, r *http.Request) {

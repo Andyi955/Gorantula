@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Clock, AlertTriangle, ArrowRight, ZoomIn, ZoomOut } from 'lucide-react';
+import { loadBoardStateForInvestigation } from '../utils/investigationPersistence';
 
 interface TimelineEvent {
     timestamp: string;
@@ -93,14 +94,14 @@ const TimelineView: React.FC<TimelineViewProps> = ({ investigationId, onNavigate
             return;
         }
 
-        const saved = localStorage.getItem(`inv_data_${investigationId}`);
-        if (!saved) {
-            setEvents([]);
-            return;
-        }
-
-        try {
-            const { nodes } = JSON.parse(saved);
+        let cancelled = false;
+        void (async () => {
+            try {
+            const savedState = await loadBoardStateForInvestigation(investigationId);
+            if (cancelled) {
+                return;
+            }
+            const nodes = savedState?.nodes || [];
             const extractedEvents: ParsedEvent[] = [];
 
             nodes.forEach((node: any) => {
@@ -140,10 +141,17 @@ const TimelineView: React.FC<TimelineViewProps> = ({ investigationId, onNavigate
             );
 
             setEvents(uniqueEvents);
-        } catch (err) {
-            console.error('[TimelineView] Error parsing investigation data:', err);
-            setEvents([]);
-        }
+            } catch (err) {
+                console.error('[TimelineView] Error parsing investigation data:', err);
+                if (!cancelled) {
+                    setEvents([]);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
     }, [investigationId]);
 
     useEffect(() => {

@@ -1,7 +1,12 @@
 import type { Edge, Node } from 'reactflow'
 import { calculateNodeFrame } from '../components/boardGeometry'
-import { persistBoardStateForInvestigation } from './hierarchicalCanvas'
+import { persistBoardStateForInvestigation, type PersistedBoardState } from './hierarchicalCanvas'
 import { createRootInvestigation, INVESTIGATIONS_STORAGE_KEY, normalizeInvestigations } from './investigations'
+import {
+  deleteInvestigationPersistence,
+  saveBoardStateForInvestigation,
+  saveInvestigations,
+} from './investigationPersistence'
 
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
 
@@ -116,6 +121,7 @@ export const clearBrowserQaData = () => {
 
   writeStoredInvestigations(remainingInvestigations)
   BROWSER_QA_INVESTIGATION_IDS.forEach((investigationId) => {
+    void deleteInvestigationPersistence(investigationId).catch(() => undefined)
     localStorage.removeItem(`inv_data_${investigationId}`)
     localStorage.removeItem(`vault_result_${investigationId}`)
   })
@@ -130,6 +136,7 @@ export const seedBrowserQaData = (): BrowserQaSeedResult => {
   const targetInvestigation = createRootInvestigation(BROWSER_QA_TARGET_INVESTIGATION_ID, 'QA: Imported Target')
 
   writeStoredInvestigations([targetInvestigation, sourceInvestigation, ...preservedInvestigations])
+  void saveInvestigations([targetInvestigation, sourceInvestigation, ...preservedInvestigations]).catch(() => undefined)
 
   const sourceNodes = [
     createEvidenceNode(
@@ -168,21 +175,25 @@ export const seedBrowserQaData = (): BrowserQaSeedResult => {
     ),
   ]
 
-  persistBoardStateForInvestigation(sourceInvestigation.id, {
+  const sourceBoard: PersistedBoardState = {
     mode: 'strict-grid',
     nodes: sourceNodes,
     edges: sourceEdges,
     pendingIntegrationNodeIds: [],
     synthesisAlerts: [],
-  })
+  }
+  persistBoardStateForInvestigation(sourceInvestigation.id, sourceBoard)
+  void saveBoardStateForInvestigation(sourceInvestigation.id, sourceBoard)
 
-  persistBoardStateForInvestigation(targetInvestigation.id, {
+  const targetBoard: PersistedBoardState = {
     mode: 'strict-grid',
     nodes: targetNodes,
     edges: [],
     pendingIntegrationNodeIds: [],
     synthesisAlerts: [],
-  })
+  }
+  persistBoardStateForInvestigation(targetInvestigation.id, targetBoard)
+  void saveBoardStateForInvestigation(targetInvestigation.id, targetBoard)
 
   return {
     focusInvestigationId: targetInvestigation.id,

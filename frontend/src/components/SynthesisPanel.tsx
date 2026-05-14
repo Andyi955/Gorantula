@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
-import { parsePersistedBoardState, persistBoardStateForInvestigation, type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
+import { type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
 import { BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT } from '../utils/boardWorkspaceEvents';
+import {
+    getCachedBoardStateForInvestigation,
+    loadBoardStateForInvestigation,
+    saveBoardStateForInvestigation,
+} from '../utils/investigationPersistence';
 
 interface NodeContextPayload {
     vaultId: string;
@@ -110,12 +115,12 @@ const upsertAlertBucket = (alerts: SynthesisAlert[], incomingAlert: SynthesisAle
 };
 
 const persistInvestigationAlerts = (investigationId: string, alerts: SynthesisAlert[]) => {
-    const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${investigationId}`));
+    const savedState = getCachedBoardStateForInvestigation(investigationId);
     if (!savedState) {
         return;
     }
 
-    persistBoardStateForInvestigation(investigationId, {
+    void saveBoardStateForInvestigation(investigationId, {
         ...savedState,
         synthesisAlerts: alerts as PersistedSynthesisAlert[],
     });
@@ -148,10 +153,10 @@ const persistAlertBuckets = (buckets: AlertBuckets): AlertBuckets => {
     const pruned = pruneBucketsForStorage(buckets);
     try {
         localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(pruned));
-        return buckets;
+        return pruned;
     } catch (error) {
-        console.warn('[SynthesisPanel] Failed to persist synthesis alerts; continuing in-memory only.', error);
-        return buckets;
+        console.warn('[SynthesisPanel] Failed to persist synthesis alert cache; continuing in-memory only.', error);
+        return pruned;
     }
 };
 
@@ -265,29 +270,39 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             return;
         }
 
-        const savedState = parsePersistedBoardState(localStorage.getItem(`inv_data_${currentInvestigationId}`));
-        const persistedAlerts = savedState?.synthesisAlerts?.map((alert) => normalizeAlert(alert as SynthesisAlert)) || [];
-        if (persistedAlerts.length === 0) {
-            return;
-        }
-
-        setAlertsByInvestigation(prev => {
-            if ((prev[currentInvestigationId] || []).length > 0) {
-                return prev;
+        let cancelled = false;
+        void (async () => {
+            const savedState = await loadBoardStateForInvestigation(currentInvestigationId);
+            if (cancelled) {
+                return;
+            }
+            const persistedAlerts = savedState?.synthesisAlerts?.map((alert) => normalizeAlert(alert as SynthesisAlert)) || [];
+            if (persistedAlerts.length === 0) {
+                return;
             }
 
-            console.debug('[SynthesisPanel] Rehydrating synthesis alerts from persisted board state', {
-                currentInvestigationId,
-                count: persistedAlerts.length,
-            });
+            setAlertsByInvestigation(prev => {
+                if ((prev[currentInvestigationId] || []).length > 0) {
+                    return prev;
+                }
 
-            const nextBuckets = pruneBucketsForState({
-                ...prev,
-                [currentInvestigationId]: persistedAlerts,
-            }, currentInvestigationId);
-            persistAlertBuckets(nextBuckets);
-            return nextBuckets;
-        });
+                console.debug('[SynthesisPanel] Rehydrating synthesis alerts from persisted board state', {
+                    currentInvestigationId,
+                    count: persistedAlerts.length,
+                });
+
+                const nextBuckets = pruneBucketsForState({
+                    ...prev,
+                    [currentInvestigationId]: persistedAlerts,
+                }, currentInvestigationId);
+                persistAlertBuckets(nextBuckets);
+                return nextBuckets;
+            });
+        })();
+
+        return () => {
+            cancelled = true;
+        };
     }, [currentInvestigationId]);
 
     useEffect(() => {
