@@ -128,6 +128,18 @@ describe('App', () => {
     expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
   })
 
+  it('hides floating synthesis and discovery handles on settings view', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByText('Settings'))
+
+    expect(await screen.findByText('SettingsDashboard')).toBeInTheDocument()
+    expect(screen.queryByText('SynthesisPanel Handle')).not.toBeInTheDocument()
+    expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /settings/i })).toHaveClass('forensic-app-tab-active')
+  })
+
   it('loads saved investigations and switches tabs', async () => {
     const user = userEvent.setup()
     localStorage.setItem(

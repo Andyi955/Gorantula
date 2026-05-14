@@ -1,5 +1,20 @@
-import { useState, useEffect } from 'react';
-import { Save, Lock, Bot, Cpu, FlaskConical, RotateCcw, Power } from 'lucide-react';
+import { useMemo, useState, useEffect } from 'react';
+import {
+    AlertTriangle,
+    ChevronRight,
+    CheckCircle2,
+    Cpu,
+    Database,
+    FlaskConical,
+    KeyRound,
+    Lock,
+    Power,
+    RefreshCcw,
+    RotateCcw,
+    Save,
+    SlidersHorizontal,
+    TerminalSquare,
+} from 'lucide-react';
 import {
     BROWSER_QA_CLEARED_EVENT,
     BROWSER_QA_SEEDED_EVENT,
@@ -48,16 +63,16 @@ const ROUTING_OPTIONS = [
 ];
 
 const PROVIDER_ACTIVATION_FIELDS = [
-    { id: 'gemini', enabledKey: 'GEMINI_ENABLED', name: 'Google Gemini', setupKey: 'GEMINI_API_KEY' },
-    { id: 'openai', enabledKey: 'OPENAI_ENABLED', name: 'OpenAI', setupKey: 'OPENAI_API_KEY' },
-    { id: 'anthropic', enabledKey: 'ANTHROPIC_ENABLED', name: 'Anthropic Claude', setupKey: 'ANTHROPIC_API_KEY' },
-    { id: 'deepseek', enabledKey: 'DEEPSEEK_ENABLED', name: 'DeepSeek', setupKey: 'DEEPSEEK_API_KEY', recommended: true },
-    { id: 'qwen', enabledKey: 'DASHSCOPE_ENABLED', name: 'Qwen (DashScope)', setupKey: 'DASHSCOPE_API_KEY' },
-    { id: 'zhipuai', enabledKey: 'ZHIPUAI_ENABLED', name: 'GLM (Zhipu AI)', setupKey: 'ZHIPUAI_API_KEY' },
-    { id: 'moonshot', enabledKey: 'MOONSHOT_ENABLED', name: 'Kimi (Moonshot)', setupKey: 'MOONSHOT_API_KEY' },
-    { id: 'minimax', enabledKey: 'MINIMAX_ENABLED', name: 'MiniMax', setupKey: 'MINIMAX_API_KEY' },
-    { id: 'ollama', enabledKey: 'OLLAMA_ENABLED', name: 'Ollama Local', setupKey: 'OLLAMA_HOST' },
-    { id: 'lmstudio', enabledKey: 'LMSTUDIO_ENABLED', name: 'LM Studio Local', setupKey: 'LMSTUDIO_BASE_URL' },
+    { id: 'gemini', enabledKey: 'GEMINI_ENABLED', name: 'Google Gemini', setupKey: 'GEMINI_API_KEY', logo: '/assets/providers/gemini.svg' },
+    { id: 'openai', enabledKey: 'OPENAI_ENABLED', name: 'OpenAI', setupKey: 'OPENAI_API_KEY', logo: '/assets/providers/openai.svg' },
+    { id: 'anthropic', enabledKey: 'ANTHROPIC_ENABLED', name: 'Anthropic Claude', setupKey: 'ANTHROPIC_API_KEY', logo: '/assets/providers/anthropic.svg' },
+    { id: 'deepseek', enabledKey: 'DEEPSEEK_ENABLED', name: 'DeepSeek', setupKey: 'DEEPSEEK_API_KEY', recommended: true, logo: '/assets/providers/deepseek.svg' },
+    { id: 'qwen', enabledKey: 'DASHSCOPE_ENABLED', name: 'Qwen (DashScope)', setupKey: 'DASHSCOPE_API_KEY', logo: '/assets/providers/qwen.svg' },
+    { id: 'zhipuai', enabledKey: 'ZHIPUAI_ENABLED', name: 'GLM (Zhipu AI)', setupKey: 'ZHIPUAI_API_KEY', logo: '/assets/providers/zhipuai.svg' },
+    { id: 'moonshot', enabledKey: 'MOONSHOT_ENABLED', name: 'Kimi (Moonshot)', setupKey: 'MOONSHOT_API_KEY', logo: '/assets/providers/moonshot.svg' },
+    { id: 'minimax', enabledKey: 'MINIMAX_ENABLED', name: 'MiniMax', setupKey: 'MINIMAX_API_KEY', logo: '/assets/providers/minimax.svg' },
+    { id: 'ollama', enabledKey: 'OLLAMA_ENABLED', name: 'Ollama Local', setupKey: 'OLLAMA_HOST', logo: '/assets/providers/ollama.svg' },
+    { id: 'lmstudio', enabledKey: 'LMSTUDIO_ENABLED', name: 'LM Studio Local', setupKey: 'LMSTUDIO_BASE_URL', logo: '/assets/providers/lmstudio.svg' },
 ];
 
 const ROUTING_SETTINGS = [
@@ -83,18 +98,81 @@ const PROVIDER_ACTIVATION_KEYS = PROVIDER_ACTIVATION_FIELDS.reduce<Record<string
     return keys;
 }, {});
 
+const SETTINGS_SECTIONS = [
+    { id: 'overview', label: 'Routing', description: 'Default task routes', icon: SlidersHorizontal },
+    { id: 'providers', label: 'Providers', description: 'Activation switchboard', icon: Power },
+    { id: 'credentials', label: 'Credentials', description: 'API keys and local hosts', icon: KeyRound },
+    { id: 'models', label: 'Model IDs', description: 'Provider model overrides', icon: Cpu },
+    { id: 'qa', label: 'QA Tools', description: 'Browser test workspace', icon: FlaskConical },
+] as const;
+
+type SettingsSectionId = typeof SETTINGS_SECTIONS[number]['id'];
+
+const CREDENTIAL_GROUPS = [
+    {
+        id: 'cloud',
+        label: 'Cloud APIs',
+        description: 'Primary hosted model providers',
+        fields: ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY'],
+    },
+    {
+        id: 'alt',
+        label: 'Alt APIs',
+        description: 'Qwen, GLM, Kimi, MiniMax',
+        fields: ['DASHSCOPE_API_KEY', 'ZHIPUAI_API_KEY', 'MOONSHOT_API_KEY', 'MINIMAX_API_KEY'],
+    },
+    {
+        id: 'local',
+        label: 'Local Runtimes',
+        description: 'Ollama and LM Studio endpoints',
+        fields: ['OLLAMA_HOST', 'LMSTUDIO_BASE_URL', 'LM_API_TOKEN'],
+    },
+] as const;
+
+type CredentialGroupId = typeof CREDENTIAL_GROUPS[number]['id'];
+
+const MODEL_GROUPS = [
+    {
+        id: 'cloud',
+        label: 'Cloud IDs',
+        description: 'Gemini, OpenAI, Anthropic, DeepSeek',
+        fields: ['GEMINI_MODEL', 'OPENAI_MODEL', 'ANTHROPIC_MODEL', 'DEEPSEEK_MODEL'],
+    },
+    {
+        id: 'alt',
+        label: 'Alt IDs',
+        description: 'Qwen, GLM, Kimi, MiniMax',
+        fields: ['DASHSCOPE_MODEL', 'ZHIPUAI_MODEL', 'MOONSHOT_MODEL', 'MINIMAX_MODEL'],
+    },
+    {
+        id: 'local',
+        label: 'Local IDs',
+        description: 'Ollama and LM Studio models',
+        fields: ['OLLAMA_MODEL', 'LMSTUDIO_MODEL'],
+    },
+] as const;
+
+type ModelGroupId = typeof MODEL_GROUPS[number]['id'];
+
 const SettingsDashboard = () => {
     const [keys, setKeys] = useState<Record<string, string>>({});
+    const [baselineKeys, setBaselineKeys] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [status, setStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+    const [activeSection, setActiveSection] = useState<SettingsSectionId>('overview');
+    const [activeCredentialGroup, setActiveCredentialGroup] = useState<CredentialGroupId>('cloud');
+    const [activeModelGroup, setActiveModelGroup] = useState<ModelGroupId>('cloud');
+    const [lastSavedAt, setLastSavedAt] = useState<string>('Not saved this session');
     const showBrowserQaTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
 
     useEffect(() => {
         fetch('http://localhost:8080/api/settings')
             .then(res => res.json())
             .then(data => {
-                setKeys(data.keys || {});
+                const nextKeys = data.keys || {};
+                setKeys(nextKeys);
+                setBaselineKeys(nextKeys);
                 setLoading(false);
             })
             .catch(err => {
@@ -107,6 +185,8 @@ const SettingsDashboard = () => {
         setStatus(nextStatus);
         setTimeout(() => setStatus(null), 3000);
     };
+
+    const dirty = useMemo(() => JSON.stringify(keys) !== JSON.stringify(baselineKeys), [baselineKeys, keys]);
 
     const handleChange = (id: string, value: string) => {
         setKeys(prev => ({ ...prev, [id]: value }));
@@ -136,6 +216,32 @@ const SettingsDashboard = () => {
         handleChange(enabledKey, nextEnabled ? 'true' : 'false');
     };
 
+    const providerReadiness = useMemo(() => {
+        const activeProviders = PROVIDER_ACTIVATION_FIELDS.filter(provider => isProviderEnabled(provider.id));
+        const missingProviders = activeProviders.filter(provider => !hasProviderSetup(provider.id));
+        const localProviders = activeProviders.filter(provider => provider.id === 'ollama' || provider.id === 'lmstudio');
+        return { activeProviders, missingProviders, localProviders };
+    }, [keys]);
+
+    const selectedSearchProvider = keys.DEFAULT_SEARCH_MODEL || 'deepseek';
+    const selectedPersonaProvider = keys.DEFAULT_PERSONA_MODEL || 'deepseek';
+    const deepseekModel = keys.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+    const credentialFieldsForActiveGroup = useMemo(() => {
+        const group = CREDENTIAL_GROUPS.find(candidate => candidate.id === activeCredentialGroup) || CREDENTIAL_GROUPS[0];
+        const fieldIds = new Set<string>(group.fields);
+        return CREDENTIAL_FIELDS.filter(field => fieldIds.has(field.id));
+    }, [activeCredentialGroup]);
+    const modelFieldsForActiveGroup = useMemo(() => {
+        const group = MODEL_GROUPS.find(candidate => candidate.id === activeModelGroup) || MODEL_GROUPS[0];
+        const fieldIds = new Set<string>(group.fields);
+        return MODEL_FIELDS.filter(field => fieldIds.has(field.id));
+    }, [activeModelGroup]);
+
+    const handleReset = () => {
+        setKeys(baselineKeys);
+        pushTransientStatus({ type: 'success', msg: 'Unsaved edits reverted' });
+    };
+
     const handleSave = async () => {
         setSaving(true);
         setStatus(null);
@@ -150,9 +256,11 @@ const SettingsDashboard = () => {
 
             setStatus({ type: 'success', msg: 'Settings saved successfully' });
 
-            // Reload masking
             const newData = await fetch('http://localhost:8080/api/settings').then(r => r.json());
-            setKeys(newData.keys || {});
+            const nextKeys = newData.keys || {};
+            setKeys(nextKeys);
+            setBaselineKeys(nextKeys);
+            setLastSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
             setTimeout(() => setStatus(null), 3000);
         } catch (err) {
@@ -175,185 +283,363 @@ const SettingsDashboard = () => {
         pushTransientStatus({ type: 'success', msg: 'Browser QA data cleared' });
     };
 
-    if (loading) return <div className="text-cyber-green p-8">Initializing Neural Link to Settings...</div>;
+    const renderProviderOption = (opt: typeof ROUTING_OPTIONS[number]) => {
+        const disabled = !isProviderEnabled(opt.id) || !hasProviderSetup(opt.id);
+        const disabledReason = isProviderExplicitlyDisabled(opt.id) ? 'Disabled' : 'Requires Setup';
+
+        return (
+            <option key={opt.id} value={opt.id} disabled={disabled}>
+                {opt.name} {disabled ? `(${disabledReason})` : ''}
+            </option>
+        );
+    };
+
+    if (loading) {
+        return (
+            <div className="forensic-settings-root">
+                <div className="forensic-settings-loading">Initializing Neural Link to Settings...</div>
+            </div>
+        );
+    }
 
     return (
-        <div className="h-full flex flex-col p-8 bg-black/80 font-mono text-white overflow-y-auto">
-            <div className="max-w-4xl mx-auto w-full">
-                <div className="flex items-center gap-4 mb-8">
-                    <Bot size={32} className="text-cyber-purple drop-shadow-[0_0_8px_rgba(188,19,254,0.8)]" />
-                    <h2 className="text-3xl font-black tracking-tight uppercase text-cyber-purple drop-shadow-[0_0_8px_rgba(188,19,254,0.3)]">
-                        Model Provider Uplink
+        <div className="forensic-settings-root" data-testid="settings-control-room">
+            <div className="forensic-settings-grid-bg" aria-hidden="true" />
+
+            <header className="forensic-settings-command">
+                <div className="forensic-settings-title-block">
+                    <div className="forensic-settings-kicker">
+                        <TerminalSquare size={18} />
+                        Control Room
+                    </div>
+                    <h2 aria-label="Model Provider Uplink">
+                        <span aria-hidden="true">Model</span>
+                        <span aria-hidden="true">Provider</span>
+                        <span aria-hidden="true">Uplink</span>
                     </h2>
+                    <div className="forensic-settings-title-rule" aria-hidden="true" />
+                    <div className="forensic-settings-chips" aria-label="Settings status">
+                        <span className="forensic-settings-chip forensic-settings-chip-success">
+                            <CheckCircle2 size={13} />
+                            Backend linked
+                        </span>
+                        <span className={`forensic-settings-chip ${dirty ? 'forensic-settings-chip-warning' : ''}`}>
+                            {dirty ? 'Unsaved changes' : 'Config synchronized'}
+                        </span>
+                        <span className="forensic-settings-chip">Saved {lastSavedAt}</span>
+                    </div>
                 </div>
 
-                {status && (
-                    <div className={`mb-6 p-4 border flex items-center gap-3 font-bold uppercase tracking-widest text-sm ${status.type === 'success' ? 'bg-cyber-green/10 border-cyber-green text-cyber-green shadow-[0_0_10px_rgba(57,255,20,0.2)]' : 'bg-red-500/10 border-red-500 text-red-500 shadow-[0_0_10px_rgba(255,0,0,0.2)]'}`}>
-                        {status.msg}
+                <div className="forensic-settings-command-actions">
+                    {status && (
+                        <div className={`forensic-settings-status forensic-settings-status-${status.type}`} role="status">
+                            {status.msg}
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={handleReset}
+                        disabled={!dirty || saving}
+                        className="forensic-settings-secondary-action"
+                    >
+                        <RefreshCcw size={15} />
+                        Reset
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={saving}
+                        className="forensic-settings-save-action"
+                    >
+                        <Save size={16} />
+                        {saving ? 'Transmitting...' : 'Save Changes'}
+                    </button>
+                </div>
+            </header>
+
+            <div className="forensic-settings-workspace">
+                <nav className="forensic-settings-nav" aria-label="Settings sections">
+                    <div className="forensic-settings-nav-heading">Sections</div>
+                    {SETTINGS_SECTIONS.map(section => {
+                        if (section.id === 'qa' && !showBrowserQaTools) return null;
+                        const Icon = section.icon;
+                        return (
+                            <button
+                                key={section.id}
+                                type="button"
+                                onClick={() => setActiveSection(section.id)}
+                                className={`forensic-settings-nav-item ${activeSection === section.id ? 'forensic-settings-nav-item-active' : ''}`}
+                            >
+                                <Icon size={16} />
+                                <span>
+                                    <strong>{section.label}</strong>
+                                    <small>{section.description}</small>
+                                </span>
+                            </button>
+                        );
+                    })}
+
+                    <div className="forensic-settings-nav-readout">
+                        <span>Default Route</span>
+                        <strong>DeepSeek V4 Flash</strong>
+                        <small>Low-cost daily investigation mode</small>
                     </div>
-                )}
+                </nav>
 
-                <div className="space-y-6">
-                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
-                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Cpu size={20} /> Model Routing</h3>
-                        <p className="text-sm text-gray-400 mb-6">Select the default provider route for each task. Autoselect prefers DeepSeek V4 Flash when activated and otherwise falls back to the next available provider.</p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {ROUTING_SETTINGS.map(r => (
-                                <div key={r.id} className="flex flex-col gap-2">
-                                    <label className="text-xs font-bold text-cyber-cyan tracking-widest uppercase flex items-center gap-2">
-                                        {r.name}
-                                    </label>
-                                    <select
-                                        value={keys[r.id] || ''}
-                                        onChange={(e) => handleChange(r.id, e.target.value)}
-                                        className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono text-white"
-                                    >
-                                        <option value="">-- Autoselect (Best Available) --</option>
-                                        {ROUTING_OPTIONS.map(opt => {
-                                            const disabled = !isProviderEnabled(opt.id) || !hasProviderSetup(opt.id);
-                                            const disabledReason = isProviderExplicitlyDisabled(opt.id) ? 'Disabled' : 'Requires Setup';
-
-                                            return (
-                                                <option key={opt.id} value={opt.id} disabled={disabled}>
-                                                    {opt.name} {disabled ? `(${disabledReason})` : ''}
-                                                </option>
-                                            )
-                                        })}
-                                    </select>
-                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {r.id} | {r.desc}</span>
+                <main className="forensic-settings-main">
+                    {activeSection === 'overview' && (
+                        <section className="forensic-settings-panel forensic-settings-panel-purple">
+                            <div className="forensic-settings-panel-header">
+                                <div>
+                                    <span className="forensic-settings-panel-kicker">Model Routing</span>
+                                    <h3><Cpu size={18} /> Task Routes</h3>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-green"></div>
-                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Power size={20} /> Provider Activation</h3>
-                        <p className="text-sm text-gray-400 mb-6">Turn provider routes on or off explicitly. A provider still needs its matching API key or local host before it can run.</p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {PROVIDER_ACTIVATION_FIELDS.map(provider => {
-                                const enabled = isProviderEnabled(provider.id);
-                                const configured = hasProviderSetup(provider.id);
-                                return (
-                                    <button
-                                        key={provider.id}
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={enabled}
-                                        aria-label={`${provider.name} ${enabled ? 'enabled' : 'disabled'}`}
-                                        onClick={() => toggleProvider(provider.enabledKey, !enabled)}
-                                        className={`flex items-center justify-between gap-3 border px-3 py-2 text-left transition-colors ${enabled ? 'border-cyber-green/50 bg-cyber-green/10 text-cyber-green' : 'border-cyber-gray/60 bg-black text-gray-400'}`}
-                                    >
-                                        <span className="min-w-0">
-                                            <span className="block text-xs font-bold uppercase tracking-[0.16em]">
-                                                {provider.name}
-                                                {provider.recommended ? ' (Default)' : ''}
-                                            </span>
-                                            <span className="mt-1 block text-[10px] uppercase tracking-[0.14em] text-gray-500">
-                                                {configured ? 'Setup present' : `Needs ${provider.setupKey}`}
-                                            </span>
-                                        </span>
-                                        <span className={`h-5 w-9 rounded-full border p-0.5 transition-colors ${enabled ? 'border-cyber-green bg-cyber-green/30' : 'border-cyber-gray bg-cyber-black'}`}>
-                                            <span className={`block h-3.5 w-3.5 rounded-full transition-transform ${enabled ? 'translate-x-4 bg-cyber-green' : 'translate-x-0 bg-gray-500'}`} />
-                                        </span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
-                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Lock size={20} /> API Credentials & Local Hosts</h3>
-                        <p className="text-sm text-gray-400 mb-2">Configure provider keys plus the local runtime hosts used by Ollama and LM Studio. Blank fields will unset the environment configuration.</p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                            {CREDENTIAL_FIELDS.map(field => (
-                                <div key={field.id} className="flex flex-col gap-2">
-                                    <label className="text-xs font-bold text-cyber-cyan tracking-widest uppercase flex items-center gap-2">
-                                        <Lock size={12} className="opacity-70" /> {field.name}
-                                    </label>
-                                    <input
-                                        type={field.inputType}
-                                        value={keys[field.id] || ''}
-                                        onChange={(e) => handleChange(field.id, e.target.value)}
-                                        placeholder={field.default || `Enter ${field.id}...`}
-                                        className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono placeholder:text-gray-700 placeholder:italic"
-                                    />
-                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {field.id}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
-                        <div className="absolute top-0 left-0 w-1 h-full bg-cyber-purple"></div>
-                        <h3 className="text-xl font-bold text-cyber-purple mb-2 flex items-center gap-2"><Cpu size={20} /> Provider Model IDs</h3>
-                        <p className="text-sm text-gray-400 mb-2">Override the default model ID used for each provider. Leave a field blank to use the built-in recommended default for that provider.</p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                            {MODEL_FIELDS.map(field => (
-                                <div key={field.id} className="flex flex-col gap-2">
-                                    <label className="text-xs font-bold text-cyber-cyan tracking-widest uppercase flex items-center gap-2">
-                                        <Cpu size={12} className="opacity-70" /> {field.name}
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={keys[field.id] || ''}
-                                        onChange={(e) => handleChange(field.id, e.target.value)}
-                                        placeholder={field.default}
-                                        className="bg-black border border-cyber-gray/50 px-3 py-2 text-sm focus:border-cyber-purple focus:outline-none transition-colors w-full font-mono placeholder:text-gray-700 placeholder:italic"
-                                    />
-                                    <span className="text-[10px] text-gray-600 font-mono">ENV: {field.id}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {showBrowserQaTools && (
-                        <div className="p-4 border border-cyber-gray bg-cyber-black/50 overflow-hidden relative group">
-                            <div className="absolute top-0 left-0 w-1 h-full bg-cyber-green"></div>
-                            <h3 className="text-xl font-bold text-cyber-green mb-2 flex items-center gap-2"><FlaskConical size={20} /> Local QA Tools</h3>
-                            <p className="text-sm text-gray-400 mb-6">
-                                Seed a deterministic local browser test workspace for manual QA and browser-use smoke tests. These cases stay in LocalStorage only and can be cleared at any time.
+                                <span className="forensic-settings-panel-badge">Autoselect prefers DeepSeek</span>
+                            </div>
+                            <p className="forensic-settings-panel-copy">
+                                Select the default provider route for each task. Autoselect prefers DeepSeek V4 Flash when activated and otherwise falls back to the next available provider.
                             </p>
 
-                            <div className="flex flex-wrap gap-3">
-                                <button
-                                    type="button"
-                                    onClick={handleSeedBrowserQaData}
-                                    className="flex items-center gap-2 border border-cyber-green/40 bg-cyber-green/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-cyber-green transition-colors hover:bg-cyber-green hover:text-black"
-                                >
-                                    <FlaskConical size={14} />
+                            <div className="forensic-settings-route-grid">
+                                {ROUTING_SETTINGS.map(r => (
+                                    <label key={r.id} className="forensic-settings-field">
+                                        <span>{r.name}</span>
+                                        <select
+                                            value={keys[r.id] || ''}
+                                            onChange={(e) => handleChange(r.id, e.target.value)}
+                                        >
+                                            <option value="">-- Autoselect (Best Available) --</option>
+                                            {ROUTING_OPTIONS.map(renderProviderOption)}
+                                        </select>
+                                        <small>ENV: {r.id} | {r.desc}</small>
+                                    </label>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSection === 'providers' && (
+                        <section className="forensic-settings-panel forensic-settings-panel-green">
+                            <div className="forensic-settings-panel-header">
+                                <div>
+                                    <span className="forensic-settings-panel-kicker">Provider Activation</span>
+                                    <h3><Power size={18} /> Route Switchboard</h3>
+                                </div>
+                                <span className="forensic-settings-panel-badge">
+                                    {providerReadiness.activeProviders.length} active / {PROVIDER_ACTIVATION_FIELDS.length} total
+                                </span>
+                            </div>
+                            <p className="forensic-settings-panel-copy">
+                                Turn provider routes on or off explicitly. A provider still needs its matching API key or local host before it can run.
+                            </p>
+
+                            <div className="forensic-settings-provider-grid">
+                                {PROVIDER_ACTIVATION_FIELDS.map(provider => {
+                                    const enabled = isProviderEnabled(provider.id);
+                                    const configured = hasProviderSetup(provider.id);
+                                    return (
+                                        <button
+                                            key={provider.id}
+                                            type="button"
+                                            role="switch"
+                                            aria-checked={enabled}
+                                            aria-label={`${provider.name} ${enabled ? 'enabled' : 'disabled'}`}
+                                            onClick={() => toggleProvider(provider.enabledKey, !enabled)}
+                                            className={`forensic-settings-provider ${enabled ? 'forensic-settings-provider-on' : ''} ${provider.recommended ? 'forensic-settings-provider-default' : ''}`}
+                                            >
+                                                <img
+                                                    src={provider.logo}
+                                                    alt=""
+                                                    className="forensic-settings-provider-logo"
+                                                    aria-hidden="true"
+                                                />
+                                                <span className="forensic-settings-provider-copy">
+                                                    <strong>
+                                                        {provider.name}
+                                                        {provider.recommended ? ' (Default)' : ''}
+                                                    </strong>
+                                                    <small>{configured ? 'Setup present' : `Needs ${provider.setupKey}`}</small>
+                                                </span>
+                                                <span className={`forensic-settings-provider-status ${enabled ? 'forensic-settings-provider-status-on' : ''}`}>
+                                                    {enabled ? 'Active' : 'Inactive'}
+                                                </span>
+                                                <span className="forensic-settings-switch" aria-hidden="true">
+                                                    <span />
+                                                </span>
+                                                <ChevronRight size={14} className="forensic-settings-provider-arrow" aria-hidden="true" />
+                                            </button>
+                                        );
+                                    })}
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSection === 'credentials' && (
+                        <section className="forensic-settings-panel forensic-settings-panel-cyan">
+                            <div className="forensic-settings-panel-header">
+                                <div>
+                                    <span className="forensic-settings-panel-kicker">Credentials</span>
+                                    <h3><Lock size={18} /> API Keys & Local Hosts</h3>
+                                </div>
+                                <span className="forensic-settings-panel-badge">{providerReadiness.missingProviders.length} missing setup</span>
+                            </div>
+                            <p className="forensic-settings-panel-copy">
+                                Configure provider keys plus local runtime hosts. Use the groups below so local endpoints and alternate APIs are never buried in a long form.
+                            </p>
+
+                            <div className="forensic-settings-segmented" role="tablist" aria-label="Credential groups">
+                                {CREDENTIAL_GROUPS.map(group => (
+                                    <button
+                                        key={group.id}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={activeCredentialGroup === group.id}
+                                        onClick={() => setActiveCredentialGroup(group.id)}
+                                        className={activeCredentialGroup === group.id ? 'forensic-settings-segment-active' : ''}
+                                    >
+                                        <strong>{group.label}</strong>
+                                        <span>{group.description}</span>
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="forensic-settings-input-grid">
+                                {credentialFieldsForActiveGroup.map(field => (
+                                    <label key={field.id} className="forensic-settings-field">
+                                        <span><Lock size={12} /> {field.name}</span>
+                                        <input
+                                            type={field.inputType}
+                                            value={keys[field.id] || ''}
+                                            onChange={(e) => handleChange(field.id, e.target.value)}
+                                            placeholder={field.default || `Enter ${field.id}...`}
+                                        />
+                                        <small>ENV: {field.id}</small>
+                                    </label>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSection === 'models' && (
+                        <section className="forensic-settings-panel forensic-settings-panel-purple">
+                            <div className="forensic-settings-panel-header">
+                                <div>
+                                    <span className="forensic-settings-panel-kicker">Model IDs</span>
+                                    <h3><Cpu size={18} /> Provider Model Overrides</h3>
+                                </div>
+                                <span className="forensic-settings-panel-badge">{deepseekModel}</span>
+                            </div>
+                            <p className="forensic-settings-panel-copy">
+                                Override the default model ID used for each provider. Use grouped banks so local model IDs stay easy to reach.
+                            </p>
+
+                            <div className="forensic-settings-segmented" role="tablist" aria-label="Model ID groups">
+                                {MODEL_GROUPS.map(group => (
+                                    <button
+                                        key={group.id}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={activeModelGroup === group.id}
+                                        onClick={() => setActiveModelGroup(group.id)}
+                                        className={activeModelGroup === group.id ? 'forensic-settings-segment-active' : ''}
+                                    >
+                                        <strong>{group.label}</strong>
+                                        <span>{group.description}</span>
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="forensic-settings-input-grid">
+                                {modelFieldsForActiveGroup.map(field => (
+                                    <label key={field.id} className="forensic-settings-field">
+                                        <span><Cpu size={12} /> {field.name}</span>
+                                        <input
+                                            type="text"
+                                            value={keys[field.id] || ''}
+                                            onChange={(e) => handleChange(field.id, e.target.value)}
+                                            placeholder={field.default}
+                                        />
+                                        <small>ENV: {field.id}</small>
+                                    </label>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSection === 'qa' && showBrowserQaTools && (
+                        <section className="forensic-settings-panel forensic-settings-panel-green">
+                            <div className="forensic-settings-panel-header">
+                                <div>
+                                    <span className="forensic-settings-panel-kicker">Local QA</span>
+                                    <h3><FlaskConical size={18} /> Browser Test Workspace</h3>
+                                </div>
+                                <span className="forensic-settings-panel-badge">Dev only</span>
+                            </div>
+                            <p className="forensic-settings-panel-copy">
+                                Seed a deterministic local browser test workspace for manual QA and browser-use smoke tests. These cases stay in local browser storage only and can be cleared at any time.
+                            </p>
+
+                            <div className="forensic-settings-qa-actions">
+                                <button type="button" onClick={handleSeedBrowserQaData}>
+                                    <FlaskConical size={15} />
                                     Load Browser Test Data
                                 </button>
-                                <button
-                                    type="button"
-                                    onClick={handleClearBrowserQaData}
-                                    className="flex items-center gap-2 border border-cyber-gray/60 bg-black px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-gray-300 transition-colors hover:border-white hover:text-white"
-                                >
-                                    <RotateCcw size={14} />
+                                <button type="button" onClick={handleClearBrowserQaData}>
+                                    <RotateCcw size={15} />
                                     Clear Browser Test Data
                                 </button>
                             </div>
-                        </div>
+                        </section>
                     )}
+                </main>
 
-                </div>
+                <aside className="forensic-settings-summary" aria-label="Provider readiness summary">
+                    <div className="forensic-settings-summary-card forensic-settings-summary-primary">
+                        <span>Default Route</span>
+                        <strong>DeepSeek V4 Flash</strong>
+                        <small>{deepseekModel}</small>
+                    </div>
 
-                <div className="mt-8 flex justify-end">
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="flex items-center gap-2 bg-cyber-purple hover:bg-white hover:text-black text-white px-8 py-3 font-bold tracking-widest transition-all shadow-[0_0_15px_rgba(188,19,254,0.4)] disabled:opacity-50 disabled:cursor-not-allowed uppercase"
-                    >
-                        <Save size={18} />
-                        {saving ? 'Transmitting...' : 'Commit Settings'}
-                    </button>
-                </div>
+                    <div className="forensic-settings-summary-card">
+                        <span>Search Route</span>
+                        <strong>{selectedSearchProvider}</strong>
+                        <small>Internet browsing and scrape synthesis</small>
+                    </div>
+
+                    <div className="forensic-settings-summary-card">
+                        <span>Persona Route</span>
+                        <strong>{selectedPersonaProvider}</strong>
+                        <small>Connector, skeptic, timeline, and discovery personas</small>
+                    </div>
+
+                    <div className="forensic-settings-summary-card">
+                        <span>Provider Readiness</span>
+                        <strong>{providerReadiness.activeProviders.length} active / {providerReadiness.missingProviders.length} need setup</strong>
+                        {providerReadiness.missingProviders.length > 0 ? (
+                            <small className="forensic-settings-warning-line">
+                                <AlertTriangle size={12} />
+                                {providerReadiness.missingProviders.map(provider => provider.name).join(', ')}
+                            </small>
+                        ) : (
+                            <small className="forensic-settings-success-line">
+                                <CheckCircle2 size={12} />
+                                All active providers configured
+                            </small>
+                        )}
+                    </div>
+
+                    <div className="forensic-settings-summary-card">
+                        <span>Local Runtime</span>
+                        <strong>{providerReadiness.localProviders.length > 0 ? 'Enabled' : 'Standby'}</strong>
+                        <small>Ollama / LM Studio local routes</small>
+                    </div>
+
+                    <div className="forensic-settings-summary-card">
+                        <span>Config Source</span>
+                        <strong><Database size={14} /> Backend API</strong>
+                        <small>http://localhost:8080/api/settings</small>
+                    </div>
+                </aside>
             </div>
         </div>
     );
