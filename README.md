@@ -55,18 +55,34 @@
 - **Go** (1.21+)
 - **Node.js** (v18+) & **npm** or **pnpm**
 - **Brave Search API Key**: [Get it here](https://api.search.brave.com/app/dashboard)
-- **Google Gemini API Key**: [Get it here](https://aistudio.google.com/app/apikey)
-- **MiniMax API Key (Optional)**: [Get it here](https://platform.minimax.io) - Supports Coding Plan for high-speed inference
+- **DeepSeek API Key**: used by default with `deepseek-v4-flash` for fast, lower-cost day-to-day investigations.
+- **Optional provider keys**: Gemini, OpenAI, Anthropic, Qwen, GLM, Kimi, MiniMax, Ollama, and LM Studio can be activated later from Settings.
 
 ### 2. Environment Configuration
 Create a `.env` file in the root directory (or copy from `.env.example`). You can configure these directly in the application UI under the "Settings" tab without needing to restart the server:
 ```bash
-GEMINI_API_KEY=your_gemini_api_key
 BRAVE_API_KEY=your_brave_api_key
-# Optional Providers:
+DEEPSEEK_ENABLED=true
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEFAULT_SEARCH_MODEL=deepseek
+DEFAULT_PERSONA_MODEL=deepseek
+
+# Optional provider activation switches:
+GEMINI_ENABLED=false
+OPENAI_ENABLED=false
+ANTHROPIC_ENABLED=false
+DASHSCOPE_ENABLED=false
+ZHIPUAI_ENABLED=false
+MOONSHOT_ENABLED=false
+MINIMAX_ENABLED=false
+OLLAMA_ENABLED=false
+LMSTUDIO_ENABLED=false
+
+# Optional provider credentials and local hosts:
+GEMINI_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
-DEEPSEEK_API_KEY=
 DASHSCOPE_API_KEY=
 ZHIPUAI_API_KEY=
 MOONSHOT_API_KEY=
@@ -79,7 +95,6 @@ LM_API_TOKEN=
 GEMINI_MODEL=gemini-3-flash-preview
 OPENAI_MODEL=gpt-5.4-mini
 ANTHROPIC_MODEL=claude-sonnet-4-6
-DEEPSEEK_MODEL=deepseek-v4-flash
 DASHSCOPE_MODEL=qwen3.6-plus
 ZHIPUAI_MODEL=glm-5-turbo
 MOONSHOT_MODEL=kimi-k2.6
@@ -87,6 +102,8 @@ MINIMAX_MODEL=MiniMax-M2.7-highspeed
 OLLAMA_MODEL=qwen3-coder
 LMSTUDIO_MODEL=qwen3.6
 ```
+
+Provider switches are intentionally separate from keys. Set `*_ENABLED=true` for the providers you want Gorantula to route to, then add only the matching key or local host. If a switch is omitted, Gorantula keeps backward-compatible auto-detection and activates a provider when its key or local host exists.
 
 ### 3. Installation
 

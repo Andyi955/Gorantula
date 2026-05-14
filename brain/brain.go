@@ -72,7 +72,7 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	var client *genai.Client
 	var model *genai.GenerativeModel
-	if apiKey != "" {
+	if apiKey != "" && providerEnabled("GEMINI_ENABLED") {
 		var err error
 		client, err = genai.NewClient(ctx, option.WithAPIKey(apiKey))
 		if err != nil {
@@ -118,11 +118,11 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 func (b *Brain) GetSearchProvider() ModelProvider {
 	pref := os.Getenv("DEFAULT_SEARCH_MODEL")
 	if pref == "" {
-		pref = "gemini"
+		pref = "deepseek"
 	}
 	provider, ok := b.GetRouter(pref)
 	if !ok {
-		if provider, ok = b.GetRouter("gemini"); ok {
+		if provider, ok = b.GetRouter("deepseek"); ok {
 			return provider
 		}
 	}

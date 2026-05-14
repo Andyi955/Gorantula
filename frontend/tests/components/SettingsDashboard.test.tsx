@@ -113,6 +113,58 @@ describe('SettingsDashboard', () => {
     )
   })
 
+  it('shows provider activation switches and saves them with settings', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          keys: {
+            DEEPSEEK_ENABLED: 'true',
+            DEEPSEEK_API_KEY: 'ds...ey',
+            GEMINI_ENABLED: 'false',
+            DEFAULT_SEARCH_MODEL: 'deepseek',
+            DEFAULT_PERSONA_MODEL: 'deepseek',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          keys: {
+            DEEPSEEK_ENABLED: 'true',
+            GEMINI_ENABLED: 'true',
+            DEFAULT_SEARCH_MODEL: 'deepseek',
+            DEFAULT_PERSONA_MODEL: 'deepseek',
+          },
+        }),
+      })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<SettingsDashboard />)
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    expect(screen.getByText(/provider activation/i)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /deepseek enabled/i })).toBeChecked()
+    const geminiSwitch = screen.getByRole('switch', { name: /google gemini disabled/i })
+    expect(geminiSwitch).not.toBeChecked()
+
+    await user.click(geminiSwitch)
+    await user.click(screen.getByRole('button', { name: /commit settings/i }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toContain('"GEMINI_ENABLED":"true"')
+  })
+
   it('seeds browser QA data from the local QA tools panel', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn().mockResolvedValue({

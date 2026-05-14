@@ -25,3 +25,16 @@ func envOrDefault(key, fallback string) string {
 	}
 	return value
 }
+
+func providerEnabled(key string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if value == "" {
+		return true
+	}
+	switch value {
+	case "0", "false", "no", "off", "disabled":
+		return false
+	default:
+		return true
+	}
+}
