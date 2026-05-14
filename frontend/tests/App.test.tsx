@@ -505,6 +505,24 @@ describe('App', () => {
     expect(screen.getByText(/storage quota/i)).toBeInTheDocument()
   })
 
+  it('distinguishes backend persistence failures from browser storage quota failures', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(BOARD_PERSIST_FAILED_EVENT, {
+        detail: {
+          investigationId: 'inv-backend',
+          errorName: 'BackendPersistenceError',
+        },
+      }))
+    })
+
+    expect(screen.getByText(/Autosave warning/i)).toBeInTheDocument()
+    expect(screen.getByText(/backend persistence unavailable/i)).toBeInTheDocument()
+    expect(screen.queryByText(/storage quota/i)).not.toBeInTheDocument()
+  })
+
   it('keeps incoming discoveries visible when discovery persistence hits quota', async () => {
     localStorage.setItem(
       'gorantula_investigations',

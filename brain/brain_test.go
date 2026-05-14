@@ -2,12 +2,14 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"spider-agent/models"
+	"spider-agent/nervous_system"
 )
 
 // MockProvider implements ModelProvider for testing
@@ -206,5 +208,98 @@ func TestNotifyImageReviewUnavailableBroadcastsWarning(t *testing.T) {
 	}
 	if payload, _ := messages[0].Payload.(string); !strings.Contains(payload, "does not support multimodal image review") {
 		t.Fatalf("expected unsupported image review warning, got %#v", messages[0].Payload)
+	}
+}
+
+func TestProcessPromptWithNonGeminiProviderDoesNotRequireLegacyGeminiModel(t *testing.T) {
+	t.Setenv("DEFAULT_SEARCH_MODEL", "deepseek")
+
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			return errors.New("planner unavailable")
+		},
+	}
+
+	brain := &Brain{
+		Model:       nil,
+		NS:          nervous_system.NewNervousSystem(nil),
+		Abdomen:     &models.Abdomen{},
+		ModelRouter: map[string]ModelProvider{"deepseek": mock},
+		tokenUsage:  newTokenUsageTracker(),
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("ProcessPrompt panicked with nil legacy Gemini model: %v", recovered)
+		}
+	}()
+
+	_, err := brain.ProcessPromptWithOptions(context.Background(), "latest spacex news", false)
+	if err == nil {
+		t.Fatal("expected provider planning error")
+	}
+	if !strings.Contains(err.Error(), "failed to generate sub-queries") {
+		t.Fatalf("expected planning error, got %v", err)
+	}
+}
+
+func TestGenerateJSONWithFallbackUsesAvailableNonGeminiProvider(t *testing.T) {
+	primary := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			return errors.New("deepseek unavailable")
+		},
+	}
+	fallback := &MockProvider{
+		NameFunc: func() string { return "openai" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*SubQueries)
+			response.Queries = []string{"fallback query"}
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{
+			"deepseek": primary,
+			"openai":   fallback,
+		},
+	}
+
+	var response SubQueries
+	if err := brain.generateJSONWithFallback(context.Background(), "planning", primary, "prompt", &response); err != nil {
+		t.Fatalf("expected generic fallback to recover, got %v", err)
+	}
+	if len(response.Queries) != 1 || response.Queries[0] != "fallback query" {
+		t.Fatalf("expected fallback response, got %#v", response.Queries)
+	}
+}
+
+func TestRunPersonaAnalysisFallsBackToAvailableNonGeminiProvider(t *testing.T) {
+	fallback := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"fallback persona"}
+			response.Confidence = 0.8
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{
+			"deepseek": fallback,
+		},
+	}
+
+	insight, err := brain.runPersonaAnalysisWithPrompt(context.Background(), Persona{
+		Name:        "Skeptic",
+		ModelPref:   "missing-provider",
+		Perspective: "Checks assumptions",
+	}, "prompt")
+	if err != nil {
+		t.Fatalf("expected available non-Gemini provider to run persona, got %v", err)
+	}
+	if insight.KeyFindings[0] != "fallback persona" {
+		t.Fatalf("expected fallback persona result, got %#v", insight.KeyFindings)
 	}
 }

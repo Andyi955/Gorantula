@@ -38,6 +38,21 @@ var (
 )
 
 const maxNodeImageUploadBodyBytes = 12 << 20
+
+func backendListenAddress() string {
+	host := strings.TrimSpace(os.Getenv("GORANTULA_HOST"))
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	port := strings.TrimSpace(os.Getenv("GORANTULA_PORT"))
+	if port == "" {
+		port = "8080"
+	}
+
+	return fmt.Sprintf("%s:%s", host, port)
+}
+
 const pipelineProfileRetention = 100
 
 func broadcast(msg models.WSMessage) {
@@ -1138,9 +1153,9 @@ func main() {
 		handleSettings(w, r, envFile, &envMutex, br)
 	})
 
-	port := "8080"
-	fmt.Printf("Gorantula Backend running on :%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	address := backendListenAddress()
+	fmt.Printf("Gorantula Backend running on http://%s\n", address)
+	log.Fatal(http.ListenAndServe(address, nil))
 }
 
 // handleSettings is extracted for testability
@@ -1272,7 +1287,4 @@ func handleSettings(w http.ResponseWriter, r *http.Request, envFile string, envM
 	}
 
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	port := "8080"
-	fmt.Printf("Gorantula Backend running on :%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
