@@ -624,11 +624,12 @@ function App() {
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
+  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'settings'
   const expandedSidebarWidth = hasCustomSidebarWidth
     ? sidebarWidth
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
-  const showFloatingPanelHandles = activeTab !== 'spider' && !isBoardWorkspaceActive
+  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && !isBoardWorkspaceActive
 
   const filteredSidebarRows = useMemo(() => {
     const query = sidebarSearchQuery.trim().toLowerCase()
@@ -1345,24 +1346,20 @@ function App() {
     }
   }
 
-  const headerClassName = isBoardWorkspaceActive
-    || activeTab === 'spider'
+  const headerClassName = isForensicWorkspaceActive
     ? 'forensic-app-shell-header'
     : 'flex items-center justify-between border-b border-cyber-gray bg-cyber-black px-6 py-4 z-50'
-  const appShellClassName = isBoardWorkspaceActive
-    || activeTab === 'spider'
+  const appShellClassName = isForensicWorkspaceActive
     ? 'forensic-app-shell flex h-screen w-screen flex-col overflow-hidden font-mono'
     : 'flex h-screen w-screen flex-col overflow-hidden bg-cyber-black font-mono'
-  const brandClassName = isBoardWorkspaceActive
-    || activeTab === 'spider'
+  const brandClassName = isForensicWorkspaceActive
     ? 'forensic-app-brand text-2xl font-black tracking-tighter italic'
     : 'text-2xl font-black tracking-tighter italic text-cyber-green'
-  const tabRailClassName = isBoardWorkspaceActive
-    || activeTab === 'spider'
+  const tabRailClassName = isForensicWorkspaceActive
     ? 'forensic-app-tab-rail'
     : 'flex gap-4'
   const getTabClassName = (tab: 'spider' | 'board' | 'timeline' | 'chat' | 'settings', activeClassName: string) => (
-    isBoardWorkspaceActive || activeTab === 'spider'
+    isForensicWorkspaceActive
       ? `forensic-app-tab ${activeTab === tab ? `forensic-app-tab-active ${activeClassName}` : ''}`
       : `flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === tab ? activeClassName : 'text-gray-500 hover:text-white'}`
   )
@@ -1460,7 +1457,7 @@ function App() {
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className={getTabClassName('settings', 'bg-cyber-gray/30 text-white shadow-[0_0_15px_rgba(255,255,255,0.2)]')}
+            className={getTabClassName('settings', 'bg-cyber-purple text-white shadow-[0_0_15px_rgba(188,19,254,0.5)]')}
           >
             <Settings size={18} />
             Settings

@@ -54,15 +54,23 @@ describe('SettingsDashboard', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
-    expect(screen.getByText(/model provider uplink/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /model provider uplink/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: /credentials/i }))
     const passwordInput = document.querySelector('input[value="masked-key"]') as HTMLInputElement
     expect(passwordInput).not.toBeNull()
     await user.type(passwordInput, '-updated')
+    await user.click(screen.getByRole('tab', { name: /local runtimes/i }))
+    expect(screen.getByPlaceholderText('http://localhost:1234/v1')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /model ids/i }))
     const deepseekModelInput = screen.getByPlaceholderText('deepseek-v4-flash') as HTMLInputElement
     await user.clear(deepseekModelInput)
     await user.type(deepseekModelInput, 'deepseek-v4-pro')
-    await user.click(screen.getByRole('button', { name: /commit settings/i }))
+    await user.click(screen.getByRole('tab', { name: /local ids/i }))
+    expect(screen.getByPlaceholderText('qwen3-coder')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(3)
@@ -151,13 +159,16 @@ describe('SettingsDashboard', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
+    await user.click(screen.getByRole('button', { name: /providers/i }))
+
     expect(screen.getByText(/provider activation/i)).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: /deepseek enabled/i })).toBeChecked()
+    expect(screen.getByRole('switch', { name: /lm studio local disabled/i })).toBeInTheDocument()
     const geminiSwitch = screen.getByRole('switch', { name: /google gemini disabled/i })
     expect(geminiSwitch).not.toBeChecked()
 
     await user.click(geminiSwitch)
-    await user.click(screen.getByRole('button', { name: /commit settings/i }))
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(3)
@@ -181,6 +192,7 @@ describe('SettingsDashboard', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
+    await user.click(screen.getByRole('button', { name: /qa tools/i }))
     await user.click(screen.getByRole('button', { name: /load browser test data/i }))
 
     expect(screen.getByText(/browser qa data loaded/i)).toBeInTheDocument()
