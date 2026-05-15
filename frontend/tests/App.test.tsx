@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
@@ -269,6 +269,138 @@ describe('App', () => {
     expect(screen.getByText('Evidence Items')).toBeInTheDocument()
     expect(screen.getByText('Confidence Score')).toBeInTheDocument()
     expect(screen.queryByText('Current Board')).not.toBeInTheDocument()
+  })
+
+  it('switches persisted discoveries and vault reports with the selected investigation', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-alpha', topic: 'Alpha Case' },
+        { id: 'inv-bravo', topic: 'Bravo Case' },
+      ]),
+    )
+    localStorage.setItem(
+      'gorantula_discoveries_by_investigation',
+      JSON.stringify({
+        'inv-alpha': [
+          {
+            id: 'disc-alpha',
+            title: 'Alpha discovery only',
+            claim: 'Alpha claim',
+            impact: 'Alpha impact',
+            confidence: 0.9,
+            sourceNodeIDs: ['alpha-node'],
+            sourceVaultID: 'inv-alpha',
+            createdAt: '2026-05-15T10:00:00.000Z',
+            nodeKind: 'discovery',
+          },
+        ],
+        'inv-bravo': [
+          {
+            id: 'disc-bravo',
+            title: 'Bravo discovery only',
+            claim: 'Bravo claim',
+            impact: 'Bravo impact',
+            confidence: 0.8,
+            sourceNodeIDs: ['bravo-node'],
+            sourceVaultID: 'inv-bravo',
+            createdAt: '2026-05-15T10:05:00.000Z',
+            nodeKind: 'discovery',
+          },
+        ],
+      }),
+    )
+    localStorage.setItem('vault_result_inv-alpha', JSON.stringify({ result: 'Alpha theory summary belongs to alpha only.' }))
+    localStorage.setItem('vault_result_inv-bravo', JSON.stringify({ result: 'Bravo theory summary belongs to bravo only.' }))
+
+    render(<App />)
+
+    expect(await screen.findByText(/Alpha theory summary belongs to alpha only/i)).toBeInTheDocument()
+    expect(screen.getByText('Alpha discovery only')).toBeInTheDocument()
+    expect(screen.queryByText('Bravo discovery only')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('Bravo Case'))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Bravo theory summary belongs to bravo only/i)).toBeInTheDocument()
+      expect(screen.getByText('Bravo discovery only')).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Alpha theory summary belongs to alpha only/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Alpha discovery only')).not.toBeInTheDocument()
+  })
+
+  it('stores synthesis completions in the owning investigation without leaking into the selected case', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-alpha', topic: 'Alpha Case' },
+        { id: 'inv-bravo', topic: 'Bravo Case' },
+      ]),
+    )
+    localStorage.setItem('vault_result_inv-alpha', JSON.stringify({ result: 'Alpha original theory remains selected.' }))
+
+    render(<App />)
+    expect(await screen.findByText(/Alpha original theory remains selected/i)).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYNTHESIS_COMPLETE', {
+        vaultId: 'inv-bravo',
+        result: 'Bravo completed theory arrived in the background.',
+        append: false,
+      })
+    })
+
+    expect(screen.queryByText(/Bravo completed theory arrived in the background/i)).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('vault_result_inv-bravo') || '{}')).toMatchObject({
+      result: 'Bravo completed theory arrived in the background.',
+    })
+
+    await user.click(screen.getByText('Bravo Case'))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Bravo completed theory arrived in the background/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Alpha original theory remains selected/i)).not.toBeInTheDocument()
+  })
+
+  it('derives discovery panel entries from saved Discovery persona insights when no approved discoveries were stored', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-persona', topic: 'Persona Discovery Case' }]),
+    )
+    localStorage.setItem(
+      'inv_data_inv-persona',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-persona-1',
+            data: {
+              title: 'Discovery source node',
+              personaInsights: [
+                {
+                  personaName: 'Discovery',
+                  confidence: 0.72,
+                  keyFindings: ['Persona-derived discovery should appear in the panel.'],
+                  nodeIDs: ['node-persona-1'],
+                },
+              ],
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    render(<App />)
+
+    expect(await screen.findByText('Persona-derived discovery should appear in the panel.')).toBeInTheDocument()
   })
 
   it('collapses and expands the investigations sidebar with the arrow control', async () => {

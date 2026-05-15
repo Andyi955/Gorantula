@@ -2,6 +2,7 @@ import { createRootInvestigation, INVESTIGATIONS_STORAGE_KEY } from '../src/util
 import {
   loadInvestigations,
   loadBoardStateForInvestigation,
+  loadDiscoveriesForInvestigation,
   saveBoardStateForInvestigation,
 } from '../src/utils/investigationPersistence'
 import { BOARD_PERSIST_FAILED_EVENT, parsePersistedBoardState, type PersistedBoardState } from '../src/utils/hierarchicalCanvas'
@@ -116,6 +117,35 @@ describe('investigation persistence', () => {
     expect(loaded?.nodes).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8080/api/investigations/inv-local-rich/board',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+  })
+
+  it('uses browser discoveries when the backend still has an empty discovery bucket', async () => {
+    localStorage.setItem(
+      'gorantula_discoveries_by_investigation',
+      JSON.stringify({
+        'inv-local-discoveries': [
+          { id: 'discovery-local', title: 'Recovered local discovery' },
+        ],
+      }),
+    )
+
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        return { ok: true, json: async () => ({}) } as Response
+      }
+      return { ok: true, json: async () => [] } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const discoveries = await loadDiscoveriesForInvestigation('inv-local-discoveries')
+
+    expect(discoveries).toEqual([
+      expect.objectContaining({ id: 'discovery-local', title: 'Recovered local discovery' }),
+    ])
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/investigations/inv-local-discoveries/discoveries',
       expect.objectContaining({ method: 'PUT' }),
     )
   })
