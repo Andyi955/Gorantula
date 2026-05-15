@@ -1832,7 +1832,7 @@ function App() {
                         value={prompt}
                         onChange={(e) => setPrompt(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && runSpider()}
-                        placeholder={crawlMode === 'web' ? "ENTER CRAWL PARAMETERS..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
+                        placeholder={crawlMode === 'web' ? "ENTER A TOPIC OR URL TO CRAWL THE WEB..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
                         className="forensic-spider-command-input"
                       />
 
