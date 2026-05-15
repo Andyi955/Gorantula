@@ -70,17 +70,6 @@ describe('SpiderVisualizer', () => {
     expect(container).toHaveTextContent('Brain: Connected')
   })
 
-  it('renders system log warnings from the crawl pipeline', () => {
-    const sharedSocket = new MockSocket()
-    render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
-
-    act(() => {
-      sharedSocket.emit('SYSTEM_LOG', "Image scraping is enabled, but provider 'minimax' does not support multimodal image review.")
-    })
-
-    expect(screen.getByText(/does not support multimodal image review/i)).toBeInTheDocument()
-  })
-
   it('updates leg telemetry from websocket leg events', () => {
     const sharedSocket = new MockSocket()
     render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)

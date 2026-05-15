@@ -20,6 +20,10 @@ interface SpiderVisualizerProps {
     pipelineLabel?: string;
     pipelineProgressPercent?: number;
     onOpenPipelineMonitor?: () => void;
+    tokenReadout?: {
+        value: string;
+        title?: string;
+    };
 }
 
 const legRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
@@ -105,8 +109,8 @@ const LegTelemetryCard = ({ id, state }: { id: number; state: string }) => {
     );
 };
 
-const MetricReadout = ({ label, value }: { label: string; value: string | number }) => (
-    <div className="forensic-spider-readout">
+const MetricReadout = ({ label, value, title }: { label: string; value: string | number; title?: string }) => (
+    <div className="forensic-spider-readout" title={title}>
         <span>{label}</span>
         <strong>{value}</strong>
     </div>
@@ -119,15 +123,14 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     pipelineLabel = 'Pipeline idle',
     pipelineProgressPercent = 0,
     onOpenPipelineMonitor,
+    tokenReadout,
 }) => {
     const [legStates, setLegStates] = useState<Record<number, string>>(resetLegStates);
     const [brainState, setBrainState] = useState<string>('Offline');
-    const [systemLog, setSystemLog] = useState<string | null>(null);
 
     useEffect(() => {
         if (!sharedSocket) {
             setBrainState('Offline');
-            setSystemLog(null);
             return;
         }
 
@@ -140,14 +143,6 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                 setBrainState(msg.payload);
                 if (['Done', 'Offline', 'Disconnected'].includes(msg.payload)) {
                     setLegStates(resetLegStates());
-                }
-            } else if (msg.type === 'SYSTEM_LOG') {
-                if (typeof msg.payload === 'string') {
-                    setSystemLog(msg.payload);
-                } else if (msg.payload == null) {
-                    setSystemLog(null);
-                } else {
-                    setSystemLog(String(msg.payload));
                 }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
                 setLegStates(resetLegStates());
@@ -186,16 +181,10 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                         <MetricReadout label="Uptime" value={uptime} />
                         <MetricReadout label="Legs Active" value={`${activeLegCount} / 8`} />
                         <MetricReadout label="Evidence" value={evidenceCount} />
+                        <MetricReadout label="Tokens" value={tokenReadout?.value || '0'} title={tokenReadout?.title} />
                         <MetricReadout label="Throughput" value={throughput} />
                     </div>
                 </header>
-
-                {systemLog && (
-                    <div className="forensic-spider-system-log">
-                        <Activity size={14} />
-                        <span>{systemLog}</span>
-                    </div>
-                )}
 
                 <div className="forensic-spider-workbench">
                     <div className="forensic-spider-leg-bank">

@@ -13,14 +13,20 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     pipelineLabel = 'Pipeline idle',
     pipelineProgressPercent = 0,
     onOpenPipelineMonitor,
+    tokenReadout,
   }: {
     pipelineStatus?: string
     pipelineLabel?: string
     pipelineProgressPercent?: number
     onOpenPipelineMonitor?: () => void
+    tokenReadout?: { value: string; title?: string }
   }) => (
     <div>
       SpiderVisualizer
+      <div title={tokenReadout?.title}>
+        <span>Tokens</span>
+        <strong>{tokenReadout?.value}</strong>
+      </div>
       <button type="button" data-testid="mock-spider-pipeline-rail" onClick={onOpenPipelineMonitor}>
         Pipeline rail {pipelineStatus} {pipelineLabel} {pipelineProgressPercent}%
       </button>
@@ -319,7 +325,7 @@ describe('App', () => {
     await user.click(imageToggle)
     expect(imageToggle).toHaveAttribute('aria-checked', 'true')
 
-    await user.type(screen.getByPlaceholderText(/enter crawl parameters/i), 'AI frontier systems')
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'AI frontier systems')
     await user.click(screen.getByRole('button', { name: /execute/i }))
 
     expect(WebSocketMock.instances[0]?.send).toHaveBeenCalled()
@@ -339,7 +345,7 @@ describe('App', () => {
       WebSocketMock.instances[0]?.onopen?.()
     })
 
-    await user.type(screen.getByPlaceholderText(/enter crawl parameters/i), 'signal pattern research')
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'signal pattern research')
     await user.click(screen.getByRole('button', { name: /execute/i }))
 
     const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
@@ -397,7 +403,7 @@ describe('App', () => {
       WebSocketMock.instances[0]?.onopen?.()
     })
 
-    await user.type(screen.getByPlaceholderText(/enter crawl parameters/i), 'compact status test')
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'compact status test')
     await user.click(screen.getByRole('button', { name: /execute/i }))
 
     const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
@@ -564,7 +570,7 @@ describe('App', () => {
     expect(setItemSpy).toHaveBeenCalledWith('gorantula_discoveries_by_investigation', expect.any(String))
 
     await userEvent.click(screen.getByText('Vault Chat'))
-    expect(await screen.findByText('DiscoveryPanel Handle')).toBeInTheDocument()
+    expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
     expect(await screen.findByText('Signal compression finding')).toBeInTheDocument()
   })
 
@@ -586,7 +592,7 @@ describe('App', () => {
     expect(screen.getByRole('switch', { name: /scrape images/i })).toBeInTheDocument()
   })
 
-  it('renders current board and session token usage from websocket events', async () => {
+  it('renders compact token usage from websocket events', async () => {
     localStorage.setItem(
       'gorantula_investigations',
       JSON.stringify([{ id: 'inv-1', topic: 'Board One' }, { id: 'inv-2', topic: 'Board Two' }]),
@@ -615,13 +621,9 @@ describe('App', () => {
       })
     })
 
-    expect(screen.getByText('Current Board')).toBeInTheDocument()
-    expect(screen.getByText('Session Total')).toBeInTheDocument()
-    expect(screen.getByText('Full-board persona analysis')).toBeInTheDocument()
-    expect(screen.getAllByText('5K total')).toHaveLength(2)
-    expect(screen.getAllByText('4.2K in')).toHaveLength(2)
-    expect(screen.getAllByText('800 out')).toHaveLength(2)
-    expect(screen.getAllByText('7 calls')).toHaveLength(2)
+    expect(screen.getByText('Tokens')).toBeInTheDocument()
+    expect(screen.getByText('5K / 7 calls')).toBeInTheDocument()
+    expect(screen.getByTitle(/Full-board persona analysis/)).toHaveTextContent('5K / 7 calls')
 
     act(() => {
       WebSocketMock.instances[0]?.emit('TOKEN_USAGE', {
@@ -640,11 +642,36 @@ describe('App', () => {
       })
     })
 
-    expect(screen.getByText('6.6K total')).toBeInTheDocument()
-    expect(screen.getByText('5.2K in')).toBeInTheDocument()
-    expect(screen.getByText('1.3K out')).toBeInTheDocument()
-    expect(screen.getByText('10 calls')).toBeInTheDocument()
-    expect(screen.getByText('1 est.')).toBeInTheDocument()
+    expect(screen.getByText('5K / 7 calls')).toBeInTheDocument()
+    expect(screen.getByTitle(/Session: 6.6K total/)).toBeInTheDocument()
+  })
+
+  it('renders compact dismissible system notices in the app header', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYSTEM_LOG', 'Full-board persona analysis token usage: 43292 total (15847 prompt, 27445 completion) across 7 calls; 7 reported; providers: deepseek=43292.')
+    })
+
+    expect(screen.getByText('Persona analysis: 43.3K tokens / 7 calls')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute('title', expect.stringContaining('43292 total'))
+
+    await user.click(screen.getByRole('button', { name: /dismiss system notice/i }))
+
+    expect(screen.queryByText('Persona analysis: 43.3K tokens / 7 calls')).not.toBeInTheDocument()
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYSTEM_LOG', "Image review failed for provider 'deepseek'. Falling back to basic image scraping for this node.")
+    })
+
+    expect(screen.getByText('Image review fallback: DeepSeek using basic scraping')).toBeInTheDocument()
   })
 
   it('ignores malformed token usage payloads', async () => {
@@ -677,13 +704,9 @@ describe('App', () => {
       })
     })
 
-    expect(screen.getByText('Current Board')).toBeInTheDocument()
-    expect(screen.queryByText('Session Total')).not.toBeInTheDocument()
-    expect(screen.getByText('Broken totals')).toBeInTheDocument()
-    expect(screen.getByText('0 total')).toBeInTheDocument()
-    expect(screen.getByText('0 in')).toBeInTheDocument()
-    expect(screen.getByText('0 out')).toBeInTheDocument()
-    expect(screen.getByText('0 calls')).toBeInTheDocument()
+    expect(screen.getByText('Tokens')).toBeInTheDocument()
+    expect(screen.getByText('0 / 0 calls')).toBeInTheDocument()
+    expect(screen.getByTitle(/Broken totals/)).toBeInTheDocument()
   })
 
   it('uses the sidebar plus shortcut to jump to spider view and focus the crawl input', async () => {
@@ -696,7 +719,7 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: /open spider input/i }))
 
-    const crawlInput = screen.getByPlaceholderText(/enter crawl parameters/i)
+    const crawlInput = screen.getByPlaceholderText(/enter a topic or url to crawl the web/i)
     expect(crawlInput).toHaveFocus()
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
   })
