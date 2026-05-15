@@ -106,3 +106,12 @@ func TestSyncSynthesisIndexWithActiveVaultsBackfillsBoardEntities(t *testing.T) 
 		t.Fatal("expected synced historical board to produce an overlap alert")
 	}
 }
+
+func TestPersonaAnalysisCompletionDetail(t *testing.T) {
+	if got := personaAnalysisCompletionDetail(7, 7); got != "Generated 7 persona insight sets" {
+		t.Fatalf("full success detail = %q", got)
+	}
+	if got := personaAnalysisCompletionDetail(5, 7); got != "Partial persona analysis completed (5/7 insight sets)" {
+		t.Fatalf("partial success detail = %q", got)
+	}
+}

@@ -600,6 +600,13 @@ func relationshipDebugSummary(debugRun models.RelationshipDebugRun) string {
 	return strings.Join(debugRun.Notes, "; ")
 }
 
+func personaAnalysisCompletionDetail(successCount, totalCount int) string {
+	if totalCount > 0 && successCount < totalCount {
+		return fmt.Sprintf("Partial persona analysis completed (%d/%d insight sets)", successCount, totalCount)
+	}
+	return fmt.Sprintf("Generated %d persona insight sets", successCount)
+}
+
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipelineRunMetadata) {
 	go func() {
 		tracker := getPipelineTracker(meta, models.DefaultPipelineProgressSteps())
@@ -658,7 +665,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 
 		broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
-		broadcast(tracker.Complete("persona_analysis", fmt.Sprintf("Generated %d persona insight sets", len(insights))))
+		broadcast(tracker.Complete("persona_analysis", personaAnalysisCompletionDetail(len(insights), len(brain.GetDefaultPersonas()))))
 		tracker.RecordCounter("personaInsightSets", len(insights))
 		saveAndBroadcastPipelineProfile(tracker)
 

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 )
 
 // OpenAIMessage represents a chat message
@@ -112,18 +111,7 @@ func (p *OpenAICompatibleProvider) GenerateJSON(ctx context.Context, prompt stri
 	}
 	p.recordTokenUsage(ctx, "GenerateJSON", prompt, content, usage)
 
-	// Clean markdown JSON if wrapped
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimSuffix(content, "```")
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(content, "```")
-	}
-	content = strings.TrimSpace(content)
-
-	return json.Unmarshal([]byte(content), response)
+	return parseJSONResponse(content, response)
 }
 
 func (p *OpenAICompatibleProvider) ReviewImageJSON(ctx context.Context, prompt, mimeType string, imageData []byte, response interface{}) error {

@@ -94,6 +94,41 @@ func TestOpenAICompatibleProvider_GenerateJSON(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleProvider_GenerateJSONUsesSharedRepairParser(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": "DeepSeek draft:\n```json\n{\"key\":\"value\",}\n```",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := &OpenAICompatibleProvider{
+		NameID:     "deepseek",
+		APIKey:     "test-api-key",
+		BaseURL:    mockServer.URL,
+		Model:      "test-model",
+		HTTPClient: mockServer.Client(),
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	err := provider.GenerateJSON(context.Background(), "Give me JSON", &result)
+	if err != nil {
+		t.Fatalf("expected repaired JSON to parse, got %v", err)
+	}
+	if result.Key != "value" {
+		t.Fatalf("expected value, got %q", result.Key)
+	}
+}
+
 func TestOpenAICompatibleProvider_GenerateContent_Error(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

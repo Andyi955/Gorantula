@@ -200,6 +200,11 @@ const formatSystemNotice = (message: string) => {
     return `${displayLabel}: ${formatCompactTokens(Number(tokenUsageMatch[2]))} tokens / ${tokenUsageMatch[3]} calls`
   }
 
+  const partialPersonaMatch = trimmed.match(/^Partial persona analysis completed:\s*(\d+)\/(\d+)\s+personas succeeded;\s+missing\s+(.+?)\.?$/i)
+  if (partialPersonaMatch) {
+    return `Persona partial: ${partialPersonaMatch[1]}/${partialPersonaMatch[2]} succeeded, missing ${partialPersonaMatch[3]}`
+  }
+
   return trimmed
 }
 
