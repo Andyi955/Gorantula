@@ -35,9 +35,8 @@ describe('VaultChatbot', () => {
 
     render(<VaultChatbot sharedSocket={sharedSocket} />)
 
-    await user.click(screen.getByRole('button', { name: /files selected for context/i }))
-    await user.click(await screen.findByText('case-1.md'))
-    await user.type(screen.getByPlaceholderText(/ask a question mapping the selected intelligence/i), 'What changed?')
+    await user.click(await screen.findByRole('button', { name: /select vault file case-1\.md/i }))
+    await user.type(screen.getByPlaceholderText(/ask across selected evidence/i), 'What changed?')
     await user.click(screen.getByRole('button', { name: /interrogate/i }))
 
     expect(sharedSocket.send).toHaveBeenCalledWith(

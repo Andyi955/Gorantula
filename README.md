@@ -1,74 +1,104 @@
-# GORANTULA v2.0 // ARCHITECT
+# Gorantula v2.0 // Architect
+
+Gorantula is a local-first intelligence research workspace. It crawls a topic, gathers evidence, synthesizes it with configurable AI providers, and turns the result into a forensic board, timeline, and searchable vault.
+
+## Preview
 
 ![Spider View Preview](./public/assets/dashboard-v4.png)
 ![Detective Board Preview](./public/assets/detectiveboard.png)
 ![Timeline Preview](./public/assets/timeline-v2.png)
 
-**Gorantula** is a multi-threaded, AI-powered intelligence agent designed to crawl, digest, and visualize complex research topics. By orchestrating a "Nervous System" of concurrent "Legs," it scrapes the web for raw facts and uses supported AI providers to synthesize connections and visualize them on an interactive detective board.
+## What It Does
 
----
+- Runs concurrent web crawling with multiple worker legs.
+- Builds an interactive Detective Board from gathered evidence.
+- Extracts deterministic, board-derived events into the Timeline View.
+- Archives successful investigations into the local `abdomen_vault`.
+- Lets you interrogate archived evidence through Vault Chat.
+- Supports discovery review, relationship mapping, draggable graph labels, and source-linked evidence cards.
+- Uses configurable AI routing with DeepSeek as the default day-to-day provider.
+- Supports Gemini, OpenAI, Anthropic, Qwen, GLM, Kimi, MiniMax, Ollama, LM Studio, and compatible `/v1/chat/completions` providers.
 
-## 🚀 Key Features
+## Tech Stack
 
-- **Concurrent Crawling**: Deploys 8 parallel scraping workers (Legs) to gather information from disparate sources simultaneously.
-- **Cross-Case Synthesis Engine**: The "Grand Unified Theory" background engine silently analyzes incoming evidence against your entire historical archive of past investigations using a persistent, $O(1)$ Inverted Entity Index. It automatically alerts you via floating UI notifications if a person, organization, or location from today's case was previously discovered months ago in an unrelated investigation.
-- **RAG Vault Chatbot**: Interrogate your archived investigations natively. Select multiple historical case files from the interactive Checklist UI and ask the AI specific questions; it dynamically enforces strict constraints to answer *only* based on the provided evidence.
-- **Audio/Video Media Transcription**: Send YouTube, Vimeo, or standard audio/video URLs (.mp4, .mp3, etc.) straight into the crawler. If the currently routed AI provider supports multimodal parsing, it physically rips the media and extracts the intelligence. If not, a Graceful Fallback dynamically intercepts the payload without crashing the investigation.
-- **Date-Aware AI**: The central Brain contextually limits searches and connects data via chronological relation to the absolute exact current date, ensuring modern timeline accuracy.
-- **Robust Multi-Byte Parsing**: Advanced `rune` UTF-8 token handling ensures foreign languages (Chinese, Japanese) parsing is pristine without bytes-truncation corruption.
-- **3D WebGL Spider View**: Next-gen visually stunning React Three Fiber data pipeline flow, visualizing live task delegation to parallel worker legs.
-- **Detective Board**: A React Flow-powered visualization interface that maps gathered intelligence as interactive nodes with dynamic edge-wiring.
-- **Interactive Timeline**: A dedicated horizontal, scrubbable timeline view plotting chronologically relevant events on a mathematically infinite virtual floating canvas, allowing for buttery smooth drag-panning and dynamic scaling.
-- **Multi-Agent Persona Analysis**: "Connect The Dots" runs 6 specialized AI personas in parallel to analyze evidence from different angles:
-  - **Skeptic** — Questions assumptions, finds gaps and contradictions
-  - **Connector** — Finds hidden links between different pieces of info
-  - **Timeline Analyst** — Orders events chronologically, spots causality
-  - **Entity Hunter** — Identifies key people, orgs, and locations
-  - **Context Provider** — Adds historical background and explains jargon
-  - **Implications Mapper** — Evaluates consequences and predicts outcomes
-  Results are synthesized by the AI into distinct relationship tags based on what the personas investigated.
-- **Discovery Review Cell**: After the relationship graph is synthesized, Gorantula proposes candidate discoveries and sends them through a temporary expert review cell before surfacing anything to the UI.
-- **Breakthroughs Panel**: Approved discoveries appear in a dedicated right-side panel scoped to the active investigation. The panel stays available even when no discoveries survive review, making debugging easier.
-- **Discovery Debug Logs**: Every discovery run writes a timestamped plain-text trace to `abdomen_vault/discovery_logs`, including candidate discoveries, reviewer verdicts, revisions, rejection reasons, and post-review validation notes.
-- **Draggable Relationship Edges**: Custom graph wire-routing allows users to click and drag the actual relationship words to act as physical waypoints, cleanly bending and re-routing the connecting SVG lines around other cards to declutter dense network views. Double-click the label to snap it back instantly.
-- **Universal Connection Ports**: Dynamically generated, load-balanced universal connection nodes scale on hover and act as omni-directional tether points without enforcing strict left/right input-output bounds, enabling fluid line layout mapping.
-- **AI-Decided Connections**: Rather than relying on hardcoded tag lists, the AI analysis engine explicitly decides the best specific word to describe the relationship between two nodes based on context. These dynamic relationships are automatically assigned unique hashed color-coding and dashed line styling on the fly.
-- **Multi-Model Routing & Safe Fallbacks**: Supports a vast array of AI models for analysis. Users can explicitly route distinct LLMs to specific tasks (e.g., using DeepSeek for searching, and Gemini for Persona Analysis). Includes a robust thread-safe fallback mechanism that intercepts API failures and seamlessly re-routes prompts to the next available active provider without interrupting the investigation.
-- **Provider Agnostic**: Native integration for Google Gemini, Anthropic Claude, OpenAI, DeepSeek, Qwen, GLM, Kimi, Ollama, and LM Studio.
-- **Auto-Layout**: Integrated Dagre graph engine ensuring clean, structured, and non-overlapping board organization.
-- **Investigation Persistence**: Fast, popup-free instant-switching between research projects with seamless LocalStorage transitions and marquee UX.
-- **Intel Vault**: Every successful crawl is automatically archived as a markdown report in the timestamped `abdomen_vault`.
+- Backend: Go, Gorilla WebSockets
+- Frontend: React, TypeScript, Vite, Tailwind CSS
+- Graphs: React Flow, Dagre
+- 3D view: React Three Fiber / Three.js
+- Search: Brave Search API
+- Storage: local browser persistence plus backend vault files
 
-## 🛠️ Tech Stack
+## Prerequisites
 
-- **Backend**: Go (Gorilla WebSockets, Google GenAI SDK)
-- **Frontend**: React, TypeScript, Vite, Tailwind CSS (v4)
-- **Visualization**: React Flow, Dagre
-- **AI Engine**: Dynamic multi-model routing supporting Gemini, Anthropic, OpenAI, DeepSeek, Qwen, Ollama, and more via a generic `/v1/chat/completions` provider architecture.
-- **Search Engine**: Brave Search API
+- Go 1.21 or newer
+- Node.js 18 or newer
+- npm
+- Brave Search API key
+- DeepSeek API key, unless you configure another provider in Settings
 
----
+Optional local providers:
 
-## 📋 Setup Guide
+- Ollama at `http://localhost:11434`
+- LM Studio at `http://localhost:1234/v1`
 
-### 1. Prerequisites
-- **Go** (1.21+)
-- **Node.js** (v18+) & **npm** or **pnpm**
-- **Brave Search API Key**: [Get it here](https://api.search.brave.com/app/dashboard)
-- **DeepSeek API Key**: used by default with `deepseek-v4-flash` for fast, lower-cost day-to-day investigations.
-- **Optional provider keys**: Gemini, OpenAI, Anthropic, Qwen, GLM, Kimi, MiniMax, Ollama, and LM Studio can be activated later from Settings.
+## Quick Start
 
-### 2. Environment Configuration
-Create a `.env` file in the root directory (or copy from `.env.example`). You can configure these directly in the application UI under the "Settings" tab without needing to restart the server:
-```bash
+From the repository root:
+
+```powershell
+go mod download
+Copy-Item .env.example .env
+```
+
+Install frontend dependencies:
+
+```powershell
+cd frontend
+npm.cmd install
+```
+
+Start the backend from the repository root:
+
+```powershell
+go run .
+```
+
+The backend runs at:
+
+```text
+http://127.0.0.1:8080
+```
+
+Start the frontend from `frontend`:
+
+```powershell
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173/
+```
+
+## Environment Setup
+
+Create `.env` from `.env.example`, then add at least:
+
+```env
 BRAVE_API_KEY=your_brave_api_key
+GORANTULA_HOST=127.0.0.1
+GORANTULA_PORT=8080
 DEEPSEEK_ENABLED=true
 DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_MODEL=deepseek-v4-flash
 DEFAULT_SEARCH_MODEL=deepseek
 DEFAULT_PERSONA_MODEL=deepseek
+```
 
-# Optional provider activation switches:
+Optional provider switches:
+
+```env
 GEMINI_ENABLED=false
 OPENAI_ENABLED=false
 ANTHROPIC_ENABLED=false
@@ -78,8 +108,11 @@ MOONSHOT_ENABLED=false
 MINIMAX_ENABLED=false
 OLLAMA_ENABLED=false
 LMSTUDIO_ENABLED=false
+```
 
-# Optional provider credentials and local hosts:
+Provider keys and local hosts:
+
+```env
 GEMINI_API_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -90,8 +123,11 @@ MINIMAX_API_KEY=
 OLLAMA_HOST=http://localhost:11434
 LMSTUDIO_BASE_URL=http://localhost:1234/v1
 LM_API_TOKEN=
+```
 
-# Optional model overrides:
+Model overrides:
+
+```env
 GEMINI_MODEL=gemini-3-flash-preview
 OPENAI_MODEL=gpt-5.4-mini
 ANTHROPIC_MODEL=claude-sonnet-4-6
@@ -103,50 +139,55 @@ OLLAMA_MODEL=qwen3-coder
 LMSTUDIO_MODEL=qwen3.6
 ```
 
-Provider switches are intentionally separate from keys. Set `*_ENABLED=true` for the providers you want Gorantula to route to, then add only the matching key or local host. If a switch is omitted, Gorantula keeps backward-compatible auto-detection and activates a provider when its key or local host exists.
+Provider switches are separate from credentials. Set `*_ENABLED=true` only for providers you want Gorantula to route to.
 
-### 3. Installation
+## Daily Development Commands
 
-**Backend Setup:**
-```bash
-go mod download
+Backend:
+
+```powershell
+go run .
+go test ./...
 ```
 
-**Frontend Setup:**
-```bash
+Frontend:
+
+```powershell
 cd frontend
-npm install
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+npm.cmd run test
+npm.cmd run build
 ```
 
----
+On Windows, the first backend start may trigger a Windows Defender Firewall prompt. Allowing private-network access is expected for local development.
 
-## 🎮 How to Run
+## Workflow
 
-### Start the Backend
-From the root directory:
-```bash
-go run main.go
-```
-The server will start on `localhost:8080`.
+1. Open Spider View and enter a research topic.
+2. Watch the worker legs gather sources and evidence.
+3. Open Detective Board to inspect evidence cards and relationships.
+4. Use Connect the Dots to synthesize relationships when the crawl is complete.
+5. Open Timeline View and generate or refresh the timeline from saved board evidence.
+6. Use Vault Chat to select archived evidence files and ask grounded questions.
+7. Review generated markdown reports in `abdomen_vault`.
 
-### Start the Frontend
-From the `frontend` directory:
-```bash
-npm run dev
-```
-Open your browser to the local Vite URL (usually `localhost:5173`).
+## Project Notes
 
----
+- Timeline generation is manual and local to the selected investigation.
+- Vault Chat answers are scoped to the selected vault evidence files.
+- Browser persistence is used for fast local investigation switching.
+- Backend vault files provide durable markdown archives for completed investigations.
+- Discovery debug traces are written under `abdomen_vault/discovery_logs`.
 
-## 🕵️ Operation Instructions
+## Troubleshooting
 
-1. **Initiate Crawl**: Go to the "Spider View" and enter a research topic (e.g., "Future of fusion energy"). The AI will parse this intelligently using today's exact date.
-2. **Watch the WebGL Spider**: Observe the 3D visualizer map out the "Nervous System." You will see 8 distinct worker legs pulse with activity, lock onto targets, and glow as data physically returns to the central core.
-3. **Analyze the Board**: Head over to the "Detective Board" tab. Watch as cards "pop in" with AI-generated summaries. You can safely resize cards for a better fit or use the mini-map to overview massive case networks.
-4. **Connect The Dots**: Once gathering is complete, click the **[ CONNECT THE DOTS ]** button. The board will automatically organize itself into a logical hierarchy, connecting topics with distinct visual evidence wires. These relationship tags are explicitly decided by the AI analysis engine investigating the context, rather than a hardcoded list. Users can freely drag the dynamically generated relationship labels around to manually re-route and bend the visual connection lines to their liking!
-5. **Review Breakthroughs**: After the graph is built, open the right-side **Breakthroughs** panel to inspect only the discoveries that survived the temporary review cell.
-6. **Inspect Discovery Logs**: If a discovery is missing, weak, or unexpectedly rejected, open the latest file in `abdomen_vault/discovery_logs` to inspect candidate generation, reviewer rewrites, hard vetoes, and post-review validation.
-7. **Read Deep**: Click "READ FULL" on any card to slide out the complete Intel Report, fully parsed and untruncated even if in multi-byte languages.
-8. **Timeline Analysis**: Toggle to the "Timeline" view to see dates extracted from reports logically laid out chronologically on a virtual floating canvas. Smoothly drag and zoom to investigate cascading historical implications!
-9. **Switch Topics**: Use the fast, popup-free sidebar to rapidly ditch old investigations and swap seamlessly into new cases while monitoring the lower Status Ticker.
-10. **Interrogate Vault**: Open the "Vault Chat" tab anytime to review past investigations. Select multiple`.md` files using the dropdown, and chat with the AI exclusively bounded by the contents of those documents.
+- If the frontend opens on `localhost` instead of `127.0.0.1`, use:
+
+  ```powershell
+  npm.cmd run dev -- --host 127.0.0.1 --port 5173
+  ```
+
+- If Vault Chat cannot load files, confirm the backend is running at `http://127.0.0.1:8080`.
+- If searches fail, check `BRAVE_API_KEY`.
+- If AI calls fail, check that the matching provider has both `*_ENABLED=true` and a valid key or local host.
+- If a board or timeline looks stale, refresh the active investigation data from the UI before re-running analysis.

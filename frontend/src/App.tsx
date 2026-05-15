@@ -634,12 +634,12 @@ function App() {
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
-  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'settings'
+  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'chat' || activeTab === 'settings'
   const expandedSidebarWidth = hasCustomSidebarWidth
     ? sidebarWidth
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
-  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && !isBoardWorkspaceActive
+  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && activeTab !== 'chat' && !isBoardWorkspaceActive
 
   const filteredSidebarRows = useMemo(() => {
     const query = sidebarSearchQuery.trim().toLowerCase()
@@ -1370,7 +1370,7 @@ function App() {
     : 'flex gap-4'
   const getTabClassName = (tab: 'spider' | 'board' | 'timeline' | 'chat' | 'settings', activeClassName: string) => (
     isForensicWorkspaceActive
-      ? `forensic-app-tab ${activeTab === tab ? `forensic-app-tab-active ${activeClassName}` : ''}`
+      ? `forensic-app-tab ${activeTab === tab ? 'forensic-app-tab-active' : ''}`
       : `flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === tab ? activeClassName : 'text-gray-500 hover:text-white'}`
   )
   const startSidebarResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -1433,7 +1433,7 @@ function App() {
       {/* Top Header */}
       <header className={headerClassName}>
         <h1 className={brandClassName}>
-          GORANTULA <span className={`ml-2 text-sm not-italic font-normal ${isBoardWorkspaceActive || activeTab === 'spider' ? 'forensic-app-brand-meta' : 'text-white opacity-50'}`}>v2.0 // ARCHITECT</span>
+          GORANTULA <span className={`ml-2 text-sm not-italic font-normal ${isForensicWorkspaceActive ? 'forensic-app-brand-meta' : 'text-white opacity-50'}`}>v2.0 // ARCHITECT</span>
         </h1>
 
         <div className={tabRailClassName}>
