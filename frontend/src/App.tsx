@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
-import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle } from 'lucide-react'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle, Activity } from 'lucide-react'
 import {
   buildSidebarInvestigationRows,
   createRootInvestigation,
@@ -169,6 +169,31 @@ const compactTokenFormatter = new Intl.NumberFormat('en-US', {
 const investigationTimestampPattern = /(?:inv|merge)-(\d{10,})$/i
 
 const formatCompactTokens = (value: number) => compactTokenFormatter.format(value)
+
+const formatProviderName = (provider: string) => {
+  const normalized = provider.trim().toLowerCase()
+  if (normalized === 'deepseek') return 'DeepSeek'
+  if (normalized === 'openai') return 'OpenAI'
+  if (normalized === 'gemini') return 'Gemini'
+  return provider.trim() || 'Provider'
+}
+
+const formatSystemNotice = (message: string) => {
+  const trimmed = message.trim()
+  const imageFallbackMatch = trimmed.match(/image review failed for provider ['"]?([^'".]+)['"]?/i)
+  if (imageFallbackMatch) {
+    return `Image review fallback: ${formatProviderName(imageFallbackMatch[1])} using basic scraping`
+  }
+
+  const tokenUsageMatch = trimmed.match(/^(.+?) token usage:\s*(\d+)\s+total.*?across\s+(\d+)\s+calls/i)
+  if (tokenUsageMatch) {
+    const label = tokenUsageMatch[1].replace(/^full-board\s+/i, '').trim()
+    const displayLabel = label ? `${label[0].toUpperCase()}${label.slice(1)}` : 'Token usage'
+    return `${displayLabel}: ${formatCompactTokens(Number(tokenUsageMatch[2]))} tokens / ${tokenUsageMatch[3]} calls`
+  }
+
+  return trimmed
+}
 
 const clampSidebarWidth = (value: number) =>
   Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)))
@@ -623,6 +648,8 @@ function App() {
   const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
   const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
   const [autosaveWarning, setAutosaveWarning] = useState<AutosaveWarning | null>(null)
+  const [systemNotice, setSystemNotice] = useState<string | null>(null)
+  const [dismissedSystemNotice, setDismissedSystemNotice] = useState<string | null>(null)
 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -640,6 +667,8 @@ function App() {
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
   const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && activeTab !== 'chat' && !isBoardWorkspaceActive
+  const visibleSystemNotice = activeTab === 'spider' && systemNotice && dismissedSystemNotice !== systemNotice ? systemNotice : null
+  const systemNoticeText = visibleSystemNotice ? formatSystemNotice(visibleSystemNotice) : null
 
   const filteredSidebarRows = useMemo(() => {
     const query = sidebarSearchQuery.trim().toLowerCase()
@@ -925,6 +954,18 @@ function App() {
           return
         }
 
+        if (msg.type === 'SYSTEM_LOG') {
+          if (typeof msg.payload === 'string') {
+            setSystemNotice(msg.payload)
+          } else if (msg.payload == null) {
+            setSystemNotice(null)
+            setDismissedSystemNotice(null)
+          } else {
+            setSystemNotice(String(msg.payload))
+          }
+          return
+        }
+
         if (msg.type === 'TOKEN_USAGE') {
           const report = coerceTokenUsageReport(msg.payload)
           if (!report) {
@@ -984,6 +1025,19 @@ function App() {
   }, [currentInvestigationId, refreshPipelineProfiles, socketConfig.socket])
 
   const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
+  const sessionTokenSummary = `Session: ${formatCompactTokens(sessionTokenUsage.totalTokens)} total, ${formatCompactTokens(sessionTokenUsage.promptTokens)} in, ${formatCompactTokens(sessionTokenUsage.completionTokens)} out, ${sessionTokenUsage.callCount} calls | ${formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}`
+  const spiderTokenUsage = currentBoardTokenUsage || (sessionTokenUsage.totalTokens > 0 ? sessionTokenUsage : null)
+  const spiderTokenReadout = spiderTokenUsage
+    ? {
+      value: `${formatCompactTokens(spiderTokenUsage.totalTokens)} / ${spiderTokenUsage.callCount} calls`,
+      title: currentBoardTokenUsage
+        ? `Current board: ${currentBoardTokenUsage.label} | ${formatCompactTokens(currentBoardTokenUsage.totalTokens)} total, ${formatCompactTokens(currentBoardTokenUsage.promptTokens)} in, ${formatCompactTokens(currentBoardTokenUsage.completionTokens)} out, ${currentBoardTokenUsage.callCount} calls | ${formatTokenProviderBreakdown(currentBoardTokenUsage.providerTotals)} | ${sessionTokenSummary}`
+        : sessionTokenSummary,
+    }
+    : {
+      value: '0',
+      title: 'No token usage reported yet',
+    }
   const pipelineRuns = useMemo(
     () => Object.values(pipelineRunsById).sort((left, right) => right.updatedAt - left.updatedAt),
     [pipelineRunsById],
@@ -1436,6 +1490,22 @@ function App() {
           GORANTULA <span className={`ml-2 text-sm not-italic font-normal ${isForensicWorkspaceActive ? 'forensic-app-brand-meta' : 'text-white opacity-50'}`}>v2.0 // ARCHITECT</span>
         </h1>
 
+        <div className="forensic-app-header-notice-slot">
+          {visibleSystemNotice && systemNoticeText && (
+            <div className="forensic-app-system-notice" title={visibleSystemNotice} role="status">
+              <Activity size={13} />
+              <span>{systemNoticeText}</span>
+              <button
+                type="button"
+                aria-label="Dismiss system notice"
+                onClick={() => setDismissedSystemNotice(visibleSystemNotice)}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className={tabRailClassName}>
           <button
             onClick={() => setActiveTab('spider')}
@@ -1750,6 +1820,7 @@ function App() {
                       pipelineLabel={activePipelineRun?.stepLabel ?? 'Pipeline idle'}
                       pipelineProgressPercent={activePipelinePercent}
                       onOpenPipelineMonitor={() => setIsPipelineDrawerOpen(true)}
+                      tokenReadout={spiderTokenReadout}
                     />
                   </Suspense>
                 )}
@@ -1924,7 +1995,7 @@ function App() {
       </div>
 
       {/* Status Bar */}
-      <footer className="forensic-statusbar forensic-statusbar-shell px-3 py-2 text-[10px] z-50 overflow-hidden">
+      <footer className="forensic-statusbar forensic-statusbar-shell px-3 py-2 text-[10px] z-50">
         <div className="forensic-status-grid">
           <div className="forensic-status-block">
             <span className="forensic-status-label">System Status</span>
@@ -1971,78 +2042,49 @@ function App() {
           </div>
         </div>
 
-        {activePipelineRun && !isPipelineChipDismissed && (
-          <div
-            data-testid="pipeline-progress-chip"
-            className="forensic-pipeline-chip forensic-status-segment ml-4 shrink-0 text-left text-[10px]"
-            title={`${activePipelineRun.stepLabel} | elapsed ${formatDuration(activePipelineRun.elapsedMs)} | ETA ${activePipelineEta}`}
-          >
-            <button
-              type="button"
-              onClick={() => setIsPipelineDrawerOpen(true)}
-              className="forensic-pipeline-chip-main"
-              aria-label={`Open pipeline monitor: ${activePipelineRun.stepLabel}`}
+        <div className="forensic-status-activity">
+          {activePipelineRun && !isPipelineChipDismissed && (
+            <div
+              data-testid="pipeline-progress-chip"
+              className="forensic-pipeline-chip forensic-status-segment text-left text-[10px]"
+              title={`${activePipelineRun.stepLabel} | elapsed ${formatDuration(activePipelineRun.elapsedMs)} | ETA ${activePipelineEta}`}
             >
-              <span className={`forensic-pipeline-chip-dot forensic-pipeline-chip-dot-${activePipelineRailStatus}`} aria-hidden="true" />
-              <span className="forensic-status-heading font-bold uppercase tracking-[0.18em]">Pipeline</span>
-              <strong>{activePipelinePercent}%</strong>
-              <span className="forensic-pipeline-chip-label">{activePipelineRun.stepLabel}</span>
-            </button>
-            <button
-              type="button"
-              className="forensic-pipeline-chip-dismiss"
-              aria-label="Dismiss pipeline status chip"
-              onClick={() => {
-                setDismissedPipelineChipRuns((current) => ({
-                  ...current,
-                  [activePipelineRun.runId]: true,
-                }))
-              }}
-            >
-              <X size={11} />
-            </button>
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={() => setIsPipelineDrawerOpen(true)}
+                className="forensic-pipeline-chip-main"
+                aria-label={`Open pipeline monitor: ${activePipelineRun.stepLabel}`}
+              >
+                <span className={`forensic-pipeline-chip-dot forensic-pipeline-chip-dot-${activePipelineRailStatus}`} aria-hidden="true" />
+                <span className="forensic-status-heading font-bold uppercase tracking-[0.18em]">Pipeline</span>
+                <strong>{activePipelinePercent}%</strong>
+                <span className="forensic-pipeline-chip-label">{activePipelineRun.stepLabel}</span>
+              </button>
+              <button
+                type="button"
+                className="forensic-pipeline-chip-dismiss"
+                aria-label="Dismiss pipeline status chip"
+                onClick={() => {
+                  setDismissedPipelineChipRuns((current) => ({
+                    ...current,
+                    [activePipelineRun.runId]: true,
+                  }))
+                }}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          )}
 
-        {autosaveWarning && (
-          <div className="forensic-autosave-warning forensic-status-segment ml-4 flex shrink-0 items-center gap-2 pl-4 text-[10px]">
-            <AlertTriangle size={14} />
-            <span className="font-bold uppercase tracking-[0.18em]">Autosave warning</span>
-            <span>{formatAutosaveWarningMessage(autosaveWarning)}</span>
-          </div>
-        )}
+          {autosaveWarning && (
+            <div className="forensic-autosave-warning forensic-status-segment flex items-center gap-2 text-[10px]">
+              <AlertTriangle size={14} />
+              <span className="font-bold uppercase tracking-[0.18em]">Autosave warning</span>
+              <span>{formatAutosaveWarningMessage(autosaveWarning)}</span>
+            </div>
+          )}
+        </div>
 
-        {!isBoardWorkspaceActive && currentBoardTokenUsage && (
-          <div
-            className="forensic-status-metric forensic-status-segment ml-4 flex shrink-0 items-center gap-3 pl-4 text-[10px]"
-            title={`${currentBoardTokenUsage.label} | ${formatTokenProviderBreakdown(currentBoardTokenUsage.providerTotals)}`}
-          >
-            <span className="forensic-status-heading font-bold uppercase tracking-[0.2em]">Current Board</span>
-            <span className="text-[var(--forensic-text)]">{currentBoardTokenUsage.label}</span>
-            <span>{formatCompactTokens(currentBoardTokenUsage.totalTokens)} total</span>
-            <span>{formatCompactTokens(currentBoardTokenUsage.promptTokens)} in</span>
-            <span>{formatCompactTokens(currentBoardTokenUsage.completionTokens)} out</span>
-            <span>{currentBoardTokenUsage.callCount} calls</span>
-            {currentBoardTokenUsage.estimatedCallCount > 0 && (
-              <span>{currentBoardTokenUsage.estimatedCallCount} est.</span>
-            )}
-          </div>
-        )}
-        {!isBoardWorkspaceActive && sessionTokenUsage.totalTokens > 0 && (
-          <div
-            className="forensic-status-metric forensic-status-segment ml-4 flex shrink-0 items-center gap-3 pl-4 text-[10px]"
-            title={formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}
-          >
-            <span className="forensic-status-heading font-bold uppercase tracking-[0.2em]">Session Total</span>
-            <span>{formatCompactTokens(sessionTokenUsage.totalTokens)} total</span>
-            <span>{formatCompactTokens(sessionTokenUsage.promptTokens)} in</span>
-            <span>{formatCompactTokens(sessionTokenUsage.completionTokens)} out</span>
-            <span>{sessionTokenUsage.callCount} calls</span>
-            {sessionTokenUsage.estimatedCallCount > 0 && (
-              <span>{sessionTokenUsage.estimatedCallCount} est.</span>
-            )}
-          </div>
-        )}
       </footer>
 
       {isPipelineDrawerOpen && activePipelineRun && (

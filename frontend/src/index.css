@@ -199,6 +199,7 @@ body {
 }
 
 .forensic-app-shell-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -219,6 +220,61 @@ body {
 
 .forensic-app-brand-meta {
   color: rgba(162, 179, 196, 0.62);
+}
+
+.forensic-app-header-notice-slot {
+  position: absolute;
+  right: clamp(44rem, 46.25vw, 55.5rem);
+  bottom: 0.18rem;
+  left: 18rem;
+  z-index: 2;
+  display: flex;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.forensic-app-system-notice {
+  display: flex;
+  width: 100%;
+  min-height: 1.55rem;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid rgba(246, 200, 121, 0.34);
+  background:
+    linear-gradient(90deg, rgba(246, 200, 121, 0.14), rgba(246, 200, 121, 0.055)),
+    rgba(5, 10, 15, 0.94);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24), inset 0 0 0 1px rgba(255, 255, 255, 0.018);
+  color: #ffe2aa;
+  font-size: 0.66rem;
+  padding: 0.22rem 0.42rem 0.22rem 0.56rem;
+  pointer-events: auto;
+}
+
+.forensic-app-system-notice span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-app-system-notice button {
+  display: inline-flex;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(246, 200, 121, 0.25);
+  background: rgba(4, 8, 12, 0.74);
+  color: rgba(255, 226, 170, 0.84);
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.forensic-app-system-notice button:hover {
+  border-color: rgba(255, 226, 170, 0.55);
+  background: rgba(246, 200, 121, 0.1);
+  color: #fff2cf;
 }
 
 .forensic-app-tab-rail {
@@ -529,21 +585,22 @@ body {
   position: relative;
   display: flex;
   align-items: stretch;
-  gap: 0.35rem;
+  gap: 0.42rem;
 }
 
 .forensic-status-grid {
   display: grid;
-  flex: 1 1 auto;
+  flex: 1 1 42rem;
   min-width: 0;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(4.1rem, 1fr));
   gap: 0.35rem;
   align-items: stretch;
 }
 
 .forensic-status-block {
   min-height: 3rem;
-  padding: 0.7rem 0.8rem;
+  min-width: 0;
+  padding: 0.6rem 0.65rem;
   border: 1px solid rgba(129, 227, 255, 0.08);
   border-left-color: rgba(129, 227, 255, 0.12);
   background: linear-gradient(180deg, rgba(8, 13, 19, 0.82), rgba(5, 9, 14, 0.88));
@@ -557,23 +614,29 @@ body {
 .forensic-status-label {
   display: block;
   margin-bottom: 0.35rem;
+  overflow: hidden;
   color: var(--forensic-text-faint);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.18em;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .forensic-status-value {
+  overflow: hidden;
   color: var(--forensic-text);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .forensic-status-block-confidence {
-  min-width: 13rem;
+  min-width: 9.5rem;
 }
 
 .forensic-status-segment {
@@ -606,15 +669,19 @@ body {
   color: var(--forensic-accent);
 }
 
-.forensic-status-metric {
-  border-left-color: rgba(129, 227, 255, 0.16) !important;
-  color: var(--forensic-text-muted);
+.forensic-status-activity {
+  display: grid;
+  flex: 0 1 18rem;
+  min-width: 12rem;
+  align-items: stretch;
+  gap: 0.35rem;
 }
 
 .forensic-pipeline-chip {
   position: relative;
   min-height: 2.28rem;
-  max-width: min(19rem, 30vw);
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid rgba(129, 227, 255, 0.14);
   background:
     linear-gradient(180deg, rgba(8, 15, 21, 0.84), rgba(4, 9, 14, 0.92)),
@@ -653,7 +720,8 @@ body {
 
 .forensic-pipeline-chip-label {
   min-width: 0;
-  max-width: 8.5rem;
+  max-width: none;
+  flex: 1 1 auto;
   overflow: hidden;
   color: var(--forensic-text);
   text-overflow: ellipsis;
@@ -713,10 +781,18 @@ body {
 }
 
 .forensic-autosave-warning {
+  min-width: 0;
   min-height: 2.7rem;
   border: 1px solid rgba(255, 140, 134, 0.24);
   background: rgba(255, 140, 134, 0.08);
   color: var(--forensic-danger);
+  padding: 0.45rem 0.65rem;
+}
+
+.forensic-autosave-warning span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .forensic-pipeline-drawer {
@@ -869,11 +945,6 @@ body {
 .forensic-pipeline-profile-card-positive {
   border-color: rgba(65, 255, 122, 0.24);
   background: rgba(65, 255, 122, 0.07);
-}
-
-.forensic-status-metric strong,
-.forensic-status-metric .forensic-status-heading {
-  color: var(--forensic-accent-muted);
 }
 
 .forensic-confidence-track {
@@ -1259,6 +1330,7 @@ body {
   display: flex;
   min-height: 3.2rem;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 1rem;
   border: 1px solid rgba(118, 177, 214, 0.14);
@@ -1271,26 +1343,33 @@ body {
 
 .forensic-spider-brain-title {
   display: flex;
-  min-width: 18rem;
+  flex: 0 1 24rem;
+  min-width: 16rem;
   align-items: center;
   gap: 0.7rem;
   text-transform: uppercase;
 }
 
 .forensic-spider-brain-title span {
+  flex: 0 0 auto;
   color: var(--color-cyber-green);
   font-size: 1rem;
   font-weight: 900;
 }
 
 .forensic-spider-brain-title strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--forensic-accent-strong);
   font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .forensic-spider-ekg {
   width: 8rem;
   height: 1.2rem;
+  flex: 0 0 auto;
   background:
     linear-gradient(90deg, transparent 0 8%, rgba(0, 255, 65, 0.8) 8% 9%, transparent 9% 15%, rgba(0, 255, 65, 0.8) 15% 16%, transparent 16% 19%, rgba(0, 255, 65, 0.8) 19% 20%, transparent 20% 28%, rgba(0, 255, 65, 0.8) 28% 29%, transparent 29% 34%, rgba(0, 255, 65, 0.8) 34% 35%, transparent 35% 48%, rgba(0, 255, 65, 0.8) 48% 49%, transparent 49% 56%, rgba(0, 255, 65, 0.8) 56% 57%, transparent 57%),
     linear-gradient(180deg, transparent 45%, rgba(0, 255, 65, 0.45) 46% 54%, transparent 55%);
@@ -1299,9 +1378,10 @@ body {
 
 .forensic-spider-top-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(7.5rem, 1fr));
+  flex: 1 1 38rem;
+  grid-template-columns: repeat(5, minmax(6.25rem, 1fr));
   gap: 0.75rem;
-  width: min(54rem, 58%);
+  width: auto;
 }
 
 .forensic-spider-readout {
@@ -1324,17 +1404,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.forensic-spider-system-log {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  border: 1px solid rgba(246, 200, 121, 0.28);
-  background: rgba(246, 200, 121, 0.08);
-  color: #ffe2aa;
-  padding: 0.55rem 0.75rem;
-  font-size: 0.72rem;
 }
 
 .forensic-spider-workbench {
@@ -2633,7 +2702,12 @@ body {
 
   .forensic-spider-top-metrics {
     grid-template-columns: repeat(2, minmax(7rem, 1fr));
-    width: 42%;
+    flex-basis: 24rem;
+    width: auto;
+  }
+
+  .forensic-spider-brain-title {
+    min-width: 14rem;
   }
 
   .forensic-spider-workbench {
@@ -4419,6 +4493,15 @@ body {
   .forensic-timeline-side-panel {
     max-height: 18rem;
   }
+
+  .forensic-statusbar-shell {
+    flex-wrap: wrap;
+  }
+
+  .forensic-status-grid,
+  .forensic-status-activity {
+    flex: 1 1 100%;
+  }
 }
 
 @media (max-width: 760px) {
@@ -4449,15 +4532,9 @@ body {
     min-width: 0;
   }
 
-  .forensic-statusbar-shell {
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-  }
-
   .forensic-status-grid {
-    flex: 0 0 auto;
-    min-width: 54rem;
-    grid-template-columns: repeat(8, minmax(6.2rem, 1fr));
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .forensic-status-block {
