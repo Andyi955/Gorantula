@@ -11,7 +11,7 @@ const API_BASE = 'http://localhost:8080/api/investigations'
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
 const MIGRATION_MARKER_KEY = 'gorantula_backend_persistence_migrated_at'
 
-type VaultResultPayload = Record<string, unknown>
+export type VaultResultPayload = Record<string, unknown>
 type DiscoveryPayload = Record<string, unknown>[]
 
 const boardStateCache = new Map<string, PersistedBoardState>()
@@ -390,6 +390,12 @@ export const loadDiscoveriesForInvestigation = async (investigationId: string) =
     try {
       const payload = await requestJSON<DiscoveryPayload>(`${API_BASE}/${encodeURIComponent(investigationId)}/discoveries`)
       const discoveries = Array.isArray(payload) ? payload : []
+      const browserFallback = readBrowserDiscoveryBuckets()[investigationId] || []
+      if (discoveries.length === 0 && browserFallback.length > 0) {
+        discoveriesCache.set(investigationId, browserFallback)
+        void saveDiscoveriesForInvestigation(investigationId, browserFallback, { skipFallback: true })
+        return browserFallback
+      }
       discoveriesCache.set(investigationId, discoveries)
       return discoveries
     } catch (error) {

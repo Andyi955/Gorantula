@@ -143,6 +143,23 @@ describe('SynthesisPanel', () => {
     expect(screen.getAllByText('alice').length).toBeGreaterThan(0)
   })
 
+  it('shows the selected investigation theory report when there are no overlap alerts', () => {
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-a', topic: 'Investigation A' },
+        ]}
+        currentTheoryReport="Saved final synthesis for this selected investigation."
+      />,
+    )
+
+    expect(screen.getByText(/Saved final synthesis for this selected investigation/i)).toBeInTheDocument()
+    expect(screen.queryByText(/No cross-investigation overlaps yet/i)).not.toBeInTheDocument()
+  })
+
   it('rehydrates synthesis alerts from persisted board state on investigation load', async () => {
     localStorage.setItem('inv_data_inv-a', JSON.stringify({
       mode: 'strict-grid',
@@ -176,6 +193,49 @@ describe('SynthesisPanel', () => {
     await waitFor(() => {
       expect(screen.getAllByText('alice').length).toBeGreaterThan(0)
       expect(screen.getByText('Recovered from board state')).toBeInTheDocument()
+    })
+  })
+
+  it('keeps legacy alert buckets when a board was saved before alert snapshots existed', async () => {
+    localStorage.setItem('gorantula_synthesis_alerts_by_investigation', JSON.stringify({
+      'inv-b': [
+        {
+          type: 'synthesis_alert',
+          alertKey: 'inv-b::stale::inv-b',
+          entity: 'stale-entity',
+          currentVaultId: 'inv-b',
+          connectedCases: ['inv-b'],
+          nodes: [{ vaultId: 'inv-b', nodeId: 'node-stale', summary: 'Stale mention' }],
+          analysis: 'This legacy alert should survive the older board snapshot',
+          timestamp: '12:00:00',
+        },
+      ],
+    }))
+    localStorage.setItem('inv_data_inv-b', JSON.stringify({
+      mode: 'strict-grid',
+      nodes: [],
+      edges: [],
+    }))
+
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-b"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-b', topic: 'Investigation B' },
+        ]}
+      />,
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getAllByText('stale-entity').length).toBeGreaterThan(0)
+      expect(screen.getByText('This legacy alert should survive the older board snapshot')).toBeInTheDocument()
     })
   })
 

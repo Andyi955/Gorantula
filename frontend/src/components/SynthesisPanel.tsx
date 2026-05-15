@@ -238,9 +238,10 @@ interface SynthesisPanelProps {
     investigations?: { id: string; topic: string; displayTopic?: string }[];
     onMergeInvestigations?: (entity: string, connectedCases: string[], relevantNodes: MergeCandidateNode[]) => void;
     showHandle?: boolean;
+    currentTheoryReport?: string | null;
 }
 
-export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations, showHandle = true }: SynthesisPanelProps) {
+export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations, showHandle = true, currentTheoryReport = null }: SynthesisPanelProps) {
     const [alertsByInvestigation, setAlertsByInvestigation] = useState<AlertBuckets>({});
     const [isOpen, setIsOpen] = useState(false);
     const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
@@ -248,6 +249,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     const [activeToast, setActiveToast] = useState<SynthesisAlert | null>(null);
     const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const hasUnread = currentInvestigationId ? Boolean(unreadByInvestigation[currentInvestigationId]) : false;
+    const trimmedTheoryReport = (currentTheoryReport || '').trim();
 
     useEffect(() => {
         console.debug('[SynthesisPanel] Mounted with current investigation:', currentInvestigationId);
@@ -276,25 +278,30 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             if (cancelled) {
                 return;
             }
+            const hasExplicitAlertSnapshot = Boolean(
+                savedState &&
+                Object.prototype.hasOwnProperty.call(savedState, 'synthesisAlerts') &&
+                Array.isArray(savedState.synthesisAlerts),
+            );
+            if (!hasExplicitAlertSnapshot) {
+                return;
+            }
             const persistedAlerts = savedState?.synthesisAlerts?.map((alert) => normalizeAlert(alert as SynthesisAlert)) || [];
             if (persistedAlerts.length === 0) {
                 return;
             }
 
             setAlertsByInvestigation(prev => {
-                if ((prev[currentInvestigationId] || []).length > 0) {
-                    return prev;
-                }
-
                 console.debug('[SynthesisPanel] Rehydrating synthesis alerts from persisted board state', {
                     currentInvestigationId,
                     count: persistedAlerts.length,
                 });
 
-                const nextBuckets = pruneBucketsForState({
+                const nextBucketsDraft = {
                     ...prev,
                     [currentInvestigationId]: persistedAlerts,
-                }, currentInvestigationId);
+                };
+                const nextBuckets = pruneBucketsForState(nextBucketsDraft, currentInvestigationId);
                 persistAlertBuckets(nextBuckets);
                 return nextBuckets;
             });
@@ -675,7 +682,17 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
                                 </div>
                             </div>
                         </div>
-                    )) : (
+                    )) : trimmedTheoryReport ? (
+                        <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
+                            <div className="mb-3 flex items-center gap-2 text-[var(--forensic-accent)]">
+                                <Database size={12} />
+                                <span className="text-[10px] font-black uppercase tracking-[0.18em]">Current Investigation Theory</span>
+                            </div>
+                            <div className="max-h-[52vh] overflow-y-auto whitespace-pre-wrap pr-1">
+                                {trimmedTheoryReport}
+                            </div>
+                        </div>
+                    ) : (
                         <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
                             No cross-investigation overlaps yet for this investigation. Run <span className="font-black uppercase tracking-[0.16em] text-[var(--forensic-accent)]">Reconnect The Dots</span> to check for links against older cases.
                         </div>

@@ -25,6 +25,8 @@ import {
   saveBoardStateForInvestigation,
   saveDiscoveriesForInvestigation,
   saveInvestigations,
+  saveVaultResultForInvestigation,
+  type VaultResultPayload,
 } from './utils/investigationPersistence'
 
 const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
@@ -146,6 +148,12 @@ const formatAutosaveWarningMessage = (warning: AutosaveWarning) => {
 
 interface ConfidenceCarrier {
   confidence?: number | null
+}
+
+interface PersonaInsightCarrier extends ConfidenceCarrier {
+  personaName?: string
+  keyFindings?: unknown
+  nodeIDs?: unknown
 }
 
 interface SidebarRowMetrics {
@@ -569,6 +577,61 @@ const extractReadableSummary = (rawText: string) => {
   return truncateAtSentenceBoundary(cleaned, 240)
 }
 
+const deriveDiscoveryRecordsFromBoardState = (
+  investigationId: string,
+  boardState: ReturnType<typeof getCachedBoardStateForInvestigation>,
+): DiscoveryRecord[] => {
+  if (!boardState?.nodes?.length) {
+    return []
+  }
+
+  const seenFindings = new Set<string>()
+  const discoveries: DiscoveryRecord[] = []
+  boardState.nodes.forEach((node: any) => {
+    const insights = Array.isArray(node.data?.personaInsights) ? node.data.personaInsights : []
+    insights.forEach((insight: PersonaInsightCarrier) => {
+      const personaName = String(insight?.personaName || '').toLowerCase()
+      if (!personaName.includes('discovery')) {
+        return
+      }
+
+      const findings = Array.isArray(insight.keyFindings) ? insight.keyFindings : []
+      findings.forEach((finding, index) => {
+        if (typeof finding !== 'string' || !finding.trim()) {
+          return
+        }
+
+        const claim = stripMarkdownFormatting(finding).replace(/\s+/g, ' ').trim()
+        const dedupeKey = claim.toLowerCase()
+        if (!claim || seenFindings.has(dedupeKey)) {
+          return
+        }
+        seenFindings.add(dedupeKey)
+
+        const sourceNodeIDs = Array.isArray(insight.nodeIDs)
+          ? insight.nodeIDs.filter((nodeId): nodeId is string => typeof nodeId === 'string' && nodeId.trim().length > 0)
+          : []
+        const sourceNodeId = typeof node.id === 'string' && node.id.trim() ? node.id : `node-${discoveries.length + 1}`
+        const sourceIds = sourceNodeIDs.length > 0 ? sourceNodeIDs : [sourceNodeId]
+
+        discoveries.push({
+          id: `persona-discovery-${investigationId}-${sourceNodeId}-${index}`,
+          title: truncateAtSentenceBoundary(claim, 80),
+          claim,
+          impact: 'Flagged by the Discovery persona from saved board evidence.',
+          confidence: isFiniteConfidence(insight.confidence) ? insight.confidence : 0.65,
+          sourceNodeIDs: sourceIds,
+          sourceVaultID: investigationId,
+          createdAt: '',
+          nodeKind: 'discovery',
+        })
+      })
+    })
+  })
+
+  return discoveries
+}
+
 const formatWorkspaceTimestamp = (investigationId: string | null) => {
   if (!investigationId) {
     return '--'
@@ -639,6 +702,7 @@ function App() {
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
+  const [vaultResultsByInvestigation, setVaultResultsByInvestigation] = useState<Record<string, VaultResultPayload | null>>({})
   const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
@@ -654,6 +718,7 @@ function App() {
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const isUnmounted = useRef(false);
+  const investigationHydrationRequestRef = useRef(0);
   const backendOfflineNoticeShownRef = useRef(false);
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
@@ -715,12 +780,18 @@ function App() {
         evidenceCount: 0,
         confidenceScore: 0,
         lastActivityLabel: '--',
+        discoveryRecords: [],
       }
     }
 
     const savedBoardState = getCachedBoardStateForInvestigation(currentInvestigationId)
-    const savedVaultResult = getCachedVaultResultForInvestigation(currentInvestigationId)
-    const savedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
+    const hasHydratedVaultResult = Object.prototype.hasOwnProperty.call(vaultResultsByInvestigation, currentInvestigationId)
+    const savedVaultResult = hasHydratedVaultResult
+      ? vaultResultsByInvestigation[currentInvestigationId]
+      : getCachedVaultResultForInvestigation(currentInvestigationId)
+    const persistedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
+    const derivedDiscoveries = deriveDiscoveryRecordsFromBoardState(currentInvestigationId, savedBoardState)
+    const savedDiscoveries = persistedDiscoveries.length > 0 ? persistedDiscoveries : derivedDiscoveries
     const nodes = savedBoardState?.nodes || []
     const edges = savedBoardState?.edges || []
     const importCount = nodes.filter((node) => String(node.data?.title || '').includes('[IMPORTED]') || String(node.id || '').startsWith('imported-')).length
@@ -783,8 +854,9 @@ function App() {
       evidenceCount,
       confidenceScore,
       lastActivityLabel: formatWorkspaceTimestamp(currentInvestigationId),
+      discoveryRecords: savedDiscoveries,
     }
-  }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation])
+  }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation, vaultResultsByInvestigation])
 
   const focusSpiderInput = useCallback(() => {
     crawlInputRef.current?.focus()
@@ -900,13 +972,17 @@ function App() {
       if (data.length > 0) {
         setInvestigations(data)
         setCurrentInvestigationId(data[0].id)
-        const [discoveries] = await Promise.all([
+        const [discoveries, vaultResultEntries] = await Promise.all([
           loadDiscoveriesForInvestigations(data),
-          ...data.map((investigation) => loadBoardStateForInvestigation(investigation.id)),
-          ...data.map((investigation) => loadVaultResultForInvestigation(investigation.id)),
+          Promise.all(data.map(async (investigation) => [
+            investigation.id,
+            await loadVaultResultForInvestigation(investigation.id),
+          ] as const)),
+          Promise.all(data.map((investigation) => loadBoardStateForInvestigation(investigation.id))),
         ])
         if (!isUnmounted.current) {
           setDiscoveriesByInvestigation(discoveries as unknown as Record<string, DiscoveryRecord[]>)
+          setVaultResultsByInvestigation(Object.fromEntries(vaultResultEntries))
           setBoardWorkspaceRevision((current) => current + 1)
         }
       }
@@ -978,6 +1054,32 @@ function App() {
               [report.investigationId!]: report,
             }))
           }
+          return
+        }
+
+        if (msg.type === 'SYNTHESIS_COMPLETE' && msg.payload && typeof msg.payload === 'object') {
+          const payload = msg.payload as VaultResultPayload
+          const explicitVaultId = typeof payload.vaultId === 'string' ? payload.vaultId.trim() : ''
+          const vaultId = explicitVaultId || currentInvestigationId
+          if (!vaultId) {
+            return
+          }
+
+          setVaultResultsByInvestigation((current) => ({
+            ...current,
+            [vaultId]: payload,
+          }))
+          void saveVaultResultForInvestigation(vaultId, payload).catch((error) => {
+            console.warn('[App] Failed to persist vault result; keeping it in memory for this session.', error)
+            setAutosaveWarning({
+              investigationId: vaultId,
+              errorName: error && typeof error === 'object' && 'name' in error
+                ? String((error as { name?: unknown }).name || 'UnknownError')
+                : 'UnknownError',
+              timestamp: Date.now(),
+            })
+          })
+          setBoardWorkspaceRevision((current) => current + 1)
           return
         }
 
@@ -1166,19 +1268,29 @@ function App() {
 
   useEffect(() => {
     if (!currentInvestigationId) {
+      investigationHydrationRequestRef.current += 1
       return
     }
+    const requestId = investigationHydrationRequestRef.current + 1
+    investigationHydrationRequestRef.current = requestId
+
     void Promise.all([
       loadBoardStateForInvestigation(currentInvestigationId),
       loadVaultResultForInvestigation(currentInvestigationId),
       loadDiscoveriesForInvestigations(investigations.filter((investigation) => investigation.id === currentInvestigationId)),
-    ]).then(([_, __, discoveries]) => {
-      if (discoveries[currentInvestigationId]) {
-        setDiscoveriesByInvestigation((current) => ({
-          ...current,
-        [currentInvestigationId]: discoveries[currentInvestigationId] as unknown as DiscoveryRecord[],
-        }))
+    ]).then(([_, vaultResult, discoveries]) => {
+      if (investigationHydrationRequestRef.current !== requestId) {
+        return
       }
+
+      setVaultResultsByInvestigation((current) => ({
+        ...current,
+        [currentInvestigationId]: vaultResult,
+      }))
+      setDiscoveriesByInvestigation((current) => ({
+        ...current,
+        [currentInvestigationId]: (discoveries[currentInvestigationId] || []) as unknown as DiscoveryRecord[],
+      }))
       setBoardWorkspaceRevision((current) => current + 1)
     })
   }, [currentInvestigationId, investigations])
@@ -1762,7 +1874,7 @@ function App() {
           <Suspense fallback={null}>
             <DiscoveryPanel
               currentInvestigationId={currentInvestigationId}
-              discoveries={currentInvestigationId ? (discoveriesByInvestigation[currentInvestigationId] || []) : []}
+              discoveries={currentBoardSnapshot.discoveryRecords}
               hasUnread={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
               showHandle={showFloatingPanelHandles}
               onOpenDiscovery={(nodeId?: string) => {
@@ -1798,6 +1910,7 @@ function App() {
               investigations={investigations}
               onMergeInvestigations={handleMergeInvestigations}
               showHandle={showFloatingPanelHandles}
+              currentTheoryReport={currentBoardSnapshot.fullReport}
             />
           </Suspense>
 

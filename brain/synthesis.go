@@ -193,6 +193,15 @@ func (s *SynthesisEngine) PurgeOrphans(activeVaults map[string]bool) {
 	}
 }
 
+// IndexVault refreshes a normal vault's archived nodes and entity entries without dispatching alerts.
+func (s *SynthesisEngine) IndexVault(vaultID string, nodes []models.MemoryNode) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.indexVaultLocked(vaultID, nil, nodes)
+	s.saveIndexLocked()
+}
+
 // saveIndexLocked must be called with s.mu already locked.
 func (s *SynthesisEngine) saveIndexLocked() {
 	s.saveIndex() // It just serializes, fine to reuse
@@ -723,16 +732,34 @@ func (s *SynthesisEngine) RegisterDerivedVault(vaultID string, parentIDs []strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.indexVaultLocked(vaultID, parentIDs, nodes)
+	s.saveIndexLocked()
+}
+
+func (s *SynthesisEngine) indexVaultLocked(vaultID string, parentIDs []string, nodes []models.MemoryNode) {
+	vaultID = strings.TrimSpace(vaultID)
+	if vaultID == "" {
+		return
+	}
+
 	s.Index.Vaults[vaultID] = true
-	s.Index.Derived[vaultID] = DerivedVaultRecord{
-		ParentVaultIDs: append([]string(nil), parentIDs...),
-		CreatedAt:      time.Now().Format(time.RFC3339),
+	if parentIDs != nil {
+		s.Index.Derived[vaultID] = DerivedVaultRecord{
+			ParentVaultIDs: append([]string(nil), parentIDs...),
+			CreatedAt:      time.Now().Format(time.RFC3339),
+		}
+	} else {
+		delete(s.Index.Derived, vaultID)
 	}
 
-	if s.Index.NodeArchive[vaultID] == nil {
-		s.Index.NodeArchive[vaultID] = make(map[string]models.MemoryNode)
+	for entity, contextsMap := range s.Index.EntityMap {
+		delete(contextsMap, vaultID)
+		if len(contextsMap) == 0 {
+			delete(s.Index.EntityMap, entity)
+		}
 	}
 
+	s.Index.NodeArchive[vaultID] = make(map[string]models.MemoryNode)
 	for _, node := range nodes {
 		s.Index.NodeArchive[vaultID][node.ID] = node
 	}
@@ -750,8 +777,6 @@ func (s *SynthesisEngine) RegisterDerivedVault(vaultID string, parentIDs []strin
 
 		s.Index.EntityMap[entity][vaultID] = withVaultIDs
 	}
-
-	s.saveIndexLocked()
 }
 
 type OverlapAnalysis struct {
