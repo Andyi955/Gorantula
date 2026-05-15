@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"spider-agent/models"
@@ -301,5 +302,136 @@ func TestRunPersonaAnalysisFallsBackToAvailableNonGeminiProvider(t *testing.T) {
 	}
 	if insight.KeyFindings[0] != "fallback persona" {
 		t.Fatalf("expected fallback persona result, got %#v", insight.KeyFindings)
+	}
+}
+
+func TestRunPersonaAnalysisFallsBackAfterMalformedJSONError(t *testing.T) {
+	primary := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			return errors.New("invalid character ',' after object key")
+		},
+	}
+	fallback := &MockProvider{
+		NameFunc: func() string { return "openai" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"fallback recovered persona"}
+			response.Confidence = 0.82
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{
+			"deepseek": primary,
+			"openai":   fallback,
+		},
+	}
+
+	insight, err := brain.runPersonaAnalysisWithPrompt(context.Background(), Persona{
+		Name:        "Entity Hunter",
+		ModelPref:   "deepseek",
+		Perspective: "Extracts entities",
+	}, "prompt")
+	if err != nil {
+		t.Fatalf("expected fallback to recover malformed JSON, got %v", err)
+	}
+	if insight.KeyFindings[0] != "fallback recovered persona" {
+		t.Fatalf("expected fallback insight, got %#v", insight.KeyFindings)
+	}
+}
+
+func TestRunPersonaAnalysisFallsBackAfterDeadlineExceeded(t *testing.T) {
+	primary := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			return context.DeadlineExceeded
+		},
+	}
+	fallback := &MockProvider{
+		NameFunc: func() string { return "openai" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"deadline fallback persona"}
+			response.Confidence = 0.76
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{
+			"deepseek": primary,
+			"openai":   fallback,
+		},
+	}
+
+	insight, err := brain.runPersonaAnalysisWithPrompt(context.Background(), Persona{
+		Name:        "Timeline Analyst",
+		ModelPref:   "deepseek",
+		Perspective: "Orders events",
+	}, "prompt")
+	if err != nil {
+		t.Fatalf("expected fallback to recover deadline error, got %v", err)
+	}
+	if insight.KeyFindings[0] != "deadline fallback persona" {
+		t.Fatalf("expected fallback insight, got %#v", insight.KeyFindings)
+	}
+}
+
+func TestAnalyzeWithPersonasBroadcastsPartialCompletionWarning(t *testing.T) {
+	t.Setenv("DEFAULT_PERSONA_MODEL", "deepseek")
+
+	var messagesMu sync.Mutex
+	var messages []models.WSMessage
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			if strings.Contains(prompt, "timeline specialist") {
+				return context.DeadlineExceeded
+			}
+			if strings.Contains(prompt, "strict entity extraction") {
+				return errors.New("invalid character ',' after object key")
+			}
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"persona ok"}
+			response.Confidence = 0.7
+			response.NodeIDs = []string{"node-1"}
+			return nil
+		},
+	}
+	brain := &Brain{
+		NS: nervous_system.NewNervousSystem(func(msg models.WSMessage) {
+			messagesMu.Lock()
+			defer messagesMu.Unlock()
+			messages = append(messages, msg)
+		}),
+		ModelRouter: map[string]ModelProvider{"deepseek": mock},
+		tokenUsage:  newTokenUsageTracker(),
+	}
+
+	insights, err := brain.AnalyzeWithPersonas(context.Background(), "inv-partial", []models.MemoryNode{
+		{ID: "node-1", Title: "Node", Summary: "Summary"},
+	})
+	if err != nil {
+		t.Fatalf("expected partial persona analysis to continue, got %v", err)
+	}
+	if len(insights) != 5 {
+		t.Fatalf("expected 5 successful insights, got %d", len(insights))
+	}
+
+	messagesMu.Lock()
+	defer messagesMu.Unlock()
+	foundWarning := false
+	for _, msg := range messages {
+		payload, _ := msg.Payload.(string)
+		if msg.Type == "SYSTEM_LOG" &&
+			strings.Contains(payload, "Partial persona analysis completed: 5/7 personas succeeded") &&
+			strings.Contains(payload, "Entity Hunter") &&
+			strings.Contains(payload, "Timeline Analyst") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("expected partial persona SYSTEM_LOG, got %#v", messages)
 	}
 }

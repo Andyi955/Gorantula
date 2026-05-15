@@ -3,6 +3,7 @@ package brain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -151,6 +152,12 @@ func (b *Brain) firstAvailableProvider(excludedNames ...string) (ModelProvider, 
 		}
 	}
 	return nil, false
+}
+
+type personaAnalysisResult struct {
+	personaName string
+	insight     PersonaInsight
+	err         error
 }
 
 func (b *Brain) fallbackProviderAfter(provider ModelProvider) (ModelProvider, bool) {
@@ -1028,7 +1035,7 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 		len(nodes), len(personas), len(findingsText))
 
 	scopeID := b.newTokenUsageScope("persona-full-board")
-	insightsChan := make(chan PersonaInsight, len(personas))
+	insightsChan := make(chan personaAnalysisResult, len(personas))
 
 	// Run each persona analysis in parallel
 	for _, persona := range personas {
@@ -1037,18 +1044,23 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 			insight, err := b.runPersonaAnalysis(personaCtx, p, findingsText)
 			if err != nil {
 				fmt.Printf("[Brain] Persona %s failed: %v\n", p.Name, err)
-				// Send empty insight on failure
-				insightsChan <- PersonaInsight{PersonaName: p.Name, Confidence: 0}
+				insightsChan <- personaAnalysisResult{personaName: p.Name, err: err}
 				return
 			}
-			insightsChan <- insight
+			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight}
 		}(persona)
 	}
 
 	// Collect insights from all personas
 	insights := make([]PersonaInsight, 0, len(personas))
+	failedPersonas := make(map[string]struct{})
 	for i := 0; i < len(personas); i++ {
-		insight := <-insightsChan
+		result := <-insightsChan
+		if result.err != nil {
+			failedPersonas[result.personaName] = struct{}{}
+			continue
+		}
+		insight := result.insight
 		if insight.Confidence > 0 {
 			insights = append(insights, insight)
 			fmt.Printf("[Brain] Persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
@@ -1058,6 +1070,7 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 	fmt.Printf("[Brain] Persona analysis complete. Collected %d insights.\n", len(insights))
 	tokenSummary := b.summarizeTokenUsageScope(scopeID)
 	b.broadcastTokenUsageSummary(investigationID, "Full-board persona analysis", tokenSummary)
+	b.broadcastPartialPersonaAnalysisWarning(personas, failedPersonas, len(insights))
 	b.RecordPipelineTokenUsage(progress, scopeID)
 	return insights, nil
 }
@@ -1105,7 +1118,7 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 
 	personas := GetDefaultPersonas()
 	scopeID := b.newTokenUsageScope("persona-incremental")
-	insightsChan := make(chan PersonaInsight, len(personas))
+	insightsChan := make(chan personaAnalysisResult, len(personas))
 
 	for _, persona := range personas {
 		go func(p Persona) {
@@ -1114,16 +1127,22 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 			insight, err := b.runPersonaAnalysisWithPrompt(personaCtx, p, prompt)
 			if err != nil {
 				fmt.Printf("[Brain] Incremental persona %s failed: %v\n", p.Name, err)
-				insightsChan <- PersonaInsight{PersonaName: p.Name, Confidence: 0}
+				insightsChan <- personaAnalysisResult{personaName: p.Name, err: err}
 				return
 			}
-			insightsChan <- insight
+			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight}
 		}(persona)
 	}
 
 	insights := make([]PersonaInsight, 0, len(personas))
+	failedPersonas := make(map[string]struct{})
 	for i := 0; i < len(personas); i++ {
-		insight := <-insightsChan
+		result := <-insightsChan
+		if result.err != nil {
+			failedPersonas[result.personaName] = struct{}{}
+			continue
+		}
+		insight := result.insight
 		if insight.Confidence > 0 {
 			insights = append(insights, insight)
 			fmt.Printf("[Brain] Incremental persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
@@ -1133,6 +1152,7 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 	fmt.Printf("[Brain] Incremental multi-agent analysis complete. Generated %d valid persona insights.\n", len(insights))
 	tokenSummary := b.summarizeTokenUsageScope(scopeID)
 	b.broadcastTokenUsageSummary(investigationID, "Incremental persona analysis", tokenSummary)
+	b.broadcastPartialPersonaAnalysisWarning(personas, failedPersonas, len(insights))
 	b.RecordPipelineTokenUsage(progress, scopeID)
 	return insights, nil
 }
@@ -1160,7 +1180,20 @@ func (b *Brain) runPersonaAnalysisWithPrompt(ctx context.Context, persona Person
 	var response PersonaJSONResponse
 	err := provider.GenerateJSON(ctx, prompt, &response)
 	if err != nil {
-		return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+		fallbackProvider, ok := b.fallbackProviderAfter(provider)
+		if !ok {
+			return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+		}
+		if ctx.Err() != nil && !errors.Is(err, context.DeadlineExceeded) {
+			return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+		}
+		fmt.Printf("[Brain Error] Persona %s provider %s failed: %v. Attempting generic provider fallback...\n", persona.Name, provider.Name(), err)
+		response = PersonaJSONResponse{}
+		if fallbackErr := fallbackProvider.GenerateJSON(ctx, prompt, &response); fallbackErr != nil {
+			fmt.Printf("[Brain Error] Persona %s fallback provider %s failed: %v\n", persona.Name, fallbackProvider.Name(), fallbackErr)
+			return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+		}
+		fmt.Printf("[Brain] Persona %s recovered using fallback provider %s\n", persona.Name, fallbackProvider.Name())
 	}
 
 	return PersonaInsight{
@@ -1177,6 +1210,29 @@ func (b *Brain) runPersonaAnalysisWithPrompt(ctx context.Context, persona Person
 		TimelineEvents:      response.TimelineEvents,
 		ProposedConnections: response.ProposedConnections,
 	}, nil
+}
+
+func (b *Brain) broadcastPartialPersonaAnalysisWarning(personas []Persona, failedPersonas map[string]struct{}, successCount int) {
+	if len(failedPersonas) == 0 {
+		return
+	}
+
+	missing := make([]string, 0, len(failedPersonas))
+	for _, persona := range personas {
+		if _, failed := failedPersonas[persona.Name]; failed {
+			missing = append(missing, persona.Name)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	b.broadcastSystemLog(fmt.Sprintf(
+		"Partial persona analysis completed: %d/%d personas succeeded; missing %s.",
+		successCount,
+		len(personas),
+		strings.Join(missing, ", "),
+	))
 }
 
 // SynthesizePersonaInsights combines all persona insights into final connections

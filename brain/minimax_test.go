@@ -92,6 +92,35 @@ func TestCleanMarkdownJSON(t *testing.T) {
 	}
 }
 
+func TestParseJSONResponseHandlesTopLevelArray(t *testing.T) {
+	var result []struct {
+		Key string `json:"key"`
+	}
+
+	err := parseJSONResponse("Here is the JSON:\n[{\"key\":\"value\"}]\nDone.", &result)
+	if err != nil {
+		t.Fatalf("expected top-level array to parse, got %v", err)
+	}
+	if len(result) != 1 || result[0].Key != "value" {
+		t.Fatalf("unexpected parsed array: %#v", result)
+	}
+}
+
+func TestParseJSONResponseRepairsTrailingCommas(t *testing.T) {
+	var result struct {
+		Key   string   `json:"key"`
+		Items []string `json:"items"`
+	}
+
+	err := parseJSONResponse("```json\n{\"key\":\"value\",\"items\":[\"one\",],}\n```", &result)
+	if err != nil {
+		t.Fatalf("expected trailing comma repair to parse, got %v", err)
+	}
+	if result.Key != "value" || len(result.Items) != 1 || result.Items[0] != "one" {
+		t.Fatalf("unexpected parsed object: %#v", result)
+	}
+}
+
 func TestExtractJSONObject(t *testing.T) {
 	tests := []struct {
 		name        string

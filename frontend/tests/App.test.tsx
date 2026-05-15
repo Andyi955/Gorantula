@@ -804,6 +804,12 @@ describe('App', () => {
     })
 
     expect(screen.getByText('Image review fallback: DeepSeek using basic scraping')).toBeInTheDocument()
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYSTEM_LOG', 'Partial persona analysis completed: 5/7 personas succeeded; missing Entity Hunter, Timeline Analyst.')
+    })
+
+    expect(screen.getByText('Persona partial: 5/7 succeeded, missing Entity Hunter, Timeline Analyst')).toBeInTheDocument()
   })
 
   it('ignores malformed token usage payloads', async () => {

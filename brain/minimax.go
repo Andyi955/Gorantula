@@ -284,39 +284,75 @@ func (m *MiniMaxProvider) recordTokenUsage(ctx context.Context, fallbackOperatio
 
 // parseJSONResponse handles common LLM response cleaning and JSON parsing
 func parseJSONResponse(content string, response interface{}) error {
-	// Clean markdown wrapper if present
-	cleaned := cleanMarkdownJSON(content)
-
-	// Try direct parse first
-	if err := json.Unmarshal([]byte(cleaned), response); err == nil {
-		return nil
+	cleaned := strings.TrimSpace(cleanMarkdownJSON(content))
+	candidates := []string{cleaned}
+	if extracted, err := extractJSONValue(cleaned); err == nil && extracted != cleaned {
+		candidates = append(candidates, extracted)
 	}
 
-	// If that fails, try to find JSON object in the content
-	jsonStr, err := extractJSONObject(cleaned)
-	if err != nil {
-		return fmt.Errorf("could not find JSON object in response: %w, original content: %s", err, content)
+	var lastErr error
+	for _, candidate := range candidates {
+		for _, variant := range uniqueJSONParseVariants(candidate) {
+			if err := json.Unmarshal([]byte(variant), response); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
+		}
 	}
 
-	if err := json.Unmarshal([]byte(jsonStr), response); err != nil {
-		return fmt.Errorf("failed to parse extracted JSON: %w, extracted: %s", err, jsonStr)
+	if lastErr != nil {
+		return fmt.Errorf("failed to parse JSON response: %w, original content: %s", lastErr, content)
 	}
-
-	return nil
+	return fmt.Errorf("failed to parse JSON response: empty content")
 }
 
 // extractJSONObject finds the first valid-looking JSON object in a string by tracking brace depth
 func extractJSONObject(content string) (string, error) {
+	return extractJSONValueWithDelimiters(content, '{', '}')
+}
+
+func extractJSONValue(content string) (string, error) {
+	objectStart := strings.IndexRune(content, '{')
+	arrayStart := strings.IndexRune(content, '[')
+	switch {
+	case objectStart == -1 && arrayStart == -1:
+		return "", fmt.Errorf("no JSON object or array found")
+	case arrayStart == -1 || (objectStart != -1 && objectStart < arrayStart):
+		return extractJSONValueWithDelimiters(content, '{', '}')
+	default:
+		return extractJSONValueWithDelimiters(content, '[', ']')
+	}
+}
+
+func extractJSONValueWithDelimiters(content string, open, close rune) (string, error) {
 	start := -1
 	end := -1
 	depth := 0
+	inString := false
+	escaped := false
 	for i, c := range content {
-		if c == '{' {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if c == open {
 			if start == -1 {
 				start = i
 			}
 			depth++
-		} else if c == '}' {
+		} else if c == close {
 			depth--
 			if depth == 0 && start != -1 {
 				end = i + 1
@@ -329,7 +365,56 @@ func extractJSONObject(content string) (string, error) {
 		return content[start:end], nil
 	}
 
-	return "", fmt.Errorf("no balanced JSON object found")
+	return "", fmt.Errorf("no balanced JSON value found")
+}
+
+func uniqueJSONParseVariants(content string) []string {
+	trimmed := strings.TrimSpace(content)
+	repaired := removeTrailingJSONCommas(trimmed)
+	if repaired == trimmed {
+		return []string{trimmed}
+	}
+	return []string{trimmed, repaired}
+}
+
+func removeTrailingJSONCommas(content string) string {
+	var builder strings.Builder
+	builder.Grow(len(content))
+	inString := false
+	escaped := false
+
+	for i, c := range content {
+		if escaped {
+			builder.WriteRune(c)
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			builder.WriteRune(c)
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			builder.WriteRune(c)
+			inString = !inString
+			continue
+		}
+		if !inString && c == ',' {
+			for _, next := range content[i+1:] {
+				if next == ' ' || next == '\n' || next == '\r' || next == '\t' {
+					continue
+				}
+				if next == '}' || next == ']' {
+					goto skipComma
+				}
+				break
+			}
+		}
+		builder.WriteRune(c)
+	skipComma:
+	}
+
+	return builder.String()
 }
 
 // NewModelRouter creates a model router with the available providers
