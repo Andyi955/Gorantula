@@ -478,7 +478,8 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
 };
 
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 96, zoom: 1 };
-const BOARD_FIT_VIEW_OPTIONS = { padding: 0.16, minZoom: 0.98, maxZoom: 1 };
+const BOARD_MIN_ZOOM = 0.5;
+const BOARD_FIT_VIEW_OPTIONS = { padding: 0.16, minZoom: 0.72, maxZoom: 1 };
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const MINIMAP_NODE_STROKE = '#06080b';
 const MINIMAP_MASK_STROKE = 'rgba(152, 255, 255, 1)';
@@ -3243,7 +3244,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     fitView
                     fitViewOptions={BOARD_FIT_VIEW_OPTIONS}
                     defaultViewport={BOARD_DEFAULT_VIEWPORT}
-                    minZoom={0.68}
+                    minZoom={BOARD_MIN_ZOOM}
                     maxZoom={1.75}
                     proOptions={REACT_FLOW_PRO_OPTIONS}
                 >
