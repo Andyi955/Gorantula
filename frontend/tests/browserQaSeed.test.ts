@@ -1,5 +1,9 @@
-import { parsePersistedBoardState } from '../src/utils/hierarchicalCanvas'
-import { createRootInvestigation, INVESTIGATIONS_STORAGE_KEY } from '../src/utils/investigations'
+import { createRootInvestigation } from '../src/utils/investigations'
+import {
+  getCachedBoardStateForInvestigation,
+  getCachedInvestigations,
+  saveInvestigations,
+} from '../src/utils/investigationPersistence'
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_SEEDED_EVENT,
@@ -10,20 +14,17 @@ import {
 } from '../src/utils/browserQaSeed'
 
 describe('browser QA seed helpers', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear()
+    await saveInvestigations([])
   })
 
-  it('seeds deterministic browser QA investigations and board data', () => {
-    localStorage.setItem(
-      INVESTIGATIONS_STORAGE_KEY,
-      JSON.stringify([createRootInvestigation('real-investigation', 'Real Investigation')]),
-    )
+  it('seeds deterministic browser QA investigations and board data', async () => {
+    await saveInvestigations([createRootInvestigation('real-investigation', 'Real Investigation')])
 
     const result = seedBrowserQaData()
 
-    const investigations = JSON.parse(localStorage.getItem(INVESTIGATIONS_STORAGE_KEY) || '[]')
-    expect(investigations.map((entry: { id: string }) => entry.id)).toEqual([
+    expect(getCachedInvestigations().map((entry: { id: string }) => entry.id)).toEqual([
       BROWSER_QA_TARGET_INVESTIGATION_ID,
       BROWSER_QA_SOURCE_INVESTIGATION_ID,
       'real-investigation',
@@ -34,26 +35,22 @@ describe('browser QA seed helpers', () => {
       BROWSER_QA_TARGET_INVESTIGATION_ID,
     ])
 
-    const targetBoard = parsePersistedBoardState(localStorage.getItem(`inv_data_${BROWSER_QA_TARGET_INVESTIGATION_ID}`))
+    const targetBoard = getCachedBoardStateForInvestigation(BROWSER_QA_TARGET_INVESTIGATION_ID)
     expect(targetBoard?.nodes.some((node) => node.data?.title === '[IMPORTED] Pulled dossier')).toBe(true)
     expect(targetBoard?.nodes.some((node) => node.data?.title === 'Existing target lead')).toBe(true)
 
-    const sourceBoard = parsePersistedBoardState(localStorage.getItem(`inv_data_${BROWSER_QA_SOURCE_INVESTIGATION_ID}`))
+    const sourceBoard = getCachedBoardStateForInvestigation(BROWSER_QA_SOURCE_INVESTIGATION_ID)
     expect(sourceBoard?.nodes.some((node) => node.data?.title === 'Source lead')).toBe(true)
     expect(sourceBoard?.edges).toHaveLength(1)
   })
 
-  it('clears only seeded QA investigations and preserves existing data', () => {
-    localStorage.setItem(
-      INVESTIGATIONS_STORAGE_KEY,
-      JSON.stringify([createRootInvestigation('real-investigation', 'Real Investigation')]),
-    )
+  it('clears only seeded QA investigations and preserves existing data', async () => {
+    await saveInvestigations([createRootInvestigation('real-investigation', 'Real Investigation')])
     seedBrowserQaData()
 
     clearBrowserQaData()
 
-    const investigations = JSON.parse(localStorage.getItem(INVESTIGATIONS_STORAGE_KEY) || '[]')
-    expect(investigations.map((entry: { id: string }) => entry.id)).toEqual(['real-investigation'])
+    expect(getCachedInvestigations().map((entry: { id: string }) => entry.id)).toEqual(['real-investigation'])
     expect(localStorage.getItem(`inv_data_${BROWSER_QA_SOURCE_INVESTIGATION_ID}`)).toBeNull()
     expect(localStorage.getItem(`inv_data_${BROWSER_QA_TARGET_INVESTIGATION_ID}`)).toBeNull()
   })

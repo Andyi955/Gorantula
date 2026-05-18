@@ -75,7 +75,26 @@ describe('investigation persistence', () => {
     ])
   })
 
-  it('falls back to browser board cache and emits autosave warning when backend save fails', async () => {
+  it('clears orphaned legacy browser investigation payloads after backend catalog load', async () => {
+    localStorage.setItem('inv_data_inv-orphaned', JSON.stringify(buildBoardState()))
+    localStorage.setItem('vault_result_inv-orphaned', JSON.stringify({ report: 'Old report' }))
+    localStorage.setItem(
+      'gorantula_discoveries_by_investigation',
+      JSON.stringify({ 'inv-orphaned': [{ id: 'old-discovery', title: 'Old discovery' }] }),
+    )
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => [] } as Response
+    }))
+
+    await loadInvestigations()
+
+    expect(localStorage.getItem('inv_data_inv-orphaned')).toBeNull()
+    expect(localStorage.getItem('vault_result_inv-orphaned')).toBeNull()
+    expect(localStorage.getItem('gorantula_discoveries_by_investigation')).toBeNull()
+  })
+
+  it('does not write browser board fallback when backend save fails', async () => {
     const boardState = buildBoardState()
     const failedEvents: Event[] = []
     window.addEventListener(BOARD_PERSIST_FAILED_EVENT, (event) => failedEvents.push(event))
@@ -87,11 +106,11 @@ describe('investigation persistence', () => {
     const saved = await saveBoardStateForInvestigation('inv-fallback', boardState)
 
     expect(saved).toBe(false)
-    expect(parsePersistedBoardState(localStorage.getItem('inv_data_inv-fallback'))?.nodes).toHaveLength(1)
+    expect(localStorage.getItem('inv_data_inv-fallback')).toBeNull()
     expect(failedEvents).toHaveLength(1)
   })
 
-  it('uses browser board evidence when the backend still has an empty board', async () => {
+  it('keeps backend board state authoritative when browser storage has stale board evidence', async () => {
     const boardState = buildBoardState()
     localStorage.setItem('inv_data_inv-local-rich', JSON.stringify(boardState))
 
@@ -114,14 +133,14 @@ describe('investigation persistence', () => {
 
     const loaded = await loadBoardStateForInvestigation('inv-local-rich')
 
-    expect(loaded?.nodes).toHaveLength(1)
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(loaded?.nodes).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalledWith(
       'http://localhost:8080/api/investigations/inv-local-rich/board',
       expect.objectContaining({ method: 'PUT' }),
     )
   })
 
-  it('uses browser discoveries when the backend still has an empty discovery bucket', async () => {
+  it('keeps backend discovery state authoritative when browser storage has stale discoveries', async () => {
     localStorage.setItem(
       'gorantula_discoveries_by_investigation',
       JSON.stringify({
@@ -141,17 +160,14 @@ describe('investigation persistence', () => {
 
     const discoveries = await loadDiscoveriesForInvestigation('inv-local-discoveries')
 
-    expect(discoveries).toEqual([
-      expect.objectContaining({ id: 'discovery-local', title: 'Recovered local discovery' }),
-    ])
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(discoveries).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalledWith(
       'http://localhost:8080/api/investigations/inv-local-discoveries/discoveries',
       expect.objectContaining({ method: 'PUT' }),
     )
   })
 
   it('preserves an existing timeline snapshot when board saves omit it', async () => {
-    delete backendFlag.__GORANTULA_BACKEND_PERSISTENCE_TEST__
     const existingState: PersistedBoardState = {
       mode: 'strict-grid',
       nodes: [{ id: 'node-1', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'Original' } }],
@@ -174,7 +190,14 @@ describe('investigation persistence', () => {
       },
     }
 
-    localStorage.setItem('inv_data_inv-timeline', JSON.stringify(existingState))
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        return { ok: true, json: async () => ({}) } as Response
+      }
+      return { ok: true, json: async () => existingState } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
     await loadBoardStateForInvestigation('inv-timeline')
 
     await saveBoardStateForInvestigation('inv-timeline', {
@@ -183,8 +206,10 @@ describe('investigation persistence', () => {
       edges: [],
     })
 
-    const saved = parsePersistedBoardState(localStorage.getItem('inv_data_inv-timeline'))
-    expect(saved?.timelineSnapshot?.events).toHaveLength(1)
-    expect(saved?.timelineSnapshot?.sourceFingerprint).toBe('tl-existing')
+    const putCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+    expect(putCall).toBeDefined()
+    const saved = JSON.parse(String(putCall?.[1]?.body))
+    expect(saved.timelineSnapshot.events).toHaveLength(1)
+    expect(saved.timelineSnapshot.sourceFingerprint).toBe('tl-existing')
   })
 })

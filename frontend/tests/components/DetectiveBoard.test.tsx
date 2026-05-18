@@ -1014,6 +1014,7 @@ describe('DetectiveBoard relationship legend', () => {
 
   it('replays saved relationship results when the websocket delivery was missed', async () => {
     ;(globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__ = true
+    const investigationId = 'relationship-replay-investigation'
     const savedBoard = {
       mode: 'legacy',
       nodes: [
@@ -1034,12 +1035,12 @@ describe('DetectiveBoard relationship legend', () => {
         return {
           ok: true,
           json: async () => ({
-            vaultId: 'investigation-1',
+            vaultId: investigationId,
             runId: 'run-1',
             createdAt: new Date().toISOString(),
             connections: [
               {
-                vaultId: 'investigation-1',
+                vaultId: investigationId,
                 source: 'node-a',
                 target: 'node-b',
                 tag: 'RELATED',
@@ -1050,7 +1051,10 @@ describe('DetectiveBoard relationship legend', () => {
         } as Response
       }
       if (url.endsWith('/board') && init?.method === 'PUT') {
-        throw new Error('backend save unavailable')
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response
       }
       return {
         ok: true,
@@ -1058,13 +1062,16 @@ describe('DetectiveBoard relationship legend', () => {
       } as Response
     })
     vi.stubGlobal('fetch', fetchMock)
-    localStorage.setItem('inv_data_investigation-1', JSON.stringify(savedBoard))
 
     try {
-      renderBoard('investigation-1')
+      renderBoard(investigationId)
 
       await waitFor(() => {
-        const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+        const boardPutCall = fetchMock.mock.calls.find(([input, init]) =>
+          String(input).endsWith('/board') && init?.method === 'PUT',
+        )
+        expect(boardPutCall).toBeDefined()
+        const persisted = JSON.parse(String(boardPutCall?.[1]?.body || '{}'))
         expect(persisted.edges).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
@@ -1073,7 +1080,7 @@ describe('DetectiveBoard relationship legend', () => {
       })
 
       expect(fetchMock).toHaveBeenCalledWith(
-        'http://localhost:8080/api/investigations/investigation-1/relationships',
+        `http://localhost:8080/api/investigations/${investigationId}/relationships`,
         expect.objectContaining({ cache: 'no-store' }),
       )
     } finally {

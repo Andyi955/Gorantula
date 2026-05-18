@@ -9,7 +9,6 @@ import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './boardWorkspaceEvents'
 
 const API_BASE = 'http://localhost:8080/api/investigations'
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
-const MIGRATION_MARKER_KEY = 'gorantula_backend_persistence_migrated_at'
 
 export type VaultResultPayload = Record<string, unknown>
 type DiscoveryPayload = Record<string, unknown>[]
@@ -31,6 +30,7 @@ let investigationCache: InvestigationRecord[] = []
 const isBrowser = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 const shouldUseBackendPersistence = () =>
   import.meta.env.MODE !== 'test' || Boolean((globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__)
+const shouldUseBrowserInvestigationPersistence = () => !shouldUseBackendPersistence()
 
 const safeJSONStringify = (value: unknown) => {
   try {
@@ -83,7 +83,11 @@ const preserveExistingTimelineSnapshot = (
     return state
   }
 
-  const existingState = boardStateCache.get(investigationId) || getLocalBoardStateForInvestigation(investigationId)
+  const existingState = boardStateCache.get(investigationId) || (
+    shouldUseBrowserInvestigationPersistence()
+      ? getLocalBoardStateForInvestigation(investigationId)
+      : null
+  )
   if (!existingState?.timelineSnapshot) {
     return state
   }
@@ -94,24 +98,10 @@ const preserveExistingTimelineSnapshot = (
   }
 }
 
-const hasBoardEvidence = (state: PersistedBoardState) =>
-  state.nodes.length > 0 ||
-  state.edges.length > 0 ||
-  Boolean(state.pendingIntegrationNodeIds?.length) ||
-  Boolean(state.synthesisAlerts?.length)
-
 const reconcileLoadedBoardState = (
   investigationId: string,
   backendState: PersistedBoardState,
 ) => {
-  const localState = getLocalBoardStateForInvestigation(investigationId)
-  if (!hasBoardEvidence(backendState) && localState && hasBoardEvidence(localState)) {
-    return {
-      state: preserveExistingTimelineSnapshot(investigationId, localState),
-      shouldBackfillBackend: true,
-    }
-  }
-
   return {
     state: preserveExistingTimelineSnapshot(investigationId, backendState),
     shouldBackfillBackend: false,
@@ -162,7 +152,8 @@ export const loadInvestigationsFromBrowserStorage = () => {
   }
 }
 
-export const getCachedInvestigations = () => investigationCache
+export const getCachedInvestigations = () =>
+  shouldUseBackendPersistence() ? investigationCache : loadInvestigationsFromBrowserStorage()
 
 const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> => {
   if (!shouldUseBackendPersistence()) {
@@ -215,7 +206,31 @@ export const migrateBrowserInvestigationData = async (records: InvestigationReco
     }
   }))
 
-  localSet(MIGRATION_MARKER_KEY, new Date().toISOString())
+}
+
+const clearBrowserInvestigationData = () => {
+  if (!isBrowser()) {
+    return
+  }
+
+  localRemove(INVESTIGATIONS_STORAGE_KEY)
+  localRemove(DISCOVERIES_STORAGE_KEY)
+
+  try {
+    const keysToRemove: string[] = []
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index)
+      if (!key) {
+        continue
+      }
+      if (key.startsWith('inv_data_') || key.startsWith('vault_result_')) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(localRemove)
+  } catch {
+    // Legacy browser cleanup is best-effort; backend data is already authoritative.
+  }
 }
 
 export const loadInvestigations = async () => {
@@ -228,26 +243,27 @@ export const loadInvestigations = async () => {
   try {
     const backendRecords = normalizeInvestigations(await requestJSON<unknown>(API_BASE))
     const localRecords = loadInvestigationsFromBrowserStorage()
+    let migratedRecords: InvestigationRecord[] = []
 
     if (localRecords.length > 0) {
       const backendIds = new Set(backendRecords.map((record) => record.id))
       const missingLocalRecords = localRecords.filter((record) => !backendIds.has(record.id))
       if (missingLocalRecords.length > 0) {
         await migrateBrowserInvestigationData(missingLocalRecords)
+        migratedRecords = missingLocalRecords
       }
     }
+    clearBrowserInvestigationData()
 
     const merged = normalizeInvestigations([
       ...backendRecords,
-      ...localRecords.filter((record) => !backendRecords.some((backend) => backend.id === record.id)),
+      ...migratedRecords,
     ])
     investigationCache = merged
     return merged
   } catch (error) {
-    console.warn('[InvestigationPersistence] Backend investigation catalog unavailable; using browser fallback.', error)
-    const localRecords = loadInvestigationsFromBrowserStorage()
-    investigationCache = localRecords
-    return localRecords
+    console.warn('[InvestigationPersistence] Backend investigation catalog unavailable; using in-memory cache only.', error)
+    return investigationCache
   }
 }
 
@@ -264,18 +280,17 @@ export const saveInvestigations = async (records: InvestigationRecord[]) => {
   try {
     await Promise.all(records.map(saveInvestigationMetadata))
   } catch (error) {
-    console.warn('[InvestigationPersistence] Failed to save investigation catalog to backend; writing browser fallback.', error)
-    localSet(INVESTIGATIONS_STORAGE_KEY, records)
+    console.warn('[InvestigationPersistence] Failed to save investigation catalog to backend.', error)
     throw error
   }
 }
 
 export const getCachedBoardStateForInvestigation = (investigationId: string) => {
-  const localState = getLocalBoardStateForInvestigation(investigationId)
-  if (import.meta.env.MODE === 'test') {
-    return localState || boardStateCache.get(investigationId) || null
+  if (shouldUseBackendPersistence()) {
+    return boardStateCache.get(investigationId) || null
   }
-  return boardStateCache.get(investigationId) || localState
+  const localState = getLocalBoardStateForInvestigation(investigationId)
+  return localState || boardStateCache.get(investigationId) || null
 }
 
 export const loadBoardStateForInvestigation = async (investigationId: string) => {
@@ -292,7 +307,8 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
         return hydrated
       }
     } catch (error) {
-      console.warn('[InvestigationPersistence] Backend board load unavailable; using browser fallback.', error)
+      console.warn('[InvestigationPersistence] Backend board load unavailable; using in-memory cache only.', error)
+      return boardStateCache.get(investigationId) || null
     }
   }
 
@@ -335,7 +351,6 @@ export const saveBoardStateForInvestigation = async (
   } catch (error) {
     console.warn('[InvestigationPersistence] Failed to save board state to backend.', error)
     if (!options.skipFallback) {
-      localSet(`inv_data_${investigationId}`, stateToPersist, investigationId)
       emitPersistFailure(investigationId, error)
     }
     return false
@@ -343,7 +358,11 @@ export const saveBoardStateForInvestigation = async (
 }
 
 export const getCachedVaultResultForInvestigation = (investigationId: string) =>
-  vaultResultCache.get(investigationId) || parseLocalJSON<VaultResultPayload | null>(localGet(`vault_result_${investigationId}`), null)
+  vaultResultCache.get(investigationId) || (
+    shouldUseBrowserInvestigationPersistence()
+      ? parseLocalJSON<VaultResultPayload | null>(localGet(`vault_result_${investigationId}`), null)
+      : null
+  )
 
 export const loadVaultResultForInvestigation = async (investigationId: string) => {
   if (shouldUseBackendPersistence()) {
@@ -354,7 +373,8 @@ export const loadVaultResultForInvestigation = async (investigationId: string) =
         return payload
       }
     } catch (error) {
-      console.warn('[InvestigationPersistence] Backend vault result load unavailable; using browser fallback.', error)
+      console.warn('[InvestigationPersistence] Backend vault result load unavailable; using in-memory cache only.', error)
+      return vaultResultCache.get(investigationId) || null
     }
   }
 
@@ -384,7 +404,6 @@ export const saveVaultResultForInvestigation = async (
   } catch (error) {
     console.warn('[InvestigationPersistence] Failed to save vault result to backend.', error)
     if (!options.skipFallback) {
-      localSet(`vault_result_${investigationId}`, result, investigationId)
       emitPersistFailure(investigationId, error)
     }
     return false
@@ -392,23 +411,22 @@ export const saveVaultResultForInvestigation = async (
 }
 
 export const getCachedDiscoveriesForInvestigation = (investigationId: string) =>
-  discoveriesCache.get(investigationId) || readBrowserDiscoveryBuckets()[investigationId] || []
+  discoveriesCache.get(investigationId) || (
+    shouldUseBrowserInvestigationPersistence()
+      ? readBrowserDiscoveryBuckets()[investigationId] || []
+      : []
+  )
 
 export const loadDiscoveriesForInvestigation = async (investigationId: string) => {
   if (shouldUseBackendPersistence()) {
     try {
       const payload = await requestJSON<DiscoveryPayload>(`${API_BASE}/${encodeURIComponent(investigationId)}/discoveries`)
       const discoveries = Array.isArray(payload) ? payload : []
-      const browserFallback = readBrowserDiscoveryBuckets()[investigationId] || []
-      if (discoveries.length === 0 && browserFallback.length > 0) {
-        discoveriesCache.set(investigationId, browserFallback)
-        void saveDiscoveriesForInvestigation(investigationId, browserFallback, { skipFallback: true })
-        return browserFallback
-      }
       discoveriesCache.set(investigationId, discoveries)
       return discoveries
     } catch (error) {
-      console.warn('[InvestigationPersistence] Backend discoveries load unavailable; using browser fallback.', error)
+      console.warn('[InvestigationPersistence] Backend discoveries load unavailable; using in-memory cache only.', error)
+      return discoveriesCache.get(investigationId) || []
     }
   }
 
@@ -440,9 +458,6 @@ export const saveDiscoveriesForInvestigation = async (
   } catch (error) {
     console.warn('[InvestigationPersistence] Failed to save discoveries to backend.', error)
     if (!options.skipFallback) {
-      const buckets = readBrowserDiscoveryBuckets()
-      buckets[investigationId] = discoveries
-      localSet(DISCOVERIES_STORAGE_KEY, buckets, investigationId)
       emitPersistFailure(investigationId, error)
     }
     return false
