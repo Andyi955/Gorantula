@@ -46,16 +46,17 @@ var providerFallbackOrder = []string{
 
 // Brain controls the LLM generation and orchestration of the Nervous System
 type Brain struct {
-	Client       *genai.Client
-	Model        *genai.GenerativeModel
-	NS           *nervous_system.NervousSystem
-	Abdomen      *models.Abdomen
-	ModelRouter  map[string]ModelProvider
-	routerMu     sync.RWMutex
-	modelMu      sync.Mutex
-	tokenUsageMu sync.Mutex
-	tokenUsage   *tokenUsageTracker
-	Synthesis    *SynthesisEngine
+	Client        *genai.Client
+	Model         *genai.GenerativeModel
+	NS            *nervous_system.NervousSystem
+	Abdomen       *models.Abdomen
+	ModelRouter   map[string]ModelProvider
+	routerMu      sync.RWMutex
+	modelMu       sync.Mutex
+	tokenUsageMu  sync.Mutex
+	tokenUsage    *tokenUsageTracker
+	AnalysisCache *AnalysisCache
+	Synthesis     *SynthesisEngine
 }
 
 // GetRouter safely retrieves a model provider from the router
@@ -96,11 +97,12 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	}
 
 	brain := &Brain{
-		Client:     client,
-		Model:      model, // Legacy ref, kept for backward compatibility if needed temporarily
-		NS:         ns,
-		Abdomen:    abdomen,
-		tokenUsage: newTokenUsageTracker(),
+		Client:        client,
+		Model:         model, // Legacy ref, kept for backward compatibility if needed temporarily
+		NS:            ns,
+		Abdomen:       abdomen,
+		tokenUsage:    newTokenUsageTracker(),
+		AnalysisCache: NewAnalysisCache(defaultAnalysisCacheDir()),
 	}
 
 	router, err := NewModelRouter(brain)
@@ -167,23 +169,29 @@ func (b *Brain) fallbackProviderAfter(provider ModelProvider) (ModelProvider, bo
 	return b.firstAvailableProvider(provider.Name())
 }
 
-func (b *Brain) generateJSONWithFallback(ctx context.Context, operation string, provider ModelProvider, prompt string, target interface{}) error {
+func (b *Brain) generateJSONWithFallbackProvider(ctx context.Context, operation string, provider ModelProvider, prompt string, target interface{}) (ModelProvider, error) {
 	if provider == nil {
-		return fmt.Errorf("no model providers available")
+		return nil, fmt.Errorf("no model providers available")
 	}
 	if err := provider.GenerateJSON(ctx, prompt, target); err != nil {
 		fmt.Printf("[Brain Error] %s provider %s failed: %v. Attempting generic provider fallback...\n", operation, provider.Name(), err)
 		fallbackProvider, ok := b.fallbackProviderAfter(provider)
 		if !ok {
-			return err
+			return nil, err
 		}
 		if fallbackErr := fallbackProvider.GenerateJSON(ctx, prompt, target); fallbackErr != nil {
 			fmt.Printf("[Brain Error] %s fallback provider %s failed: %v\n", operation, fallbackProvider.Name(), fallbackErr)
-			return err
+			return nil, err
 		}
 		fmt.Printf("[Brain] %s recovered using fallback provider %s\n", operation, fallbackProvider.Name())
+		return fallbackProvider, nil
 	}
-	return nil
+	return provider, nil
+}
+
+func (b *Brain) generateJSONWithFallback(ctx context.Context, operation string, provider ModelProvider, prompt string, target interface{}) error {
+	_, err := b.generateJSONWithFallbackProvider(ctx, operation, provider, prompt, target)
+	return err
 }
 
 func (b *Brain) generateContentWithFallback(ctx context.Context, operation string, provider ModelProvider, prompt string) (string, error) {
@@ -962,18 +970,30 @@ func (b *Brain) summarizeNode(ctx context.Context, content string) (string, stri
 		"CRITICAL: If the text is a security block or indicates bot detection, return ONLY {}.", currentDate)
 
 	fullPrompt := systemInstruction + "\n\nContent to summarize:\n" + content
+	normalizedContent := normalizeCacheText(content)
+	contentHash := hashString(normalizedContent)
+	promptHash := hashString(systemInstruction + "\n\nContent to summarize:\n" + normalizedContent)
+	if b.AnalysisCache != nil {
+		if title, summary, ok := b.AnalysisCache.getNodeSummary(providerCacheIdentity(provider), contentHash, promptHash); ok {
+			return title, summary, nil
+		}
+	}
 	var res struct {
 		Title   string `json:"title"`
 		Summary string `json:"summary"`
 	}
-	if err := b.generateJSONWithFallback(ctx, "node summary", provider, fullPrompt, &res); err != nil {
-		if b.NS.Broadcast != nil {
+	actualProvider, err := b.generateJSONWithFallbackProvider(ctx, "node summary", provider, fullPrompt, &res)
+	if err != nil {
+		if b.NS != nil && b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
 				Payload: fmt.Sprintf("Provider %s failed while summarizing a node.", provider.Name()),
 			})
 		}
 		return "", "", err
+	}
+	if b.AnalysisCache != nil {
+		b.AnalysisCache.saveNodeSummary(providerCacheIdentity(actualProvider), contentHash, promptHash, res.Title, res.Summary)
 	}
 	return res.Title, res.Summary, nil
 }
