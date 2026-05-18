@@ -8,10 +8,11 @@ import (
 const (
 	PipelineProgressMessageType = "PIPELINE_PROGRESS"
 
-	PipelineStatusPending  = "pending"
-	PipelineStatusRunning  = "running"
-	PipelineStatusComplete = "complete"
-	PipelineStatusError    = "error"
+	PipelineStatusPending   = "pending"
+	PipelineStatusRunning   = "running"
+	PipelineStatusComplete  = "complete"
+	PipelineStatusError     = "error"
+	PipelineStatusCancelled = "cancelled"
 )
 
 type PipelineProgressStep struct {
@@ -146,6 +147,10 @@ func (t *PipelineProgressTracker) Error(stepID, message string) WSMessage {
 	return t.transition(stepID, PipelineStatusError, "", message)
 }
 
+func (t *PipelineProgressTracker) Cancel(stepID, detail string) WSMessage {
+	return t.transition(stepID, PipelineStatusCancelled, detail, "")
+}
+
 func (t *PipelineProgressTracker) transition(stepID, status, detail, errorMessage string) WSMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -193,6 +198,14 @@ func (t *PipelineProgressTracker) transition(stepID, status, detail, errorMessag
 		if t.currentID == stepID {
 			t.currentID = ""
 		}
+	case PipelineStatusCancelled:
+		for index := range t.steps {
+			if t.steps[index].Status == PipelineStatusRunning {
+				t.cancelStep(&t.steps[index], now, detail)
+			}
+		}
+		t.cancelStep(step, now, detail)
+		t.currentID = ""
 	}
 
 	payload := t.payloadFor(*step, status, detail, errorMessage, now)
@@ -201,6 +214,17 @@ func (t *PipelineProgressTracker) transition(stepID, status, detail, errorMessag
 
 func (t *PipelineProgressTracker) completeStep(step *PipelineProgressStepState, now time.Time, detail string) {
 	step.Status = PipelineStatusComplete
+	step.Detail = detail
+	step.Error = ""
+	if step.StartedAt == "" {
+		step.StartedAt = formatPipelineTime(now)
+	}
+	step.CompletedAt = formatPipelineTime(now)
+	step.DurationMs = durationSince(step.StartedAt, now)
+}
+
+func (t *PipelineProgressTracker) cancelStep(step *PipelineProgressStepState, now time.Time, detail string) {
+	step.Status = PipelineStatusCancelled
 	step.Detail = detail
 	step.Error = ""
 	if step.StartedAt == "" {

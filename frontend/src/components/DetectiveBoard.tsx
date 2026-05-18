@@ -599,6 +599,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const pendingIntegrationNodeIdsRef = useRef<string[]>([]);
     const analysisModeRef = useRef<AnalysisMode>(null);
     const latestPipelineRunIdRef = useRef<string | null>(null);
+    const stoppedPipelineRunIdsRef = useRef<Set<string>>(new Set());
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
     const dragRouteFrameRef = useRef<number | null>(null);
@@ -2469,12 +2470,26 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                 } else {
                     setIsGathering(true);
                 }
+            } else if (msg.type === 'PIPELINE_PROGRESS') {
+                const runId = typeof msg.payload?.runId === 'string' ? msg.payload.runId.trim() : '';
+                const vaultId = typeof msg.payload?.vaultId === 'string' ? msg.payload.vaultId.trim() : '';
+                const status = typeof msg.payload?.status === 'string' ? msg.payload.status : '';
+                if (runId && (!vaultId || vaultId === investigationId) && status === 'cancelled') {
+                    stoppedPipelineRunIdsRef.current.add(runId);
+                    setIsGathering(false);
+                    setIsAnalyzing(false);
+                    setAnalysisMode(null);
+                    setDeepDiveTopic(null);
+                }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
                 const explicitVaultId = typeof msg.payload?.vaultId === 'string'
                     ? msg.payload.vaultId.trim()
                     : '';
                 const vaultId = explicitVaultId || investigationId;
                 const isAppendResult = Boolean(msg.payload?.append);
+                const completedRunId = typeof msg.payload?.runId === 'string'
+                    ? msg.payload.runId.trim()
+                    : '';
 
                 setIsGathering(false);
                 setDeepDiveTopic(null);
@@ -2490,8 +2505,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     return;
                 }
 
-                if (typeof msg.payload?.runId === 'string' && msg.payload.runId.trim()) {
-                    latestPipelineRunIdRef.current = msg.payload.runId;
+                if (completedRunId) {
+                    latestPipelineRunIdRef.current = completedRunId;
+                    if (stoppedPipelineRunIdsRef.current.has(completedRunId)) {
+                        console.debug('[Board] Ignoring late synthesis completion for stopped run:', completedRunId);
+                        return;
+                    }
                 }
 
                 if (isAppendResult) {

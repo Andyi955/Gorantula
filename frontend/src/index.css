@@ -752,6 +752,11 @@ body {
   box-shadow: 0 0 10px rgba(255, 140, 134, 0.5);
 }
 
+.forensic-pipeline-chip-dot-cancelled {
+  background: var(--forensic-warning);
+  box-shadow: 0 0 10px rgba(255, 204, 102, 0.46);
+}
+
 .forensic-pipeline-chip-dismiss {
   position: absolute;
   top: 0.32rem;
@@ -887,6 +892,15 @@ body {
 
 .forensic-pipeline-step-error .forensic-pipeline-step-dot {
   background: var(--forensic-danger);
+}
+
+.forensic-pipeline-step-cancelled {
+  border-color: rgba(255, 204, 102, 0.28);
+  background: rgba(255, 204, 102, 0.08);
+}
+
+.forensic-pipeline-step-cancelled .forensic-pipeline-step-dot {
+  background: var(--forensic-warning);
 }
 
 .forensic-pipeline-run-row {
@@ -1732,6 +1746,11 @@ body {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 140, 134, 0.68);
 }
 
+.forensic-spider-pipeline-dot-cancelled {
+  background: var(--forensic-warning);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 204, 102, 0.62);
+}
+
 @keyframes forensicPipelineRailPulse {
   0%, 100% {
     transform: scale(0.86);
@@ -1936,6 +1955,37 @@ body {
   border: 1px solid rgba(129, 227, 255, 0.16);
   background: rgba(3, 8, 12, 0.54);
   color: var(--forensic-accent);
+}
+
+.forensic-spider-stop-button,
+.forensic-pipeline-stop-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(255, 140, 134, 0.34);
+  background: rgba(255, 140, 134, 0.12);
+  color: var(--forensic-danger);
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.forensic-spider-stop-button {
+  min-height: 2.45rem;
+}
+
+.forensic-pipeline-stop-button {
+  min-height: 2rem;
+  padding: 0 0.7rem;
+}
+
+.forensic-spider-stop-button:hover,
+.forensic-pipeline-stop-button:hover {
+  background: rgba(255, 140, 134, 0.18);
+  color: #fff;
+  transform: translateY(-1px);
 }
 
 .forensic-settings-root {

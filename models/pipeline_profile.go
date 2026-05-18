@@ -196,7 +196,7 @@ func (t *PipelineProgressTracker) Profile() PipelinePerformanceProfile {
 	})
 
 	status, completedAt := profileStatusAndCompletion(steps)
-	if completedAt == "" && status == PipelineStatusComplete {
+	if completedAt == "" && (status == PipelineStatusComplete || status == PipelineStatusCancelled) {
 		completedAt = formatPipelineTime(now)
 	}
 	totalElapsedMs := now.Sub(t.startedAt).Milliseconds()
@@ -392,6 +392,9 @@ func profileStatusAndCompletion(steps []PipelineProgressStepState) (string, stri
 	for _, step := range steps {
 		if step.Status == PipelineStatusError {
 			return PipelineStatusError, step.CompletedAt
+		}
+		if step.Status == PipelineStatusCancelled {
+			return PipelineStatusCancelled, step.CompletedAt
 		}
 		if step.ID == "complete" && step.Status == PipelineStatusComplete {
 			status = PipelineStatusComplete

@@ -560,6 +560,64 @@ describe('App', () => {
     expect(screen.getByTestId('mock-spider-pipeline-rail')).toHaveTextContent('running Dispatching legs 25%')
   })
 
+  it('sends a stop command for the active pipeline run and renders cancelled status without clearing the investigation', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'cancel me gently')
+    await user.click(screen.getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        mode: 'web',
+        stepId: 'gather_evidence',
+        stepLabel: 'Gathering evidence',
+        status: 'running',
+        completedSteps: 3,
+        totalSteps: 8,
+        elapsedMs: 5400,
+      })
+    })
+
+    const stopButton = await screen.findByRole('button', { name: /stop current investigation/i })
+    await user.click(stopButton)
+
+    const stopMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(stopMessage).toEqual({
+      type: 'STOP_PIPELINE',
+      runId: crawlMessage.runId,
+      vaultId: crawlMessage.vaultId,
+    })
+    expect(localStorage.getItem('gorantula_investigations')).toContain(crawlMessage.vaultId)
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        mode: 'web',
+        stepId: 'complete',
+        stepLabel: 'Pipeline stopped',
+        status: 'cancelled',
+        completedSteps: 3,
+        totalSteps: 8,
+        elapsedMs: 6100,
+        detail: 'Stopped by operator',
+      })
+    })
+
+    expect(screen.getByTestId('mock-spider-pipeline-rail')).toHaveTextContent('cancelled Pipeline stopped 38%')
+    expect(screen.queryByRole('button', { name: /stop current investigation/i })).not.toBeInTheDocument()
+  })
+
   it('renders saved pipeline performance profiles in the monitor drawer', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn((input: RequestInfo | URL) => {

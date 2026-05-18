@@ -64,7 +64,7 @@ interface TokenUsageReport {
 interface PipelineProgressStepState {
   id: string
   label: string
-  status: 'pending' | 'running' | 'complete' | 'error'
+  status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled'
   startedAt?: string
   completedAt?: string
   durationMs?: number
@@ -78,7 +78,7 @@ interface PipelineProgressPayload {
   mode: string
   stepId: string
   stepLabel: string
-  status: 'pending' | 'running' | 'complete' | 'error'
+  status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled'
   completedSteps: number
   totalSteps: number
   startedAt?: string
@@ -235,7 +235,7 @@ const formatDuration = (milliseconds?: number | null) => {
 }
 
 const coercePipelineStatus = (value: unknown): PipelineProgressPayload['status'] => {
-  if (value === 'pending' || value === 'running' || value === 'complete' || value === 'error') {
+  if (value === 'pending' || value === 'running' || value === 'complete' || value === 'error' || value === 'cancelled') {
     return value
   }
   return 'running'
@@ -1177,19 +1177,43 @@ function App() {
     : 0
   const activePipelineEta = activePipelineRun?.status === 'complete'
     ? 'done'
-    : activePipelineRun?.estimatedRemainingMs
-      ? formatDuration(activePipelineRun.estimatedRemainingMs)
-      : 'calibrating'
-  const activePipelineRailStatus: 'idle' | 'running' | 'complete' | 'error' = !activePipelineRun
+    : activePipelineRun?.status === 'cancelled'
+      ? 'stopped'
+      : activePipelineRun?.estimatedRemainingMs
+        ? formatDuration(activePipelineRun.estimatedRemainingMs)
+        : 'calibrating'
+  const activePipelineRailStatus: 'idle' | 'running' | 'complete' | 'error' | 'cancelled' = !activePipelineRun
     ? 'idle'
     : activePipelineRun.status === 'complete'
       ? 'complete'
-      : activePipelineRun.status === 'error'
-        ? 'error'
+      : activePipelineRun.status === 'error' || activePipelineRun.status === 'cancelled'
+        ? activePipelineRun.status
         : 'running'
+  const canStopActivePipeline = Boolean(
+    activePipelineRun &&
+    socketConfig.socket &&
+    socketConfig.ready &&
+    activePipelineRun.status !== 'complete' &&
+    activePipelineRun.status !== 'error' &&
+    activePipelineRun.status !== 'cancelled',
+  )
   const isPipelineChipDismissed = activePipelineRun
     ? Boolean(dismissedPipelineChipRuns[activePipelineRun.runId])
     : false
+
+  const stopActivePipeline = useCallback(() => {
+    if (!activePipelineRun || !socketConfig.socket || !socketConfig.ready) {
+      return
+    }
+    if (activePipelineRun.status === 'complete' || activePipelineRun.status === 'error' || activePipelineRun.status === 'cancelled') {
+      return
+    }
+    socketConfig.socket.send(JSON.stringify({
+      type: 'STOP_PIPELINE',
+      runId: activePipelineRun.runId,
+      vaultId: activePipelineRun.vaultId,
+    }))
+  }, [activePipelineRun, socketConfig.ready, socketConfig.socket])
 
   useEffect(() => {
     const handleClearDiscoveries = (event: Event) => {
@@ -2054,9 +2078,22 @@ function App() {
                       >
                         Execute
                       </button>
-                      <button type="button" className="forensic-spider-command-more" aria-label="Command options">
-                        <ChevronRight size={15} />
-                      </button>
+                      {canStopActivePipeline ? (
+                        <button
+                          type="button"
+                          onClick={stopActivePipeline}
+                          className="forensic-spider-stop-button"
+                          aria-label="Stop current investigation"
+                          title="Stop current investigation"
+                        >
+                          <X size={15} />
+                          Stop
+                        </button>
+                      ) : (
+                        <button type="button" className="forensic-spider-command-more" aria-label="Command options">
+                          <ChevronRight size={15} />
+                        </button>
+                      )}
                     </div>
                   </section>
                 </div>
@@ -2215,14 +2252,28 @@ function App() {
                 {activePipelineRun.mode.toUpperCase()} / {activePipelineRun.vaultId || 'unassigned vault'}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsPipelineDrawerOpen(false)}
-              className="rounded-lg border border-white/10 p-2 text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
-              aria-label="Close pipeline monitor"
-            >
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-2">
+              {canStopActivePipeline && (
+                <button
+                  type="button"
+                  onClick={stopActivePipeline}
+                  className="forensic-pipeline-stop-button"
+                  aria-label="Stop current investigation"
+                  title="Stop current investigation"
+                >
+                  <X size={14} />
+                  Stop
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsPipelineDrawerOpen(false)}
+                className="rounded-lg border border-white/10 p-2 text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
+                aria-label="Close pipeline monitor"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           <div className="mt-5">

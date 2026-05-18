@@ -45,6 +45,9 @@ func nodeSummaryConcurrency() int {
 }
 
 func (b *Brain) processNutrients(ctx context.Context, nutrients []models.NutrientFlow, options nutrientProcessingOptions) []processedNutrient {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(nutrients) == 0 {
 		return nil
 	}
@@ -67,14 +70,32 @@ func (b *Brain) processNutrients(ctx context.Context, nutrients []models.Nutrien
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			for job := range jobs {
-				results <- b.processSingleNutrient(ctx, job.index, job.nutrient, options)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					result := b.processSingleNutrient(ctx, job.index, job.nutrient, options)
+					select {
+					case results <- result:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
 		}()
 	}
 
+enqueueLoop:
 	for index, nutrient := range nutrients {
-		jobs <- nutrientJob{index: index, nutrient: nutrient}
+		select {
+		case <-ctx.Done():
+			break enqueueLoop
+		case jobs <- nutrientJob{index: index, nutrient: nutrient}:
+		}
 	}
 	close(jobs)
 	waitGroup.Wait()
@@ -93,6 +114,9 @@ func (b *Brain) processNutrients(ctx context.Context, nutrients []models.Nutrien
 }
 
 func (b *Brain) processSingleNutrient(ctx context.Context, index int, nutrient models.NutrientFlow, options nutrientProcessingOptions) processedNutrient {
+	if err := ctx.Err(); err != nil {
+		return processedNutrient{index: index}
+	}
 	if nutrient.Error != nil {
 		fmt.Printf("[Brain Warning] Leg %d returned error: %v\n", nutrient.LegID, nutrient.Error)
 		return processedNutrient{index: index}

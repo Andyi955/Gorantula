@@ -32,9 +32,10 @@ var upgrader = websocket.Upgrader{
 }
 
 var (
-	clients          = make(map[*websocket.Conn]bool)
-	clientsMu        sync.Mutex
-	pipelineTrackers sync.Map
+	clients               = make(map[*websocket.Conn]bool)
+	clientsMu             sync.Mutex
+	pipelineTrackers      sync.Map
+	pipelineCancellations sync.Map
 )
 
 const maxNodeImageUploadBodyBytes = 12 << 20
@@ -85,6 +86,11 @@ type pipelineRunMetadata struct {
 	Mode    string
 }
 
+type pipelineCancellation struct {
+	vaultID string
+	cancel  context.CancelFunc
+}
+
 func extractPipelineRunMetadata(msg map[string]interface{}, fallbackVaultID, mode string) pipelineRunMetadata {
 	runID := ""
 	if rawRunID, ok := msg["runId"].(string); ok {
@@ -129,6 +135,68 @@ func forgetPipelineTracker(runID string) {
 	if strings.TrimSpace(runID) != "" {
 		pipelineTrackers.Delete(runID)
 	}
+}
+
+func registerPipelineCancellation(meta pipelineRunMetadata, cancel context.CancelFunc) {
+	runID := strings.TrimSpace(meta.RunID)
+	if runID == "" || cancel == nil {
+		return
+	}
+	pipelineCancellations.Store(runID, pipelineCancellation{
+		vaultID: strings.TrimSpace(meta.VaultID),
+		cancel:  cancel,
+	})
+}
+
+func cancelPipelineRun(runID, vaultID string) bool {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	value, ok := pipelineCancellations.Load(runID)
+	if !ok {
+		return false
+	}
+	registration, ok := value.(pipelineCancellation)
+	if !ok {
+		pipelineCancellations.Delete(runID)
+		return false
+	}
+	vaultID = strings.TrimSpace(vaultID)
+	if vaultID != "" && registration.vaultID != "" && vaultID != registration.vaultID {
+		return false
+	}
+	registration.cancel()
+	pipelineCancellations.Delete(runID)
+	return true
+}
+
+func forgetPipelineCancellation(runID string) {
+	if strings.TrimSpace(runID) != "" {
+		pipelineCancellations.Delete(runID)
+	}
+}
+
+func resetPipelineCancellationRegistryForTest() {
+	pipelineCancellations.Range(func(key, value interface{}) bool {
+		pipelineCancellations.Delete(key)
+		return true
+	})
+}
+
+func isCancellationError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func broadcastPipelineCancelled(tracker *models.PipelineProgressTracker, detail string) {
+	if tracker == nil {
+		return
+	}
+	if strings.TrimSpace(detail) == "" {
+		detail = "Stopped by operator"
+	}
+	broadcast(tracker.Cancel("complete", detail))
+	saveAndBroadcastPipelineProfile(tracker)
 }
 
 func pipelineProfileStore() *models.PipelineProfileStore {
@@ -312,6 +380,28 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						filePaths = []string{payload}
 					}
 					triggerLocalCrawl(br, filePaths, extractPipelineRunMetadata(msg, "", "local"))
+				}
+			case "STOP_PIPELINE":
+				runID := ""
+				if rawRunID, ok := msg["runId"].(string); ok {
+					runID = strings.TrimSpace(rawRunID)
+				}
+				vaultID := ""
+				if rawVaultID, ok := msg["vaultId"].(string); ok {
+					vaultID = strings.TrimSpace(rawVaultID)
+				}
+				if runID == "" {
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "Stop pipeline requires a run id."})
+					continue
+				}
+				if !cancelPipelineRun(runID, vaultID) {
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "No active pipeline found for run " + runID})
+					continue
+				}
+				if existing, ok := pipelineTrackers.Load(runID); ok {
+					if tracker, ok := existing.(*models.PipelineProgressTracker); ok {
+						broadcastPipelineCancelled(tracker, "Stopped by operator")
+					}
 				}
 			case "CONNECT_DOTS":
 				log.Println("[WS] Received CONNECT_DOTS request")
@@ -515,17 +605,26 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 }
 
 func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, scrapeImages bool, meta pipelineRunMetadata) {
+	tracker := newPipelineTracker(meta, models.DefaultPipelineProgressSteps())
+	ctx, cancel := context.WithCancel(context.Background())
+	registerPipelineCancellation(meta, cancel)
+
 	go func() {
-		tracker := newPipelineTracker(meta, models.DefaultPipelineProgressSteps())
+		defer forgetPipelineCancellation(meta.RunID)
 		var err error
 		if appendToVault {
-			_, err = br.ProcessPromptIntoVaultWithProgress(context.Background(), prompt, vaultID, scrapeImages, tracker)
+			_, err = br.ProcessPromptIntoVaultWithProgress(ctx, prompt, vaultID, scrapeImages, tracker)
 		} else if strings.TrimSpace(vaultID) != "" {
-			_, err = br.ProcessPromptForVaultWithProgress(context.Background(), prompt, vaultID, scrapeImages, tracker)
+			_, err = br.ProcessPromptForVaultWithProgress(ctx, prompt, vaultID, scrapeImages, tracker)
 		} else {
-			_, err = br.ProcessPromptWithProgress(context.Background(), prompt, scrapeImages, tracker)
+			_, err = br.ProcessPromptWithProgress(ctx, prompt, scrapeImages, tracker)
 		}
 		if err != nil {
+			if isCancellationError(err) {
+				broadcastPipelineCancelled(tracker, "Stopped by operator")
+				forgetPipelineTracker(meta.RunID)
+				return
+			}
 			broadcast(tracker.Error("complete", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
@@ -608,8 +707,17 @@ func personaAnalysisCompletionDetail(successCount, totalCount int) string {
 }
 
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipelineRunMetadata) {
+	tracker := getPipelineTracker(meta, models.DefaultPipelineProgressSteps())
+	ctx, cancel := context.WithCancel(context.Background())
+	registerPipelineCancellation(meta, cancel)
+
 	go func() {
-		tracker := getPipelineTracker(meta, models.DefaultPipelineProgressSteps())
+		shouldForgetCancellation := true
+		defer func() {
+			if shouldForgetCancellation {
+				forgetPipelineCancellation(meta.RunID)
+			}
+		}()
 		isIncremental := len(pendingNodeIDs) > 0
 		if isIncremental {
 			log.Printf("[WS] Dispatching incremental persona analysis for %d nodes with %d pending nodes...", len(nodes), len(pendingNodeIDs))
@@ -626,19 +734,24 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		)
 		tracker.StartSpan("persona_fanout", "persona_analysis", "Persona fanout", fmt.Sprintf("running %d personas", len(brain.GetDefaultPersonas())))
 		if isIncremental {
-			insights, err = br.AnalyzeIncrementalWithPersonasWithProgress(context.Background(), vaultID, nodes, pendingNodeIDs, tracker)
+			insights, err = br.AnalyzeIncrementalWithPersonasWithProgress(ctx, vaultID, nodes, pendingNodeIDs, tracker)
 		} else {
-			insights, err = br.AnalyzeWithPersonasWithProgress(context.Background(), vaultID, nodes, tracker)
+			insights, err = br.AnalyzeWithPersonasWithProgress(ctx, vaultID, nodes, tracker)
 		}
 		tracker.CompleteSpan("persona_fanout", fmt.Sprintf("generated %d persona insight sets", len(insights)))
 		if err != nil {
+			if isCancellationError(err) {
+				broadcastPipelineCancelled(tracker, "Stopped by operator")
+				forgetPipelineTracker(meta.RunID)
+				return
+			}
 			log.Printf("[WS Error] Persona analysis failed: %v", err)
 			broadcast(tracker.Error("persona_analysis", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)
 			broadcast(models.WSMessage{Type: "ERROR", Payload: "Persona analysis failed: " + err.Error()})
 
-			connections, fallbackErr := br.AnalyzeConnections(context.Background(), nodes)
+			connections, fallbackErr := br.AnalyzeConnections(ctx, nodes)
 			if fallbackErr != nil {
 				broadcast(models.WSMessage{Type: "ERROR", Payload: "AI analysis failed: " + fallbackErr.Error()})
 			} else {
@@ -677,7 +790,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		log.Printf("[Synthesis] Triggering overlaps check with %d candidate nodes for %d total nodes", len(overlapCandidateNodes), len(nodes))
 		broadcast(tracker.Start("overlap_scan", "Scanning for cross-case overlap"))
 		if len(overlapCandidateNodes) > 0 && len(nodes) > 0 {
-			go br.Synthesis.AnalyzeOverlap(context.Background(), vaultID, overlapCandidateNodes, nodes, br)
+			go br.Synthesis.AnalyzeOverlap(ctx, vaultID, overlapCandidateNodes, nodes, br)
 		}
 		broadcast(tracker.Complete("overlap_scan", "Unified theory scan queued"))
 
@@ -686,7 +799,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 
 		var connections []models.BoardConnection
 		var debugRun models.RelationshipDebugRun
-		relationshipCtx, relationshipScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-relationships", "relationship_synthesis")
+		relationshipCtx, relationshipScopeID := br.StartPipelineTokenScope(ctx, "pipeline-relationships", "relationship_synthesis")
 		tracker.StartSpan("relationship_generation", "relationship_synthesis", "Relationship synthesis", fmt.Sprintf("linking %d nodes", len(nodes)))
 		if isIncremental {
 			connections, debugRun, err = br.RunIncrementalRelationshipWorkflow(relationshipCtx, vaultID, nodes, pendingNodeIDs, insights)
@@ -696,6 +809,11 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		tracker.CompleteSpan("relationship_generation", fmt.Sprintf("found %d relationships", len(connections)))
 		br.RecordPipelineTokenUsage(tracker, relationshipScopeID)
 		if err != nil {
+			if isCancellationError(err) {
+				broadcastPipelineCancelled(tracker, "Stopped by operator")
+				forgetPipelineTracker(meta.RunID)
+				return
+			}
 			log.Printf("[WS Error] Relationship workflow failed: %v", err)
 			broadcast(tracker.Error("relationship_synthesis", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
@@ -730,14 +848,21 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 
 		nodesSnapshot := append([]models.MemoryNode(nil), nodes...)
 		insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
+		shouldForgetCancellation = false
 		go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
+			defer forgetPipelineCancellation(meta.RunID)
 			broadcast(tracker.Start("discovery_review", "Reviewing breakthrough candidates"))
-			discoveryCtx, discoveryScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-discovery", "discovery_synthesis")
+			discoveryCtx, discoveryScopeID := br.StartPipelineTokenScope(ctx, "pipeline-discovery", "discovery_synthesis")
 			tracker.StartSpan("discovery_synthesis", "discovery_review", "Discovery candidate synthesis", fmt.Sprintf("reviewing %d nodes", len(nodes)))
 			candidateDiscoveries, err := br.SynthesizeDiscoveries(discoveryCtx, vaultID, nodes, insights)
 			tracker.CompleteSpan("discovery_synthesis", fmt.Sprintf("generated %d candidate discoveries", len(candidateDiscoveries)))
 			br.RecordPipelineTokenUsage(tracker, discoveryScopeID)
 			if err != nil {
+				if isCancellationError(err) {
+					broadcastPipelineCancelled(tracker, "Stopped by operator")
+					forgetPipelineTracker(meta.RunID)
+					return
+				}
 				log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
 				broadcast(tracker.Error("discovery_review", err.Error()))
 				saveAndBroadcastPipelineProfile(tracker)
@@ -746,12 +871,17 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			}
 			tracker.RecordCounter("discoveryCandidates", len(candidateDiscoveries))
 
-			reviewCtx, reviewScopeID := br.StartPipelineTokenScope(context.Background(), "pipeline-discovery-review", "discovery_review")
+			reviewCtx, reviewScopeID := br.StartPipelineTokenScope(ctx, "pipeline-discovery-review", "discovery_review")
 			tracker.StartSpan("discovery_candidate_review", "discovery_review", "Discovery expert review", fmt.Sprintf("reviewing %d candidates", len(candidateDiscoveries)))
 			discoveries, err := br.ReviewDiscoveryCandidates(reviewCtx, candidateDiscoveries, nodes)
 			tracker.CompleteSpan("discovery_candidate_review", fmt.Sprintf("approved %d discoveries", len(discoveries)))
 			br.RecordPipelineTokenUsage(tracker, reviewScopeID)
 			if err != nil {
+				if isCancellationError(err) {
+					broadcastPipelineCancelled(tracker, "Stopped by operator")
+					forgetPipelineTracker(meta.RunID)
+					return
+				}
 				log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
 				broadcast(tracker.Error("discovery_review", err.Error()))
 				saveAndBroadcastPipelineProfile(tracker)
@@ -772,10 +902,19 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 }
 
 func triggerLocalCrawl(br *brain.Brain, filePaths []string, meta pipelineRunMetadata) {
+	tracker := newPipelineTracker(meta, models.LocalPipelineProgressSteps())
+	ctx, cancel := context.WithCancel(context.Background())
+	registerPipelineCancellation(meta, cancel)
+
 	go func() {
-		tracker := newPipelineTracker(meta, models.LocalPipelineProgressSteps())
-		_, err := br.ProcessLocalFilesWithProgress(context.Background(), filePaths, tracker)
+		defer forgetPipelineCancellation(meta.RunID)
+		_, err := br.ProcessLocalFilesWithProgress(ctx, filePaths, tracker)
 		if err != nil {
+			if isCancellationError(err) {
+				broadcastPipelineCancelled(tracker, "Stopped by operator")
+				forgetPipelineTracker(meta.RunID)
+				return
+			}
 			broadcast(tracker.Error("complete", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
 			forgetPipelineTracker(meta.RunID)

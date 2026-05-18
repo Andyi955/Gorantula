@@ -803,6 +803,9 @@ type overlapBatchResponse struct {
 
 // AnalyzeOverlap uses tagged node entities as fast overlap candidates, then verifies them with node context.
 func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newVaultID string, candidateNodes []models.MemoryNode, allNodes []models.MemoryNode, br *Brain) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	startedAt := time.Now()
 	candidateEntityMap := extractTaggedEntities(candidateNodes)
 	log.Printf("[SynthesisEngine] Starting execution for Vault %s with %d candidate nodes and %d candidate entities", newVaultID, len(candidateNodes), len(candidateEntityMap))
@@ -890,6 +893,9 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newVaultID string,
 	refinedContexts := make(map[string][]NodeContextPayload)
 	refinedOverlaps := make(map[string][]string)
 	for entity, vaults := range overlapsFound {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if len(vaults) == 0 {
 			continue
 		}
@@ -910,6 +916,9 @@ func (s *SynthesisEngine) AnalyzeOverlap(ctx context.Context, newVaultID string,
 }
 
 func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[string][]string, currentVaultID string, overlapContexts map[string][]NodeContextPayload, br *Brain) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	log.Printf("[SynthesisEngine] Dispatching %d overlaps for current vault %s", len(overlaps), currentVaultID)
 
 	if s.activeChan == nil {
@@ -959,6 +968,9 @@ func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[st
 	}
 
 	for _, candidate := range selectedCandidates {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		entity := candidate.entity
 		historicalVaults := candidate.historicalVaults
 		nodesList := candidate.nodesList

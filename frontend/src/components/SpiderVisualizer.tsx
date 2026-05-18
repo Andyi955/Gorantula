@@ -4,7 +4,7 @@ import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import { Activity, BarChart3, Braces, CircuitBoard, Crosshair, DatabaseZap, Info, Network, RadioTower, ScanLine } from 'lucide-react';
 import { SpiderScene } from './SpiderScene';
 
-type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error';
+type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
 
 interface SpiderVisualizerProps {
     sharedSocket: WebSocket | null;
