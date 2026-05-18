@@ -455,6 +455,16 @@ describe('DetectiveBoard relationship legend', () => {
     expect(lastReactFlowProps?.proOptions).toEqual({ hideAttribution: true })
   })
 
+  it('allows the detective board to zoom out farther for large investigations', () => {
+    renderBoard()
+
+    expect(lastReactFlowProps?.minZoom).toBe(0.5)
+    expect(lastReactFlowProps?.fitViewOptions).toMatchObject({
+      minZoom: 0.72,
+      maxZoom: 1,
+    })
+  })
+
   it('keeps React Flow node and edge type objects stable across board renders', () => {
     const socket = new MockSocket()
     renderBoard('investigation-1', socket as unknown as WebSocket)
@@ -525,7 +535,7 @@ describe('DetectiveBoard relationship legend', () => {
     expect(fitViewMock).toHaveBeenCalledWith({
       duration: 220,
       padding: 0.16,
-      minZoom: 0.98,
+      minZoom: 0.72,
       maxZoom: 1,
     })
 
