@@ -224,13 +224,18 @@ class MockSocket {
   }
 }
 
-const renderBoard = (investigationId = 'investigation-1', sharedSocket: WebSocket | null = null) =>
+const renderBoard = (
+  investigationId = 'investigation-1',
+  sharedSocket: WebSocket | null = null,
+  props: Partial<React.ComponentProps<typeof DetectiveBoard>> = {},
+) =>
   render(
     <DetectiveBoard
       investigationId={investigationId}
       sharedSocket={sharedSocket}
       onDeepDiveNode={vi.fn()}
       onNavigateToChild={vi.fn()}
+      {...props}
     />,
   )
 
@@ -526,6 +531,23 @@ describe('DetectiveBoard relationship legend', () => {
 
     window.removeEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, discoveryListener as EventListener)
     window.removeEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, synthesisListener as EventListener)
+  })
+
+  it('colors completed theory and discovery utilities with unread dots', () => {
+    renderBoard('investigation-1', null, {
+      hasTheoryReady: true,
+      hasUnreadTheory: true,
+      hasDiscoveryReady: true,
+      hasUnreadDiscoveries: true,
+    })
+
+    const theoryButton = screen.getByRole('button', { name: /grand unified theory ready/i })
+    const discoveryButton = screen.getByRole('button', { name: /discoveries ready/i })
+
+    expect(theoryButton).toHaveClass('forensic-utility-button-complete')
+    expect(within(theoryButton).getByTestId('theory-utility-notification')).toBeInTheDocument()
+    expect(discoveryButton).toHaveClass('forensic-utility-button-discovery-complete')
+    expect(within(discoveryButton).getByTestId('discovery-utility-notification')).toBeInTheDocument()
   })
 
   it('renders board controls in an overlay outside the action bar', async () => {
@@ -988,6 +1010,76 @@ describe('DetectiveBoard relationship legend', () => {
         ]),
       )
     })
+  })
+
+  it('replays saved relationship results when the websocket delivery was missed', async () => {
+    ;(globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__ = true
+    const savedBoard = {
+      mode: 'legacy',
+      nodes: [
+        { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+        { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+      ],
+      edges: [],
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/board') && (!init?.method || init.method === 'GET')) {
+        return {
+          ok: true,
+          json: async () => savedBoard,
+        } as Response
+      }
+      if (url.endsWith('/relationships') && (!init?.method || init.method === 'GET')) {
+        return {
+          ok: true,
+          json: async () => ({
+            vaultId: 'investigation-1',
+            runId: 'run-1',
+            createdAt: new Date().toISOString(),
+            connections: [
+              {
+                vaultId: 'investigation-1',
+                source: 'node-a',
+                target: 'node-b',
+                tag: 'RELATED',
+                reasoning: 'Recovered from durable relationship result.',
+              },
+            ],
+          }),
+        } as Response
+      }
+      if (url.endsWith('/board') && init?.method === 'PUT') {
+        throw new Error('backend save unavailable')
+      }
+      return {
+        ok: true,
+        json: async () => ({}),
+      } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    localStorage.setItem('inv_data_investigation-1', JSON.stringify(savedBoard))
+
+    try {
+      renderBoard('investigation-1')
+
+      await waitFor(() => {
+        const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+        expect(persisted.edges).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'e-node-a-node-b-RELATED' }),
+          ]),
+        )
+      })
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:8080/api/investigations/investigation-1/relationships',
+        expect.objectContaining({ cache: 'no-store' }),
+      )
+    } finally {
+      delete (globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__
+      vi.unstubAllGlobals()
+    }
   })
 
   it('replaces only AI edges touching pending nodes during incremental integration', async () => {

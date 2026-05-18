@@ -86,6 +86,23 @@ func TestInvestigationStoreSavesRawJSONPayloads(t *testing.T) {
 	}
 }
 
+func TestInvestigationStoreSavesRelationshipResults(t *testing.T) {
+	store := NewInvestigationStore(t.TempDir())
+	payload := json.RawMessage(`{"vaultId":"inv-1","connections":[{"source":"node-a","target":"node-b","tag":"RELATED","reasoning":"Shared evidence"}]}`)
+
+	if err := store.SaveJSON("inv-1", InvestigationRelationshipsFilename, payload); err != nil {
+		t.Fatalf("SaveJSON relationships failed: %v", err)
+	}
+
+	loaded, err := store.LoadJSON("inv-1", InvestigationRelationshipsFilename)
+	if err != nil {
+		t.Fatalf("LoadJSON relationships failed: %v", err)
+	}
+	if string(loaded) != string(payload) {
+		t.Fatalf("relationship payload mismatch: %s", loaded)
+	}
+}
+
 func TestInvestigationStoreRejectsInvalidIDsAndTraversal(t *testing.T) {
 	root := t.TempDir()
 	store := NewInvestigationStore(root)

@@ -35,6 +35,7 @@ import {
     getCachedInvestigations,
     getCachedVaultResultForInvestigation,
     loadBoardStateForInvestigation,
+    loadRelationshipResultForInvestigation,
     saveBoardStateForInvestigation,
     saveVaultResultForInvestigation,
 } from '../utils/investigationPersistence';
@@ -253,6 +254,9 @@ const coerceConnectionsFoundPayload = (payload: unknown): ConnectionsFoundPayloa
 const connectionVaultId = (connection: any) =>
     typeof connection?.vaultId === 'string' ? connection.vaultId.trim() : '';
 
+const hasConnectTheDotsEdges = (edges: Edge[]) =>
+    edges.some((edge) => edge.data?.generatedBy === 'connectTheDots');
+
 export const detectiveBoardTestUtils = {
     getStrictGridLayoutedNodes,
 };
@@ -266,6 +270,10 @@ interface DetectiveBoardProps {
     focusNodeId?: string | null;
     onReturnToParent?: () => void;
     isMergedChild?: boolean;
+    hasTheoryReady?: boolean;
+    hasUnreadTheory?: boolean;
+    hasDiscoveryReady?: boolean;
+    hasUnreadDiscoveries?: boolean;
 }
 
 interface MarqueeState {
@@ -537,7 +545,20 @@ const getMiniMapNodeColor = (node: Node) => {
     return '#00f3ff';
 };
 
-const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId, returnVaultId, sharedSocket, onDeepDiveNode, onNavigateToChild, focusNodeId, onReturnToParent, isMergedChild }) => {
+const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
+    investigationId,
+    returnVaultId,
+    sharedSocket,
+    onDeepDiveNode,
+    onNavigateToChild,
+    focusNodeId,
+    onReturnToParent,
+    isMergedChild,
+    hasTheoryReady = false,
+    hasUnreadTheory = false,
+    hasDiscoveryReady = false,
+    hasUnreadDiscoveries = false,
+}) => {
     const { fitView, screenToFlowPosition, setCenter, getZoom } = useReactFlow();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
@@ -599,6 +620,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     const pendingIntegrationNodeIdsRef = useRef<string[]>([]);
     const analysisModeRef = useRef<AnalysisMode>(null);
     const latestPipelineRunIdRef = useRef<string | null>(null);
+    const relationshipRecoveryStartedAtRef = useRef(0);
     const stoppedPipelineRunIdsRef = useRef<Set<string>>(new Set());
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
@@ -1545,6 +1567,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         emitBoardWorkspaceEvent(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT);
     }, []);
 
+    const synthesisUtilityLabel = hasTheoryReady
+        ? `Toggle synthesis panel - Grand Unified Theory ready${hasUnreadTheory ? ' with unread notification' : ''}`
+        : 'Toggle synthesis panel';
+    const discoveryUtilityLabel = hasDiscoveryReady
+        ? `Toggle discoveries panel - Discoveries ready${hasUnreadDiscoveries ? ' with unread notification' : ''}`
+        : 'Toggle discoveries panel';
+
     const toggleRelationshipWorkspacePanel = useCallback(() => {
         setEditingTag(null);
         setShowRelationshipLegend((current) => !current);
@@ -2336,6 +2365,61 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
     }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, investigationId, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
     useEffect(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId || nodes.length < 2) {
+            return;
+        }
+
+        if (!isAnalyzing && hasConnectTheDotsEdges(edges)) {
+            return;
+        }
+
+        let cancelled = false;
+
+        const replayLatestRelationships = async () => {
+            const result = await loadRelationshipResultForInvestigation(investigationId);
+            if (cancelled || !result || result.connections.length === 0) {
+                return;
+            }
+
+            const resultVaultId = typeof result.vaultId === 'string' ? result.vaultId.trim() : '';
+            if (resultVaultId && resultVaultId !== investigationId) {
+                return;
+            }
+
+            if (isAnalyzing) {
+                const currentRunId = latestPipelineRunIdRef.current;
+                const resultRunId = typeof result.runId === 'string' ? result.runId.trim() : '';
+                if (currentRunId && resultRunId && resultRunId !== currentRunId) {
+                    return;
+                }
+
+                const createdAtMs = Date.parse(result.createdAt || '');
+                if (
+                    relationshipRecoveryStartedAtRef.current > 0 &&
+                    Number.isFinite(createdAtMs) &&
+                    createdAtMs + 1000 < relationshipRecoveryStartedAtRef.current
+                ) {
+                    return;
+                }
+            }
+
+            handleNewConnections(result);
+        };
+
+        const initialDelay = isAnalyzing ? 2000 : 0;
+        const timeoutId = window.setTimeout(replayLatestRelationships, initialDelay);
+        const intervalId = isAnalyzing ? window.setInterval(replayLatestRelationships, 5000) : null;
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+            if (intervalId !== null) {
+                window.clearInterval(intervalId);
+            }
+        };
+    }, [edges, handleNewConnections, investigationId, isAnalyzing, loadedInvestigationId, nodes.length]);
+
+    useEffect(() => {
         if (!sharedSocket) return;
 
         const handleMessage = (event: MessageEvent) => {
@@ -2649,6 +2733,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
         }
 
         console.debug('[Board] Dispatching CONNECT_DOTS...');
+        relationshipRecoveryStartedAtRef.current = Date.now();
         setIsAnalyzing(true);
         setAnalysisMode(incrementalNodeIds.length > 0 ? 'incremental' : 'full');
         setEdgeReasoning(null);
@@ -3249,20 +3334,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({ investigationId,
                     <button
                         type="button"
                         onClick={toggleSynthesisWorkspacePanel}
-                        aria-label="Toggle synthesis panel"
-                        title="Toggle synthesis panel"
-                        className="forensic-utility-button"
+                        aria-label={synthesisUtilityLabel}
+                        title={synthesisUtilityLabel}
+                        className={`forensic-utility-button ${hasTheoryReady ? 'forensic-utility-button-complete' : ''}`}
                     >
                         <Network size={16} />
+                        {hasUnreadTheory && (
+                            <span
+                                data-testid="theory-utility-notification"
+                                className="forensic-utility-notification-dot forensic-utility-notification-dot-theory"
+                                aria-hidden="true"
+                            />
+                        )}
                     </button>
                     <button
                         type="button"
                         onClick={toggleDiscoveryWorkspacePanel}
-                        aria-label="Toggle discoveries panel"
-                        title="Toggle discoveries panel"
-                        className="forensic-utility-button"
+                        aria-label={discoveryUtilityLabel}
+                        title={discoveryUtilityLabel}
+                        className={`forensic-utility-button ${hasDiscoveryReady ? 'forensic-utility-button-discovery-complete' : ''}`}
                     >
                         <Lightbulb size={16} />
+                        {hasUnreadDiscoveries && (
+                            <span
+                                data-testid="discovery-utility-notification"
+                                className="forensic-utility-notification-dot forensic-utility-notification-dot-discovery"
+                                aria-hidden="true"
+                            />
+                        )}
                     </button>
                     <button
                         type="button"

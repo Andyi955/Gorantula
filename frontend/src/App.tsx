@@ -709,6 +709,8 @@ function App() {
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
   const [vaultResultsByInvestigation, setVaultResultsByInvestigation] = useState<Record<string, VaultResultPayload | null>>({})
   const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
+  const [completedDiscoveryReviewByInvestigation, setCompletedDiscoveryReviewByInvestigation] = useState<Record<string, boolean>>({})
+  const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
   const [pipelineRunsById, setPipelineRunsById] = useState<Record<string, PipelineRunState>>({})
@@ -786,6 +788,7 @@ function App() {
         confidenceScore: 0,
         lastActivityLabel: '--',
         discoveryRecords: [],
+        hasTheoryReport: false,
       }
     }
 
@@ -818,10 +821,12 @@ function App() {
 
     let summary = 'No investigation summary available yet. Run a crawl or append more evidence to populate the case summary.'
     let fullReport = summary
+    let hasTheoryReport = false
     if (savedVaultResult) {
       try {
         const rawResult = typeof savedVaultResult?.result === 'string' ? savedVaultResult.result : ''
         if (rawResult.trim()) {
+          hasTheoryReport = true
           const readableReport = cleanReportBody(rawResult)
           const readableSummary = extractReadableSummary(rawResult)
           fullReport = readableReport || stripMarkdownFormatting(rawResult)
@@ -860,6 +865,7 @@ function App() {
       confidenceScore,
       lastActivityLabel: formatWorkspaceTimestamp(currentInvestigationId),
       discoveryRecords: savedDiscoveries,
+      hasTheoryReport,
     }
   }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation, vaultResultsByInvestigation])
 
@@ -1027,6 +1033,17 @@ function App() {
             },
           }))
           setActivePipelineRunId(progress.runId)
+          const completedDiscoveryVaultId = typeof progress.vaultId === 'string' ? progress.vaultId.trim() : ''
+          if (completedDiscoveryVaultId && progress.stepId === 'discovery_review' && progress.status === 'complete') {
+            setCompletedDiscoveryReviewByInvestigation((current) => ({
+              ...current,
+              [completedDiscoveryVaultId]: true,
+            }))
+            setUnreadDiscoveriesByInvestigation((current) => ({
+              ...current,
+              [completedDiscoveryVaultId]: true,
+            }))
+          }
           return
         }
 
@@ -1074,6 +1091,12 @@ function App() {
             ...current,
             [vaultId]: payload,
           }))
+          if (typeof payload.result === 'string' && payload.result.trim()) {
+            setUnreadTheoryByInvestigation((current) => ({
+              ...current,
+              [vaultId]: true,
+            }))
+          }
           void saveVaultResultForInvestigation(vaultId, payload).catch((error) => {
             console.warn('[App] Failed to persist vault result; keeping it in memory for this session.', error)
             setAutosaveWarning({
@@ -1116,7 +1139,11 @@ function App() {
           return next
         })
 
-        if (currentInvestigationId !== vaultId) {
+        if (incoming.length > 0) {
+          setCompletedDiscoveryReviewByInvestigation(prev => ({
+            ...prev,
+            [vaultId]: true,
+          }))
           setUnreadDiscoveriesByInvestigation(prev => ({
             ...prev,
             [vaultId]: true,
@@ -1411,6 +1438,10 @@ function App() {
     }
     setCurrentInvestigationId(id);
     setActiveTab('board');
+    setUnreadTheoryByInvestigation(prev => ({
+      ...prev,
+      [id]: false,
+    }))
     if (nodeId) {
       setFocusedNodeId(nodeId);
       setTimeout(() => setFocusedNodeId(null), 1000);
@@ -1940,6 +1971,15 @@ function App() {
               onMergeInvestigations={handleMergeInvestigations}
               showHandle={showFloatingPanelHandles}
               currentTheoryReport={currentBoardSnapshot.fullReport}
+              hasTheoryReady={currentBoardSnapshot.hasTheoryReport}
+              hasUnreadTheory={currentInvestigationId ? Boolean(unreadTheoryByInvestigation[currentInvestigationId]) : false}
+              onMarkTheoryRead={() => {
+                if (!currentInvestigationId) return
+                setUnreadTheoryByInvestigation(prev => ({
+                  ...prev,
+                  [currentInvestigationId]: false,
+                }))
+              }}
             />
           </Suspense>
 
@@ -2112,6 +2152,10 @@ function App() {
                 focusNodeId={focusedNodeId}
                 onReturnToParent={handleReturnToParent}
                 isMergedChild={currentInvestigation?.kind === 'merged-child'}
+                hasTheoryReady={currentBoardSnapshot.hasTheoryReport}
+                hasUnreadTheory={currentInvestigationId ? Boolean(unreadTheoryByInvestigation[currentInvestigationId]) : false}
+                hasDiscoveryReady={currentBoardSnapshot.discoveryRecords.length > 0 || (currentInvestigationId ? Boolean(completedDiscoveryReviewByInvestigation[currentInvestigationId]) : false)}
+                hasUnreadDiscoveries={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
               />
             </Suspense>
           </div>

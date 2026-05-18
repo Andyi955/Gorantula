@@ -13,10 +13,19 @@ const MIGRATION_MARKER_KEY = 'gorantula_backend_persistence_migrated_at'
 
 export type VaultResultPayload = Record<string, unknown>
 type DiscoveryPayload = Record<string, unknown>[]
+export type RelationshipResultPayload = {
+  vaultId?: string
+  runId?: string
+  createdAt?: string
+  incremental?: boolean
+  pendingNodeIds?: string[]
+  connections: Record<string, unknown>[]
+}
 
 const boardStateCache = new Map<string, PersistedBoardState>()
 const vaultResultCache = new Map<string, VaultResultPayload>()
 const discoveriesCache = new Map<string, DiscoveryPayload>()
+const relationshipResultCache = new Map<string, RelationshipResultPayload>()
 let investigationCache: InvestigationRecord[] = []
 
 const isBrowser = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
@@ -440,6 +449,60 @@ export const saveDiscoveriesForInvestigation = async (
   }
 }
 
+const normalizeRelationshipResultPayload = (
+  investigationId: string,
+  payload: unknown,
+): RelationshipResultPayload | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const result = payload as {
+    vaultId?: unknown
+    runId?: unknown
+    createdAt?: unknown
+    incremental?: unknown
+    pendingNodeIds?: unknown
+    connections?: unknown
+  }
+
+  if (!Array.isArray(result.connections)) {
+    return null
+  }
+
+  return {
+    vaultId: typeof result.vaultId === 'string' ? result.vaultId : investigationId,
+    runId: typeof result.runId === 'string' ? result.runId : undefined,
+    createdAt: typeof result.createdAt === 'string' ? result.createdAt : undefined,
+    incremental: typeof result.incremental === 'boolean' ? result.incremental : undefined,
+    pendingNodeIds: Array.isArray(result.pendingNodeIds)
+      ? result.pendingNodeIds.filter((nodeId): nodeId is string => typeof nodeId === 'string')
+      : undefined,
+    connections: result.connections.filter((connection): connection is Record<string, unknown> =>
+      Boolean(connection && typeof connection === 'object'),
+    ),
+  }
+}
+
+export const loadRelationshipResultForInvestigation = async (investigationId: string) => {
+  if (!shouldUseBackendPersistence()) {
+    return null
+  }
+
+  try {
+    const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/relationships`)
+    const result = normalizeRelationshipResultPayload(investigationId, payload)
+    if (!result) {
+      return null
+    }
+    relationshipResultCache.set(investigationId, result)
+    return result
+  } catch (error) {
+    console.warn('[InvestigationPersistence] Backend relationship result load unavailable.', error)
+    return relationshipResultCache.get(investigationId) || null
+  }
+}
+
 export const loadDiscoveriesForInvestigations = async (records: InvestigationRecord[]) => {
   const entries = await Promise.all(records.map(async (record) => [
     record.id,
@@ -452,6 +515,7 @@ export const deleteInvestigationPersistence = async (investigationId: string) =>
   boardStateCache.delete(investigationId)
   vaultResultCache.delete(investigationId)
   discoveriesCache.delete(investigationId)
+  relationshipResultCache.delete(investigationId)
   localRemove(`inv_data_${investigationId}`)
   localRemove(`vault_result_${investigationId}`)
 

@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	InvestigationMetadataFilename  = "metadata.json"
-	InvestigationBoardFilename     = "board_state.json"
-	InvestigationResultFilename    = "vault_result.json"
-	InvestigationDiscoveryFilename = "discoveries.json"
+	InvestigationMetadataFilename      = "metadata.json"
+	InvestigationBoardFilename         = "board_state.json"
+	InvestigationResultFilename        = "vault_result.json"
+	InvestigationDiscoveryFilename     = "discoveries.json"
+	InvestigationRelationshipsFilename = "relationships.json"
 )
 
 var investigationIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
@@ -242,7 +243,7 @@ func (s *InvestigationStore) investigationDir(id string) (string, error) {
 
 func allowedInvestigationFilename(filename string) bool {
 	switch filename {
-	case InvestigationMetadataFilename, InvestigationBoardFilename, InvestigationResultFilename, InvestigationDiscoveryFilename:
+	case InvestigationMetadataFilename, InvestigationBoardFilename, InvestigationResultFilename, InvestigationDiscoveryFilename, InvestigationRelationshipsFilename:
 		return true
 	default:
 		return false

@@ -114,6 +114,15 @@ type BoardConnection struct {
 	CandidateSources   []string `json:"candidateSources,omitempty"`
 }
 
+type RelationshipResult struct {
+	VaultID        string            `json:"vaultId"`
+	RunID          string            `json:"runId,omitempty"`
+	CreatedAt      string            `json:"createdAt,omitempty"`
+	Incremental    bool              `json:"incremental,omitempty"`
+	PendingNodeIDs []string          `json:"pendingNodeIds,omitempty"`
+	Connections    []BoardConnection `json:"connections"`
+}
+
 type IncrementalConnectDotsPayload struct {
 	AllNodes       []MemoryNode `json:"allNodes"`
 	PendingNodeIDs []string     `json:"pendingNodeIds"`
