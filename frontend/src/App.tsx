@@ -16,11 +16,11 @@ import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvent
 import {
   deleteInvestigationPersistence,
   getCachedBoardStateForInvestigation,
+  getCachedInvestigations,
   getCachedVaultResultForInvestigation,
   loadBoardStateForInvestigation,
   loadDiscoveriesForInvestigations,
   loadInvestigations,
-  loadInvestigationsFromBrowserStorage,
   loadVaultResultForInvestigation,
   saveBoardStateForInvestigation,
   saveDiscoveriesForInvestigation,
@@ -455,8 +455,6 @@ const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport
   }
 }
 
-const loadInvestigationsFromStorage = loadInvestigationsFromBrowserStorage
-
 const getInvestigationTimestamp = (investigationId: string): number | null => {
   const match = investigationId.match(investigationTimestampPattern)
   if (!match) {
@@ -687,7 +685,7 @@ const isBackendReachable = async () => {
 function App() {
   const initialInvestigationsRef = useRef<InvestigationRecord[] | null>(null)
   if (initialInvestigationsRef.current === null) {
-    initialInvestigationsRef.current = loadInvestigationsFromStorage()
+    initialInvestigationsRef.current = getCachedInvestigations()
   }
 
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
@@ -1275,7 +1273,7 @@ function App() {
   useEffect(() => {
     const handleBrowserQaSeeded = (event: Event) => {
       const detail = (event as CustomEvent<BrowserQaSeedResult>).detail
-      const nextInvestigations = loadInvestigationsFromStorage()
+      const nextInvestigations = getCachedInvestigations()
       setInvestigations(nextInvestigations)
       setCurrentInvestigationId(
         detail?.focusInvestigationId && nextInvestigations.some((investigation) => investigation.id === detail.focusInvestigationId)
@@ -1289,7 +1287,7 @@ function App() {
     }
 
     const handleBrowserQaCleared = () => {
-      const nextInvestigations = loadInvestigationsFromStorage()
+      const nextInvestigations = getCachedInvestigations()
       setInvestigations(nextInvestigations)
       setCurrentInvestigationId((current) => (
         current && nextInvestigations.some((investigation) => investigation.id === current)

@@ -1,14 +1,13 @@
 import type { Edge, Node } from 'reactflow'
 import { calculateNodeFrame } from '../components/boardGeometry'
-import { persistBoardStateForInvestigation, type PersistedBoardState } from './hierarchicalCanvas'
-import { createRootInvestigation, INVESTIGATIONS_STORAGE_KEY, normalizeInvestigations } from './investigations'
+import { type PersistedBoardState } from './hierarchicalCanvas'
+import { createRootInvestigation } from './investigations'
 import {
   deleteInvestigationPersistence,
+  getCachedInvestigations,
   saveBoardStateForInvestigation,
   saveInvestigations,
 } from './investigationPersistence'
-
-const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
 
 export const BROWSER_QA_SEEDED_EVENT = 'gorantula:browser-qa-seeded'
 export const BROWSER_QA_CLEARED_EVENT = 'gorantula:browser-qa-cleared'
@@ -69,73 +68,24 @@ const createRelationshipEdge = (
   },
 })
 
-const readStoredInvestigations = () => {
-  const raw = localStorage.getItem(INVESTIGATIONS_STORAGE_KEY)
-  if (!raw) {
-    return []
-  }
-
-  try {
-    return normalizeInvestigations(JSON.parse(raw))
-  } catch (error) {
-    console.error('[BrowserQaSeed] Failed to parse stored investigations', error)
-    return []
-  }
-}
-
-const writeStoredInvestigations = (investigations: ReturnType<typeof readStoredInvestigations>) => {
-  localStorage.setItem(INVESTIGATIONS_STORAGE_KEY, JSON.stringify(investigations))
-}
-
-const removeQaDiscoveries = () => {
-  const raw = localStorage.getItem(DISCOVERIES_STORAGE_KEY)
-  if (!raw) {
-    return
-  }
-
-  try {
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return
-    }
-
-    const nextEntries = Object.entries(parsed as Record<string, unknown>).filter(
-      ([key]) => !BROWSER_QA_INVESTIGATION_IDS.includes(key),
-    )
-
-    if (nextEntries.length === 0) {
-      localStorage.removeItem(DISCOVERIES_STORAGE_KEY)
-      return
-    }
-
-    localStorage.setItem(DISCOVERIES_STORAGE_KEY, JSON.stringify(Object.fromEntries(nextEntries)))
-  } catch (error) {
-    console.error('[BrowserQaSeed] Failed to parse discoveries store', error)
-  }
-}
-
 export const clearBrowserQaData = () => {
-  const remainingInvestigations = readStoredInvestigations().filter(
+  const remainingInvestigations = getCachedInvestigations().filter(
     (investigation) => !BROWSER_QA_INVESTIGATION_IDS.includes(investigation.id),
   )
 
-  writeStoredInvestigations(remainingInvestigations)
+  void saveInvestigations(remainingInvestigations).catch(() => undefined)
   BROWSER_QA_INVESTIGATION_IDS.forEach((investigationId) => {
     void deleteInvestigationPersistence(investigationId).catch(() => undefined)
-    localStorage.removeItem(`inv_data_${investigationId}`)
-    localStorage.removeItem(`vault_result_${investigationId}`)
   })
-  removeQaDiscoveries()
 }
 
 export const seedBrowserQaData = (): BrowserQaSeedResult => {
   clearBrowserQaData()
 
-  const preservedInvestigations = readStoredInvestigations()
+  const preservedInvestigations = getCachedInvestigations()
   const sourceInvestigation = createRootInvestigation(BROWSER_QA_SOURCE_INVESTIGATION_ID, 'QA: Source Case')
   const targetInvestigation = createRootInvestigation(BROWSER_QA_TARGET_INVESTIGATION_ID, 'QA: Imported Target')
 
-  writeStoredInvestigations([targetInvestigation, sourceInvestigation, ...preservedInvestigations])
   void saveInvestigations([targetInvestigation, sourceInvestigation, ...preservedInvestigations]).catch(() => undefined)
 
   const sourceNodes = [
@@ -182,7 +132,6 @@ export const seedBrowserQaData = (): BrowserQaSeedResult => {
     pendingIntegrationNodeIds: [],
     synthesisAlerts: [],
   }
-  persistBoardStateForInvestigation(sourceInvestigation.id, sourceBoard)
   void saveBoardStateForInvestigation(sourceInvestigation.id, sourceBoard)
 
   const targetBoard: PersistedBoardState = {
@@ -192,7 +141,6 @@ export const seedBrowserQaData = (): BrowserQaSeedResult => {
     pendingIntegrationNodeIds: [],
     synthesisAlerts: [],
   }
-  persistBoardStateForInvestigation(targetInvestigation.id, targetBoard)
   void saveBoardStateForInvestigation(targetInvestigation.id, targetBoard)
 
   return {
