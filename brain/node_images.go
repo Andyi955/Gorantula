@@ -257,15 +257,23 @@ func (b *Brain) reviewScrapedImageCandidate(ctx context.Context, provider ModelP
 	}
 
 	prompt := buildScrapedImageReviewPrompt(pageURL, nodeTitle, nodeSummary, nodeFullText)
+	providerIdentity := providerCacheIdentity(provider)
+	imageHash := hashBytes(candidate.payload)
+	promptHash := hashString(prompt)
+	if b.AnalysisCache != nil {
+		if cached, ok := b.AnalysisCache.getImageReview(providerIdentity, imageHash, promptHash, candidate.mimeType); ok {
+			return cached, nil
+		}
+	}
+
 	var review models.ImageReviewResult
 	if err := provider.ReviewImageJSON(ctx, prompt, candidate.mimeType, candidate.payload, &review); err != nil {
 		return models.ImageReviewResult{}, err
 	}
 
-	review.Reason = strings.TrimSpace(review.Reason)
-	review.Caption = strings.TrimSpace(review.Caption)
-	if !review.Keep {
-		review.Caption = ""
+	review = sanitizeImageReview(review)
+	if b.AnalysisCache != nil {
+		b.AnalysisCache.saveImageReview(providerIdentity, imageHash, promptHash, candidate.mimeType, review)
 	}
 
 	return review, nil
