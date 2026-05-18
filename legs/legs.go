@@ -1,6 +1,7 @@
 package legs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -35,6 +36,14 @@ type sourceScrapeResult struct {
 
 // ExecuteLegTask handles searching Brave and using goquery to extract text from the top 2 sites.
 func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) models.NutrientFlow {
+	return ExecuteLegTaskWithContext(context.Background(), legID, query, broadcast)
+}
+
+// ExecuteLegTaskWithContext handles searching Brave and scraping with cancellation support.
+func ExecuteLegTaskWithContext(ctx context.Context, legID int, query string, broadcast models.Broadcaster) models.NutrientFlow {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	apiKey := os.Getenv("BRAVE_API_KEY")
 	if apiKey == "" {
 		return models.NutrientFlow{
@@ -61,7 +70,10 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	var err error
 	client := &http.Client{Timeout: 10 * time.Second}
 	for i := 0; i < 3; i++ {
-		req, _ := http.NewRequest("GET", searchURL, nil)
+		if err := ctx.Err(); err != nil {
+			return models.NutrientFlow{LegID: legID, Error: err}
+		}
+		req, _ := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("X-Subscription-Token", apiKey)
 		resp, err = client.Do(req)
@@ -71,7 +83,11 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 		if resp != nil {
 			resp.Body.Close()
 		}
-		time.Sleep(time.Duration(i+1) * time.Second)
+		select {
+		case <-ctx.Done():
+			return models.NutrientFlow{LegID: legID, Error: ctx.Err()}
+		case <-time.After(time.Duration(i+1) * time.Second):
+		}
 	}
 
 	if err != nil || (resp != nil && resp.StatusCode != 200) {
@@ -106,7 +122,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 
 	scrapeClient := &http.Client{Timeout: 15 * time.Second} // Quality gate: timeout slow sites
-	scrapedSources := scrapeSources(scrapeClient, topURLs)
+	scrapedSources := scrapeSources(ctx, scrapeClient, topURLs)
 	var extractedTexts []string
 	var imageCandidates []string
 	for _, result := range scrapedSources {
@@ -143,7 +159,7 @@ func ExecuteLegTask(legID int, query string, broadcast models.Broadcaster) model
 	}
 }
 
-func scrapeSources(scrapeClient *http.Client, targetURLs []string) []sourceScrapeResult {
+func scrapeSources(ctx context.Context, scrapeClient *http.Client, targetURLs []string) []sourceScrapeResult {
 	if len(targetURLs) == 0 {
 		return nil
 	}
@@ -155,7 +171,7 @@ func scrapeSources(scrapeClient *http.Client, targetURLs []string) []sourceScrap
 		waitGroup.Add(1)
 		go func(resultIndex int, resultURL string) {
 			defer waitGroup.Done()
-			resultCh <- scrapeSingleSource(scrapeClient, resultIndex, resultURL)
+			resultCh <- scrapeSingleSource(ctx, scrapeClient, resultIndex, resultURL)
 		}(index, targetURL)
 	}
 	waitGroup.Wait()
@@ -173,18 +189,29 @@ func scrapeSources(scrapeClient *http.Client, targetURLs []string) []sourceScrap
 	return results
 }
 
-func scrapeSingleSource(scrapeClient *http.Client, index int, targetURL string) sourceScrapeResult {
+func scrapeSingleSource(ctx context.Context, scrapeClient *http.Client, index int, targetURL string) sourceScrapeResult {
 	var scrapeResp *http.Response
 	var scrapeErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		scrapeResp, scrapeErr = scrapeClient.Get(targetURL)
+		if err := ctx.Err(); err != nil {
+			return sourceScrapeResult{index: index}
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+		if err != nil {
+			return sourceScrapeResult{index: index}
+		}
+		scrapeResp, scrapeErr = scrapeClient.Do(request)
 		if scrapeErr == nil && scrapeResp != nil && scrapeResp.StatusCode == http.StatusOK {
 			break
 		}
 		if scrapeResp != nil {
 			scrapeResp.Body.Close()
 		}
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return sourceScrapeResult{index: index}
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 
 	if scrapeErr != nil || scrapeResp == nil || scrapeResp.StatusCode != http.StatusOK {
@@ -221,6 +248,17 @@ func scrapeSingleSource(scrapeClient *http.Client, index int, targetURL string) 
 
 // ExecuteLocalFileTask reads a local file using the document parsing package.
 func ExecuteLocalFileTask(legID int, filePath string, broadcast models.Broadcaster) models.NutrientFlow {
+	return ExecuteLocalFileTaskWithContext(context.Background(), legID, filePath, broadcast)
+}
+
+// ExecuteLocalFileTaskWithContext reads a local file using the document parsing package.
+func ExecuteLocalFileTaskWithContext(ctx context.Context, legID int, filePath string, broadcast models.Broadcaster) models.NutrientFlow {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return models.NutrientFlow{LegID: legID, Error: err}
+	}
 	if broadcast != nil {
 		broadcast(models.WSMessage{
 			Type: "LEG_UPDATE",
@@ -255,6 +293,9 @@ func ExecuteLocalFileTask(legID int, filePath string, broadcast models.Broadcast
 			LegID: legID,
 			Error: fmt.Errorf("failed to parse local file %s: %w", filepath.Base(filePath), err),
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return models.NutrientFlow{LegID: legID, Error: err}
 	}
 
 	if broadcast != nil {
@@ -422,6 +463,14 @@ func isLikelyEvidenceImageURL(candidate string) bool {
 
 // ExecuteChunkTask processes a pre-parsed text chunk.
 func ExecuteChunkTask(legID int, targetQuery string, chunkData string, broadcast models.Broadcaster) models.NutrientFlow {
+	return ExecuteChunkTaskWithContext(context.Background(), legID, targetQuery, chunkData, broadcast)
+}
+
+// ExecuteChunkTaskWithContext processes a pre-parsed text chunk with cancellation support.
+func ExecuteChunkTaskWithContext(ctx context.Context, legID int, targetQuery string, chunkData string, broadcast models.Broadcaster) models.NutrientFlow {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if broadcast != nil {
 		broadcast(models.WSMessage{
 			Type: "LEG_UPDATE",
@@ -434,7 +483,11 @@ func ExecuteChunkTask(legID int, targetQuery string, chunkData string, broadcast
 	}
 
 	// Artificial delay so the UI shows the "Analyzing Chunk" state before returning to Brain
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-ctx.Done():
+		return models.NutrientFlow{LegID: legID, SourceURL: targetQuery, Error: ctx.Err()}
+	case <-time.After(200 * time.Millisecond):
+	}
 
 	if broadcast != nil {
 		broadcast(models.WSMessage{

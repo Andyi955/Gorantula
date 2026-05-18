@@ -1299,6 +1299,66 @@ describe('DetectiveBoard relationship legend', () => {
     }
   })
 
+  it('does not auto reconnect when the matching crawl run was stopped before a late synthesis completion', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'node-a',
+            title: 'A',
+            summary: 'A',
+            fullText: 'A',
+            sourceURL: 'https://example.com/a',
+          },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'node-b',
+            title: 'B',
+            summary: 'B',
+            fullText: 'B',
+            sourceURL: 'https://example.com/b',
+          },
+        })
+        socket.emit('PIPELINE_PROGRESS', {
+          runId: 'run-stopped-1',
+          vaultId: 'investigation-1',
+          mode: 'web',
+          stepId: 'complete',
+          stepLabel: 'Pipeline stopped',
+          status: 'cancelled',
+          completedSteps: 3,
+          totalSteps: 8,
+          elapsedMs: 6000,
+        })
+        socket.emit('SYNTHESIS_COMPLETE', {
+          result: 'Late report',
+          vaultPath: 'abdomen_vault/investigation-1/report.md',
+          vaultId: 'investigation-1',
+          append: false,
+          runId: 'run-stopped-1',
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+
+      expect(socket.sentMessages.map((message) => JSON.parse(message).type)).not.toContain('CONNECT_DOTS')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('saves edited text without sending manual node analysis', async () => {
     const user = userEvent.setup()
     const socket = new MockSocket()

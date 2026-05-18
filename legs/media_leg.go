@@ -17,7 +17,17 @@ import (
 
 // ExecuteMediaTask downloads and transcribes audio/video content using Gemini natively or yt-dlp fallback.
 func ExecuteMediaTask(legID int, targetQuery string, broadcast models.Broadcaster) models.NutrientFlow {
-	ctx := context.Background()
+	return ExecuteMediaTaskWithContext(context.Background(), legID, targetQuery, broadcast)
+}
+
+// ExecuteMediaTaskWithContext downloads and transcribes audio/video content using Gemini natively or yt-dlp fallback.
+func ExecuteMediaTaskWithContext(ctx context.Context, legID int, targetQuery string, broadcast models.Broadcaster) models.NutrientFlow {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return models.NutrientFlow{LegID: legID, SourceURL: targetQuery, Error: err}
+	}
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
@@ -55,7 +65,7 @@ func ExecuteMediaTask(legID int, targetQuery string, broadcast models.Broadcaste
 		fileName := fmt.Sprintf("spider_media_%d", time.Now().UnixNano())
 		outputPath := filepath.Join(tempDir, fileName+".%(ext)s")
 
-		cmd := exec.Command("yt-dlp", "-x", "--audio-format", "mp3", "-o", outputPath, "--", targetQuery)
+		cmd := exec.CommandContext(ctx, "yt-dlp", "-x", "--audio-format", "mp3", "-o", outputPath, "--", targetQuery)
 		err := cmd.Run()
 		if err != nil {
 			return models.NutrientFlow{
@@ -127,7 +137,11 @@ func ExecuteMediaTask(legID int, targetQuery string, broadcast models.Broadcaste
 				case genai.FileStateFailed:
 					return models.NutrientFlow{LegID: legID, SourceURL: targetQuery, Error: fmt.Errorf("gemini file processing failed")}
 				default:
-					time.Sleep(2 * time.Second)
+					select {
+					case <-timeoutCtx.Done():
+						return models.NutrientFlow{LegID: legID, SourceURL: targetQuery, Error: timeoutCtx.Err()}
+					case <-time.After(2 * time.Second):
+					}
 				}
 			}
 		}

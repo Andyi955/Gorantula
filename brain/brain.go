@@ -311,6 +311,13 @@ func progressMessage(progress *models.PipelineProgressTracker, stepID, status, d
 	}
 }
 
+func checkPipelineContext(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
 func pipelineRunID(progress *models.PipelineProgressTracker) string {
 	if progress == nil {
 		return ""
@@ -323,6 +330,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
 	} else {
 		fmt.Printf("[Brain] Processing new investigation: %s\n", prompt)
+	}
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
 	}
 
 	// --- STEP 1: Break down into 8 queries ---
@@ -368,6 +378,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 			b.RecordPipelineTokenUsage(progress, planScopeID)
 		}
 		return "", fmt.Errorf("failed to generate sub-queries format: %w", err)
+	}
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
 	}
 	if progress != nil {
 		progress.CompleteSpan("plan_queries_llm", "generated search queries")
@@ -426,43 +439,35 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 	totalLegs := numQueries + len(supportedMediaURLs)
 
-	// Ensure channels are fresh for this run
-	b.NS.NerveChannel = make(chan models.NerveSignal, totalLegs)
-	b.NS.NutrientChannel = make(chan models.NutrientFlow, totalLegs)
-
+	signals := make([]models.NerveSignal, 0, totalLegs)
 	legID := 0
 	for _, url := range supportedMediaURLs {
-		b.NS.NerveChannel <- models.NerveSignal{
+		signals = append(signals, models.NerveSignal{
 			TargetQuery: url,
 			LegID:       legID,
 			IsMedia:     true,
-		}
+		})
 		legID++
 	}
 
 	for _, q := range subQ.Queries {
-		b.NS.NerveChannel <- models.NerveSignal{
+		signals = append(signals, models.NerveSignal{
 			TargetQuery: q,
 			LegID:       legID,
-		}
+		})
 		legID++
 	}
-	// Important: close nerveChannel so workers eventually exit
-	close(b.NS.NerveChannel)
-
-	// Start working Goroutines (The Legs)
-	b.NS.StartLegs()
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "dispatch_legs", "complete", fmt.Sprintf("Dispatched %d leg tasks", totalLegs)))
 
 	// --- STEP 3: Wait for Nutrients and Store in Abdomen ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "running", "Gathering and summarizing evidence"))
-	nutrients := make([]models.NutrientFlow, 0, totalLegs)
-	for i := 0; i < totalLegs; i++ {
-		nutrients = append(nutrients, <-b.NS.NutrientChannel)
+	nutrients, err := b.NS.RunSignals(ctx, signals)
+	if err != nil {
+		return "", err
 	}
-
-	// Ensure legs have finished executing cleanly
-	b.NS.WaitGroup.Wait()
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	summaryCtx, summaryScopeID := b.StartPipelineTokenScope(ctx, "pipeline-node-summary", "node_summary")
 	imageCtx, imageScopeID := b.StartPipelineTokenScope(ctx, "pipeline-image-review", "image_review")
 	if progress != nil {
@@ -475,6 +480,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		ImageReviewContext: imageCtx,
 		Progress:           progress,
 	})
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	if progress != nil {
 		progress.CompleteSpan("node_summary", fmt.Sprintf("summarized %d nodes", len(processedNutrients)))
 		b.RecordPipelineTokenUsage(progress, summaryScopeID)
@@ -515,6 +523,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 	// --- STEP 4: Synthesize Final Response ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "running", "Synthesizing final intelligence report"))
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -539,6 +550,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	if err != nil {
 		fmt.Printf("[Brain Warning] Ranking failed, falling back to raw join: %v\n", err)
 		contextText = strings.Join(rawFacts, "\n\n")
+	}
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
 	}
 
 	// provider is already declared above
@@ -568,6 +582,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 			b.RecordPipelineTokenUsage(progress, finalScopeID)
 		}
 		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
+	}
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
 	}
 	if progress != nil {
 		progress.CompleteSpan("final_report_llm", "generated final report")
@@ -648,6 +665,9 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 
 func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []string, progress *models.PipelineProgressTracker) (string, error) {
 	fmt.Printf("[Brain] Processing %d local files\n", len(filePaths))
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "running", "Operator submitted local files"))
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "complete", "Local crawl accepted"))
 
@@ -680,6 +700,9 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 	fileLimit := 1000000
 
 	for _, path := range supportedFiles {
+		if err := checkPipelineContext(ctx); err != nil {
+			return "", err
+		}
 		ext := strings.ToLower(filepath.Ext(path))
 		var content string
 		var err error
@@ -727,36 +750,25 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 		})
 	}
 
-	// Ensure channels are fresh for this run
-	// Capacity matches total chunks to prevent blocking if workers are slow
-	b.NS.NerveChannel = make(chan models.NerveSignal, len(allChunks))
-	b.NS.NutrientChannel = make(chan models.NutrientFlow, len(allChunks))
-
-	for i := range allChunks {
-		b.NS.NerveChannel <- allChunks[i]
-	}
-	// Important: close nerveChannel so workers eventually exit
-	close(b.NS.NerveChannel)
-
-	// Start working Goroutines (The Legs)
-	b.NS.StartLegs()
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "dispatch_legs", "complete", fmt.Sprintf("Dispatched %d chunks", len(allChunks))))
 
 	// --- STEP 4: Wait for Nutrients and Store in Abdomen ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "gather_evidence", "running", "Summarizing local document chunks"))
-	// Wait for exactly as many chunks as we dispatched
-	expected := len(allChunks)
-	nutrients := make([]models.NutrientFlow, 0, expected)
-	for i := 0; i < expected; i++ {
-		nutrients = append(nutrients, <-b.NS.NutrientChannel)
+	nutrients, err := b.NS.RunSignals(ctx, allChunks)
+	if err != nil {
+		return "", err
 	}
-
-	b.NS.WaitGroup.Wait()
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	summaryCtx, summaryScopeID := b.StartPipelineTokenScope(ctx, "pipeline-local-node-summary", "node_summary")
 	if progress != nil {
 		progress.StartSpan("node_summary", "gather_evidence", fmt.Sprintf("Local node summary (%d workers)", nodeSummaryConcurrency()), fmt.Sprintf("summarizing %d chunks", len(nutrients)))
 	}
 	processedNutrients := b.processNutrients(summaryCtx, nutrients, nutrientProcessingOptions{Progress: progress})
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	if progress != nil {
 		progress.CompleteSpan("node_summary", fmt.Sprintf("summarized %d local nodes", len(processedNutrients)))
 		progress.RecordCounter("documentChunks", len(allChunks))
@@ -782,6 +794,9 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 
 	// --- STEP 4: Synthesize Final Response ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "running", "Synthesizing local report"))
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
+	}
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
@@ -813,6 +828,9 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 			progress.CompleteSpan("local_final_report_llm", "local report failed")
 		}
 		return "", fmt.Errorf("failed to generate final synthesis: %w", err)
+	}
+	if err := checkPipelineContext(ctx); err != nil {
+		return "", err
 	}
 
 	if progress != nil {
@@ -1027,6 +1045,9 @@ func (b *Brain) AnalyzeWithPersonasWithProgress(ctx context.Context, investigati
 }
 
 func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode, progress *models.PipelineProgressTracker) ([]PersonaInsight, error) {
+	if err := checkPipelineContext(ctx); err != nil {
+		return nil, err
+	}
 	personas := GetDefaultPersonas()
 	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(personas))
 
@@ -1055,7 +1076,12 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 	insights := make([]PersonaInsight, 0, len(personas))
 	failedPersonas := make(map[string]struct{})
 	for i := 0; i < len(personas); i++ {
-		result := <-insightsChan
+		var result personaAnalysisResult
+		select {
+		case <-ctx.Done():
+			return insights, ctx.Err()
+		case result = <-insightsChan:
+		}
 		if result.err != nil {
 			failedPersonas[result.personaName] = struct{}{}
 			continue
@@ -1109,6 +1135,9 @@ func (b *Brain) AnalyzeIncrementalWithPersonasWithProgress(ctx context.Context, 
 }
 
 func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigationID string, nodes []models.MemoryNode, pendingNodeIDs []string, progress *models.PipelineProgressTracker) ([]PersonaInsight, error) {
+	if err := checkPipelineContext(ctx); err != nil {
+		return nil, err
+	}
 	fmt.Printf("[Brain] Running incremental persona analysis with %d personas across %d nodes (%d pending)...\n", len(GetDefaultPersonas()), len(nodes), len(pendingNodeIDs))
 
 	pendingFindings, contextFindings, validPendingNodeIDs := buildIncrementalPersonaFindings(nodes, pendingNodeIDs)
@@ -1137,7 +1166,12 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 	insights := make([]PersonaInsight, 0, len(personas))
 	failedPersonas := make(map[string]struct{})
 	for i := 0; i < len(personas); i++ {
-		result := <-insightsChan
+		var result personaAnalysisResult
+		select {
+		case <-ctx.Done():
+			return insights, ctx.Err()
+		case result = <-insightsChan:
+		}
 		if result.err != nil {
 			failedPersonas[result.personaName] = struct{}{}
 			continue

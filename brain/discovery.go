@@ -88,6 +88,9 @@ func discoveryReviewConcurrency() int {
 
 // SynthesizeDiscoveries generates candidate discoveries from the evidence before review.
 func (b *Brain) SynthesizeDiscoveries(ctx context.Context, vaultID string, nodes []models.MemoryNode, insights []PersonaInsight) ([]models.Discovery, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(nodes) < 2 {
 		return nil, nil
 	}
@@ -153,6 +156,9 @@ Evidence and insights:
 	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
 		return nil, fmt.Errorf("failed to synthesize candidate discoveries: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	discoveries := normalizeDiscoveries(response.Discoveries, vaultID, nodes, discoveryCandidateStatus)
 	sort.SliceStable(discoveries, func(i, j int) bool {
@@ -166,6 +172,9 @@ Evidence and insights:
 
 // ReviewDiscoveryCandidates runs a temporary expert cell on each candidate and returns only approved discoveries.
 func (b *Brain) ReviewDiscoveryCandidates(ctx context.Context, candidates []models.Discovery, nodes []models.MemoryNode) ([]models.Discovery, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -192,19 +201,39 @@ func (b *Brain) ReviewDiscoveryCandidates(ctx context.Context, candidates []mode
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
-			for job := range jobs {
-				trace, err := b.reviewSingleCandidate(ctx, job.candidate, nodes)
-				results <- reviewResult{index: job.index, trace: trace, err: err}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					trace, err := b.reviewSingleCandidate(ctx, job.candidate, nodes)
+					select {
+					case results <- reviewResult{index: job.index, trace: trace, err: err}:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
 		}()
 	}
 
+enqueueLoop:
 	for index, candidate := range candidates {
-		jobs <- reviewJob{index: index, candidate: candidate}
+		select {
+		case <-ctx.Done():
+			break enqueueLoop
+		case jobs <- reviewJob{index: index, candidate: candidate}:
+		}
 	}
 	close(jobs)
 	waitGroup.Wait()
 	close(results)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	traces := make([]discoveryReviewTrace, len(candidates))
 	for result := range results {
@@ -226,6 +255,9 @@ func (b *Brain) ReviewDiscoveryCandidates(ctx context.Context, candidates []mode
 }
 
 func (b *Brain) reviewSingleCandidate(ctx context.Context, candidate models.Discovery, nodes []models.MemoryNode) (discoveryReviewTrace, error) {
+	if err := ctx.Err(); err != nil {
+		return discoveryReviewTrace{}, err
+	}
 	provider := b.GetSearchProvider()
 	if provider == nil {
 		return discoveryReviewTrace{}, fmt.Errorf("no model providers available")
@@ -272,6 +304,9 @@ func (b *Brain) reviewSingleCandidate(ctx context.Context, candidate models.Disc
 
 	waitGroup.Wait()
 	close(errChan)
+	if err := ctx.Err(); err != nil {
+		return discoveryReviewTrace{}, err
+	}
 	if err := <-errChan; err != nil {
 		return discoveryReviewTrace{}, fmt.Errorf("temporary discovery review failed: %w", err)
 	}

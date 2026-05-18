@@ -77,3 +77,48 @@ func TestPipelineProgressTrackerReportsErrors(t *testing.T) {
 		t.Fatalf("unexpected step states: %+v", payload.Steps)
 	}
 }
+
+func TestPipelineProgressTrackerCancelMarksTerminalProfile(t *testing.T) {
+	now := time.Date(2026, 5, 18, 9, 30, 0, 0, time.UTC)
+	tracker := NewPipelineProgressTrackerWithClock(
+		"run-cancel-profile",
+		"inv-cancel-profile",
+		"web",
+		[]PipelineProgressStep{
+			{ID: "start", Label: "Starting crawl"},
+			{ID: "gather_evidence", Label: "Gathering evidence"},
+			{ID: "complete", Label: "Pipeline complete"},
+		},
+		func() time.Time { return now },
+	)
+
+	tracker.Start("start", "accepted")
+	now = now.Add(200 * time.Millisecond)
+	tracker.Complete("start", "ready")
+	now = now.Add(3 * time.Second)
+	tracker.Start("gather_evidence", "Gathering evidence")
+	now = now.Add(2 * time.Second)
+
+	message := tracker.Cancel("complete", "Stopped by operator")
+	payload, ok := message.Payload.(PipelineProgressPayload)
+	if !ok {
+		t.Fatalf("unexpected cancel payload type: %#v", message.Payload)
+	}
+	if payload.Status != PipelineStatusCancelled {
+		t.Fatalf("cancel status = %q, want %q", payload.Status, PipelineStatusCancelled)
+	}
+	if payload.CompletedAt == "" {
+		t.Fatal("cancel payload should include a completion timestamp")
+	}
+
+	profile := tracker.Profile()
+	if profile.Status != PipelineStatusCancelled {
+		t.Fatalf("profile status = %q, want %q", profile.Status, PipelineStatusCancelled)
+	}
+	if profile.CompletedAt == "" {
+		t.Fatal("cancelled profile should be terminal")
+	}
+	if profile.Steps[1].Status != PipelineStatusCancelled {
+		t.Fatalf("running step status = %q, want cancelled", profile.Steps[1].Status)
+	}
+}
