@@ -239,17 +239,45 @@ interface SynthesisPanelProps {
     onMergeInvestigations?: (entity: string, connectedCases: string[], relevantNodes: MergeCandidateNode[]) => void;
     showHandle?: boolean;
     currentTheoryReport?: string | null;
+    hasTheoryReady?: boolean;
+    hasUnreadTheory?: boolean;
+    onMarkTheoryRead?: () => void;
 }
 
-export default function SynthesisPanel({ sharedSocket, currentInvestigationId, onNavigateVault, returnVaultId, investigations = [], onMergeInvestigations, showHandle = true, currentTheoryReport = null }: SynthesisPanelProps) {
+export default function SynthesisPanel({
+    sharedSocket,
+    currentInvestigationId,
+    onNavigateVault,
+    returnVaultId,
+    investigations = [],
+    onMergeInvestigations,
+    showHandle = true,
+    currentTheoryReport = null,
+    hasTheoryReady = false,
+    hasUnreadTheory = false,
+    onMarkTheoryRead,
+}: SynthesisPanelProps) {
     const [alertsByInvestigation, setAlertsByInvestigation] = useState<AlertBuckets>({});
     const [isOpen, setIsOpen] = useState(false);
     const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
     const [pulledNodeId, setPulledNodeId] = useState<string | null>(null);
     const [activeToast, setActiveToast] = useState<SynthesisAlert | null>(null);
     const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
-    const hasUnread = currentInvestigationId ? Boolean(unreadByInvestigation[currentInvestigationId]) : false;
     const trimmedTheoryReport = (currentTheoryReport || '').trim();
+    const hasUnread = currentInvestigationId
+        ? Boolean(unreadByInvestigation[currentInvestigationId]) || Boolean(hasUnreadTheory)
+        : false;
+
+    const markCurrentTheoryRead = () => {
+        if (!currentInvestigationId) {
+            return;
+        }
+        setUnreadByInvestigation(prev => ({
+            ...prev,
+            [currentInvestigationId]: false,
+        }));
+        onMarkTheoryRead?.();
+    };
 
     useEffect(() => {
         console.debug('[SynthesisPanel] Mounted with current investigation:', currentInvestigationId);
@@ -414,10 +442,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
     const togglePanel = () => {
         setIsOpen(!isOpen);
         if (!isOpen && currentInvestigationId) {
-            setUnreadByInvestigation(prev => ({
-                ...prev,
-                [currentInvestigationId]: false,
-            }));
+            markCurrentTheoryRead();
         }
     };
 
@@ -426,10 +451,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             setIsOpen((current) => {
                 const next = !current;
                 if (next && currentInvestigationId) {
-                    setUnreadByInvestigation(prev => ({
-                        ...prev,
-                        [currentInvestigationId]: false,
-                    }));
+                    markCurrentTheoryRead();
                 }
                 return next;
             });
@@ -437,7 +459,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
 
         window.addEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, handlePanelToggle);
         return () => window.removeEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, handlePanelToggle);
-    }, [currentInvestigationId]);
+    }, [currentInvestigationId, onMarkTheoryRead]);
 
     const clearAlerts = () => {
         if (!currentInvestigationId) {
@@ -455,6 +477,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             ...prev,
             [currentInvestigationId]: false,
         }));
+        onMarkTheoryRead?.();
     };
 
     const handleJump = (vaultId: string, nodeId?: string) => {
@@ -477,10 +500,7 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
         if (!currentInvestigationId) {
             return;
         }
-        setUnreadByInvestigation(prev => ({
-            ...prev,
-            [currentInvestigationId]: false,
-        }));
+        markCurrentTheoryRead();
     };
 
     const showToast = Boolean(activeToast && activeToast.currentVaultId === currentInvestigationId);
@@ -526,12 +546,12 @@ export default function SynthesisPanel({ sharedSocket, currentInvestigationId, o
             {showPanelHandle && (
                 <button
                     onClick={togglePanel}
-                    aria-label={isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}
-                    title={isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}
+                    aria-label={`${isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}${hasTheoryReady ? ' - Grand Unified Theory ready' : ''}`}
+                    title={`${isOpen ? 'Hide synthesis panel' : 'Show synthesis panel'}${hasTheoryReady ? ' - Grand Unified Theory ready' : ''}`}
                     className="forensic-overlay-handle absolute right-0 top-24 z-[60] flex items-center gap-2 rounded-l-xl p-3 transition-all hover:bg-[var(--forensic-accent)] hover:text-black"
                 >
                     {isOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-                    <Network size={20} className={hasUnread ? "animate-pulse text-[var(--forensic-accent)]" : ""} />
+                    <Network size={20} className={hasUnread ? "animate-pulse text-[var(--forensic-accent)]" : hasTheoryReady ? "text-[var(--forensic-accent)]" : ""} />
                     {hasUnread && (
                         <span className="absolute -top-2 -left-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full">
                             !

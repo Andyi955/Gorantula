@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,8 @@ var (
 )
 
 const maxNodeImageUploadBodyBytes = 12 << 20
+
+var relationshipLogConnectionLinePattern = regexp.MustCompile(`^(.+?) -> (.+?) \[(.+?)\] confidence=([0-9.]+) quality=([0-9.]+)$`)
 
 func backendListenAddress() string {
 	host := strings.TrimSpace(os.Getenv("GORANTULA_HOST"))
@@ -706,6 +709,38 @@ func personaAnalysisCompletionDetail(successCount, totalCount int) string {
 	return fmt.Sprintf("Generated %d persona insight sets", successCount)
 }
 
+func buildRelationshipResult(vaultID string, runID string, incremental bool, pendingNodeIDs []string, connections []models.BoardConnection) models.RelationshipResult {
+	result := models.RelationshipResult{
+		VaultID:        vaultID,
+		RunID:          strings.TrimSpace(runID),
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		Incremental:    incremental,
+		PendingNodeIDs: append([]string(nil), pendingNodeIDs...),
+		Connections:    append([]models.BoardConnection(nil), connections...),
+	}
+	if result.Connections == nil {
+		result.Connections = []models.BoardConnection{}
+	}
+	if result.PendingNodeIDs == nil {
+		result.PendingNodeIDs = []string{}
+	}
+	return result
+}
+
+func saveRelationshipResult(result models.RelationshipResult) {
+	if strings.TrimSpace(result.VaultID) == "" {
+		return
+	}
+	raw, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		log.Printf("[WS Warning] Failed to marshal relationship result for vault=%s run=%s: %v", result.VaultID, result.RunID, err)
+		return
+	}
+	if err := investigationStore().SaveJSON(result.VaultID, models.InvestigationRelationshipsFilename, raw); err != nil {
+		log.Printf("[WS Warning] Failed to persist relationship result for vault=%s run=%s: %v", result.VaultID, result.RunID, err)
+	}
+}
+
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipelineRunMetadata) {
 	tracker := getPipelineTracker(meta, models.DefaultPipelineProgressSteps())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -768,7 +803,9 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 					len(validatedConnections),
 					relationshipDebugSummary(debugRun),
 				)
-				broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: validatedConnections})
+				result := buildRelationshipResult(vaultID, meta.RunID, isIncremental, pendingNodeIDs, validatedConnections)
+				saveRelationshipResult(result)
+				broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: result})
 			}
 			return
 		}
@@ -836,7 +873,9 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		log.Printf("[WS] Analysis complete. Broadcasting %d connections for vault=%s run=%s.", len(connections), vaultID, meta.RunID)
 		broadcast(tracker.Complete("relationship_synthesis", fmt.Sprintf("Found %d relationships", len(connections))))
 		tracker.RecordCounter("relationships", len(connections))
-		broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: connections})
+		result := buildRelationshipResult(vaultID, meta.RunID, isIncremental, pendingNodeIDs, connections)
+		saveRelationshipResult(result)
+		broadcast(models.WSMessage{Type: "CONNECTIONS_FOUND", Payload: result})
 		saveAndBroadcastPipelineProfile(tracker)
 
 		if isIncremental {
@@ -1149,9 +1188,162 @@ func handleInvestigationAPI(w http.ResponseWriter, r *http.Request, br *brain.Br
 		handleInvestigationJSON(w, r, investigationID, models.InvestigationResultFilename, json.RawMessage(`{}`))
 	case "discoveries":
 		handleInvestigationJSON(w, r, investigationID, models.InvestigationDiscoveryFilename, json.RawMessage(`[]`))
+	case "relationships":
+		handleInvestigationRelationships(w, r, investigationID)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func emptyRelationshipResult(investigationID string) json.RawMessage {
+	emptyRelationships, _ := json.Marshal(models.RelationshipResult{
+		VaultID:     investigationID,
+		Connections: []models.BoardConnection{},
+	})
+	return emptyRelationships
+}
+
+func handleInvestigationRelationships(w http.ResponseWriter, r *http.Request, investigationID string) {
+	store := investigationStore()
+
+	switch r.Method {
+	case http.MethodGet:
+		payload, err := store.LoadJSON(investigationID, models.InvestigationRelationshipsFilename)
+		if err == nil {
+			w.Write(payload)
+			return
+		}
+		if errors.Is(err, models.ErrInvestigationNotFound) {
+			if result, ok := loadLatestRelationshipResultFromLog(investigationID); ok {
+				saveRelationshipResult(result)
+				raw, marshalErr := json.Marshal(result)
+				if marshalErr != nil {
+					http.Error(w, marshalErr.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.Write(raw)
+				return
+			}
+			w.Write(emptyRelationshipResult(investigationID))
+			return
+		}
+		if errors.Is(err, models.ErrInvalidInvestigationID) {
+			http.Error(w, "invalid investigation id", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	case http.MethodPut:
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationRelationshipsFilename, emptyRelationshipResult(investigationID))
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func loadLatestRelationshipResultFromLog(vaultID string) (models.RelationshipResult, bool) {
+	if !models.ValidInvestigationID(vaultID) {
+		return models.RelationshipResult{}, false
+	}
+
+	matches, err := filepath.Glob(filepath.Join("abdomen_vault", "relationship_logs", vaultID+"-*.txt"))
+	if err != nil || len(matches) == 0 {
+		return models.RelationshipResult{}, false
+	}
+	sort.Strings(matches)
+	for index := len(matches) - 1; index >= 0; index-- {
+		data, err := os.ReadFile(matches[index])
+		if err != nil {
+			continue
+		}
+		result := parseRelationshipResultLog(vaultID, string(data))
+		if len(result.Connections) > 0 {
+			return result, true
+		}
+	}
+	return models.RelationshipResult{}, false
+}
+
+func parseRelationshipResultLog(vaultID string, logText string) models.RelationshipResult {
+	result := models.RelationshipResult{
+		VaultID:     vaultID,
+		Connections: []models.BoardConnection{},
+	}
+
+	lines := strings.Split(logText, "\n")
+	inFinalConnections := false
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if strings.HasPrefix(line, "Generated:") && result.CreatedAt == "" {
+			result.CreatedAt = strings.TrimSpace(strings.TrimPrefix(line, "Generated:"))
+			continue
+		}
+		if line == "=== Final Connections ===" {
+			inFinalConnections = true
+			continue
+		}
+		if inFinalConnections && strings.HasPrefix(line, "===") {
+			break
+		}
+		if !inFinalConnections || line == "" {
+			continue
+		}
+
+		matches := relationshipLogConnectionLinePattern.FindStringSubmatch(line)
+		if len(matches) != 6 {
+			continue
+		}
+
+		confidence, _ := strconv.ParseFloat(matches[4], 32)
+		quality, _ := strconv.ParseFloat(matches[5], 32)
+		connection := models.BoardConnection{
+			VaultID:      vaultID,
+			Source:       strings.TrimSpace(matches[1]),
+			Target:       strings.TrimSpace(matches[2]),
+			Tag:          strings.TrimSpace(matches[3]),
+			Confidence:   float32(confidence),
+			QualityScore: float32(quality),
+		}
+
+		if index+1 < len(lines) {
+			reasoningLine := strings.TrimSpace(lines[index+1])
+			if strings.HasPrefix(reasoningLine, "Reasoning:") {
+				connection.Reasoning = strings.TrimSpace(strings.TrimPrefix(reasoningLine, "Reasoning:"))
+				index++
+			}
+		}
+		if index+1 < len(lines) {
+			metadataLine := strings.TrimSpace(lines[index+1])
+			if strings.HasPrefix(metadataLine, "Personas:") {
+				parseRelationshipLogMetadata(metadataLine, &connection)
+				index++
+			}
+		}
+		result.Connections = append(result.Connections, connection)
+	}
+
+	return result
+}
+
+func parseRelationshipLogMetadata(line string, connection *models.BoardConnection) {
+	line = strings.TrimSpace(strings.TrimPrefix(line, "Personas:"))
+	parts := strings.SplitN(line, "| EvidenceNodes:", 2)
+	if len(parts) > 0 {
+		connection.SupportingPersonas = splitRelationshipLogList(parts[0])
+	}
+	if len(parts) > 1 {
+		connection.EvidenceNodeIDs = splitRelationshipLogList(parts[1])
+	}
+}
+
+func splitRelationshipLogList(value string) []string {
+	parts := strings.Split(value, ",")
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+	return cleaned
 }
 
 func handleInvestigationCatalog(w http.ResponseWriter, r *http.Request) {

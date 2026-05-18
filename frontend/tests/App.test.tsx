@@ -35,7 +35,27 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
 }))
 
 vi.mock('../src/components/DetectiveBoard', () => ({
-  default: () => <div>DetectiveBoard</div>,
+  default: ({
+    hasTheoryReady = false,
+    hasUnreadTheory = false,
+    hasDiscoveryReady = false,
+    hasUnreadDiscoveries = false,
+  }: {
+    hasTheoryReady?: boolean
+    hasUnreadTheory?: boolean
+    hasDiscoveryReady?: boolean
+    hasUnreadDiscoveries?: boolean
+  }) => (
+    <div>
+      DetectiveBoard
+      <span data-testid="mock-board-theory-state">
+        theory-ready {String(hasTheoryReady)} theory-unread {String(hasUnreadTheory)}
+      </span>
+      <span data-testid="mock-board-discovery-state">
+        discovery-ready {String(hasDiscoveryReady)} discovery-unread {String(hasUnreadDiscoveries)}
+      </span>
+    </div>
+  ),
 }))
 
 vi.mock('../src/components/SettingsDashboard', () => ({
@@ -367,6 +387,81 @@ describe('App', () => {
       expect(screen.getByText(/Bravo completed theory arrived in the background/i)).toBeInTheDocument()
     })
     expect(screen.queryByText(/Alpha original theory remains selected/i)).not.toBeInTheDocument()
+  })
+
+  it('notifies the active board when theory and discoveries finish', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-active', topic: 'Active Case' }]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYNTHESIS_COMPLETE', {
+        vaultId: 'inv-active',
+        result: 'The grand unified theory is ready.',
+        append: false,
+      })
+    })
+    act(() => {
+      WebSocketMock.instances[0]?.emit('DISCOVERIES_FOUND', [
+        {
+          id: 'discovery-active',
+          title: 'Ready discovery',
+          claim: 'The discovery review approved a new finding.',
+          impact: 'The dashboard should show the discovery as ready.',
+          confidence: 0.93,
+          sourceNodeIDs: ['node-1'],
+          sourceVaultID: 'inv-active',
+          createdAt: '2026-05-18T04:30:00.000Z',
+          nodeKind: 'discovery',
+        },
+      ])
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-board-theory-state')).toHaveTextContent('theory-ready true theory-unread true')
+      expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread true')
+    })
+  })
+
+  it('notifies the board when discovery review completes without approved discoveries', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-empty-discovery', topic: 'Empty Discovery Case' }]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: 'run-empty-discovery',
+        vaultId: 'inv-empty-discovery',
+        mode: 'web',
+        stepId: 'discovery_review',
+        stepLabel: 'Discovery review',
+        status: 'complete',
+        completedSteps: 11,
+        totalSteps: 12,
+        detail: 'Approved 0 discoveries',
+        elapsedMs: 146000,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread true')
+    })
   })
 
   it('derives discovery panel entries from saved Discovery persona insights when no approved discoveries were stored', async () => {
