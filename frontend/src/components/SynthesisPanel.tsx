@@ -341,12 +341,10 @@ export default function SynthesisPanel({
     }, [currentInvestigationId]);
 
     useEffect(() => {
-        if (!currentInvestigationId) {
-            return;
-        }
-
-        persistInvestigationAlerts(currentInvestigationId, currentAlerts);
-    }, [currentAlerts, currentInvestigationId]);
+        Object.entries(alertsByInvestigation).forEach(([investigationId, alerts]) => {
+            persistInvestigationAlerts(investigationId, alerts);
+        });
+    }, [alertsByInvestigation]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -381,7 +379,6 @@ export default function SynthesisPanel({
                             [newAlert.currentVaultId]: updatedBucket,
                         }, newAlert.currentVaultId);
                         persistAlertBuckets(updated);
-                        persistInvestigationAlerts(newAlert.currentVaultId, updatedBucket);
                         return updated;
                     });
                     setUnreadByInvestigation(prev => ({

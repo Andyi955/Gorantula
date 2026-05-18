@@ -431,7 +431,7 @@ describe('App', () => {
     })
   })
 
-  it('notifies the board when discovery review completes without approved discoveries', async () => {
+  it('marks discovery review complete without an unread dot when no discoveries are approved', async () => {
     localStorage.setItem(
       'gorantula_investigations',
       JSON.stringify([{ id: 'inv-empty-discovery', topic: 'Empty Discovery Case' }]),
@@ -460,11 +460,11 @@ describe('App', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread true')
+      expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread false')
     })
   })
 
-  it('derives discovery panel entries from saved Discovery persona insights when no approved discoveries were stored', async () => {
+  it('does not present Discovery persona key findings as approved discoveries', async () => {
     localStorage.setItem(
       'gorantula_investigations',
       JSON.stringify([{ id: 'inv-persona', topic: 'Persona Discovery Case' }]),
@@ -495,7 +495,8 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Persona-derived discovery should appear in the panel.')).toBeInTheDocument()
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.queryByText('Persona-derived discovery should appear in the panel.')).not.toBeInTheDocument()
   })
 
   it('collapses and expands the investigations sidebar with the arrow control', async () => {

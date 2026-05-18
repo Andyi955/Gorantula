@@ -24,6 +24,8 @@ describe('DiscoveryPanel', () => {
       <DiscoveryPanel
         currentInvestigationId="inv-1"
         discoveries={[]}
+        evidenceByNodeId={{}}
+        hasCompletedReview
         hasUnread={false}
         onOpenDiscovery={vi.fn()}
         onClear={vi.fn()}
@@ -33,7 +35,7 @@ describe('DiscoveryPanel', () => {
 
     await user.click(screen.getByRole('button', { name: /open discoveries/i }))
 
-    expect(screen.getByText(/No approved discoveries yet for this investigation/i)).toBeInTheDocument()
+    expect(screen.getByText(/Discovery review finished with no approved discoveries/i)).toBeInTheDocument()
   })
 
   it('opens discoveries and routes to supporting evidence', async () => {
@@ -45,6 +47,20 @@ describe('DiscoveryPanel', () => {
       <DiscoveryPanel
         currentInvestigationId="inv-1"
         discoveries={[discovery]}
+        evidenceByNodeId={{
+          'node-1': {
+            id: 'node-1',
+            title: 'Manufacturing source',
+            summary: 'The first source describes the shared production bottleneck.',
+            sourceURL: 'https://example.com/source-1',
+          },
+          'node-2': {
+            id: 'node-2',
+            title: 'Logistics source',
+            summary: 'The second source links the same bottleneck to shipping delays.',
+            sourceURL: 'https://example.com/source-2',
+          },
+        }}
         hasUnread
         onOpenDiscovery={onOpenDiscovery}
         onClear={vi.fn()}
@@ -56,8 +72,14 @@ describe('DiscoveryPanel', () => {
 
     expect(onMarkRead).toHaveBeenCalled()
     expect(screen.getByText('Cross-study bottleneck')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /show 2 supporting evidence nodes/i })).toBeInTheDocument()
+    expect(screen.queryByText('node-1')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /node-1/i }))
+    await user.click(screen.getByRole('button', { name: /show 2 supporting evidence nodes/i }))
+    expect(screen.getByText('Manufacturing source')).toBeInTheDocument()
+    expect(screen.getByText(/first source describes/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open evidence manufacturing source/i }))
     expect(onOpenDiscovery).toHaveBeenCalledWith('node-1')
   })
 
@@ -71,6 +93,7 @@ describe('DiscoveryPanel', () => {
         <DiscoveryPanel
           currentInvestigationId="inv-1"
           discoveries={[discovery]}
+          evidenceByNodeId={{}}
           hasUnread={!isRead}
           onOpenDiscovery={vi.fn()}
           onClear={vi.fn()}

@@ -18,6 +18,12 @@ func TestSynthesizeDiscoveriesReturnsCandidateDiscoveries(t *testing.T) {
 			if !strings.Contains(prompt, "Use plain, technical titles with no hype language") {
 				t.Fatalf("expected discovery prompt to require sober titles")
 			}
+			if !strings.Contains(prompt, "non-obvious pattern, contradiction, escalation, dependency, or second-order implication") {
+				t.Fatalf("expected discovery prompt to define discoveries as synthesized non-obvious insights")
+			}
+			if !strings.Contains(prompt, "Do not return isolated facts, single-source announcements, or rewritten node summaries") {
+				t.Fatalf("expected discovery prompt to reject fact summaries")
+			}
 
 			switch response := target.(type) {
 			case *discoveryJSONResponse:
@@ -53,6 +59,59 @@ func TestSynthesizeDiscoveriesReturnsCandidateDiscoveries(t *testing.T) {
 	}
 	if discoveries[0].Status != discoveryCandidateStatus {
 		t.Fatalf("expected candidate discovery status, got %q", discoveries[0].Status)
+	}
+}
+
+func TestSynthesizeDiscoveriesIncludesPersonaEvidenceFields(t *testing.T) {
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			for _, expected := range []string{
+				"Observation: node-1 and node-2 both describe agentic AI governance pressure.",
+				"Hypothesis: Governance guidance and infrastructure spending are converging.",
+				"Proposed Connections:",
+				"node-1 -> node-2 [GOVERNANCE_INFRASTRUCTURE]",
+				"Evidence: node-1, node-2",
+			} {
+				if !strings.Contains(prompt, expected) {
+					t.Fatalf("expected discovery prompt to include %q\nPrompt:\n%s", expected, prompt)
+				}
+			}
+
+			response, ok := target.(*discoveryJSONResponse)
+			if !ok {
+				t.Fatalf("unexpected target type %T", target)
+			}
+			response.Discoveries = nil
+			return nil
+		},
+	}
+
+	brain := &Brain{ModelRouter: map[string]ModelProvider{"mock": mock}}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	_, err := brain.SynthesizeDiscoveries(context.Background(), "inv-1", []models.MemoryNode{
+		{ID: "node-1", Title: "Governance", Summary: "Agentic AI governance pressure increased.", FullText: "Agentic AI governance pressure increased after safety guidance."},
+		{ID: "node-2", Title: "Infrastructure", Summary: "AI infrastructure spending increased.", FullText: "AI infrastructure spending increased alongside governance guidance."},
+	}, []PersonaInsight{
+		{
+			PersonaName:  "Discovery",
+			Observations: []string{"Observation: node-1 and node-2 both describe agentic AI governance pressure."},
+			Hypotheses:   []string{"Hypothesis: Governance guidance and infrastructure spending are converging."},
+			ProposedConnections: []PersonaConnectionProposal{
+				{
+					Source:          "node-1",
+					Target:          "node-2",
+					Tag:             "GOVERNANCE_INFRASTRUCTURE",
+					Reasoning:       "Governance pressure appears alongside infrastructure spending.",
+					EvidenceNodeIDs: []string{"node-1", "node-2"},
+					Confidence:      0.83,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SynthesizeDiscoveries failed: %v", err)
 	}
 }
 
@@ -102,6 +161,27 @@ func TestBuildDiscoveryReviewTeamUsesHybridTopicExperts(t *testing.T) {
 	baseReviewers := buildDiscoveryReviewTeam("")
 	if len(baseReviewers) != 3 {
 		t.Fatalf("expected fixed review cell only for empty topic, got %d", len(baseReviewers))
+	}
+}
+
+func TestNormalizeDiscoveriesKeepsReviewableCandidateBelowOldStrictThreshold(t *testing.T) {
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "Governance", Summary: "Agentic ai governance appears with infrastructure adoption.", FullText: "Agentic ai governance appears with infrastructure adoption."},
+		{ID: "node-2", Title: "Infrastructure", Summary: "Infrastructure adoption appears with agentic ai governance.", FullText: "Infrastructure adoption appears with agentic ai governance."},
+	}
+
+	discoveries := normalizeDiscoveries([]models.Discovery{
+		{
+			Title:         "governed infrastructure adoption",
+			Claim:         "Agentic ai governance and infrastructure adoption appear together across the cited evidence.",
+			Impact:        "This gives reviewers a concrete cross-node candidate to evaluate.",
+			Confidence:    0.82,
+			SourceNodeIDs: []string{"node-1", "node-2"},
+		},
+	}, "inv-1", nodes, discoveryCandidateStatus)
+
+	if len(discoveries) != 1 {
+		t.Fatalf("expected reviewable candidate below old threshold to survive normalization, got %d", len(discoveries))
 	}
 }
 
