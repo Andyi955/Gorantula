@@ -150,14 +150,15 @@ interface ConfidenceCarrier {
   confidence?: number | null
 }
 
-interface PersonaInsightCarrier extends ConfidenceCarrier {
-  personaName?: string
-  keyFindings?: unknown
-  nodeIDs?: unknown
-}
-
 interface SidebarRowMetrics {
   evidenceCount: number
+}
+
+interface DiscoveryEvidenceRecord {
+  id: string
+  title: string
+  summary: string
+  sourceURL?: string
 }
 
 const BACKEND_STATUS_ENDPOINT = '/__gorantula_backend_status'
@@ -580,61 +581,6 @@ const extractReadableSummary = (rawText: string) => {
   return truncateAtSentenceBoundary(cleaned, 240)
 }
 
-const deriveDiscoveryRecordsFromBoardState = (
-  investigationId: string,
-  boardState: ReturnType<typeof getCachedBoardStateForInvestigation>,
-): DiscoveryRecord[] => {
-  if (!boardState?.nodes?.length) {
-    return []
-  }
-
-  const seenFindings = new Set<string>()
-  const discoveries: DiscoveryRecord[] = []
-  boardState.nodes.forEach((node: any) => {
-    const insights = Array.isArray(node.data?.personaInsights) ? node.data.personaInsights : []
-    insights.forEach((insight: PersonaInsightCarrier) => {
-      const personaName = String(insight?.personaName || '').toLowerCase()
-      if (!personaName.includes('discovery')) {
-        return
-      }
-
-      const findings = Array.isArray(insight.keyFindings) ? insight.keyFindings : []
-      findings.forEach((finding, index) => {
-        if (typeof finding !== 'string' || !finding.trim()) {
-          return
-        }
-
-        const claim = stripMarkdownFormatting(finding).replace(/\s+/g, ' ').trim()
-        const dedupeKey = claim.toLowerCase()
-        if (!claim || seenFindings.has(dedupeKey)) {
-          return
-        }
-        seenFindings.add(dedupeKey)
-
-        const sourceNodeIDs = Array.isArray(insight.nodeIDs)
-          ? insight.nodeIDs.filter((nodeId): nodeId is string => typeof nodeId === 'string' && nodeId.trim().length > 0)
-          : []
-        const sourceNodeId = typeof node.id === 'string' && node.id.trim() ? node.id : `node-${discoveries.length + 1}`
-        const sourceIds = sourceNodeIDs.length > 0 ? sourceNodeIDs : [sourceNodeId]
-
-        discoveries.push({
-          id: `persona-discovery-${investigationId}-${sourceNodeId}-${index}`,
-          title: truncateAtSentenceBoundary(claim, 80),
-          claim,
-          impact: 'Flagged by the Discovery persona from saved board evidence.',
-          confidence: isFiniteConfidence(insight.confidence) ? insight.confidence : 0.65,
-          sourceNodeIDs: sourceIds,
-          sourceVaultID: investigationId,
-          createdAt: '',
-          nodeKind: 'discovery',
-        })
-      })
-    })
-  })
-
-  return discoveries
-}
-
 const formatWorkspaceTimestamp = (investigationId: string | null) => {
   if (!investigationId) {
     return '--'
@@ -786,6 +732,7 @@ function App() {
         confidenceScore: 0,
         lastActivityLabel: '--',
         discoveryRecords: [],
+        evidenceByNodeId: {},
         hasTheoryReport: false,
       }
     }
@@ -796,9 +743,21 @@ function App() {
       ? vaultResultsByInvestigation[currentInvestigationId]
       : getCachedVaultResultForInvestigation(currentInvestigationId)
     const persistedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
-    const derivedDiscoveries = deriveDiscoveryRecordsFromBoardState(currentInvestigationId, savedBoardState)
-    const savedDiscoveries = persistedDiscoveries.length > 0 ? persistedDiscoveries : derivedDiscoveries
+    const savedDiscoveries = persistedDiscoveries
     const nodes = savedBoardState?.nodes || []
+    const evidenceByNodeId = nodes.reduce<Record<string, DiscoveryEvidenceRecord>>((lookup, node) => {
+      const id = typeof node.id === 'string' ? node.id : ''
+      if (!id) {
+        return lookup
+      }
+      lookup[id] = {
+        id,
+        title: String(node.data?.title || id),
+        summary: String(node.data?.summary || node.data?.fullText || ''),
+        sourceURL: typeof node.data?.sourceURL === 'string' ? node.data.sourceURL : undefined,
+      }
+      return lookup
+    }, {})
     const edges = savedBoardState?.edges || []
     const importCount = nodes.filter((node) => String(node.data?.title || '').includes('[IMPORTED]') || String(node.id || '').startsWith('imported-')).length
     const imageCount = nodes.reduce((total, node) => {
@@ -863,6 +822,7 @@ function App() {
       confidenceScore,
       lastActivityLabel: formatWorkspaceTimestamp(currentInvestigationId),
       discoveryRecords: savedDiscoveries,
+      evidenceByNodeId,
       hasTheoryReport,
     }
   }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation, vaultResultsByInvestigation])
@@ -1034,10 +994,6 @@ function App() {
           const completedDiscoveryVaultId = typeof progress.vaultId === 'string' ? progress.vaultId.trim() : ''
           if (completedDiscoveryVaultId && progress.stepId === 'discovery_review' && progress.status === 'complete') {
             setCompletedDiscoveryReviewByInvestigation((current) => ({
-              ...current,
-              [completedDiscoveryVaultId]: true,
-            }))
-            setUnreadDiscoveriesByInvestigation((current) => ({
               ...current,
               [completedDiscoveryVaultId]: true,
             }))
@@ -1933,6 +1889,8 @@ function App() {
             <DiscoveryPanel
               currentInvestigationId={currentInvestigationId}
               discoveries={currentBoardSnapshot.discoveryRecords}
+              evidenceByNodeId={currentBoardSnapshot.evidenceByNodeId}
+              hasCompletedReview={currentInvestigationId ? Boolean(completedDiscoveryReviewByInvestigation[currentInvestigationId]) : false}
               hasUnread={currentInvestigationId ? Boolean(unreadDiscoveriesByInvestigation[currentInvestigationId]) : false}
               showHandle={showFloatingPanelHandles}
               onOpenDiscovery={(nodeId?: string) => {

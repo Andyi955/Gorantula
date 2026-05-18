@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	discoveryConfidenceThreshold      float32 = 0.86
+	discoveryCandidateConfidenceFloor float32 = 0.78
 	discoveryReviewConfidenceFloor    float32 = 0.78
 	discoveryCandidateStatus                  = "candidate"
 	discoveryApprovedStatus                   = "approved"
@@ -108,15 +108,37 @@ func (b *Brain) SynthesizeDiscoveries(ctx context.Context, vaultID string, nodes
 	if len(insights) > 0 {
 		findingsBuilder.WriteString("=== PERSONA INSIGHTS ===\n")
 		for _, insight := range insights {
-			findingsBuilder.WriteString(fmt.Sprintf("[%s]\nConfidence: %.2f\nKey Findings: %s\nConnections: %s\nQuestions: %s\nAnalysis: %s\nNodeIDs: %s\n\n",
+			findingsBuilder.WriteString(fmt.Sprintf("[%s]\nConfidence: %.2f\nKey Findings: %s\nObservations: %s\nHypotheses: %s\nConnections: %s\nQuestions: %s\nAnalysis: %s\nNodeIDs: %s\n",
 				insight.PersonaName,
 				insight.Confidence,
 				strings.Join(insight.KeyFindings, " | "),
+				strings.Join(insight.Observations, " | "),
+				strings.Join(insight.Hypotheses, " | "),
 				strings.Join(insight.Connections, " | "),
 				strings.Join(insight.Questions, " | "),
 				insight.FullAnalysis,
 				strings.Join(insight.NodeIDs, ", "),
 			))
+			if len(insight.ProposedConnections) > 0 {
+				findingsBuilder.WriteString("Proposed Connections:\n")
+				for _, connection := range insight.ProposedConnections {
+					findingsBuilder.WriteString(fmt.Sprintf("- %s -> %s [%s]\n  Reasoning: %s\n  Evidence: %s\n  Confidence: %.2f\n",
+						connection.Source,
+						connection.Target,
+						connection.Tag,
+						connection.Reasoning,
+						strings.Join(connection.EvidenceNodeIDs, ", "),
+						connection.Confidence,
+					))
+				}
+			}
+			if len(insight.TimelineEvents) > 0 {
+				findingsBuilder.WriteString("Timeline Events:\n")
+				for _, event := range insight.TimelineEvents {
+					findingsBuilder.WriteString(fmt.Sprintf("- %s: %s (source: %s)\n", event.Timestamp, event.Event, event.SourceNodeID))
+				}
+			}
+			findingsBuilder.WriteString("\n")
 		}
 	}
 
@@ -124,7 +146,7 @@ func (b *Brain) SynthesizeDiscoveries(ctx context.Context, vaultID string, nodes
 Your job is to PROPOSE possible discoveries, not to publish final discoveries.
 
 Return only candidate discoveries that meet ALL of these rules:
-1. The claim is novel or strategically important, not a generic summary.
+1. The claim is a synthesized non-obvious pattern, contradiction, escalation, dependency, or second-order implication, not a generic summary.
 2. The evidence is grounded in the exact node IDs provided.
 3. Use plain, technical titles with no hype language.
 4. Make "impact" a single sober sentence.
@@ -132,6 +154,8 @@ Return only candidate discoveries that meet ALL of these rules:
 6. Do NOT introduce any dates, deployments, organizations, locations, numbers, benchmarks, or hardware claims unless they appear explicitly in the cited evidence nodes.
 7. Do NOT use absolutist hype language like "supremacy", "elimination", "universality", "proof", or "guarantee".
 8. If a claim needs outside knowledge or interpretation beyond the cited evidence, omit it.
+9. Do not return isolated facts, single-source announcements, or rewritten node summaries.
+10. A valid discovery must explain what becomes visible only when at least two evidence nodes are considered together.
 
 Return ONLY valid JSON in this shape:
 {
@@ -516,7 +540,7 @@ func normalizeDiscoveries(raw []models.Discovery, vaultID string, nodes []models
 		if discovery.Title == "" || discovery.Claim == "" || discovery.Impact == "" {
 			continue
 		}
-		if discovery.Confidence < discoveryConfidenceThreshold {
+		if discovery.Confidence < discoveryCandidateConfidenceFloor {
 			continue
 		}
 		if looksGenericDiscovery(discovery.Title, discovery.Claim, discovery.Impact) || usesAbsolutistDiscoveryLanguage(discovery.Title, discovery.Claim, discovery.Impact) {
@@ -718,7 +742,7 @@ func discoveryPassesConsensus(candidate models.Discovery, reviews []models.Disco
 	if approveCount <= len(reviews)/2 || approveCount <= rejectCount {
 		return false, "consensus_not_reached"
 	}
-	if candidate.Confidence < discoveryConfidenceThreshold {
+	if candidate.Confidence < discoveryCandidateConfidenceFloor {
 		return false, "candidate_confidence_below_threshold"
 	}
 

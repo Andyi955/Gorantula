@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Lightbulb, ChevronRight, ChevronLeft, Sparkles, Target, ShieldAlert } from 'lucide-react'
+import { Lightbulb, ChevronRight, ChevronLeft, ChevronDown, Sparkles, FileText, ShieldAlert } from 'lucide-react'
 import type { DiscoveryRecord } from '../App'
 import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../utils/boardWorkspaceEvents'
+
+interface DiscoveryEvidenceRecord {
+  id: string
+  title: string
+  summary: string
+  sourceURL?: string
+}
 
 interface DiscoveryPanelProps {
   currentInvestigationId: string | null
   discoveries: DiscoveryRecord[]
+  evidenceByNodeId: Record<string, DiscoveryEvidenceRecord>
+  hasCompletedReview?: boolean
   hasUnread: boolean
   showHandle?: boolean
   onOpenDiscovery: (nodeId?: string) => void
@@ -18,6 +27,8 @@ const formatConfidence = (value: number) => `${Math.round((value || 0) * 100)}%`
 export default function DiscoveryPanel({
   currentInvestigationId,
   discoveries,
+  evidenceByNodeId,
+  hasCompletedReview = false,
   hasUnread,
   showHandle = true,
   onOpenDiscovery,
@@ -25,6 +36,7 @@ export default function DiscoveryPanel({
   onMarkRead,
 }: DiscoveryPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const [expandedEvidenceByDiscoveryId, setExpandedEvidenceByDiscoveryId] = useState<Record<string, boolean>>({})
 
   const orderedDiscoveries = useMemo(
     () => [...discoveries].sort((left, right) => right.confidence - left.confidence),
@@ -46,6 +58,13 @@ export default function DiscoveryPanel({
 
   if (!currentInvestigationId) {
     return null
+  }
+
+  const toggleEvidence = (discoveryId: string) => {
+    setExpandedEvidenceByDiscoveryId((current) => ({
+      ...current,
+      [discoveryId]: !current[discoveryId],
+    }))
   }
 
   return (
@@ -101,7 +120,15 @@ export default function DiscoveryPanel({
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {orderedDiscoveries.length === 0 ? (
             <div className="forensic-board-section rounded-2xl p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
-              No approved discoveries yet for this investigation. Run <span className="font-black uppercase tracking-[0.14em] text-[var(--forensic-warning)]">Reconnect The Dots</span>, then check the discovery log in <span className="font-mono text-[var(--forensic-accent-strong)]">abdomen_vault/discovery_logs</span> to see the full candidate and review trail.
+              {hasCompletedReview ? (
+                <>
+                  Discovery review finished with no approved discoveries. Check the discovery log in <span className="font-mono text-[var(--forensic-accent-strong)]">abdomen_vault/discovery_logs</span> to see the full candidate and review trail.
+                </>
+              ) : (
+                <>
+                  No approved discoveries yet for this investigation. Run <span className="font-black uppercase tracking-[0.14em] text-[var(--forensic-warning)]">Reconnect The Dots</span>, then check the discovery log in <span className="font-mono text-[var(--forensic-accent-strong)]">abdomen_vault/discovery_logs</span> to see the full candidate and review trail.
+                </>
+              )}
             </div>
           ) : (
             orderedDiscoveries.map((discovery) => (
@@ -131,21 +158,43 @@ export default function DiscoveryPanel({
                   </div>
 
                   <div>
-                    <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--forensic-warning)]">
-                      Supporting Evidence
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {discovery.sourceNodeIDs.map((nodeId) => (
-                        <button
-                          key={nodeId}
-                          onClick={() => onOpenDiscovery(nodeId)}
-                          className="forensic-badge rounded px-2 py-1 text-[10px] font-black uppercase tracking-[0.15em] transition-colors hover:bg-[var(--forensic-accent)] hover:text-black"
-                        >
-                          <Target size={10} className="mr-1 inline-block" />
-                          {nodeId}
-                        </button>
-                      ))}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleEvidence(discovery.id)}
+                      aria-expanded={Boolean(expandedEvidenceByDiscoveryId[discovery.id])}
+                      aria-label={`${expandedEvidenceByDiscoveryId[discovery.id] ? 'Hide' : 'Show'} ${discovery.sourceNodeIDs.length} supporting evidence nodes`}
+                      className="flex w-full items-center justify-between border-t border-[rgba(246,200,121,0.14)] pt-3 text-left text-[10px] font-black uppercase tracking-[0.18em] text-[var(--forensic-warning)] transition-colors hover:text-[var(--forensic-accent)]"
+                    >
+                      <span>Supporting evidence: {discovery.sourceNodeIDs.length} node{discovery.sourceNodeIDs.length === 1 ? '' : 's'}</span>
+                      {expandedEvidenceByDiscoveryId[discovery.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    {expandedEvidenceByDiscoveryId[discovery.id] && (
+                      <div className="mt-3 divide-y divide-[rgba(116,148,171,0.16)] border-y border-[rgba(116,148,171,0.16)]">
+                        {discovery.sourceNodeIDs.map((nodeId) => {
+                          const evidence = evidenceByNodeId[nodeId]
+                          const title = evidence?.title || 'Evidence node'
+                          const summary = evidence?.summary || 'No summary available for this evidence node.'
+
+                          return (
+                            <button
+                              key={nodeId}
+                              type="button"
+                              onClick={() => onOpenDiscovery(nodeId)}
+                              aria-label={`Open evidence ${title}`}
+                              className="block w-full py-3 text-left transition-colors hover:text-[var(--forensic-accent)]"
+                            >
+                              <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-[var(--forensic-text)]">
+                                <FileText size={12} className="text-[var(--forensic-warning)]" />
+                                {title}
+                              </span>
+                              <span className="mt-1 block text-[11px] leading-relaxed text-[var(--forensic-text-muted)]">
+                                {summary}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

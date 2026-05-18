@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useEffect, useState } from 'react'
 import { vi } from 'vitest'
 import SynthesisPanel from '../src/components/SynthesisPanel'
+import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../src/utils/boardWorkspaceEvents'
 
 class SocketMock {
   private listeners = new Map<string, Set<(event: MessageEvent) => void>>()
@@ -462,5 +464,59 @@ describe('SynthesisPanel', () => {
     expect(screen.getAllByText('alice').length).toBeGreaterThan(0)
 
     setItemSpy.mockRestore()
+  })
+
+  it('persists incoming alerts without updating parents during render', () => {
+    localStorage.setItem('inv_data_inv-a', JSON.stringify({ mode: 'strict-grid', nodes: [], edges: [] }))
+    const socket = new SocketMock() as unknown as WebSocket
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const Harness = () => {
+      const [revision, setRevision] = useState(0)
+
+      useEffect(() => {
+        const handleBoardUpdate = () => setRevision((current) => current + 1)
+        window.addEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardUpdate)
+        return () => window.removeEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardUpdate)
+      }, [])
+
+      return (
+        <>
+          <span data-testid="revision">{revision}</span>
+          <SynthesisPanel
+            sharedSocket={socket}
+            currentInvestigationId="inv-a"
+            returnVaultId={null}
+            investigations={[{ id: 'inv-a', topic: 'Investigation A' }]}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+
+    act(() => {
+      ;(socket as unknown as SocketMock).emit('message', {
+        type: 'SYNTHESIS_ALERT',
+        payload: {
+          type: 'synthesis_alert',
+          entity: 'alice',
+          currentVaultId: 'inv-a',
+          connectedCases: ['inv-a'],
+          nodes: [{ vaultId: 'inv-a', nodeId: 'node-a', summary: 'Alice mention' }],
+          analysis: 'Alert A',
+          timestamp: '12:10:00',
+        },
+      })
+    })
+
+    expect(screen.getAllByText('alice').length).toBeGreaterThan(0)
+    expect(consoleError).not.toHaveBeenCalledWith(
+      expect.stringContaining('Cannot update a component'),
+      expect.anything(),
+      expect.anything(),
+    )
+
+    consoleError.mockRestore()
   })
 })
