@@ -3820,7 +3820,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 id="connect-dots-btn"
                                 onClick={connectTheDots}
                                 disabled={!canConnectDots}
-                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-black tracking-[0.18em] transition-all ${canConnectDots
+                                className={`flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2 text-[11px] font-black tracking-[0.18em] transition-all ${isAnalyzing ? 'forensic-connect-button-scanning' : ''} ${canConnectDots
                                     ? 'border-[rgba(170,212,255,0.24)] bg-[rgba(170,212,255,0.08)] text-[var(--forensic-accent-muted)] hover:border-[rgba(170,212,255,0.4)] hover:bg-[rgba(170,212,255,0.16)] hover:text-white'
                                     : 'cursor-not-allowed border-[rgba(170,212,255,0.12)] bg-[rgba(170,212,255,0.04)] text-[rgba(170,212,255,0.38)]'
                                     }`}
