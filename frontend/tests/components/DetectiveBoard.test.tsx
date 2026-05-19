@@ -1032,6 +1032,9 @@ describe('DetectiveBoard relationship legend', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /connect the dots/i }))
 
+    const analyzingButton = screen.getByRole('button', { name: /analyzing patterns/i })
+    expect(analyzingButton).toHaveClass('forensic-connect-button-scanning')
+
     expect(JSON.parse(socket.sentMessages[0])).toMatchObject({
       type: 'CONNECT_DOTS',
       vaultId: 'investigation-1',
