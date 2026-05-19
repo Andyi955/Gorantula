@@ -1,4 +1,5 @@
 import { Fragment, memo, useState, useEffect, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
@@ -62,6 +63,8 @@ export interface NodeData {
     onRemoveImage?: (nodeId: string, imageId: string) => void;
     expanded?: boolean;
     isRecentlyImported?: boolean;
+    isConnectionHighlighted?: boolean;
+    connectionHighlightColor?: string;
     returnVaultId?: string | null;
     currentInvestigationId?: string | null;
     sharedSocket?: WebSocket | null;
@@ -288,6 +291,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const recentImportShellClass = data.isRecentlyImported
         ? 'ring-2 ring-amber-300/90 shadow-[0_0_0_2px_rgba(251,191,36,0.25),0_0_34px_rgba(245,158,11,0.34)]'
         : '';
+    const connectionHighlightShellClass = data.isConnectionHighlighted
+        ? 'forensic-node-connection-highlight'
+        : '';
+    const connectionHighlightColor = data.connectionHighlightColor || '#8ee8ff';
     const nodeShellToneClass = isPortalNode
         ? 'forensic-node-portal'
         : isDiscoveryNode
@@ -300,7 +307,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         : isDiscoveryNode
             ? 'forensic-badge forensic-badge-warning'
             : 'forensic-badge forensic-badge-imported';
-    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass}`;
+    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass} ${connectionHighlightShellClass}`;
     const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
     const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
     const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
@@ -440,7 +447,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 height: '100%',
                 minWidth: MIN_NODE_WIDTH,
                 minHeight: MIN_NODE_HEIGHT,
-            }}
+                '--connection-highlight-color': connectionHighlightColor,
+            } as CSSProperties}
         >
             <NodeResizer
                 minWidth={MIN_NODE_WIDTH}

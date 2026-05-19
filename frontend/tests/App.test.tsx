@@ -389,6 +389,34 @@ describe('App', () => {
     expect(screen.queryByText(/Alpha original theory remains selected/i)).not.toBeInTheDocument()
   })
 
+  it('switches to the detective board when the active crawl synthesis completes', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-active-crawl', topic: 'Active Crawl Case' }]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYNTHESIS_COMPLETE', {
+        vaultId: 'inv-active-crawl',
+        result: 'Unified report is ready.',
+        append: false,
+        runId: 'run-active-crawl',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('SpiderVisualizer')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /detective board/i })).toHaveClass('forensic-app-tab-active')
+    })
+  })
+
   it('notifies the active board when theory and discoveries finish', async () => {
     localStorage.setItem(
       'gorantula_investigations',

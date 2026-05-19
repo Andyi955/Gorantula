@@ -73,6 +73,33 @@ describe('CustomNode', () => {
     expect(screen.getByTestId('custom-node-shell').className).toContain('ring-cyber-cyan')
   })
 
+  it('uses the active connection color for hover highlights', () => {
+    render(
+      <CustomNode
+        id="node-connection-highlight"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-connection-highlight',
+          title: 'Connected Node',
+          summary: 'Connected summary',
+          isConnectionHighlighted: true,
+          connectionHighlightColor: '#ff5500',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const shell = screen.getByTestId('custom-node-shell')
+    expect(shell).toHaveClass('forensic-node-connection-highlight')
+    expect(shell).toHaveStyle({ '--connection-highlight-color': '#ff5500' })
+  })
+
   it('renders a compact image preview and opens the board viewer callback', async () => {
     const user = userEvent.setup()
     const onViewImages = vi.fn()

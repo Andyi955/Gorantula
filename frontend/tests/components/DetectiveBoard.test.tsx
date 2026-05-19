@@ -109,6 +109,8 @@ vi.mock('../../src/components/CustomNode', () => ({
       images?: Array<{ id?: string; path: string }>
       isEditing?: boolean
       isRecentlyImported?: boolean
+      isConnectionHighlighted?: boolean
+      connectionHighlightColor?: string
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -122,6 +124,8 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.title ? React.createElement('span', null, data.title) : null,
       data?.summary ? React.createElement('span', null, data.summary) : null,
       data?.isRecentlyImported ? React.createElement('span', null, 'recent import') : null,
+      data?.isConnectionHighlighted ? React.createElement('span', null, 'connection highlight') : null,
+      data?.connectionHighlightColor ? React.createElement('span', null, `connection color ${data.connectionHighlightColor}`) : null,
       React.createElement(
         'button',
         {
@@ -899,6 +903,112 @@ describe('DetectiveBoard relationship legend', () => {
         ]),
       )
     })
+  })
+
+  it('marks only newly accepted connect-the-dots edges for reveal animation', async () => {
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 200, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 400, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Existing line' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    await waitFor(() => {
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(edges.find((edge) => edge.id === 'e-node-a-node-b-RELATED')?.data?.isConnectionRevealing).toBeFalsy()
+    })
+
+    socket.emit('CONNECTIONS_FOUND', [
+      {
+        source: 'node-b',
+        target: 'node-c',
+        tag: 'RELATED',
+        reasoning: 'Newly found line',
+      },
+    ])
+
+    await waitFor(() => {
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      const newEdge = edges.find((edge) => edge.id === 'e-node-b-node-c-RELATED')
+      expect(newEdge?.data?.isConnectionRevealing).toBe(true)
+      expect(newEdge?.data?.onConnectionHover).toEqual(expect.any(Function))
+    })
+  })
+
+  it('strips transient connection animation state before persisting board data', async () => {
+    vi.useFakeTimers()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [
+          {
+            id: 'node-a',
+            position: { x: 0, y: 0 },
+            data: { title: 'A', summary: 'A', fullText: 'A', isConnectionHighlighted: true, connectionHighlightColor: '#ff5500' },
+            style: { width: 320, height: 180 },
+          },
+          {
+            id: 'node-b',
+            position: { x: 200, y: 0 },
+            data: { title: 'B', summary: 'B', fullText: 'B' },
+            style: { width: 320, height: 180 },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: {
+              generatedBy: 'connectTheDots',
+              reasoning: 'Existing line',
+              isConnectionRevealing: true,
+              connectionRevealStartedAt: 123,
+              onConnectionHover: 'not persisted',
+            },
+          },
+        ],
+      }),
+    )
+
+    try {
+      renderBoard('investigation-1', new MockSocket() as unknown as WebSocket)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.nodes[0].data).not.toHaveProperty('isConnectionHighlighted')
+      expect(persisted.nodes[0].data).not.toHaveProperty('connectionHighlightColor')
+      expect(persisted.edges[0].data).not.toHaveProperty('isConnectionRevealing')
+      expect(persisted.edges[0].data).not.toHaveProperty('connectionRevealStartedAt')
+      expect(persisted.edges[0].data).not.toHaveProperty('onConnectionHover')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('replaces stale AI edges on a full reconnect run', async () => {
