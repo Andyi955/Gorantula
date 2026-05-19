@@ -6,6 +6,7 @@ import {
 } from '../src/utils/investigationPersistence'
 import {
   BROWSER_QA_CLEARED_EVENT,
+  BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SOURCE_INVESTIGATION_ID,
   BROWSER_QA_TARGET_INVESTIGATION_ID,
@@ -58,5 +59,6 @@ describe('browser QA seed helpers', () => {
   it('exports stable QA browser events', () => {
     expect(BROWSER_QA_SEEDED_EVENT).toBe('gorantula:browser-qa-seeded')
     expect(BROWSER_QA_CLEARED_EVENT).toBe('gorantula:browser-qa-cleared')
+    expect(BROWSER_QA_DISCOVERY_DEMO_EVENT).toBe('gorantula:browser-qa-play-discovery-demo')
   })
 })

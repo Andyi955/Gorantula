@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Lightbulb, ChevronRight, ChevronLeft, ChevronDown, Sparkles, FileText, ShieldAlert } from 'lucide-react'
 import type { DiscoveryRecord } from '../App'
 import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../utils/boardWorkspaceEvents'
@@ -23,6 +23,18 @@ interface DiscoveryPanelProps {
 }
 
 const formatConfidence = (value: number) => `${Math.round((value || 0) * 100)}%`
+const confidencePercent = (value: number) => Math.round((value || 0) * 100)
+const DISCOVERY_CONFIDENCE_COUNT_UP_STEPS = 24
+const DISCOVERY_CONFIDENCE_COUNT_UP_INTERVAL_MS = 60
+const DISCOVERY_REVEAL_DURATION_MS = 1900
+
+const prefersReducedMotion = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false
+  }
+
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
 
 export default function DiscoveryPanel({
   currentInvestigationId,
@@ -37,11 +49,111 @@ export default function DiscoveryPanel({
 }: DiscoveryPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [expandedEvidenceByDiscoveryId, setExpandedEvidenceByDiscoveryId] = useState<Record<string, boolean>>({})
+  const [revealingDiscoveryIds, setRevealingDiscoveryIds] = useState<Set<string>>(() => new Set())
+  const [displayConfidenceByDiscoveryId, setDisplayConfidenceByDiscoveryId] = useState<Record<string, number>>({})
+  const knownDiscoveryIdsRef = useRef<Set<string>>(new Set(discoveries.map((discovery) => discovery.id)))
+  const confidenceTimersRef = useRef<Map<string, number>>(new Map())
+  const revealTimersRef = useRef<Map<string, number>>(new Map())
 
   const orderedDiscoveries = useMemo(
     () => [...discoveries].sort((left, right) => right.confidence - left.confidence),
     [discoveries],
   )
+
+  useEffect(() => {
+    knownDiscoveryIdsRef.current = new Set(discoveries.map((discovery) => discovery.id))
+    setRevealingDiscoveryIds(new Set())
+    setDisplayConfidenceByDiscoveryId({})
+    confidenceTimersRef.current.forEach((timerId) => window.clearInterval(timerId))
+    confidenceTimersRef.current.clear()
+    revealTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
+    revealTimersRef.current.clear()
+  }, [currentInvestigationId])
+
+  useEffect(() => {
+    const knownDiscoveryIds = knownDiscoveryIdsRef.current
+    const newDiscoveries = discoveries.filter((discovery) => !knownDiscoveryIds.has(discovery.id))
+    discoveries.forEach((discovery) => knownDiscoveryIds.add(discovery.id))
+
+    if (newDiscoveries.length === 0) {
+      return
+    }
+
+    if (prefersReducedMotion()) {
+      setDisplayConfidenceByDiscoveryId((current) => {
+        const next = { ...current }
+        newDiscoveries.forEach((discovery) => {
+          next[discovery.id] = confidencePercent(discovery.confidence)
+        })
+        return next
+      })
+      return
+    }
+
+    setRevealingDiscoveryIds((current) => {
+      const next = new Set(current)
+      newDiscoveries.forEach((discovery) => next.add(discovery.id))
+      return next
+    })
+    setDisplayConfidenceByDiscoveryId((current) => {
+      const next = { ...current }
+      newDiscoveries.forEach((discovery) => {
+        next[discovery.id] = 0
+      })
+      return next
+    })
+  }, [discoveries])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    orderedDiscoveries.forEach((discovery) => {
+      if (!revealingDiscoveryIds.has(discovery.id) || confidenceTimersRef.current.has(discovery.id)) {
+        return
+      }
+
+      const finalPercent = confidencePercent(discovery.confidence)
+      if (prefersReducedMotion()) {
+        setDisplayConfidenceByDiscoveryId((current) => ({
+          ...current,
+          [discovery.id]: finalPercent,
+        }))
+        return
+      }
+
+      let step = 0
+      const timerId = window.setInterval(() => {
+        step += 1
+        const nextPercent = Math.round(finalPercent * Math.min(step / DISCOVERY_CONFIDENCE_COUNT_UP_STEPS, 1))
+        setDisplayConfidenceByDiscoveryId((current) => ({
+          ...current,
+          [discovery.id]: nextPercent,
+        }))
+        if (step >= DISCOVERY_CONFIDENCE_COUNT_UP_STEPS) {
+          window.clearInterval(timerId)
+          confidenceTimersRef.current.delete(discovery.id)
+        }
+      }, DISCOVERY_CONFIDENCE_COUNT_UP_INTERVAL_MS)
+      confidenceTimersRef.current.set(discovery.id, timerId)
+
+      const revealTimerId = window.setTimeout(() => {
+        revealTimersRef.current.delete(discovery.id)
+        setRevealingDiscoveryIds((current) => {
+          const next = new Set(current)
+          next.delete(discovery.id)
+          return next
+        })
+      }, DISCOVERY_REVEAL_DURATION_MS)
+      revealTimersRef.current.set(discovery.id, revealTimerId)
+    })
+  }, [isOpen, orderedDiscoveries, revealingDiscoveryIds])
+
+  useEffect(() => () => {
+    confidenceTimersRef.current.forEach((timerId) => window.clearInterval(timerId))
+    revealTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
+  }, [])
 
   useEffect(() => {
     const handlePanelToggle = () => {
@@ -79,9 +191,9 @@ export default function DiscoveryPanel({
           className="forensic-overlay-handle absolute right-0 top-44 z-40 flex items-center gap-2 rounded-l-xl p-3 text-[var(--forensic-warning)] transition-all hover:bg-[var(--forensic-warning)] hover:text-black"
         >
           <ChevronLeft size={18} />
-          <Lightbulb size={20} className={hasUnread ? 'animate-pulse' : ''} />
+          <Lightbulb size={20} className={hasUnread ? 'forensic-discovery-handle-icon-unread' : ''} />
           {hasUnread && (
-            <span className="absolute -left-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-black text-white">
+            <span className="forensic-discovery-handle-badge absolute -left-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-black text-white">
               !
             </span>
           )}
@@ -131,12 +243,24 @@ export default function DiscoveryPanel({
               )}
             </div>
           ) : (
-            orderedDiscoveries.map((discovery) => (
-              <div key={discovery.id} className="forensic-board-section rounded-[1.35rem] p-4">
+            orderedDiscoveries.map((discovery) => {
+              const isRevealing = revealingDiscoveryIds.has(discovery.id)
+              const expanded = Boolean(expandedEvidenceByDiscoveryId[discovery.id])
+              const displayConfidence = displayConfidenceByDiscoveryId[discovery.id] ?? confidencePercent(discovery.confidence)
+
+              return (
+              <div
+                key={discovery.id}
+                data-testid={`discovery-card-${discovery.id}`}
+                className={`forensic-board-section forensic-discovery-card rounded-[1.35rem] p-4 ${isRevealing ? 'forensic-discovery-card-reveal' : ''}`}
+              >
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <h3 className="text-sm font-black uppercase tracking-[0.16em] text-[var(--forensic-warning)]">{discovery.title}</h3>
-                  <span className="forensic-badge forensic-badge-warning rounded px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em]">
-                    {formatConfidence(discovery.confidence)}
+                  <span
+                    data-testid={`discovery-confidence-${discovery.id}`}
+                    className="forensic-badge forensic-badge-warning rounded px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em]"
+                  >
+                    {formatConfidence(displayConfidence / 100)}
                   </span>
                 </div>
 
@@ -161,14 +285,18 @@ export default function DiscoveryPanel({
                     <button
                       type="button"
                       onClick={() => toggleEvidence(discovery.id)}
-                      aria-expanded={Boolean(expandedEvidenceByDiscoveryId[discovery.id])}
-                      aria-label={`${expandedEvidenceByDiscoveryId[discovery.id] ? 'Hide' : 'Show'} ${discovery.sourceNodeIDs.length} supporting evidence nodes`}
+                      aria-expanded={expanded}
+                      aria-label={`${expanded ? 'Hide' : 'Show'} ${discovery.sourceNodeIDs.length} supporting evidence nodes`}
                       className="flex w-full items-center justify-between border-t border-[rgba(246,200,121,0.14)] pt-3 text-left text-[10px] font-black uppercase tracking-[0.18em] text-[var(--forensic-warning)] transition-colors hover:text-[var(--forensic-accent)]"
                     >
                       <span>Supporting evidence: {discovery.sourceNodeIDs.length} node{discovery.sourceNodeIDs.length === 1 ? '' : 's'}</span>
-                      {expandedEvidenceByDiscoveryId[discovery.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
-                    {expandedEvidenceByDiscoveryId[discovery.id] && (
+                    <div
+                      data-testid={`discovery-evidence-panel-${discovery.id}`}
+                      aria-hidden={!expanded}
+                      className={`forensic-discovery-evidence-panel ${expanded ? 'forensic-discovery-evidence-panel-open' : 'forensic-discovery-evidence-panel-closed'}`}
+                    >
                       <div className="mt-3 divide-y divide-[rgba(116,148,171,0.16)] border-y border-[rgba(116,148,171,0.16)]">
                         {discovery.sourceNodeIDs.map((nodeId) => {
                           const evidence = evidenceByNodeId[nodeId]
@@ -194,11 +322,12 @@ export default function DiscoveryPanel({
                           )
                         })}
                       </div>
-                    )}
+                    </div>
                   </div>
                 </div>
               </div>
-            ))
+              )
+            })
           )}
         </div>
       </div>

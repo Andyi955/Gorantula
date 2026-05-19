@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -619,7 +619,41 @@ describe('DetectiveBoard relationship legend', () => {
     expect(theoryButton).toHaveClass('forensic-utility-button-complete')
     expect(within(theoryButton).getByTestId('theory-utility-notification')).toBeInTheDocument()
     expect(discoveryButton).toHaveClass('forensic-utility-button-discovery-complete')
-    expect(within(discoveryButton).getByTestId('discovery-utility-notification')).toBeInTheDocument()
+    expect(within(discoveryButton).getByTestId('discovery-utility-notification')).toHaveClass('forensic-utility-notification-dot-unread')
+  })
+
+  it('replays the discovery demo from the QA utility rail without backend socket messages', async () => {
+    const socket = new MockSocket()
+    const discoveryDemoListener = vi.fn()
+    window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, discoveryDemoListener as EventListener)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      fireEvent.click(screen.getByRole('button', { name: /replay discovery demo/i }))
+
+      expect(discoveryDemoListener).toHaveBeenCalledTimes(1)
+      expect((discoveryDemoListener.mock.calls[0][0] as CustomEvent).detail).toEqual(expect.objectContaining({
+        investigationId: 'investigation-1',
+        requestId: expect.any(String),
+      }))
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, discoveryDemoListener as EventListener)
+    }
+  })
+
+  it('does not pulse the discovery utility dot after discoveries are read', () => {
+    renderBoard('investigation-1', null, {
+      hasDiscoveryReady: true,
+      hasUnreadDiscoveries: false,
+    })
+
+    const discoveryButton = screen.getByRole('button', { name: /discoveries ready/i })
+
+    expect(within(discoveryButton).queryByTestId('discovery-utility-notification')).not.toBeInTheDocument()
   })
 
   it('renders board controls in an overlay outside the action bar', async () => {

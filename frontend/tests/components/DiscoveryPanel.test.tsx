@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import DiscoveryPanel from '../../src/components/DiscoveryPanel'
@@ -17,6 +17,11 @@ const discovery = {
 }
 
 describe('DiscoveryPanel', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
   it('stays available with an empty state when no discoveries are approved', async () => {
     const user = userEvent.setup()
 
@@ -81,6 +86,145 @@ describe('DiscoveryPanel', () => {
 
     await user.click(screen.getByRole('button', { name: /open evidence manufacturing source/i }))
     expect(onOpenDiscovery).toHaveBeenCalledWith('node-1')
+  })
+
+  it('reveals newly arrived discoveries and counts confidence up when the panel is open', async () => {
+    vi.useFakeTimers()
+    const onMarkRead = vi.fn()
+
+    const { rerender } = render(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[]}
+        evidenceByNodeId={{}}
+        hasUnread={false}
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={onMarkRead}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /open discoveries/i }))
+
+    rerender(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[discovery]}
+        evidenceByNodeId={{}}
+        hasUnread
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={onMarkRead}
+      />,
+    )
+
+    const card = screen.getByTestId('discovery-card-discovery-inv-1-0')
+    expect(card).toHaveClass('forensic-discovery-card-reveal')
+    expect(screen.getByTestId('discovery-confidence-discovery-inv-1-0')).toHaveTextContent('0%')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1440)
+    })
+
+    expect(screen.getByTestId('discovery-confidence-discovery-inv-1-0')).toHaveTextContent('94%')
+  })
+
+  it('does not replay reveal animation for discoveries present on initial load', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[discovery]}
+        evidenceByNodeId={{}}
+        hasUnread={false}
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /open discoveries/i }))
+
+    expect(screen.getByTestId('discovery-card-discovery-inv-1-0')).not.toHaveClass('forensic-discovery-card-reveal')
+    expect(screen.getByTestId('discovery-confidence-discovery-inv-1-0')).toHaveTextContent('94%')
+  })
+
+  it('shows final confidence immediately when reduced motion is preferred', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    const { rerender } = render(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[]}
+        evidenceByNodeId={{}}
+        hasUnread={false}
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /open discoveries/i }))
+
+    rerender(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[discovery]}
+        evidenceByNodeId={{}}
+        hasUnread
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('discovery-confidence-discovery-inv-1-0')).toHaveTextContent('94%')
+  })
+
+  it('uses smooth accordion state classes for supporting evidence', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[discovery]}
+        evidenceByNodeId={{
+          'node-1': {
+            id: 'node-1',
+            title: 'Manufacturing source',
+            summary: 'The first source describes the shared production bottleneck.',
+          },
+        }}
+        hasUnread={false}
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /open discoveries/i }))
+
+    const toggle = screen.getByRole('button', { name: /show 2 supporting evidence nodes/i })
+    const panel = screen.getByTestId('discovery-evidence-panel-discovery-inv-1-0')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(panel).toHaveClass('forensic-discovery-evidence-panel-closed')
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(panel).toHaveClass('forensic-discovery-evidence-panel-open')
+    expect(screen.getByText('Manufacturing source')).toBeInTheDocument()
   })
 
   it('marks discoveries read from board toggle events without render-phase parent updates', () => {

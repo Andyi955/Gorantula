@@ -12,6 +12,7 @@ import {
 export const BROWSER_QA_SEEDED_EVENT = 'gorantula:browser-qa-seeded'
 export const BROWSER_QA_CLEARED_EVENT = 'gorantula:browser-qa-cleared'
 export const BROWSER_QA_ANIMATION_DEMO_EVENT = 'gorantula:browser-qa-play-animations'
+export const BROWSER_QA_DISCOVERY_DEMO_EVENT = 'gorantula:browser-qa-play-discovery-demo'
 export const BROWSER_QA_ANIMATION_DEMO_PENDING_KEY = 'gorantula_browser_qa_animation_demo_pending'
 export const BROWSER_QA_SOURCE_INVESTIGATION_ID = 'qa-browser-source'
 export const BROWSER_QA_TARGET_INVESTIGATION_ID = 'qa-browser-target'
@@ -31,6 +32,47 @@ export interface BrowserQaAnimationDemoDetail {
   requestId?: string
   includeConnections?: boolean
 }
+
+export interface BrowserQaDiscoveryDemoDetail {
+  investigationId: string
+  requestId?: string
+}
+
+export const createBrowserQaDiscoveryDemoRecords = (investigationId: string) => [
+  {
+    id: `qa-discovery-grid-near-miss-${investigationId}`,
+    title: 'QA Discovery: Grid Near-Miss Pattern',
+    claim: 'Two QA evidence cards point to the same substation corridor as a recurring reliability pressure point.',
+    impact: 'The pattern turns isolated load and cooling notes into a stronger infrastructure-risk finding for animation review.',
+    confidence: 0.92,
+    sourceNodeIDs: ['qa-target-existing', 'imported-qa-target-node'],
+    sourceVaultID: investigationId,
+    createdAt: '2026-05-19T12:00:00Z',
+    nodeKind: 'discovery',
+  },
+  {
+    id: `qa-discovery-imported-brief-${investigationId}`,
+    title: 'QA Discovery: Imported Brief Confirms Exposure',
+    claim: 'The imported regulator brief reinforces the target case with prior near-miss language and mitigation guidance.',
+    impact: 'This gives the discovery accordion a mixed local/imported evidence trail without calling any provider.',
+    confidence: 0.86,
+    sourceNodeIDs: ['imported-qa-target-node', 'qa-target-existing'],
+    sourceVaultID: investigationId,
+    createdAt: '2026-05-19T12:01:00Z',
+    nodeKind: 'discovery',
+  },
+  {
+    id: `qa-discovery-cost-signal-${investigationId}`,
+    title: 'QA Discovery: Cost Signal Needs Review',
+    claim: 'The available QA evidence suggests reliability costs may concentrate around the same operational constraint.',
+    impact: 'This lower-confidence item gives the panel a second rank and count-up target for visual QA.',
+    confidence: 0.74,
+    sourceNodeIDs: ['qa-target-existing'],
+    sourceVaultID: investigationId,
+    createdAt: '2026-05-19T12:02:00Z',
+    nodeKind: 'discovery',
+  },
+]
 
 const createEvidenceNode = (
   id: string,
