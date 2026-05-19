@@ -168,6 +168,11 @@ body {
   transform: none;
 }
 
+.react-flow__node.forensic-react-flow-node-moving {
+  transition: transform 900ms cubic-bezier(0.16, 0.84, 0.28, 1);
+  will-change: transform;
+}
+
 .forensic-edge-main {
   transition: filter 160ms ease, opacity 160ms ease, stroke-width 160ms ease;
 }
@@ -213,6 +218,14 @@ body {
 
 .forensic-node-persona-scan {
   animation: forensicNodePersonaScan 1.6s ease-out both;
+}
+
+.forensic-node-layout-choreography {
+  animation: forensicNodeLayoutChoreography 900ms ease-in-out both;
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(129, 227, 255, 0.12),
+    0 0 24px rgba(129, 227, 255, 0.14) !important;
 }
 
 .forensic-node-shell.forensic-node-persona-scan::after {
@@ -327,6 +340,15 @@ body {
   }
 }
 
+@keyframes forensicNodeLayoutChoreography {
+  0%, 100% {
+    filter: brightness(1);
+  }
+  42% {
+    filter: brightness(1.14);
+  }
+}
+
 @keyframes forensicNodeScanSweep {
   0% {
     opacity: 0;
@@ -352,8 +374,13 @@ body {
   .forensic-node-connection-highlight,
   .forensic-node-entry,
   .forensic-node-persona-scan,
+  .forensic-node-layout-choreography,
   .forensic-node-shell.forensic-node-persona-scan::after {
     animation: none !important;
+    transition: none !important;
+  }
+
+  .react-flow__node.forensic-react-flow-node-moving {
     transition: none !important;
   }
 

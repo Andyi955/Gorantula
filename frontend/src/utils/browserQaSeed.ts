@@ -29,6 +29,7 @@ export interface BrowserQaSeedResult {
 export interface BrowserQaAnimationDemoDetail {
   investigationId: string
   requestId?: string
+  includeConnections?: boolean
 }
 
 const createEvidenceNode = (

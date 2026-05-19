@@ -24,7 +24,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode, { type NodeSaveMode } from './CustomNode';
 import CustomEdge from './CustomEdge';
-import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
+import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
@@ -507,12 +507,31 @@ const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
 const BOARD_CONTROLS_PANEL_MARGIN = 16;
 const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
 const CONNECTION_REVEAL_DURATION_MS = 3200;
+const CONNECT_LAYOUT_SETTLE_MS = 850;
 const NODE_ENTRY_STAGGER_MS = 120;
 const NODE_ENTRY_MAX_DELAY_MS = 840;
 const NODE_ENTRY_ANIMATION_DURATION_MS = 1800;
 const PERSONA_SCAN_DURATION_MS = 2200;
 const BOARD_QA_TOOLS_ENABLED_KEY = 'detective_board_qa_tools_enabled';
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
+const LAYOUT_CHOREOGRAPHY_NODE_CLASS = 'forensic-react-flow-node-moving';
+
+const appendClassName = (className: string | undefined, nextClassName: string) => {
+    const classes = new Set((className || '').split(/\s+/).filter(Boolean));
+    classes.add(nextClassName);
+    return Array.from(classes).join(' ');
+};
+
+const removeClassName = (className: string | undefined, targetClassName: string) =>
+    (className || '').split(/\s+/).filter((classNamePart) => classNamePart && classNamePart !== targetClassName).join(' ');
+
+const getConnectLayoutSettleDelay = () => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+        return CONNECT_LAYOUT_SETTLE_MS;
+    }
+
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CONNECT_LAYOUT_SETTLE_MS;
+};
 
 const isImportedEvidenceNode = (nodeLike: { id?: string; title?: string } | null | undefined) =>
     Boolean(nodeLike?.title?.includes('[IMPORTED]') || nodeLike?.id?.startsWith('imported-'));
@@ -539,22 +558,96 @@ const QA_ANIMATION_DEMO_NODES = [
         fullText: 'An imported regulator brief references prior near-miss events and recommends tighter demand-response rules for data center operators.',
         sourceURL: 'https://example.com/qa-regulator-brief',
     },
+    {
+        id: 'qa-animation-capacity-auction',
+        title: 'Capacity Auction Shock',
+        summary: 'A market note ties higher capacity prices to forecast AI compute load and warns that utility upgrades are lagging demand.',
+        fullText: 'A market note ties higher capacity prices to forecast AI compute load and warns that utility upgrades are lagging demand.',
+        sourceURL: 'https://example.com/qa-capacity-auction',
+    },
+    {
+        id: 'qa-animation-demand-response',
+        title: 'Operator Curtailment Plan',
+        summary: 'A grid operator drafts a demand-response playbook requiring large campuses to shed load during fast voltage swings.',
+        fullText: 'A grid operator drafts a demand-response playbook requiring large campuses to shed load during fast voltage swings.',
+        sourceURL: 'https://example.com/qa-demand-response',
+    },
+    {
+        id: 'qa-animation-backup-dispatch',
+        title: 'Backup Dispatch Window',
+        summary: 'Emergency backup generation was briefly dispatched after cooling systems and compute racks peaked at the same time.',
+        fullText: 'Emergency backup generation was briefly dispatched after cooling systems and compute racks peaked at the same time.',
+        sourceURL: 'https://example.com/qa-backup-dispatch',
+    },
 ] as const;
+
+const QA_ANIMATION_DEMO_STAGING_POSITIONS = [
+    { x: 96, y: 96 },
+    { x: 768, y: 384 },
+    { x: 288, y: 672 },
+    { x: 864, y: 96 },
+    { x: 96, y: 456 },
+    { x: 576, y: 672 },
+] as const;
+
+const getQaAnimationDemoStagingPosition = (index: number) =>
+    QA_ANIMATION_DEMO_STAGING_POSITIONS[index] || {
+        x: 96 + (index % 3) * 384,
+        y: 96 + Math.floor(index / 3) * 288,
+    };
 
 const QA_ANIMATION_DEMO_INSIGHTS = [
     {
         personaName: 'Discovery',
         perspective: 'Looks for non-obvious operational patterns.',
-        keyFindings: ['Grid load, cooling draw, and regulatory concern point to the same reliability pressure.'],
-        observations: ['The load spike and thermal alert share a substation corridor.'],
+        keyFindings: ['Grid load, cooling draw, capacity pricing, backup dispatch, and curtailment planning point to the same reliability pressure.'],
+        observations: ['The load spike, thermal alert, market shock, and backup dispatch cluster around the same operational stress pattern.'],
         hypotheses: ['Clustered AI compute demand is creating repeatable grid stress rather than isolated incidents.'],
-        connections: ['Grid Load Spike connects to Thermal Cooling Alert through shared infrastructure stress.'],
+        connections: ['The scattered evidence resolves into a single chain: load growth, cooling demand, market pressure, operator response, and regulatory action.'],
         questions: ['Which operators are tied to the constrained corridor?'],
         confidence: 0.86,
-        fullAnalysis: 'The demo evidence suggests a recurring reliability pattern across load, cooling, and regulatory signals.',
+        fullAnalysis: 'The demo evidence suggests a recurring reliability pattern across load, cooling, market, backup, operator, and regulatory signals.',
         nodeIDs: QA_ANIMATION_DEMO_NODES.map((node) => node.id),
     },
 ];
+
+const QA_ANIMATION_DEMO_CONNECTIONS = [
+    {
+        source: 'qa-animation-grid-load',
+        target: 'qa-animation-thermal-cooling',
+        tag: 'INFRASTRUCTURE_STRESS',
+        reasoning: 'The load spike and cooling alert point to the same stressed infrastructure corridor.',
+        confidence: 0.86,
+    },
+    {
+        source: 'qa-animation-thermal-cooling',
+        target: 'imported-qa-animation-brief',
+        tag: 'REGULATORY_SIGNAL',
+        reasoning: 'The regulator brief references the same cooling and substation pressure pattern.',
+        confidence: 0.82,
+    },
+    {
+        source: 'qa-animation-capacity-auction',
+        target: 'qa-animation-grid-load',
+        tag: 'MARKET_PRESSURE',
+        reasoning: 'The auction shock follows the same AI load forecasts that triggered the utility stress warning.',
+        confidence: 0.8,
+    },
+    {
+        source: 'qa-animation-demand-response',
+        target: 'qa-animation-grid-load',
+        tag: 'DEMAND_RESPONSE',
+        reasoning: 'The curtailment plan is an operator response to fast voltage swings caused by clustered load spikes.',
+        confidence: 0.84,
+    },
+    {
+        source: 'qa-animation-backup-dispatch',
+        target: 'qa-animation-thermal-cooling',
+        tag: 'RESILIENCE_GAP',
+        reasoning: 'Backup dispatch coincides with the same cooling-demand peak flagged in the facilities alert.',
+        confidence: 0.78,
+    },
+] as const;
 
 const stripTransientNodeData = (node: Node): Node => {
     const {
@@ -566,10 +659,12 @@ const stripTransientNodeData = (node: Node): Node => {
         nodeEntrySequence: _nodeEntrySequence,
         isPersonaScanActive: _isPersonaScanActive,
         personaScanStartedAt: _personaScanStartedAt,
+        isLayoutChoreographyActive: _isLayoutChoreographyActive,
+        layoutChoreographyStartedAt: _layoutChoreographyStartedAt,
         ...stableNodeData
     } = node.data || {};
-
-    return {
+    const stableClassName = removeClassName((node as Node & { className?: string }).className, LAYOUT_CHOREOGRAPHY_NODE_CLASS);
+    const stableNode = {
         ...node,
         data: {
             ...stableNodeData,
@@ -589,7 +684,15 @@ const stripTransientNodeData = (node: Node): Node => {
                 }))
                 : node.data?.personaInsights,
         }
-    };
+    } as Node & { className?: string };
+
+    if (stableClassName) {
+        stableNode.className = stableClassName;
+    } else {
+        delete stableNode.className;
+    }
+
+    return stableNode;
 };
 
 const sanitizeNodesForPersistence = (nodes: Node[]) => nodes.map(stripTransientNodeData);
@@ -721,6 +824,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const nodeEntrySequenceRef = useRef(0);
     const nodeEntryTimeoutsRef = useRef<Map<string, number>>(new Map());
     const personaScanTimeoutsRef = useRef<Map<string, number>>(new Map());
+    const layoutChoreographyTimeoutsRef = useRef<number[]>([]);
+    const isLayoutChoreographyActiveRef = useRef(false);
+    const visibleConnectEdgeIdsRef = useRef<Set<string>>(new Set());
+    const connectChoreographyBaseNodesRef = useRef<Node[]>([]);
+    const connectChoreographyBaseEdgesRef = useRef<Edge[]>([]);
     const qaAnimationTimeoutsRef = useRef<number[]>([]);
     const qaAnimationDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
@@ -790,6 +898,31 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
     }, [clearConnectionRevealForEdges]);
 
+    const stripNodeEntryFromNodes = useCallback((nodesToStrip: Node[]) => nodesToStrip.map((node) => {
+        const {
+            nodeEntryAnimation: _nodeEntryAnimation,
+            nodeEntryDelayMs: _nodeEntryDelayMs,
+            nodeEntryStartedAt: _nodeEntryStartedAt,
+            nodeEntrySequence: _nodeEntrySequence,
+            ...stableData
+        } = node.data || {};
+
+        return {
+            ...node,
+            data: stableData,
+        };
+    }), []);
+
+    const cancelNodeEntryCleanupForNodes = useCallback((nodeIds: string[]) => {
+        nodeIds.forEach((nodeId) => {
+            const activeTimeout = nodeEntryTimeoutsRef.current.get(nodeId);
+            if (activeTimeout) {
+                window.clearTimeout(activeTimeout);
+                nodeEntryTimeoutsRef.current.delete(nodeId);
+            }
+        });
+    }, []);
+
     const clearNodeEntryForNodes = useCallback((nodeIds: string[]) => {
         const targetIds = new Set(nodeIds);
         if (targetIds.size === 0) {
@@ -801,20 +934,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 return node;
             }
 
-            const {
-                nodeEntryAnimation: _nodeEntryAnimation,
-                nodeEntryDelayMs: _nodeEntryDelayMs,
-                nodeEntryStartedAt: _nodeEntryStartedAt,
-                nodeEntrySequence: _nodeEntrySequence,
-                ...stableData
-            } = node.data || {};
-
-            return {
-                ...node,
-                data: stableData,
-            };
+            return stripNodeEntryFromNodes([node])[0] || node;
         }));
-    }, []);
+    }, [stripNodeEntryFromNodes]);
 
     const createNodeEntryMetadata = useCallback((isImported: boolean) => {
         const sequence = nodeEntrySequenceRef.current;
@@ -882,6 +1004,64 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             personaScanTimeoutsRef.current.set(nodeId, timeoutId);
         });
     }, [clearPersonaScanForNodes]);
+
+    const clearLayoutChoreographyTimeouts = useCallback(() => {
+        layoutChoreographyTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        layoutChoreographyTimeoutsRef.current = [];
+    }, []);
+
+    const trackLayoutChoreographyTimeout = useCallback((callback: () => void, delayMs: number) => {
+        const timeoutId = window.setTimeout(() => {
+            layoutChoreographyTimeoutsRef.current = layoutChoreographyTimeoutsRef.current.filter((activeTimeoutId) => activeTimeoutId !== timeoutId);
+            callback();
+        }, delayMs);
+
+        layoutChoreographyTimeoutsRef.current.push(timeoutId);
+        return timeoutId;
+    }, []);
+
+    const markNodesForLayoutChoreography = useCallback((nodesToMark: Node[]) => {
+        const startedAt = Date.now();
+
+        return nodesToMark.map((node) => ({
+            ...node,
+            className: appendClassName((node as Node & { className?: string }).className, LAYOUT_CHOREOGRAPHY_NODE_CLASS),
+            data: {
+                ...node.data,
+                isLayoutChoreographyActive: true,
+                layoutChoreographyStartedAt: startedAt,
+            },
+        }));
+    }, []);
+
+    const stripLayoutChoreographyFromNodes = useCallback((nodesToStrip: Node[]) => nodesToStrip.map((node) => {
+        const {
+            isLayoutChoreographyActive: _isLayoutChoreographyActive,
+            layoutChoreographyStartedAt: _layoutChoreographyStartedAt,
+            ...stableData
+        } = node.data || {};
+        const stableClassName = removeClassName((node as Node & { className?: string }).className, LAYOUT_CHOREOGRAPHY_NODE_CLASS);
+        const stableNode = {
+            ...node,
+            data: stableData,
+        } as Node & { className?: string };
+
+        if (stableClassName) {
+            stableNode.className = stableClassName;
+        } else {
+            delete stableNode.className;
+        }
+
+        return stableNode;
+    }), []);
+
+    const clearLayoutChoreographyState = useCallback(() => {
+        clearLayoutChoreographyTimeouts();
+        isLayoutChoreographyActiveRef.current = false;
+        connectChoreographyBaseNodesRef.current = [];
+        connectChoreographyBaseEdgesRef.current = [];
+        setNodes((currentNodes) => stripLayoutChoreographyFromNodes(currentNodes));
+    }, [clearLayoutChoreographyTimeouts, stripLayoutChoreographyFromNodes]);
 
     const handleConnectionHover = useCallback((payload: { source?: string; target?: string; color?: string; active?: boolean }) => {
         const highlightIds = new Set([payload.source, payload.target].filter((id): id is string => Boolean(id)));
@@ -1227,6 +1407,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 edge.sourceHandle,
                 edge.targetHandle
             );
+            const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
+            const routeTargetPoint = getPortById(targetNode, route.targetPortId);
 
             if (import.meta.env.DEV) {
                 console.debug('[StrictGridRoute]', {
@@ -1238,6 +1420,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     sourceHandleOut: route.sourcePortId,
                     targetHandleOut: route.targetPortId,
                     routePoints: route.points,
+                    routeSourcePoint,
+                    routeTargetPoint,
                 });
             }
 
@@ -1251,6 +1435,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    routeSourcePoint,
+                    routeTargetPoint,
                     sourcePortSide: route.sourceSide,
                     targetPortSide: route.targetSide,
                     snapEnabled: snapConnectionLabels,
@@ -1259,7 +1445,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
     }, [snapConnectionLabels]);
 
-    const syncStrictGridEdgesToNodes = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
+    const buildStrictGridState = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
         const collectActivePortIds = (edgesToInspect: Edge[]) => {
             const activePortIdsByNode = new Map<string, Set<string>>();
 
@@ -1308,10 +1494,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             edgeCount: finalizedStrictEdges.length,
         });
 
-        setBoardMode('strict-grid');
-        setNodes(finalizedNodes);
-        setEdges(finalizedStrictEdges);
+        return {
+            nodes: finalizedNodes,
+            edges: finalizedStrictEdges,
+        };
     }, [decorateStrictGridEdges]);
+
+    const syncStrictGridEdgesToNodes = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
+        const finalizedState = buildStrictGridState(nextEdges, nextNodes);
+
+        setBoardMode('strict-grid');
+        setNodes(finalizedState.nodes);
+        setEdges(finalizedState.edges);
+    }, [buildStrictGridState]);
 
     const syncStrictGridSubset = useCallback((
         changedNodeIds: string[],
@@ -1324,6 +1519,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         const normalizedNodes = normalizeStrictGridNodes(nextNodes);
+        const normalizedNodeMap = new Map(normalizedNodes.map((node) => [node.id, node]));
         const affectedEdges = nextEdges.filter((edge) => changedNodeIdSet.has(edge.source) || changedNodeIdSet.has(edge.target));
         const affectedAssignments = assignStrictGridPorts(affectedEdges, normalizedNodes);
         const updatedEdges = nextEdges.map((edge) => {
@@ -1331,6 +1527,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             if (!route) {
                 return edge;
             }
+            const sourceNode = normalizedNodeMap.get(edge.source);
+            const targetNode = normalizedNodeMap.get(edge.target);
 
             return {
                 ...edge,
@@ -1342,6 +1540,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    routeSourcePoint: sourceNode ? getPortById(sourceNode, route.sourcePortId) : undefined,
+                    routeTargetPoint: targetNode ? getPortById(targetNode, route.targetPortId) : undefined,
                     sourcePortSide: route.sourceSide,
                     targetPortSide: route.targetSide,
                     snapEnabled: snapConnectionLabels,
@@ -1417,6 +1617,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 edge.sourceHandle,
                 edge.targetHandle
             );
+            const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
+            const routeTargetPoint = getPortById(targetNode, route.targetPortId);
 
             return {
                 ...edge,
@@ -1428,6 +1630,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    routeSourcePoint,
+                    routeTargetPoint,
                     sourcePortSide: route.sourceSide,
                     targetPortSide: route.targetSide,
                     snapEnabled: snapConnectionLabels,
@@ -1490,6 +1694,85 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setNodes(handledNodes);
         setEdges(finalEdges);
     }, [boardMode, syncStrictGridEdgesToNodes]);
+
+    const buildConnectLayoutState = useCallback((nextNodes: Node[], nextEdges: Edge[]) => {
+        if (boardMode === 'strict-grid') {
+            const layoutedNodes = getStrictGridLayoutedNodes(nextNodes, nextEdges);
+            return buildStrictGridState(nextEdges, layoutedNodes);
+        }
+
+        const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
+        const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+
+        return {
+            nodes: layoutedNodes,
+            edges: finalEdges,
+        };
+    }, [boardMode, buildStrictGridState]);
+
+    const buildFixedLayoutEdgeState = useCallback((layoutedNodes: Node[], nextEdges: Edge[]) => {
+        if (boardMode === 'strict-grid') {
+            return buildStrictGridState(nextEdges, layoutedNodes);
+        }
+
+        return {
+            nodes: layoutedNodes,
+            edges: nextEdges,
+        };
+    }, [boardMode, buildStrictGridState]);
+
+    const startConnectLayoutChoreography = useCallback((nextNodes: Node[], nextEdges: Edge[]) => {
+        clearLayoutChoreographyTimeouts();
+        isLayoutChoreographyActiveRef.current = true;
+        const stableNodes = stripNodeEntryFromNodes(nextNodes);
+        cancelNodeEntryCleanupForNodes(stableNodes.map((node) => node.id));
+        connectChoreographyBaseNodesRef.current = stableNodes;
+        connectChoreographyBaseEdgesRef.current = nextEdges;
+        visibleConnectEdgeIdsRef.current = new Set(nextEdges.map((edge) => edge.id));
+        const layoutState = buildConnectLayoutState(stableNodes, nextEdges);
+
+        setBoardMode(boardMode);
+        setNodes(markNodesForLayoutChoreography(layoutState.nodes));
+        setEdges(layoutState.edges);
+        trackLayoutChoreographyTimeout(() => {
+            fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
+        }, 100);
+    }, [boardMode, buildConnectLayoutState, cancelNodeEntryCleanupForNodes, clearLayoutChoreographyTimeouts, fitView, markNodesForLayoutChoreography, stripNodeEntryFromNodes, trackLayoutChoreographyTimeout]);
+
+    const finishConnectLayoutChoreography = useCallback((finalNodes: Node[], immediateEdges: Edge[], finalEdges: Edge[], delayedEdgeIds: string[], pendingIdsForPersistence = pendingIntegrationNodeIdsRef.current) => {
+        clearLayoutChoreographyTimeouts();
+        const settleDelayMs = getConnectLayoutSettleDelay();
+        const stableFinalNodes = stripNodeEntryFromNodes(finalNodes);
+        cancelNodeEntryCleanupForNodes(stableFinalNodes.map((node) => node.id));
+
+        setNodes(markNodesForLayoutChoreography(stableFinalNodes));
+        setEdges(immediateEdges);
+
+        trackLayoutChoreographyTimeout(() => {
+            isLayoutChoreographyActiveRef.current = false;
+            connectChoreographyBaseNodesRef.current = [];
+            connectChoreographyBaseEdgesRef.current = [];
+            setNodes(stripLayoutChoreographyFromNodes(stableFinalNodes));
+            setEdges(finalEdges);
+            scheduleConnectionRevealCleanup(delayedEdgeIds);
+            if (investigationId && loadedInvestigationId === investigationId) {
+                const existingState = getCachedBoardStateForInvestigation(investigationId);
+                void saveBoardStateForInvestigation(investigationId, {
+                    mode: boardMode,
+                    nodes: sanitizeNodesForPersistence(stableFinalNodes),
+                    edges: sanitizeEdgesForPersistence(finalEdges),
+                    pendingIntegrationNodeIds: pendingIdsForPersistence,
+                    synthesisAlerts: existingState?.synthesisAlerts || [],
+                });
+            }
+            setHasConnectedDots(true);
+            setIsAnalyzing(false);
+            setAnalysisMode(null);
+            trackLayoutChoreographyTimeout(() => {
+                fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
+            }, 100);
+        }, settleDelayMs);
+    }, [boardMode, cancelNodeEntryCleanupForNodes, clearLayoutChoreographyTimeouts, fitView, investigationId, loadedInvestigationId, markNodesForLayoutChoreography, scheduleConnectionRevealCleanup, stripLayoutChoreographyFromNodes, stripNodeEntryFromNodes, trackLayoutChoreographyTimeout]);
 
     const handleDeleteNode = useCallback((id: string) => {
         setNodes(nds => nds.filter(n => n.id !== id));
@@ -2028,8 +2311,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setAnalysisMode(null);
         setImageLightbox(null);
         nodeEntrySequenceRef.current = 0;
+        clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
-    }, [investigationId]);
+    }, [clearLayoutChoreographyState, investigationId]);
 
     useEffect(() => {
         console.debug('[DetectiveBoard] Grid visibility changed:', showGrid);
@@ -2248,6 +2532,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         nodeEntryTimeoutsRef.current.clear();
         personaScanTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         personaScanTimeoutsRef.current.clear();
+        layoutChoreographyTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        layoutChoreographyTimeoutsRef.current = [];
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
     }, []);
@@ -2630,7 +2916,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             payloadVaultId,
             connections: scopedConnections,
         });
-        const currentNodes = nodesRef.current;
+        const currentNodes = isLayoutChoreographyActiveRef.current
+            ? connectChoreographyBaseNodesRef.current
+            : nodesRef.current;
         const activeAnalysisMode = analysisModeRef.current;
         const activePendingNodeIds = pendingIntegrationNodeIdsRef.current;
         console.debug('[Board] Current nodes:', currentNodes.map(n => ({ id: n.id, title: n.data.title })));
@@ -2714,19 +3002,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 labelBgBorderRadius: 2,
             };
         });
-        scheduleConnectionRevealCleanup(newEdges.map((edge) => edge.id));
-
-        if (boardMode === 'strict-grid') {
-            const combinedEdges = activeAnalysisMode === 'incremental'
-                ? mergeIncrementalEvidenceEdges(edgesRef.current, newEdges, activePendingNodeIds)
-                : mergeEvidenceEdges(edgesRef.current, newEdges);
-
-            window.requestAnimationFrame(() => {
-                const layoutedNodes = getStrictGridLayoutedNodes(currentNodes, combinedEdges);
-                syncStrictGridEdgesToNodes(combinedEdges, layoutedNodes);
-                setTimeout(() => fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS }), 100);
-            });
-
+        const sourceEdgesForMerge = isLayoutChoreographyActiveRef.current
+            ? connectChoreographyBaseEdgesRef.current
+            : edgesRef.current;
+        const combinedEdges = activeAnalysisMode === 'incremental'
+            ? mergeIncrementalEvidenceEdges(sourceEdgesForMerge, newEdges, activePendingNodeIds)
+            : mergeEvidenceEdges(sourceEdgesForMerge, newEdges);
+        if (!isLayoutChoreographyActiveRef.current) {
+            const finalLayoutState = buildConnectLayoutState(currentNodes, combinedEdges);
+            setNodes(stripLayoutChoreographyFromNodes(finalLayoutState.nodes));
+            setEdges(finalLayoutState.edges);
+            scheduleConnectionRevealCleanup(newEdges.map((edge) => edge.id));
             if (activeAnalysisMode === 'incremental') {
                 clearPendingIntegrationNodeIds();
             }
@@ -2736,37 +3022,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             return;
         }
 
-        setEdges((eds) => {
-            const combinedEdges = activeAnalysisMode === 'incremental'
-                ? mergeIncrementalEvidenceEdges(eds, newEdges, activePendingNodeIds)
-                : mergeEvidenceEdges(eds, newEdges);
+        const delayedEdgeIds = newEdges
+            .map((edge) => edge.id)
+            .filter((edgeId) => !visibleConnectEdgeIdsRef.current.has(edgeId));
+        const delayedEdgeIdSet = new Set(delayedEdgeIds);
+        const finalEdges = combinedEdges.map((edge) => (
+            delayedEdgeIdSet.has(edge.id) ? edge : stripTransientEdgeData(edge)
+        ));
+        const immediateEdges = finalEdges.filter((edge) => !delayedEdgeIdSet.has(edge.id));
+        const finalLayoutState = buildConnectLayoutState(currentNodes, finalEdges);
+        const immediateLayoutState = buildFixedLayoutEdgeState(finalLayoutState.nodes, immediateEdges);
+        const finalFixedState = buildFixedLayoutEdgeState(finalLayoutState.nodes, finalEdges);
 
-            setNodes((currentNodes) => {
-                const { edges: finalEdges, handledNodes } = distributeEdges(combinedEdges, currentNodes);
-                const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
-
-                // Update edges synchronously (outside setNodes if possible, but for simplicity here we return nodes and set edges separately)
-                setEdges(finalEdges);
-                setTimeout(() => fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS }), 100);
-                return layoutedNodes;
-            });
-
-            // We calculate distributed edges against current nodes. 
-            // Because React state updates are queued, we resolve them both cleanly in the node queue.
-            // For edges state, we need to return the final array independently avoiding stale node reads
-            return combinedEdges; // Temporary fallback. The node queue recalculates the real edges.
-        });
+        finishConnectLayoutChoreography(
+            finalFixedState.nodes,
+            immediateLayoutState.edges,
+            finalFixedState.edges,
+            delayedEdgeIds,
+            activeAnalysisMode === 'incremental' ? [] : pendingIntegrationNodeIdsRef.current
+        );
         if (activeAnalysisMode === 'incremental') {
             clearPendingIntegrationNodeIds();
         }
-        setHasConnectedDots(true);
-        setIsAnalyzing(false);
-        setAnalysisMode(null);
-    }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, handleConnectionHover, investigationId, persistTagStyles, scheduleConnectionRevealCleanup, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
+    }, [buildConnectLayoutState, buildEdgeVisuals, buildFixedLayoutEdgeState, clearPendingIntegrationNodeIds, finishConnectLayoutChoreography, handleConnectionHover, investigationId, persistTagStyles, scheduleConnectionRevealCleanup, snapConnectionLabels, stripLayoutChoreographyFromNodes, tagStyles]);
 
-    const playBrowserQaAnimationDemo = useCallback(() => {
+    const playBrowserQaAnimationDemo = useCallback((includeConnections = true) => {
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
+        clearLayoutChoreographyState();
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -2808,11 +3091,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         expanded: false,
                         boardMode: 'strict-grid' as BoardMode,
                     },
-                    position: [
-                        { x: 96, y: 96 },
-                        { x: 480, y: 96 },
-                        { x: 288, y: 360 },
-                    ][index] || { x: 96 + index * 320, y: 96 },
+                    position: getQaAnimationDemoStagingPosition(index),
                     sourcePosition: Position.Right,
                     targetPosition: Position.Left
                 };
@@ -2832,24 +3111,73 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         const insightsTimeout = window.setTimeout(() => {
             applyPersonaInsightsToNodes(QA_ANIMATION_DEMO_INSIGHTS);
-        }, 900);
+        }, 1120);
 
         qaAnimationTimeoutsRef.current.push(insightsTimeout);
+
+        if (includeConnections) {
+            const connectTimeout = window.setTimeout(() => {
+                const demoNodeIds = new Set<string>(QA_ANIMATION_DEMO_NODES.map((demoNode) => demoNode.id));
+                let demoNodes = nodesRef.current.filter((node) => demoNodeIds.has(node.id));
+                if (demoNodes.length < 2) {
+                    demoNodes = QA_ANIMATION_DEMO_NODES.map((demoNode, index) => {
+                        const frame = calculateNodeFrame(demoNode.summary, demoNode.fullText, false, false);
+                        return {
+                            id: demoNode.id,
+                            type: 'custom',
+                            zIndex: STRICT_GRID_NODE_Z_INDEX,
+                            style: frame,
+                            data: {
+                                ...demoNode,
+                                onReadFull: () => setSelectedContent(demoNode.fullText),
+                                isDeepDiveSource: false,
+                                expanded: false,
+                                boardMode: 'strict-grid' as BoardMode,
+                            },
+                            position: getQaAnimationDemoStagingPosition(index),
+                            sourcePosition: Position.Right,
+                            targetPosition: Position.Left,
+                        };
+                    });
+                }
+                if (demoNodes.length < 2) {
+                    return;
+                }
+
+                setIsAnalyzing(true);
+                setAnalysisMode('full');
+                startConnectLayoutChoreography(demoNodes, []);
+
+                const revealTimeout = window.setTimeout(() => {
+                    handleNewConnections({
+                        connections: QA_ANIMATION_DEMO_CONNECTIONS,
+                        vaultId: investigationId,
+                    });
+                }, 180);
+                qaAnimationTimeoutsRef.current.push(revealTimeout);
+            }, 1280);
+
+            qaAnimationTimeoutsRef.current.push(connectTimeout);
+        }
     }, [
         applyPersonaInsightsToNodes,
+        clearLayoutChoreographyState,
         createNodeEntryMetadata,
         handleAttachImage,
         handleDeleteNode,
         handleNodeExpand,
+        handleNewConnections,
         handleRemoveImage,
         handleSaveNode,
         handleSetEditing,
         handleUpdateNode,
+        investigationId,
         markNodeAsRecentlyImported,
         onDeepDiveNode,
         onNavigateToChild,
         openImageLightbox,
         scheduleNodeEntryCleanup,
+        startConnectLayoutChoreography,
     ]);
 
     const tryPlayBrowserQaAnimationDemo = useCallback((detail?: BrowserQaAnimationDemoDetail | null) => {
@@ -2872,7 +3200,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         if (requestId) {
             lastQaAnimationDemoRequestIdRef.current = requestId;
         }
-        playBrowserQaAnimationDemo();
+        playBrowserQaAnimationDemo(detail?.includeConnections !== false);
         return true;
     }, [investigationId, loadedInvestigationId, playBrowserQaAnimationDemo]);
 
@@ -3087,6 +3415,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 const status = typeof msg.payload?.status === 'string' ? msg.payload.status : '';
                 if (runId && (!vaultId || vaultId === investigationId) && status === 'cancelled') {
                     stoppedPipelineRunIdsRef.current.add(runId);
+                    clearLayoutChoreographyState();
                     setIsGathering(false);
                     setIsAnalyzing(false);
                     setAnalysisMode(null);
@@ -3134,6 +3463,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }, 500);
             } else if (msg.type === 'ERROR') {
                 console.error('[Board] System Error:', msg.payload);
+                clearLayoutChoreographyState();
                 setIsAnalyzing(false);
                 setIsGathering(false);
                 setAnalysisMode(null);
@@ -3178,7 +3508,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [applyPersonaInsightsToNodes, boardMode, sharedSocket, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
+    }, [applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -3264,8 +3594,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setIsAnalyzing(true);
         setAnalysisMode(incrementalNodeIds.length > 0 ? 'incremental' : 'full');
         setEdgeReasoning(null);
-        setNodes((nds) => nds.filter(node => node.data?.nodeKind !== 'discovery'));
-        setEdges((eds) => eds.filter((edge) => {
+        const retainedEdges = edges.filter((edge) => {
             if (edge.data?.generatedBy === 'discovery') {
                 return false;
             }
@@ -3275,7 +3604,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             }
 
             return true;
-        }));
+        });
+        startConnectLayoutChoreography(evidenceNodes, retainedEdges);
         if (investigationId) {
             window.dispatchEvent(new CustomEvent('gorantula:clear-discoveries', { detail: { vaultId: investigationId } }));
         }
@@ -3310,6 +3640,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const clearBoard = () => {
         if (window.confirm("Clear board?")) {
+            clearLayoutChoreographyState();
             setBoardMode('strict-grid');
             setPendingIntegrationNodeIds([]);
             setAnalysisMode(null);
@@ -3930,7 +4261,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     {showBrowserQaBoardTools && qaToolsEnabled && (
                         <button
                             type="button"
-                            onClick={playBrowserQaAnimationDemo}
+                            onClick={() => playBrowserQaAnimationDemo()}
                             aria-label="Replay board animation demo"
                             title="Replay board animation demo"
                             className="forensic-utility-button forensic-utility-button-qa"

@@ -181,6 +181,30 @@ describe('CustomNode', () => {
     expect(shell).toHaveClass('forensic-node-persona-scan')
   })
 
+  it('renders layout choreography styling while connect-the-dots is arranging evidence', () => {
+    render(
+      <CustomNode
+        id="node-layout"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-layout',
+          title: 'Layout Node',
+          summary: 'Layout summary',
+          isLayoutChoreographyActive: true,
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-layout-choreography')
+  })
+
   it('renders a compact image preview and opens the board viewer callback', async () => {
     const user = userEvent.setup()
     const onViewImages = vi.fn()
