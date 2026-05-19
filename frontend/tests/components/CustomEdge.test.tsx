@@ -6,10 +6,11 @@ const getNodes = vi.fn(() => [])
 const getTransform = (testId: string) => screen.getByTestId(testId).getAttribute('style') || ''
 
 vi.mock('reactflow', () => ({
-  BaseEdge: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+  BaseEdge: ({ className, path, style }: { className?: string; path?: string; style?: React.CSSProperties }) => (
     <path
       data-testid="base-edge"
       className={className}
+      data-path={path}
       data-stroke-dasharray={style?.strokeDasharray}
       data-stroke-linecap={style?.strokeLinecap}
     />
@@ -182,6 +183,39 @@ describe('CustomEdge', () => {
     )
 
     expect(getTransform('edge-label-edge-6')).not.toContain('translate(60px, 60px)')
+  })
+
+  it('uses strict-grid route anchors instead of stale React Flow handle coordinates', () => {
+    render(
+      <CustomEdge
+        id="edge-anchored"
+        source="source-node"
+        target="target-node"
+        sourceX={0}
+        sourceY={0}
+        targetX={100}
+        targetY={0}
+        sourcePosition="Right"
+        targetPosition="Left"
+        label="RELATED"
+        data={{
+          boardMode: 'strict-grid',
+          sourcePortSide: 'right',
+          targetPortSide: 'left',
+          routeSourcePoint: { x: 320, y: 96 },
+          routeTargetPoint: { x: 672, y: 96 },
+          routePoints: [
+            { x: 344, y: 96 },
+            { x: 648, y: 96 },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('base-edge')).toHaveAttribute(
+      'data-path',
+      'M 320 96 L 344 96 L 648 96 L 672 96',
+    )
   })
 
   it('renders a reveal overlay and reports hover state for new connections', () => {

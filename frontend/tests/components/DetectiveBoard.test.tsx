@@ -115,6 +115,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       nodeEntryAnimation?: 'evidence' | 'imported'
       nodeEntryDelayMs?: number
       isPersonaScanActive?: boolean
+      isLayoutChoreographyActive?: boolean
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -132,6 +133,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.connectionHighlightColor ? React.createElement('span', null, `connection color ${data.connectionHighlightColor}`) : null,
       data?.nodeEntryAnimation ? React.createElement('span', null, `entry ${data.nodeEntryAnimation} ${data.nodeEntryDelayMs || 0}`) : null,
       data?.isPersonaScanActive ? React.createElement('span', null, 'persona scan') : null,
+      data?.isLayoutChoreographyActive ? React.createElement('span', null, 'layout choreography') : null,
       React.createElement(
         'button',
         {
@@ -578,13 +580,25 @@ describe('DetectiveBoard relationship legend', () => {
         'qa-animation-grid-load',
         'qa-animation-thermal-cooling',
         'imported-qa-animation-brief',
+        'qa-animation-capacity-auction',
+        'qa-animation-demand-response',
+        'qa-animation-backup-dispatch',
       ]))
+      expect(nodes).toHaveLength(6)
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1800)
       })
 
-      expect((lastReactFlowProps?.edges || []) as Array<{ label?: string }>).toEqual([])
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
+      expect(edges.map((edge) => edge.label)).toEqual(expect.arrayContaining([
+        'INFRASTRUCTURE_STRESS',
+        'REGULATORY_SIGNAL',
+        'MARKET_PRESSURE',
+        'DEMAND_RESPONSE',
+        'RESILIENCE_GAP',
+      ]))
+      expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
       expect(socket.sentMessages).toEqual([])
     } finally {
       vi.useRealTimers()
@@ -998,6 +1012,200 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('starts layout choreography when manual Connect the Dots is dispatched', async () => {
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 0, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 0, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    fireEvent.click(screen.getByRole('button', { name: /connect the dots/i }))
+
+    expect(JSON.parse(socket.sentMessages[0])).toMatchObject({
+      type: 'CONNECT_DOTS',
+      vaultId: 'investigation-1',
+    })
+
+    const nodes = (lastReactFlowProps?.nodes || []) as Array<{
+      id: string
+      className?: string
+      data?: Record<string, unknown>
+      position?: { x: number; y: number }
+    }>
+    expect(nodes).toHaveLength(3)
+    expect(nodes.every((node) => node.className?.includes('forensic-react-flow-node-moving'))).toBe(true)
+    expect(nodes.every((node) => node.data?.isLayoutChoreographyActive === true)).toBe(true)
+    expect(new Set(nodes.map((node) => `${node.position?.x},${node.position?.y}`)).size).toBeGreaterThan(1)
+  })
+
+  it('waits for card layout to settle before revealing returned connect-the-dots edges', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 0, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 0, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /connect the dots/i }))
+
+      act(() => {
+        socket.emit('CONNECTIONS_FOUND', [
+          {
+            source: 'node-a',
+            target: 'node-b',
+            tag: 'RELATED',
+            reasoning: 'New line',
+          },
+        ])
+      })
+
+      expect((lastReactFlowProps?.edges || []) as Array<unknown>).toEqual([])
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ data?: Record<string, unknown> }>).some((node) => node.data?.isLayoutChoreographyActive)).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(849)
+      })
+      expect((lastReactFlowProps?.edges || []) as Array<unknown>).toEqual([])
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(edges).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'e-node-a-node-b-RELATED',
+          data: expect.objectContaining({
+            isConnectionRevealing: true,
+            routeSourcePoint: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+            routeTargetPoint: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+          }),
+        }),
+      ]))
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ data?: Record<string, unknown> }>).some((node) => node.data?.isLayoutChoreographyActive)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves existing incremental edges while delaying only newly returned edges', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        pendingIntegrationNodeIds: ['node-c'],
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 320, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+          { id: 'node-c', position: { x: 640, y: 0 }, data: { title: 'C', summary: 'C', fullText: 'C' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Existing line' },
+          },
+        ],
+      }),
+    )
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /integrate new evidence/i }))
+      act(() => {
+        socket.emit('CONNECTIONS_FOUND', [
+          {
+            source: 'node-b',
+            target: 'node-c',
+            tag: 'RELATED',
+            reasoning: 'New incremental line',
+          },
+        ])
+      })
+
+      let edges = (lastReactFlowProps?.edges || []) as Array<{ id: string }>
+      expect(edges.map((edge) => edge.id)).toEqual(['e-node-a-node-b-RELATED'])
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(900)
+      })
+
+      edges = (lastReactFlowProps?.edges || []) as Array<{ id: string }>
+      expect(edges.map((edge) => edge.id)).toEqual(expect.arrayContaining([
+        'e-node-a-node-b-RELATED',
+        'e-node-b-node-c-RELATED',
+      ]))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears layout choreography when connect-the-dots analysis errors', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+          { id: 'node-b', position: { x: 0, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /connect the dots/i }))
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ data?: Record<string, unknown> }>).some((node) => node.data?.isLayoutChoreographyActive)).toBe(true)
+
+      act(() => {
+        socket.emit('ERROR', 'analysis failed')
+      })
+
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ data?: Record<string, unknown> }>).some((node) => node.data?.isLayoutChoreographyActive)).toBe(false)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1200)
+      })
+      expect((lastReactFlowProps?.edges || []) as Array<unknown>).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('strips transient connection animation state before persisting board data', async () => {
     vi.useFakeTimers()
 
@@ -1009,7 +1217,16 @@ describe('DetectiveBoard relationship legend', () => {
           {
             id: 'node-a',
             position: { x: 0, y: 0 },
-            data: { title: 'A', summary: 'A', fullText: 'A', isConnectionHighlighted: true, connectionHighlightColor: '#ff5500' },
+            className: 'forensic-react-flow-node-moving',
+            data: {
+              title: 'A',
+              summary: 'A',
+              fullText: 'A',
+              isConnectionHighlighted: true,
+              connectionHighlightColor: '#ff5500',
+              isLayoutChoreographyActive: true,
+              layoutChoreographyStartedAt: 123,
+            },
             style: { width: 320, height: 180 },
           },
           {
@@ -1045,8 +1262,11 @@ describe('DetectiveBoard relationship legend', () => {
       })
 
       const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.nodes[0]).not.toHaveProperty('className')
       expect(persisted.nodes[0].data).not.toHaveProperty('isConnectionHighlighted')
       expect(persisted.nodes[0].data).not.toHaveProperty('connectionHighlightColor')
+      expect(persisted.nodes[0].data).not.toHaveProperty('isLayoutChoreographyActive')
+      expect(persisted.nodes[0].data).not.toHaveProperty('layoutChoreographyStartedAt')
       expect(persisted.edges[0].data).not.toHaveProperty('isConnectionRevealing')
       expect(persisted.edges[0].data).not.toHaveProperty('connectionRevealStartedAt')
       expect(persisted.edges[0].data).not.toHaveProperty('onConnectionHover')
@@ -1616,15 +1836,43 @@ describe('DetectiveBoard relationship legend', () => {
       })
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(1600)
+        await vi.advanceTimersByTimeAsync(1170)
       })
 
-      const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      let nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
       expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
         'qa-animation-grid-load',
         'qa-animation-thermal-cooling',
         'imported-qa-animation-brief',
+        'qa-animation-capacity-auction',
+        'qa-animation-demand-response',
+        'qa-animation-backup-dispatch',
       ]))
+      expect(nodes).toHaveLength(6)
+      const stagedPositions = new Map(nodes.map((node) => [node.id, `${node.position?.x},${node.position?.y}`]))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(430)
+      })
+
+      nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
+      const movedNodeCount = nodes.filter((node) => stagedPositions.get(node.id) !== `${node.position?.x},${node.position?.y}`).length
+      expect(movedNodeCount).toBeGreaterThanOrEqual(3)
+      expect(nodes.some((node) => node.data?.nodeEntryAnimation)).toBe(false)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1400)
+      })
+
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
+      expect(edges.map((edge) => edge.label)).toEqual(expect.arrayContaining([
+        'INFRASTRUCTURE_STRESS',
+        'REGULATORY_SIGNAL',
+        'MARKET_PRESSURE',
+        'DEMAND_RESPONSE',
+        'RESILIENCE_GAP',
+      ]))
+      expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
       expect(socket.sentMessages).toEqual([])
     } finally {
       vi.useRealTimers()

@@ -390,6 +390,19 @@ const buildStrictRoutePointsFromAnchor = (
     { x: targetX, y: targetY },
 ]);
 
+const coerceRoutePoint = (point: unknown): StrictGridPoint | null => {
+    if (
+        point &&
+        typeof point === 'object' &&
+        typeof (point as StrictGridPoint).x === 'number' &&
+        typeof (point as StrictGridPoint).y === 'number'
+    ) {
+        return { x: (point as StrictGridPoint).x, y: (point as StrictGridPoint).y };
+    }
+
+    return null;
+};
+
 const alignRouteEndpoint = (
     anchor: StrictGridPoint,
     side: PortSide | undefined,
@@ -408,10 +421,10 @@ const alignRouteEndpoint = (
 
 const getStrictRouteData = (data: any, sourceX: number, sourceY: number, targetX: number, targetY: number) => {
     const hasRouteAnchor = typeof data?.routeAnchorX === 'number' && typeof data?.routeAnchorY === 'number';
-    const sourcePoint = { x: sourceX, y: sourceY };
-    const targetPoint = { x: targetX, y: targetY };
+    const sourcePoint = coerceRoutePoint(data?.routeSourcePoint) || { x: sourceX, y: sourceY };
+    const targetPoint = coerceRoutePoint(data?.routeTargetPoint) || { x: targetX, y: targetY };
     const rawPathPoints: StrictGridPoint[] = hasRouteAnchor
-        ? buildStrictRoutePointsFromAnchor(sourceX, sourceY, targetX, targetY, data.routeAnchorX, data.routeAnchorY)
+        ? buildStrictRoutePointsFromAnchor(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y, data.routeAnchorX, data.routeAnchorY)
         : [
             sourcePoint,
             ...(Array.isArray(data?.routePoints) ? data.routePoints : []),
