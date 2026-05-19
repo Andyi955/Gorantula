@@ -10,7 +10,14 @@ import {
   type InvestigationRecord,
 } from './utils/investigations'
 import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard } from './utils/hierarchicalCanvas'
-import { BROWSER_QA_CLEARED_EVENT, BROWSER_QA_SEEDED_EVENT, type BrowserQaSeedResult } from './utils/browserQaSeed'
+import {
+  BROWSER_QA_CLEARED_EVENT,
+  BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_SEEDED_EVENT,
+  createBrowserQaDiscoveryDemoRecords,
+  type BrowserQaDiscoveryDemoDetail,
+  type BrowserQaSeedResult,
+} from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
 import {
@@ -654,6 +661,7 @@ function App() {
   const [vaultResultsByInvestigation, setVaultResultsByInvestigation] = useState<Record<string, VaultResultPayload | null>>({})
   const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
   const [completedDiscoveryReviewByInvestigation, setCompletedDiscoveryReviewByInvestigation] = useState<Record<string, boolean>>({})
+  const qaDiscoveryDemoByInvestigationRef = useRef<Record<string, DiscoveryRecord[]>>({})
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
@@ -1078,6 +1086,7 @@ function App() {
           return
         }
 
+        delete qaDiscoveryDemoByInvestigationRef.current[vaultId]
         setDiscoveriesByInvestigation(prev => {
           const next = {
             ...prev,
@@ -1207,6 +1216,7 @@ function App() {
         return
       }
 
+      delete qaDiscoveryDemoByInvestigationRef.current[vaultId]
       setDiscoveriesByInvestigation(prev => {
         const next = {
           ...prev,
@@ -1246,6 +1256,7 @@ function App() {
     }
 
     const handleBrowserQaCleared = () => {
+      qaDiscoveryDemoByInvestigationRef.current = {}
       const nextInvestigations = getCachedInvestigations()
       setInvestigations(nextInvestigations)
       setCurrentInvestigationId((current) => (
@@ -1262,13 +1273,49 @@ function App() {
       setBoardWorkspaceRevision((current) => current + 1)
     }
 
+    const handleBrowserQaDiscoveryDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaDiscoveryDemoDetail>).detail
+      const requestedInvestigationId = typeof detail?.investigationId === 'string'
+        ? detail.investigationId.trim()
+        : ''
+      const targetInvestigationId = requestedInvestigationId || currentInvestigationId
+      if (!targetInvestigationId || !investigations.some((investigation) => investigation.id === targetInvestigationId)) {
+        return
+      }
+
+      const demoDiscoveries = createBrowserQaDiscoveryDemoRecords(targetInvestigationId) as DiscoveryRecord[]
+      qaDiscoveryDemoByInvestigationRef.current = {
+        ...qaDiscoveryDemoByInvestigationRef.current,
+        [targetInvestigationId]: demoDiscoveries,
+      }
+      setDiscoveriesByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: demoDiscoveries,
+      }))
+      setCompletedDiscoveryReviewByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: true,
+      }))
+      setUnreadDiscoveriesByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: true,
+      }))
+      setCurrentInvestigationId(targetInvestigationId)
+      setReturnVaultId(null)
+      setFocusedNodeId(null)
+      setActiveTab('board')
+      setBoardWorkspaceRevision((current) => current + 1)
+    }
+
     window.addEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
+    window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
     return () => {
       window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
+      window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
     }
-  }, [])
+  }, [currentInvestigationId, investigations])
 
   useEffect(() => {
     const handleBoardWorkspaceUpdate = () => {
@@ -1300,9 +1347,10 @@ function App() {
         ...current,
         [currentInvestigationId]: vaultResult,
       }))
+      const qaDemoDiscoveries = qaDiscoveryDemoByInvestigationRef.current[currentInvestigationId]
       setDiscoveriesByInvestigation((current) => ({
         ...current,
-        [currentInvestigationId]: (discoveries[currentInvestigationId] || []) as unknown as DiscoveryRecord[],
+        [currentInvestigationId]: qaDemoDiscoveries || ((discoveries[currentInvestigationId] || []) as unknown as DiscoveryRecord[]),
       }))
       setBoardWorkspaceRevision((current) => current + 1)
     })
@@ -1903,6 +1951,7 @@ function App() {
               onClear={() => {
                 if (!currentInvestigationId) return
 
+                delete qaDiscoveryDemoByInvestigationRef.current[currentInvestigationId]
                 setDiscoveriesByInvestigation(prev => {
                   const next = { ...prev, [currentInvestigationId]: [] }
                   void saveDiscoveriesForInvestigation(currentInvestigationId, [])

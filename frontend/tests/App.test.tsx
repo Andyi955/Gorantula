@@ -2,7 +2,9 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
+  BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
+  BROWSER_QA_TARGET_INVESTIGATION_ID,
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
 import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
@@ -1053,5 +1055,28 @@ describe('App', () => {
     })
 
     expect(screen.getAllByText('QA: Imported Target').length).toBeGreaterThan(0)
+  })
+
+  it('injects temporary QA discovery demo records without backend messages or persistence', async () => {
+    render(<App />)
+
+    act(() => {
+      const result = seedBrowserQaData()
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SEEDED_EVENT, { detail: result }))
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_DISCOVERY_DEMO_EVENT, {
+        detail: {
+          investigationId: BROWSER_QA_TARGET_INVESTIGATION_ID,
+          requestId: 'qa-discovery-test',
+        },
+      }))
+    })
+
+    expect(await screen.findByText('QA Discovery: Grid Near-Miss Pattern')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread true')
+    expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
+    expect(localStorage.getItem('gorantula_discoveries_by_investigation')).toBeNull()
   })
 })

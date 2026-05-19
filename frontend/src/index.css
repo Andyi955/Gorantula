@@ -418,6 +418,12 @@ body {
   .forensic-node-entry,
   .forensic-node-persona-scan,
   .forensic-node-layout-choreography,
+  .forensic-utility-notification-dot-unread,
+  .forensic-discovery-handle-icon-unread,
+  .forensic-discovery-handle-badge,
+  .forensic-discovery-card-reveal,
+  .forensic-discovery-card-reveal::after,
+  .forensic-discovery-evidence-panel,
   .forensic-node-shell.forensic-node-persona-scan::after {
     animation: none !important;
     transition: none !important;
@@ -436,6 +442,13 @@ body {
   }
 
   .forensic-node-entry {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  .forensic-discovery-card-reveal,
+  .forensic-discovery-card-reveal::after {
     opacity: 1;
     transform: none;
     filter: none;
@@ -1463,12 +1476,125 @@ body {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 14px currentColor;
 }
 
+.forensic-utility-notification-dot-unread,
+.forensic-discovery-handle-icon-unread,
+.forensic-discovery-handle-badge {
+  animation: forensicDiscoveryUnreadPulse 1.35s ease-in-out infinite;
+}
+
 .forensic-utility-notification-dot-theory {
   background: var(--forensic-success);
 }
 
 .forensic-utility-notification-dot-discovery {
   background: var(--forensic-warning);
+}
+
+.forensic-discovery-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.forensic-discovery-card-reveal {
+  animation: forensicDiscoveryCardReveal 1350ms cubic-bezier(0.16, 0.84, 0.24, 1) both;
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(246, 200, 121, 0.18),
+    0 0 28px rgba(246, 200, 121, 0.2) !important;
+}
+
+.forensic-discovery-card-reveal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 16%, rgba(255, 244, 214, 0.18) 44%, rgba(246, 200, 121, 0.14) 52%, transparent 74%);
+  transform: translateX(-105%);
+  animation: forensicDiscoveryCardShine 1250ms ease-out 160ms both;
+}
+
+.forensic-discovery-evidence-panel {
+  display: grid;
+  transition: grid-template-rows 320ms ease, opacity 320ms ease, transform 320ms ease;
+}
+
+.forensic-discovery-evidence-panel > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.forensic-discovery-evidence-panel-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.forensic-discovery-evidence-panel-closed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@keyframes forensicDiscoveryUnreadPulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.16);
+    filter: brightness(1.22) drop-shadow(0 0 8px rgba(246, 200, 121, 0.42));
+  }
+}
+
+@keyframes forensicDiscoveryCardReveal {
+  0% {
+    opacity: 0;
+    transform: translate3d(18px, 10px, 0) scale(0.975);
+    filter: brightness(1.22);
+  }
+  62% {
+    opacity: 1;
+    transform: translate3d(-2px, -1px, 0) scale(1.006);
+    filter: brightness(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes forensicDiscoveryCardShine {
+  0% {
+    opacity: 0;
+    transform: translateX(-105%);
+  }
+  26% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(105%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-utility-notification-dot-unread,
+  .forensic-discovery-handle-icon-unread,
+  .forensic-discovery-handle-badge,
+  .forensic-discovery-card-reveal,
+  .forensic-discovery-card-reveal::after,
+  .forensic-discovery-evidence-panel {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .forensic-discovery-card-reveal,
+  .forensic-discovery-card-reveal::after {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
 
 .forensic-utility-rail {

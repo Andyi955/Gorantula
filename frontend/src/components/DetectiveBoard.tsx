@@ -56,6 +56,7 @@ import {
 import {
     BROWSER_QA_ANIMATION_DEMO_EVENT,
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
+    BROWSER_QA_DISCOVERY_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
 } from '../utils/browserQaSeed';
 
@@ -3204,6 +3205,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return true;
     }, [investigationId, loadedInvestigationId, playBrowserQaAnimationDemo]);
 
+    const playBrowserQaDiscoveryDemo = useCallback(() => {
+        if (!investigationId) {
+            return;
+        }
+
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_DISCOVERY_DEMO_EVENT, {
+            detail: {
+                investigationId,
+                requestId: `qa-discovery-${Date.now()}`,
+            },
+        }));
+    }, [investigationId]);
+
     useEffect(() => {
         const handleBrowserQaAnimationDemo = (event: Event) => {
             const detail = (event as CustomEvent<BrowserQaAnimationDemoDetail>).detail;
@@ -4244,7 +4258,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         {hasUnreadDiscoveries && (
                             <span
                                 data-testid="discovery-utility-notification"
-                                className="forensic-utility-notification-dot forensic-utility-notification-dot-discovery"
+                                className="forensic-utility-notification-dot forensic-utility-notification-dot-discovery forensic-utility-notification-dot-unread"
                                 aria-hidden="true"
                             />
                         )}
@@ -4259,15 +4273,26 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         <Info size={16} />
                     </button>
                     {showBrowserQaBoardTools && qaToolsEnabled && (
-                        <button
-                            type="button"
-                            onClick={() => playBrowserQaAnimationDemo()}
-                            aria-label="Replay board animation demo"
-                            title="Replay board animation demo"
-                            className="forensic-utility-button forensic-utility-button-qa"
-                        >
-                            <PlayCircle size={16} />
-                        </button>
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => playBrowserQaAnimationDemo()}
+                                aria-label="Replay board animation demo"
+                                title="Replay board animation demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <PlayCircle size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaDiscoveryDemo}
+                                aria-label="Replay discovery demo"
+                                title="Replay discovery demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <Lightbulb size={16} />
+                            </button>
+                        </>
                     )}
                     <button
                         type="button"
