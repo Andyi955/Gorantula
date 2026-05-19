@@ -201,6 +201,29 @@ body {
     inset 0 0 20px rgba(144, 243, 218, 0.06) !important;
 }
 
+.forensic-node-entry {
+  animation: forensicNodeEntryDrop 900ms cubic-bezier(0.16, 0.9, 0.24, 1) var(--node-entry-delay, 0ms) both;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity, filter;
+}
+
+.forensic-node-entry-imported {
+  animation-name: forensicImportedNodeEntry;
+}
+
+.forensic-node-persona-scan {
+  animation: forensicNodePersonaScan 1.6s ease-out both;
+}
+
+.forensic-node-shell.forensic-node-persona-scan::after {
+  border-color: rgba(251, 191, 36, 0.12);
+  background:
+    linear-gradient(100deg, transparent 0%, rgba(129, 227, 255, 0) 28%, rgba(129, 227, 255, 0.18) 48%, rgba(251, 191, 36, 0.16) 54%, transparent 72%),
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 20%, transparent 70%, rgba(255,255,255,0.016));
+  background-size: 230% 100%, 100% 100%;
+  animation: forensicNodeScanSweep 1.35s ease-out both;
+}
+
 @keyframes forensicEdgeReveal {
   0% {
     opacity: 0;
@@ -242,17 +265,106 @@ body {
   }
 }
 
+@keyframes forensicNodeEntryDrop {
+  0% {
+    opacity: 0;
+    transform: translate3d(-28px, -46px, 0) scale(0.94) rotate(-1.6deg);
+    filter: brightness(1.32) blur(1px);
+  }
+  48% {
+    opacity: 1;
+    transform: translate3d(8px, 7px, 0) scale(1.018) rotate(0.45deg);
+    filter: brightness(1.18) blur(0);
+  }
+  74% {
+    transform: translate3d(-2px, -2px, 0) scale(0.998) rotate(-0.14deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0);
+    filter: brightness(1) blur(0);
+  }
+}
+
+@keyframes forensicImportedNodeEntry {
+  0% {
+    opacity: 0;
+    transform: translate3d(34px, -40px, 0) scale(0.92) rotate(1.8deg);
+    filter: sepia(0.35) brightness(1.35) blur(1px);
+  }
+  44% {
+    opacity: 1;
+    transform: translate3d(-8px, 8px, 0) scale(1.02) rotate(-0.5deg);
+    filter: sepia(0.2) brightness(1.2) blur(0);
+  }
+  72% {
+    transform: translate3d(2px, -2px, 0) scale(1) rotate(0.16deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0);
+    filter: sepia(0) brightness(1) blur(0);
+  }
+}
+
+@keyframes forensicNodePersonaScan {
+  0% {
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.36),
+      0 0 0 0 rgba(129, 227, 255, 0);
+  }
+  40% {
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.36),
+      0 0 0 2px rgba(129, 227, 255, 0.28),
+      0 0 28px rgba(129, 227, 255, 0.18);
+  }
+  100% {
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.025),
+      inset 0 0 0 1px rgba(129, 227, 255, 0.03);
+  }
+}
+
+@keyframes forensicNodeScanSweep {
+  0% {
+    opacity: 0;
+    background-position: 120% 0, 0 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 0.9;
+    background-position: -85% 0, 0 0;
+  }
+  100% {
+    opacity: 0;
+    background-position: -120% 0, 0 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .forensic-edge-main,
   .forensic-edge-reveal-overlay,
   .forensic-edge-label-reveal,
-  .forensic-node-connection-highlight {
+  .forensic-node-connection-highlight,
+  .forensic-node-entry,
+  .forensic-node-persona-scan,
+  .forensic-node-shell.forensic-node-persona-scan::after {
     animation: none !important;
     transition: none !important;
   }
 
   .forensic-edge-reveal-overlay {
     opacity: 0;
+  }
+
+  .forensic-node-entry {
+    opacity: 1;
+    transform: none;
+    filter: none;
   }
 }
 
@@ -1256,6 +1368,14 @@ body {
     0 18px 32px rgba(0, 0, 0, 0.34),
     0 0 18px rgba(246, 200, 121, 0.12),
     inset 0 0 0 1px rgba(246, 200, 121, 0.05);
+}
+
+.forensic-utility-button-qa {
+  color: #f6c879;
+  border-color: rgba(246, 200, 121, 0.42);
+  background:
+    linear-gradient(180deg, rgba(24, 18, 10, 0.98), rgba(10, 12, 14, 0.98)),
+    radial-gradient(circle at top left, rgba(246, 200, 121, 0.18), transparent 42%);
 }
 
 .forensic-utility-notification-dot {
