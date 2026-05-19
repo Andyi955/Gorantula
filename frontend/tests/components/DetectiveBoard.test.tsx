@@ -7,6 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -111,6 +112,9 @@ vi.mock('../../src/components/CustomNode', () => ({
       isRecentlyImported?: boolean
       isConnectionHighlighted?: boolean
       connectionHighlightColor?: string
+      nodeEntryAnimation?: 'evidence' | 'imported'
+      nodeEntryDelayMs?: number
+      isPersonaScanActive?: boolean
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -126,6 +130,8 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.isRecentlyImported ? React.createElement('span', null, 'recent import') : null,
       data?.isConnectionHighlighted ? React.createElement('span', null, 'connection highlight') : null,
       data?.connectionHighlightColor ? React.createElement('span', null, `connection color ${data.connectionHighlightColor}`) : null,
+      data?.nodeEntryAnimation ? React.createElement('span', null, `entry ${data.nodeEntryAnimation} ${data.nodeEntryDelayMs || 0}`) : null,
+      data?.isPersonaScanActive ? React.createElement('span', null, 'persona scan') : null,
       React.createElement(
         'button',
         {
@@ -545,6 +551,44 @@ describe('DetectiveBoard relationship legend', () => {
 
     window.removeEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, discoveryListener as EventListener)
     window.removeEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, synthesisListener as EventListener)
+  })
+
+  it('enables QA tools from board controls and replays the animation demo from the utility rail', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      expect(screen.queryByRole('button', { name: /replay board animation demo/i })).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+
+      expect(screen.getByRole('button', { name: /replay board animation demo/i })).toBeInTheDocument()
+      expect(localStorage.getItem('detective_board_qa_tools_enabled')).toBe('true')
+
+      fireEvent.click(screen.getByRole('button', { name: /replay board animation demo/i }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1600)
+      })
+
+      const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+        'qa-animation-grid-load',
+        'qa-animation-thermal-cooling',
+        'imported-qa-animation-brief',
+      ]))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1800)
+      })
+
+      expect((lastReactFlowProps?.edges || []) as Array<{ label?: string }>).toEqual([])
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('colors completed theory and discovery utilities with unread dots', () => {
@@ -1399,6 +1443,190 @@ describe('DetectiveBoard relationship legend', () => {
       expect(screen.queryByText('recent import')).not.toBeInTheDocument()
     } finally {
       randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks live gathered evidence with staggered entry metadata and strips it before persistence', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'node-entry-a',
+            title: 'Entry A',
+            summary: 'Entry summary A',
+            fullText: 'Entry summary A',
+          },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'node-entry-b',
+            title: 'Entry B',
+            summary: 'Entry summary B',
+            fullText: 'Entry summary B',
+          },
+        })
+      })
+
+      const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.find((node) => node.id === 'node-entry-a')?.data).toEqual(expect.objectContaining({
+        nodeEntryAnimation: 'evidence',
+        nodeEntryDelayMs: 0,
+      }))
+      expect(nodes.find((node) => node.id === 'node-entry-b')?.data).toEqual(expect.objectContaining({
+        nodeEntryAnimation: 'evidence',
+        nodeEntryDelayMs: 120,
+      }))
+      expect(nodes.find((node) => node.id === 'node-entry-a')?.position).not.toEqual(
+        nodes.find((node) => node.id === 'node-entry-b')?.position,
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+
+      const persisted = JSON.parse(localStorage.getItem('inv_data_investigation-1') || '{}')
+      expect(persisted.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'node-entry-a',
+            data: expect.not.objectContaining({
+              nodeEntryAnimation: expect.anything(),
+              nodeEntryDelayMs: expect.anything(),
+              nodeEntryStartedAt: expect.anything(),
+            }),
+          }),
+        ]),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not replay stale entry or scan metadata from persisted boards', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-saved-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 220 },
+            data: {
+              title: 'Saved A',
+              summary: 'Saved summary',
+              fullText: 'Saved summary',
+              nodeEntryAnimation: 'evidence',
+              nodeEntryDelayMs: 120,
+              isPersonaScanActive: true,
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      const restored = nodes.find((node) => node.id === 'node-saved-a')
+      expect(restored?.data).not.toEqual(expect.objectContaining({
+        nodeEntryAnimation: expect.anything(),
+        isPersonaScanActive: expect.anything(),
+      }))
+    })
+  })
+
+  it('runs a temporary scan glow only on nodes that receive persona insights', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: { id: 'node-scan-a', title: 'Scan A', summary: 'A', fullText: 'A' },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: { id: 'node-scan-b', title: 'Scan B', summary: 'B', fullText: 'B' },
+        })
+        socket.emit('PERSONA_INSIGHTS', [
+          {
+            personaName: 'Discovery',
+            perspective: 'Finds hidden patterns',
+            keyFindings: ['Pattern found'],
+            connections: [],
+            questions: [],
+            confidence: 0.8,
+            fullAnalysis: 'Pattern found',
+            nodeIDs: ['node-scan-a'],
+          },
+        ])
+      })
+
+      let nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.find((node) => node.id === 'node-scan-a')?.data).toEqual(expect.objectContaining({
+        isPersonaScanActive: true,
+      }))
+      expect(nodes.find((node) => node.id === 'node-scan-b')?.data).not.toEqual(expect.objectContaining({
+        isPersonaScanActive: true,
+      }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2200)
+      })
+
+      nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.find((node) => node.id === 'node-scan-a')?.data).not.toEqual(expect.objectContaining({
+        isPersonaScanActive: true,
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('plays the browser QA animation demo without sending backend socket messages', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_ANIMATION_DEMO_EVENT, {
+          detail: { investigationId: 'investigation-1' },
+        }))
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1600)
+      })
+
+      const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+        'qa-animation-grid-load',
+        'qa-animation-thermal-cooling',
+        'imported-qa-animation-brief',
+      ]))
+      expect(socket.sentMessages).toEqual([])
+    } finally {
       vi.useRealTimers()
     }
   })

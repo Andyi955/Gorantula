@@ -11,6 +11,8 @@ import {
 
 export const BROWSER_QA_SEEDED_EVENT = 'gorantula:browser-qa-seeded'
 export const BROWSER_QA_CLEARED_EVENT = 'gorantula:browser-qa-cleared'
+export const BROWSER_QA_ANIMATION_DEMO_EVENT = 'gorantula:browser-qa-play-animations'
+export const BROWSER_QA_ANIMATION_DEMO_PENDING_KEY = 'gorantula_browser_qa_animation_demo_pending'
 export const BROWSER_QA_SOURCE_INVESTIGATION_ID = 'qa-browser-source'
 export const BROWSER_QA_TARGET_INVESTIGATION_ID = 'qa-browser-target'
 
@@ -22,6 +24,11 @@ const BROWSER_QA_INVESTIGATION_IDS = [
 export interface BrowserQaSeedResult {
   focusInvestigationId: string
   investigationIds: string[]
+}
+
+export interface BrowserQaAnimationDemoDetail {
+  investigationId: string
+  requestId?: string
 }
 
 const createEvidenceNode = (

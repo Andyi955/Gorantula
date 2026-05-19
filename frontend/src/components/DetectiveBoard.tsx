@@ -53,8 +53,13 @@ import {
     BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
     emitBoardWorkspaceEvent,
 } from '../utils/boardWorkspaceEvents';
+import {
+    BROWSER_QA_ANIMATION_DEMO_EVENT,
+    BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
+    type BrowserQaAnimationDemoDetail,
+} from '../utils/browserQaSeed';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -502,15 +507,65 @@ const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
 const BOARD_CONTROLS_PANEL_MARGIN = 16;
 const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
 const CONNECTION_REVEAL_DURATION_MS = 3200;
+const NODE_ENTRY_STAGGER_MS = 120;
+const NODE_ENTRY_MAX_DELAY_MS = 840;
+const NODE_ENTRY_ANIMATION_DURATION_MS = 1800;
+const PERSONA_SCAN_DURATION_MS = 2200;
+const BOARD_QA_TOOLS_ENABLED_KEY = 'detective_board_qa_tools_enabled';
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
 
 const isImportedEvidenceNode = (nodeLike: { id?: string; title?: string } | null | undefined) =>
     Boolean(nodeLike?.title?.includes('[IMPORTED]') || nodeLike?.id?.startsWith('imported-'));
 
+const QA_ANIMATION_DEMO_NODES = [
+    {
+        id: 'qa-animation-grid-load',
+        title: 'Grid Load Spike',
+        summary: 'A regional utility report flags a sudden load spike near clustered AI data centers during a peak demand window.',
+        fullText: 'A regional utility report flags a sudden load spike near clustered AI data centers during a peak demand window.',
+        sourceURL: 'https://example.com/qa-grid-load',
+    },
+    {
+        id: 'qa-animation-thermal-cooling',
+        title: 'Thermal Cooling Alert',
+        summary: 'A facilities memo links emergency cooling draw to the same substation corridor and notes elevated transformer temperatures.',
+        fullText: 'A facilities memo links emergency cooling draw to the same substation corridor and notes elevated transformer temperatures.',
+        sourceURL: 'https://example.com/qa-thermal-cooling',
+    },
+    {
+        id: 'imported-qa-animation-brief',
+        title: '[IMPORTED] Regulator Brief',
+        summary: 'An imported regulator brief references prior near-miss events and recommends tighter demand-response rules for data center operators.',
+        fullText: 'An imported regulator brief references prior near-miss events and recommends tighter demand-response rules for data center operators.',
+        sourceURL: 'https://example.com/qa-regulator-brief',
+    },
+] as const;
+
+const QA_ANIMATION_DEMO_INSIGHTS = [
+    {
+        personaName: 'Discovery',
+        perspective: 'Looks for non-obvious operational patterns.',
+        keyFindings: ['Grid load, cooling draw, and regulatory concern point to the same reliability pressure.'],
+        observations: ['The load spike and thermal alert share a substation corridor.'],
+        hypotheses: ['Clustered AI compute demand is creating repeatable grid stress rather than isolated incidents.'],
+        connections: ['Grid Load Spike connects to Thermal Cooling Alert through shared infrastructure stress.'],
+        questions: ['Which operators are tied to the constrained corridor?'],
+        confidence: 0.86,
+        fullAnalysis: 'The demo evidence suggests a recurring reliability pattern across load, cooling, and regulatory signals.',
+        nodeIDs: QA_ANIMATION_DEMO_NODES.map((node) => node.id),
+    },
+];
+
 const stripTransientNodeData = (node: Node): Node => {
     const {
         isConnectionHighlighted: _isConnectionHighlighted,
         connectionHighlightColor: _connectionHighlightColor,
+        nodeEntryAnimation: _nodeEntryAnimation,
+        nodeEntryDelayMs: _nodeEntryDelayMs,
+        nodeEntryStartedAt: _nodeEntryStartedAt,
+        nodeEntrySequence: _nodeEntrySequence,
+        isPersonaScanActive: _isPersonaScanActive,
+        personaScanStartedAt: _personaScanStartedAt,
         ...stableNodeData
     } = node.data || {};
 
@@ -632,6 +687,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
+    const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
+    const [qaToolsEnabled, setQaToolsEnabled] = useState(() => {
+        if (!showBrowserQaBoardTools || typeof window === 'undefined') {
+            return false;
+        }
+        return window.localStorage.getItem(BOARD_QA_TOOLS_ENABLED_KEY) === 'true';
+    });
     const lightboxFileInputRef = useRef<HTMLInputElement>(null);
     const lightboxDialogRef = useRef<HTMLDivElement>(null);
     const previousFocusedElementRef = useRef<HTMLElement | null>(null);
@@ -656,6 +718,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
     const recentImportTimeoutsRef = useRef<Map<string, number>>(new Map());
     const connectionRevealTimeoutsRef = useRef<Map<string, number>>(new Map());
+    const nodeEntrySequenceRef = useRef(0);
+    const nodeEntryTimeoutsRef = useRef<Map<string, number>>(new Map());
+    const personaScanTimeoutsRef = useRef<Map<string, number>>(new Map());
+    const qaAnimationTimeoutsRef = useRef<number[]>([]);
+    const qaAnimationDemoActiveRef = useRef(false);
+    const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -721,6 +789,99 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             connectionRevealTimeoutsRef.current.set(edgeId, timeoutId);
         });
     }, [clearConnectionRevealForEdges]);
+
+    const clearNodeEntryForNodes = useCallback((nodeIds: string[]) => {
+        const targetIds = new Set(nodeIds);
+        if (targetIds.size === 0) {
+            return;
+        }
+
+        setNodes((currentNodes) => currentNodes.map((node) => {
+            if (!targetIds.has(node.id)) {
+                return node;
+            }
+
+            const {
+                nodeEntryAnimation: _nodeEntryAnimation,
+                nodeEntryDelayMs: _nodeEntryDelayMs,
+                nodeEntryStartedAt: _nodeEntryStartedAt,
+                nodeEntrySequence: _nodeEntrySequence,
+                ...stableData
+            } = node.data || {};
+
+            return {
+                ...node,
+                data: stableData,
+            };
+        }));
+    }, []);
+
+    const createNodeEntryMetadata = useCallback((isImported: boolean) => {
+        const sequence = nodeEntrySequenceRef.current;
+        nodeEntrySequenceRef.current += 1;
+        const nodeEntryDelayMs = Math.min(sequence * NODE_ENTRY_STAGGER_MS, NODE_ENTRY_MAX_DELAY_MS);
+
+        return {
+            nodeEntryAnimation: isImported ? 'imported' as const : 'evidence' as const,
+            nodeEntryDelayMs,
+            nodeEntryStartedAt: Date.now(),
+            nodeEntrySequence: sequence,
+        };
+    }, []);
+
+    const scheduleNodeEntryCleanup = useCallback((nodeId: string, delayMs = 0) => {
+        const activeTimeout = nodeEntryTimeoutsRef.current.get(nodeId);
+        if (activeTimeout) {
+            window.clearTimeout(activeTimeout);
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            nodeEntryTimeoutsRef.current.delete(nodeId);
+            clearNodeEntryForNodes([nodeId]);
+        }, NODE_ENTRY_ANIMATION_DURATION_MS + delayMs);
+
+        nodeEntryTimeoutsRef.current.set(nodeId, timeoutId);
+    }, [clearNodeEntryForNodes]);
+
+    const clearPersonaScanForNodes = useCallback((nodeIds: string[]) => {
+        const targetIds = new Set(nodeIds);
+        if (targetIds.size === 0) {
+            return;
+        }
+
+        setNodes((currentNodes) => currentNodes.map((node) => {
+            if (!targetIds.has(node.id)) {
+                return node;
+            }
+
+            const {
+                isPersonaScanActive: _isPersonaScanActive,
+                personaScanStartedAt: _personaScanStartedAt,
+                ...stableData
+            } = node.data || {};
+
+            return {
+                ...node,
+                data: stableData,
+            };
+        }));
+    }, []);
+
+    const schedulePersonaScanCleanup = useCallback((nodeIds: string[]) => {
+        nodeIds.forEach((nodeId) => {
+            const activeTimeout = personaScanTimeoutsRef.current.get(nodeId);
+            if (activeTimeout) {
+                window.clearTimeout(activeTimeout);
+            }
+
+            const timeoutId = window.setTimeout(() => {
+                personaScanTimeoutsRef.current.delete(nodeId);
+                clearPersonaScanForNodes([nodeId]);
+            }, PERSONA_SCAN_DURATION_MS);
+
+            personaScanTimeoutsRef.current.set(nodeId, timeoutId);
+        });
+    }, [clearPersonaScanForNodes]);
 
     const handleConnectionHover = useCallback((payload: { source?: string; target?: string; color?: string; active?: boolean }) => {
         const highlightIds = new Set([payload.source, payload.target].filter((id): id is string => Boolean(id)));
@@ -900,6 +1061,42 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return rawPosition;
     }, [boardMode, screenToFlowPosition]);
 
+    const getNodeEntryStagingPosition = useCallback((
+        frame: { width: number; height: number },
+        mode: BoardMode,
+        sequence: number
+    ) => {
+        const basePosition = getViewportCenteredNodePosition(frame, mode);
+        const stagingOffsets = [
+            { x: 0, y: 0 },
+            { x: -1, y: 0 },
+            { x: 1, y: 0 },
+            { x: 0, y: 1 },
+            { x: -1, y: 1 },
+            { x: 1, y: 1 },
+            { x: 0, y: -1 },
+            { x: -1, y: -1 },
+            { x: 1, y: -1 },
+        ];
+        const offset = stagingOffsets[sequence % stagingOffsets.length];
+        const ring = Math.floor(sequence / stagingOffsets.length);
+        const spacingX = snapCoordinateToGrid(Math.max(frame.width + BOARD_GRID_SIZE * 4, BOARD_GRID_SIZE * 16));
+        const spacingY = snapCoordinateToGrid(Math.max(frame.height + BOARD_GRID_SIZE * 3, BOARD_GRID_SIZE * 11));
+        const rawPosition = {
+            x: basePosition.x + offset.x * spacingX + ring * BOARD_GRID_SIZE * 2,
+            y: basePosition.y + offset.y * spacingY + ring * BOARD_GRID_SIZE * 2,
+        };
+
+        if (mode === 'strict-grid') {
+            return {
+                x: snapCoordinateToGrid(rawPosition.x),
+                y: snapCoordinateToGrid(rawPosition.y),
+            };
+        }
+
+        return rawPosition;
+    }, [getViewportCenteredNodePosition]);
+
     const markNodeAsRecentlyImported = useCallback((nodeId: string) => {
         const activeTimeout = recentImportTimeoutsRef.current.get(nodeId);
         if (activeTimeout) {
@@ -935,6 +1132,74 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         recentImportTimeoutsRef.current.set(nodeId, timeoutId);
     }, []);
+
+    const applyPersonaInsightsToNodes = useCallback((insights: Array<{
+        personaName: string;
+        perspective: string;
+        keyFindings: string[];
+        connections: string[];
+        observations?: string[];
+        hypotheses?: string[];
+        questions: string[];
+        confidence: number;
+        fullAnalysis: string;
+        nodeIDs: string[];
+        proposedConnections?: Array<{
+            source: string;
+            target: string;
+            tag: string;
+            reasoning: string;
+            evidenceNodeIDs: string[];
+            confidence: number;
+        }>;
+    }>) => {
+        if (!Array.isArray(insights)) {
+            return;
+        }
+
+        const scannedNodeIds = new Set(
+            insights
+                .flatMap((insight) => Array.isArray(insight.nodeIDs) ? insight.nodeIDs : [])
+                .filter((nodeId): nodeId is string => typeof nodeId === 'string')
+        );
+        console.debug('[PERSONA_INSIGHTS] Current nodes:', nodesRef.current.map(n => ({ id: n.id, title: n.data.title })));
+
+        setNodes((nds) => nds.map(node => {
+            const nodeInsights = insights.filter(insight =>
+                insight.nodeIDs && insight.nodeIDs.includes(node.id)
+            );
+            console.debug(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
+
+            const nextData = {
+                ...node.data,
+                personaInsights: nodeInsights
+            };
+
+            if (nodeInsights.length > 0) {
+                return {
+                    ...node,
+                    data: {
+                        ...nextData,
+                        isPersonaScanActive: true,
+                        personaScanStartedAt: Date.now(),
+                    }
+                };
+            }
+
+            const {
+                isPersonaScanActive: _isPersonaScanActive,
+                personaScanStartedAt: _personaScanStartedAt,
+                ...stableData
+            } = nextData;
+
+            return {
+                ...node,
+                data: stableData,
+            };
+        }));
+
+        schedulePersonaScanCleanup(Array.from(scannedNodeIds));
+    }, [schedulePersonaScanCleanup]);
 
     const decorateStrictGridEdges = useCallback((nextEdges: Edge[], nextNodes: Node[]) => {
         const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
@@ -1762,6 +2027,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setPendingIntegrationNodeIds([]);
         setAnalysisMode(null);
         setImageLightbox(null);
+        nodeEntrySequenceRef.current = 0;
+        qaAnimationDemoActiveRef.current = false;
     }, [investigationId]);
 
     useEffect(() => {
@@ -1776,6 +2043,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     useEffect(() => {
         localStorage.setItem('detective_board_snap_nodes', String(snapNodes));
     }, [snapNodes]);
+
+    useEffect(() => {
+        if (!showBrowserQaBoardTools) {
+            return;
+        }
+        localStorage.setItem(BOARD_QA_TOOLS_ENABLED_KEY, String(qaToolsEnabled));
+    }, [qaToolsEnabled, showBrowserQaBoardTools]);
 
     useEffect(() => {
         const edgeTags = edges
@@ -1905,6 +2179,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         applyBoardState(immediateState);
 
         void loadBoardStateForInvestigation(investigationId).then((backendState) => {
+            if (qaAnimationDemoActiveRef.current) {
+                return;
+            }
             if (backendState && backendState !== immediateState) {
                 applyBoardState(backendState);
             }
@@ -1967,6 +2244,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         recentImportTimeoutsRef.current.clear();
         connectionRevealTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         connectionRevealTimeoutsRef.current.clear();
+        nodeEntryTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        nodeEntryTimeoutsRef.current.clear();
+        personaScanTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        personaScanTimeoutsRef.current.clear();
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
     }, []);
 
     const onNodesChange: OnNodesChange = useCallback(
@@ -2481,6 +2764,146 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setAnalysisMode(null);
     }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, handleConnectionHover, investigationId, persistTagStyles, scheduleConnectionRevealCleanup, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
+    const playBrowserQaAnimationDemo = useCallback(() => {
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
+        nodeEntrySequenceRef.current = 0;
+        setBoardMode('strict-grid');
+        setPendingIntegrationNodeIds([]);
+        setHasConnectedDots(false);
+        setIsGathering(false);
+        setIsAnalyzing(false);
+        setAnalysisMode(null);
+        setDeepDiveTopic(null);
+        qaAnimationDemoActiveRef.current = true;
+        setEdges([]);
+        setNodes([]);
+
+        QA_ANIMATION_DEMO_NODES.forEach((demoNode, index) => {
+            const timeoutId = window.setTimeout(() => {
+                const frame = calculateNodeFrame(demoNode.summary, demoNode.fullText, false, false);
+                const isImported = isImportedEvidenceNode(demoNode);
+                const { nodeEntrySequence: _nodeEntrySequence, ...entryMetadata } = createNodeEntryMetadata(isImported);
+                const newNode: Node = {
+                    id: demoNode.id,
+                    type: 'custom',
+                    zIndex: STRICT_GRID_NODE_Z_INDEX,
+                    style: frame,
+                    data: {
+                        ...demoNode,
+                        onReadFull: () => setSelectedContent(demoNode.fullText),
+                        onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                        onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                        onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                        onDelete: (id: string) => handleDeleteNode(id),
+                        onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                        onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                        onSetEditing: (id: string | null) => handleSetEditing(id),
+                        onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                        onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                        onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                        isDeepDiveSource: false,
+                        isRecentlyImported: isImported,
+                        ...entryMetadata,
+                        expanded: false,
+                        boardMode: 'strict-grid' as BoardMode,
+                    },
+                    position: [
+                        { x: 96, y: 96 },
+                        { x: 480, y: 96 },
+                        { x: 288, y: 360 },
+                    ][index] || { x: 96 + index * 320, y: 96 },
+                    sourcePosition: Position.Right,
+                    targetPosition: Position.Left
+                };
+
+                setNodes((currentNodes) => (
+                    currentNodes.some((node) => node.id === demoNode.id)
+                        ? currentNodes
+                        : [...currentNodes, newNode]
+                ));
+                scheduleNodeEntryCleanup(demoNode.id, entryMetadata.nodeEntryDelayMs);
+                if (isImported) {
+                    markNodeAsRecentlyImported(demoNode.id);
+                }
+            }, index * 220);
+            qaAnimationTimeoutsRef.current.push(timeoutId);
+        });
+
+        const insightsTimeout = window.setTimeout(() => {
+            applyPersonaInsightsToNodes(QA_ANIMATION_DEMO_INSIGHTS);
+        }, 900);
+
+        qaAnimationTimeoutsRef.current.push(insightsTimeout);
+    }, [
+        applyPersonaInsightsToNodes,
+        createNodeEntryMetadata,
+        handleAttachImage,
+        handleDeleteNode,
+        handleNodeExpand,
+        handleRemoveImage,
+        handleSaveNode,
+        handleSetEditing,
+        handleUpdateNode,
+        markNodeAsRecentlyImported,
+        onDeepDiveNode,
+        onNavigateToChild,
+        openImageLightbox,
+        scheduleNodeEntryCleanup,
+    ]);
+
+    const tryPlayBrowserQaAnimationDemo = useCallback((detail?: BrowserQaAnimationDemoDetail | null) => {
+        const requestedInvestigationId = typeof detail?.investigationId === 'string'
+            ? detail.investigationId.trim()
+            : '';
+        if (!requestedInvestigationId || requestedInvestigationId !== investigationId || loadedInvestigationId !== investigationId) {
+            return false;
+        }
+        const requestId = typeof detail?.requestId === 'string' ? detail.requestId.trim() : '';
+        if (requestId && lastQaAnimationDemoRequestIdRef.current === requestId) {
+            return true;
+        }
+
+        try {
+            window.sessionStorage.removeItem(BROWSER_QA_ANIMATION_DEMO_PENDING_KEY);
+        } catch {
+            // Session storage is optional; the in-memory event path is enough for active boards.
+        }
+        if (requestId) {
+            lastQaAnimationDemoRequestIdRef.current = requestId;
+        }
+        playBrowserQaAnimationDemo();
+        return true;
+    }, [investigationId, loadedInvestigationId, playBrowserQaAnimationDemo]);
+
+    useEffect(() => {
+        const handleBrowserQaAnimationDemo = (event: Event) => {
+            const detail = (event as CustomEvent<BrowserQaAnimationDemoDetail>).detail;
+            if (!tryPlayBrowserQaAnimationDemo(detail)) {
+                try {
+                    window.sessionStorage.setItem(BROWSER_QA_ANIMATION_DEMO_PENDING_KEY, JSON.stringify(detail));
+                } catch {
+                    // Optional QA convenience only.
+                }
+            }
+        };
+
+        window.addEventListener(BROWSER_QA_ANIMATION_DEMO_EVENT, handleBrowserQaAnimationDemo as EventListener);
+
+        try {
+            const pending = window.sessionStorage.getItem(BROWSER_QA_ANIMATION_DEMO_PENDING_KEY);
+            if (pending) {
+                tryPlayBrowserQaAnimationDemo(JSON.parse(pending) as BrowserQaAnimationDemoDetail);
+            }
+        } catch {
+            // Ignore malformed or unavailable session storage.
+        }
+
+        return () => {
+            window.removeEventListener(BROWSER_QA_ANIMATION_DEMO_EVENT, handleBrowserQaAnimationDemo as EventListener);
+        };
+    }, [tryPlayBrowserQaAnimationDemo]);
+
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId || nodes.length < 2) {
             return;
@@ -2550,6 +2973,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     ? (getCachedBoardStateForInvestigation(vaultId)?.mode === 'legacy' ? 'legacy' : 'strict-grid')
                     : boardMode;
                 const isImported = isImportedEvidenceNode(node);
+                const { nodeEntrySequence, ...entryMetadata } = createNodeEntryMetadata(isImported);
 
                 const newNode: Node = {
                     id: node.id,
@@ -2571,10 +2995,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                         isDeepDiveSource: false,
                         isRecentlyImported: isImported,
+                        ...entryMetadata,
                         expanded: false,
                         boardMode: targetBoardMode,
                     },
-                    position: getViewportCenteredNodePosition(frame, targetBoardMode),
+                    position: getNodeEntryStagingPosition(frame, targetBoardMode, nodeEntrySequence),
                     sourcePosition: Position.Right,
                     targetPosition: Position.Left
                 };
@@ -2607,6 +3032,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     if (nds.find(n => n.id === node.id)) return nds;
                     return [...nds, newNode];
                 });
+                scheduleNodeEntryCleanup(node.id, entryMetadata.nodeEntryDelayMs);
                 if (isImported) {
                     markNodeAsRecentlyImported(node.id);
                 }
@@ -2637,23 +3063,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }>;
                 console.debug('[PERSONA_INSIGHTS] Received insights:', insights);
                 if (insights && Array.isArray(insights)) {
-                    setNodes((nds) => {
-                        console.debug('[PERSONA_INSIGHTS] Current nodes:', nds.map(n => ({ id: n.id, title: n.data.title })));
-                        return nds.map(node => {
-                            // Find personas that contributed to this specific node
-                            const nodeInsights = insights.filter(insight =>
-                                insight.nodeIDs && insight.nodeIDs.includes(node.id)
-                            );
-                            console.debug(`[PERSONA_INSIGHTS] Node ${node.id}: matched ${nodeInsights.length} insights, all nodeIDs:`, insights.map(i => i.nodeIDs));
-                            return {
-                                ...node,
-                                data: {
-                                    ...node.data,
-                                    personaInsights: nodeInsights // Full insight objects
-                                }
-                            };
-                        });
-                    });
+                    applyPersonaInsightsToNodes(insights);
                 }
                 // Stop gathering when persona insights are complete
                 setIsGathering(false);
@@ -2768,7 +3178,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [boardMode, sharedSocket, getViewportCenteredNodePosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox]);
+    }, [applyPersonaInsightsToNodes, boardMode, sharedSocket, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -3142,7 +3552,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     <div
                         ref={boardControlsPanelRef}
                         data-testid="board-controls-overlay"
-                        className="forensic-board-dialog absolute z-30 rounded-[1.5rem] p-4 backdrop-blur-xl"
+                        className="forensic-board-dialog absolute z-[60] rounded-[1.5rem] p-4 backdrop-blur-xl"
                         style={{
                             top: `${boardControlsPosition.top}px`,
                             left: `${boardControlsPosition.left}px`,
@@ -3271,6 +3681,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         </button>
                                     </div>
                                 </section>
+
+                                {showBrowserQaBoardTools && (
+                                    <section className="forensic-board-section rounded-2xl p-3">
+                                        <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-text-faint)]">
+                                            <FlaskConical size={13} className="text-amber-200/80" />
+                                            QA
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setQaToolsEnabled((current) => !current)}
+                                            aria-pressed={qaToolsEnabled}
+                                            className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${qaToolsEnabled
+                                                ? 'border-amber-300/40 bg-amber-300/10 text-amber-100'
+                                                : 'border-amber-300/18 bg-black/35 text-gray-300 hover:border-amber-300/35 hover:text-white'
+                                                }`}
+                                        >
+                                            <div className="w-full">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-[11px] font-semibold">Enable QA Tools</div>
+                                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] ${qaToolsEnabled ? 'bg-amber-200 text-black' : 'bg-white/8 text-gray-300'}`}>
+                                                        {qaToolsEnabled ? 'On' : 'Off'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 text-xs leading-relaxed text-gray-500">Show the local animation replay button in the board utility rail.</div>
+                                            </div>
+                                        </button>
+                                    </section>
+                                )}
 
                                 <section className="rounded-2xl border border-red-500/20 bg-red-500/[0.03] p-3">
                                     <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-red-400">
@@ -3489,6 +3927,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     >
                         <Info size={16} />
                     </button>
+                    {showBrowserQaBoardTools && qaToolsEnabled && (
+                        <button
+                            type="button"
+                            onClick={playBrowserQaAnimationDemo}
+                            aria-label="Replay board animation demo"
+                            title="Replay board animation demo"
+                            className="forensic-utility-button forensic-utility-button-qa"
+                        >
+                            <PlayCircle size={16} />
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={recenterBoardViewport}

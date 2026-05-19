@@ -100,6 +100,87 @@ describe('CustomNode', () => {
     expect(shell).toHaveStyle({ '--connection-highlight-color': '#ff5500' })
   })
 
+  it('renders regular evidence entry animation metadata', () => {
+    render(
+      <CustomNode
+        id="node-entry"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-entry',
+          title: 'Entry Node',
+          summary: 'Entry summary',
+          nodeEntryAnimation: 'evidence',
+          nodeEntryDelayMs: 240,
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const shell = screen.getByTestId('custom-node-shell')
+    expect(shell).toHaveClass('forensic-node-entry')
+    expect(shell).toHaveClass('forensic-node-entry-evidence')
+    expect(shell).toHaveStyle({ '--node-entry-delay': '240ms' })
+  })
+
+  it('renders imported evidence with the warm entry animation', () => {
+    render(
+      <CustomNode
+        id="imported-node-entry"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'imported-node-entry',
+          title: '[IMPORTED] Entry Node',
+          summary: 'Imported entry summary',
+          nodeEntryAnimation: 'imported',
+          nodeEntryDelayMs: 120,
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const shell = screen.getByTestId('custom-node-shell')
+    expect(shell).toHaveClass('forensic-node-entry')
+    expect(shell).toHaveClass('forensic-node-entry-imported')
+    expect(shell).toHaveStyle({ '--node-entry-delay': '120ms' })
+  })
+
+  it('renders persona insight scan styling while scan metadata is active', () => {
+    render(
+      <CustomNode
+        id="node-scan"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-scan',
+          title: 'Scanned Node',
+          summary: 'Scan summary',
+          isPersonaScanActive: true,
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const shell = screen.getByTestId('custom-node-shell')
+    expect(shell).toHaveClass('forensic-node-persona-scan')
+  })
+
   it('renders a compact image preview and opens the board viewer callback', async () => {
     const user = userEvent.setup()
     const onViewImages = vi.fn()
