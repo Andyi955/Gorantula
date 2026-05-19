@@ -501,34 +501,59 @@ const EXPORT_MENU_WIDTH = 224;
 const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
 const BOARD_CONTROLS_PANEL_MARGIN = 16;
 const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
+const CONNECTION_REVEAL_DURATION_MS = 3200;
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
 
 const isImportedEvidenceNode = (nodeLike: { id?: string; title?: string } | null | undefined) =>
     Boolean(nodeLike?.title?.includes('[IMPORTED]') || nodeLike?.id?.startsWith('imported-'));
 
-const stripTransientNodeData = (node: Node): Node => ({
-    ...node,
-    data: {
-        ...node.data,
-        isRecentlyImported: false,
-        personaInsights: Array.isArray(node.data?.personaInsights)
-            ? node.data.personaInsights.map((insight: any) => ({
-                personaName: insight?.personaName,
-                perspective: insight?.perspective,
-                confidence: insight?.confidence,
-                keyFindings: Array.isArray(insight?.keyFindings) ? insight.keyFindings.slice(0, 4) : [],
-                observations: Array.isArray(insight?.observations) ? insight.observations.slice(0, 4) : [],
-                hypotheses: Array.isArray(insight?.hypotheses) ? insight.hypotheses.slice(0, 3) : [],
-                connections: Array.isArray(insight?.connections) ? insight.connections.slice(0, 4) : [],
-                questions: Array.isArray(insight?.questions) ? insight.questions.slice(0, 3) : [],
-                nodeIDs: Array.isArray(insight?.nodeIDs) ? insight.nodeIDs.slice(0, 12) : [],
-                proposedConnections: Array.isArray(insight?.proposedConnections) ? insight.proposedConnections.slice(0, 6) : [],
-            }))
-            : node.data?.personaInsights,
-    }
-});
+const stripTransientNodeData = (node: Node): Node => {
+    const {
+        isConnectionHighlighted: _isConnectionHighlighted,
+        connectionHighlightColor: _connectionHighlightColor,
+        ...stableNodeData
+    } = node.data || {};
+
+    return {
+        ...node,
+        data: {
+            ...stableNodeData,
+            isRecentlyImported: false,
+            personaInsights: Array.isArray(node.data?.personaInsights)
+                ? node.data.personaInsights.map((insight: any) => ({
+                    personaName: insight?.personaName,
+                    perspective: insight?.perspective,
+                    confidence: insight?.confidence,
+                    keyFindings: Array.isArray(insight?.keyFindings) ? insight.keyFindings.slice(0, 4) : [],
+                    observations: Array.isArray(insight?.observations) ? insight.observations.slice(0, 4) : [],
+                    hypotheses: Array.isArray(insight?.hypotheses) ? insight.hypotheses.slice(0, 3) : [],
+                    connections: Array.isArray(insight?.connections) ? insight.connections.slice(0, 4) : [],
+                    questions: Array.isArray(insight?.questions) ? insight.questions.slice(0, 3) : [],
+                    nodeIDs: Array.isArray(insight?.nodeIDs) ? insight.nodeIDs.slice(0, 12) : [],
+                    proposedConnections: Array.isArray(insight?.proposedConnections) ? insight.proposedConnections.slice(0, 6) : [],
+                }))
+                : node.data?.personaInsights,
+        }
+    };
+};
 
 const sanitizeNodesForPersistence = (nodes: Node[]) => nodes.map(stripTransientNodeData);
+
+const stripTransientEdgeData = (edge: Edge): Edge => {
+    const {
+        isConnectionRevealing: _isConnectionRevealing,
+        connectionRevealStartedAt: _connectionRevealStartedAt,
+        onConnectionHover: _onConnectionHover,
+        ...stableEdgeData
+    } = edge.data || {};
+
+    return {
+        ...edge,
+        data: stableEdgeData,
+    };
+};
+
+const sanitizeEdgesForPersistence = (edges: Edge[]) => edges.map(stripTransientEdgeData);
 
 const getMiniMapNodeColor = (node: Node) => {
     if (node.data?.portalKind === 'merged-child') {
@@ -630,6 +655,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const marqueePointerIdRef = useRef<number | null>(null);
     const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
     const recentImportTimeoutsRef = useRef<Map<string, number>>(new Map());
+    const connectionRevealTimeoutsRef = useRef<Map<string, number>>(new Map());
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -654,6 +680,84 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const openRelationshipLegend = useCallback(() => {
         setShowRelationshipLegend(true);
+    }, []);
+
+    const clearConnectionRevealForEdges = useCallback((edgeIds: string[]) => {
+        if (edgeIds.length === 0) {
+            return;
+        }
+
+        const edgeIdSet = new Set(edgeIds);
+        setEdges((currentEdges) => currentEdges.map((edge) => {
+            if (!edgeIdSet.has(edge.id)) {
+                return edge;
+            }
+
+            const {
+                isConnectionRevealing: _isConnectionRevealing,
+                connectionRevealStartedAt: _connectionRevealStartedAt,
+                ...stableData
+            } = edge.data || {};
+
+            return {
+                ...edge,
+                data: stableData,
+            };
+        }));
+    }, []);
+
+    const scheduleConnectionRevealCleanup = useCallback((edgeIds: string[]) => {
+        edgeIds.forEach((edgeId) => {
+            const existingTimeout = connectionRevealTimeoutsRef.current.get(edgeId);
+            if (existingTimeout) {
+                window.clearTimeout(existingTimeout);
+            }
+
+            const timeoutId = window.setTimeout(() => {
+                connectionRevealTimeoutsRef.current.delete(edgeId);
+                clearConnectionRevealForEdges([edgeId]);
+            }, CONNECTION_REVEAL_DURATION_MS);
+
+            connectionRevealTimeoutsRef.current.set(edgeId, timeoutId);
+        });
+    }, [clearConnectionRevealForEdges]);
+
+    const handleConnectionHover = useCallback((payload: { source?: string; target?: string; color?: string; active?: boolean }) => {
+        const highlightIds = new Set([payload.source, payload.target].filter((id): id is string => Boolean(id)));
+        if (highlightIds.size === 0) {
+            return;
+        }
+
+        const shouldHighlight = payload.active === true;
+        const highlightColor = typeof payload.color === 'string' && payload.color.trim()
+            ? payload.color.trim()
+            : '#8ee8ff';
+        setNodes((currentNodes) => currentNodes.map((node) => {
+            if (!highlightIds.has(node.id)) {
+                return node;
+            }
+
+            if (
+                Boolean(node.data?.isConnectionHighlighted) === shouldHighlight &&
+                (!shouldHighlight || node.data?.connectionHighlightColor === highlightColor)
+            ) {
+                return node;
+            }
+
+            const nextData = { ...node.data };
+            if (shouldHighlight) {
+                nextData.isConnectionHighlighted = true;
+                nextData.connectionHighlightColor = highlightColor;
+            } else {
+                delete nextData.isConnectionHighlighted;
+                delete nextData.connectionHighlightColor;
+            }
+
+            return {
+                ...node,
+                data: nextData,
+            };
+        }));
     }, []);
 
     const openImageLightbox = useCallback((images: NodeImageAsset[], initialIndex = 0, nodeTitle?: string, nodeId?: string) => {
@@ -1392,6 +1496,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const needsActions = edges.some((edge) =>
             edge.data?.onRename !== renameRelationshipEdge ||
             edge.data?.onDelete !== deleteRelationshipEdge ||
+            edge.data?.onConnectionHover !== handleConnectionHover ||
             edge.data?.snapEnabled !== snapConnectionLabels
         );
 
@@ -1403,10 +1508,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 ...edge.data,
                 onRename: renameRelationshipEdge,
                 onDelete: deleteRelationshipEdge,
+                onConnectionHover: handleConnectionHover,
                 snapEnabled: snapConnectionLabels,
             }
         })));
-    }, [deleteRelationshipEdge, edges, renameRelationshipEdge, snapConnectionLabels]);
+    }, [deleteRelationshipEdge, edges, handleConnectionHover, renameRelationshipEdge, snapConnectionLabels]);
 
     const lastFocusedRef = useRef<string | null>(null);
 
@@ -1726,28 +1832,29 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
                     .filter((nodeId) => savedNodeIdSet.has(nodeId));
                 const restoredNodes = savedNodes.map((n: Node) => {
+                    const stableNode = stripTransientNodeData(n);
                     const autoFrame = calculateNodeFrame(
-                        n.data?.summary || '',
-                        n.data?.fullText || '',
-                        Boolean(n.data?.expanded),
-                        nodeHasImages(n.data?.images)
+                        stableNode.data?.summary || '',
+                        stableNode.data?.fullText || '',
+                        Boolean(stableNode.data?.expanded),
+                        nodeHasImages(stableNode.data?.images)
                     );
-                    const persistedWidth = typeof n.style?.width === 'number' ? n.style.width : 288;
-                    const persistedHeight = typeof n.style?.height === 'number' ? n.style.height : 192;
+                    const persistedWidth = typeof stableNode.style?.width === 'number' ? stableNode.style.width : 288;
+                    const persistedHeight = typeof stableNode.style?.height === 'number' ? stableNode.style.height : 192;
                     const normalizedFrame = normalizeNodeFrame(
                         Math.max(persistedWidth, autoFrame.width),
                         Math.max(persistedHeight, autoFrame.height)
                     );
 
                     return {
-                        ...n,
+                        ...stableNode,
                         style: {
-                            ...n.style,
+                            ...stableNode.style,
                             ...normalizedFrame,
                         },
                         data: {
-                            ...n.data,
-                            onReadFull: () => setSelectedContent(n.data.fullText),
+                            ...stableNode.data,
+                            onReadFull: () => setSelectedContent(stableNode.data.fullText),
                             onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                             onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                             onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -1757,19 +1864,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                             onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                             onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
-                            isDeepDiveSource: !!n.data?.isDeepDiveSource,
+                            isDeepDiveSource: !!stableNode.data?.isDeepDiveSource,
                             isRecentlyImported: false,
                             boardMode: savedMode,
                         }
                     };
                 });
-                const restoredEdges = savedEdges.map((e: Edge) => ({
-                    ...e,
-                    type: 'customEdge',
-                    updatable: true,
-                    interactionWidth: 20,
-                    data: { ...e.data, snapEnabled: snapConnectionLabels, boardMode: savedMode }
-                }));
+                const restoredEdges = savedEdges.map((e: Edge) => {
+                    const stableEdge = stripTransientEdgeData(e);
+                    return {
+                        ...stableEdge,
+                        type: 'customEdge',
+                        updatable: true,
+                        interactionWidth: 20,
+                        data: { ...stableEdge.data, snapEnabled: snapConnectionLabels, boardMode: savedMode }
+                    };
+                });
 
                 setBoardMode(savedMode);
                 if (savedMode === 'strict-grid') {
@@ -1819,7 +1929,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             void saveBoardStateForInvestigation(investigationId, {
                 mode: boardMode,
                 nodes: sanitizeNodesForPersistence(nodes),
-                edges,
+                edges: sanitizeEdgesForPersistence(edges),
                 pendingIntegrationNodeIds,
                 synthesisAlerts: existingState?.synthesisAlerts || [],
             });
@@ -1846,7 +1956,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         void saveBoardStateForInvestigation(investigationId, {
             mode: boardMode,
             nodes: sanitizeNodesForPersistence(nodesRef.current),
-            edges: edgesRef.current,
+            edges: sanitizeEdgesForPersistence(edgesRef.current),
             pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current,
             synthesisAlerts: existingState?.synthesisAlerts || [],
         });
@@ -1855,6 +1965,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     useEffect(() => () => {
         recentImportTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         recentImportTimeoutsRef.current.clear();
+        connectionRevealTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        connectionRevealTimeoutsRef.current.clear();
     }, []);
 
     const onNodesChange: OnNodesChange = useCallback(
@@ -2301,6 +2413,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     validationStatus: c.validationStatus,
                     candidateSources: c.candidateSources || [],
                     generatedBy: 'connectTheDots',
+                    isConnectionRevealing: true,
+                    connectionRevealStartedAt: Date.now(),
+                    onConnectionHover: handleConnectionHover,
                     snapEnabled: snapConnectionLabels,
                     boardMode
                 },
@@ -2316,6 +2431,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 labelBgBorderRadius: 2,
             };
         });
+        scheduleConnectionRevealCleanup(newEdges.map((edge) => edge.id));
 
         if (boardMode === 'strict-grid') {
             const combinedEdges = activeAnalysisMode === 'incremental'
@@ -2363,7 +2479,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setHasConnectedDots(true);
         setIsAnalyzing(false);
         setAnalysisMode(null);
-    }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, investigationId, persistTagStyles, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
+    }, [boardMode, buildEdgeVisuals, clearPendingIntegrationNodeIds, fitView, handleConnectionHover, investigationId, persistTagStyles, scheduleConnectionRevealCleanup, snapConnectionLabels, syncStrictGridEdgesToNodes, tagStyles]);
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId || nodes.length < 2) {

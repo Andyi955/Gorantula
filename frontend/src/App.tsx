@@ -1045,6 +1045,9 @@ function App() {
             ...current,
             [vaultId]: payload,
           }))
+          if (vaultId === currentInvestigationId && !payload.append) {
+            setActiveTab('board')
+          }
           if (typeof payload.result === 'string' && payload.result.trim()) {
             setUnreadTheoryByInvestigation((current) => ({
               ...current,

@@ -6,9 +6,10 @@ const getNodes = vi.fn(() => [])
 const getTransform = (testId: string) => screen.getByTestId(testId).getAttribute('style') || ''
 
 vi.mock('reactflow', () => ({
-  BaseEdge: ({ style }: { style?: React.CSSProperties }) => (
+  BaseEdge: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
     <path
       data-testid="base-edge"
+      className={className}
       data-stroke-dasharray={style?.strokeDasharray}
       data-stroke-linecap={style?.strokeLinecap}
     />
@@ -181,5 +182,50 @@ describe('CustomEdge', () => {
     )
 
     expect(getTransform('edge-label-edge-6')).not.toContain('translate(60px, 60px)')
+  })
+
+  it('renders a reveal overlay and reports hover state for new connections', () => {
+    const onConnectionHover = vi.fn()
+
+    render(
+      <CustomEdge
+        id="edge-7"
+        source="source-node"
+        target="target-node"
+        sourceX={0}
+        sourceY={0}
+        targetX={100}
+        targetY={100}
+        sourcePosition="Right"
+        targetPosition="Left"
+        label="RELATED"
+        data={{
+          color: '#00ffaa',
+          isConnectionRevealing: true,
+          onConnectionHover,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('edge-reveal-overlay-edge-7')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-label-edge-7').firstElementChild).toHaveClass('forensic-edge-label-reveal')
+
+    fireEvent.mouseEnter(screen.getByTestId('edge-hover-target-edge-7'))
+    expect(onConnectionHover).toHaveBeenLastCalledWith({
+      edgeId: 'edge-7',
+      source: 'source-node',
+      target: 'target-node',
+      color: '#00ffaa',
+      active: true,
+    })
+
+    fireEvent.mouseLeave(screen.getByTestId('edge-hover-target-edge-7'))
+    expect(onConnectionHover).toHaveBeenLastCalledWith({
+      edgeId: 'edge-7',
+      source: 'source-node',
+      target: 'target-node',
+      color: '#00ffaa',
+      active: false,
+    })
   })
 })

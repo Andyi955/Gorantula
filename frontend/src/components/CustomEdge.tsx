@@ -461,6 +461,7 @@ export default function CustomEdge({
     const [isHovered, setIsHovered] = useState(false);
     const boardMode = data?.boardMode as BoardMode | undefined;
     const isStrictGrid = boardMode === 'strict-grid';
+    const isConnectionRevealing = data?.isConnectionRevealing === true;
 
     const [smoothPath, smoothLabelX, smoothLabelY] = getSmoothStepPath({
         sourceX,
@@ -532,6 +533,12 @@ export default function CustomEdge({
             strokeWidth: visuals.strokeWidth ?? style?.strokeWidth,
         };
     }, [data?.color, data?.pattern, data?.shape, style]);
+    const displayedEdgeStyle = useMemo(() => ({
+        ...resolvedEdgeStyle,
+        filter: isHovered
+            ? `drop-shadow(0 0 5px ${data?.color || resolvedEdgeStyle.stroke || '#8ee8ff'}66)`
+            : resolvedEdgeStyle.filter,
+    }), [data?.color, isHovered, resolvedEdgeStyle]);
 
     const onMouseDown = useCallback(
         (evt: React.MouseEvent) => {
@@ -647,9 +654,57 @@ export default function CustomEdge({
         data?.onDelete?.(id);
     };
 
+    const edgeColor = data?.color || resolvedEdgeStyle.stroke || style?.stroke || '#bc13fe';
+
+    const setConnectionHover = useCallback((active: boolean) => {
+        setIsHovered(active);
+        data?.onConnectionHover?.({
+            edgeId: id,
+            source,
+            target,
+            color: edgeColor,
+            active,
+        });
+    }, [data, edgeColor, id, source, target]);
+
+    const overlayStrokeWidth = Number(resolvedEdgeStyle.strokeWidth || style?.strokeWidth || 2) + 1.5;
+    const hoverStrokeWidth = interactionWidth || 20;
+
     return (
         <>
-            <BaseEdge id={id} path={edgePath} style={resolvedEdgeStyle} markerEnd={markerEnd} interactionWidth={interactionWidth} />
+            <BaseEdge
+                id={id}
+                path={edgePath}
+                style={displayedEdgeStyle}
+                markerEnd={markerEnd}
+                interactionWidth={interactionWidth}
+            />
+
+            {isConnectionRevealing && (
+                <path
+                    data-testid={`edge-reveal-overlay-${id}`}
+                    d={edgePath}
+                    className="forensic-edge-reveal-overlay"
+                    fill="none"
+                    stroke={edgeColor}
+                    strokeWidth={overlayStrokeWidth}
+                    strokeLinecap={resolvedEdgeStyle.strokeLinecap || 'round'}
+                    strokeLinejoin="round"
+                    pathLength={1}
+                    pointerEvents="none"
+                />
+            )}
+
+            <path
+                data-testid={`edge-hover-target-${id}`}
+                d={edgePath}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={hoverStrokeWidth}
+                pointerEvents="stroke"
+                onMouseEnter={() => setConnectionHover(true)}
+                onMouseLeave={() => setConnectionHover(false)}
+            />
 
             <EdgeLabelRenderer>
                 <div
@@ -678,9 +733,9 @@ export default function CustomEdge({
                         }}
                         onMouseDown={onMouseDown}
                         onDoubleClick={onDoubleClick}
-                        onMouseEnter={() => setIsHovered(true)}
-                        onMouseLeave={() => setIsHovered(false)}
-                        className="transition-all hover:bg-[#111] hover:scale-110 active:scale-95 active:cursor-grabbing"
+                        onMouseEnter={() => setConnectionHover(true)}
+                        onMouseLeave={() => setConnectionHover(false)}
+                        className={`transition-all hover:bg-[#111] hover:scale-110 active:scale-95 active:cursor-grabbing ${isConnectionRevealing ? 'forensic-edge-label-reveal' : ''} ${isHovered ? 'forensic-edge-label-hovered' : ''}`}
                         title={isStrictGrid
                             ? (data?.snapEnabled
                                 ? 'Drag to reroute line on the grid. Double-click to reset label position.'
