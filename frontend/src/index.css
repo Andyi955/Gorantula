@@ -485,6 +485,8 @@ body {
   .forensic-timeline-event-reordering,
   .forensic-timeline-unknown-card-entering,
   .forensic-board-camera-moving .react-flow__minimap-mask,
+  .forensic-board-empty-idle::before,
+  .forensic-board-empty-idle::after,
   .forensic-minimap-center-button-active,
   .forensic-utility-button-camera-moving,
   .forensic-utility-notification-dot-unread,
@@ -492,6 +494,7 @@ body {
   .forensic-discovery-handle-badge,
   .forensic-discovery-card-reveal,
   .forensic-discovery-card-reveal::after,
+  .forensic-discovery-empty-complete-sweep::after,
   .forensic-discovery-evidence-panel,
   .forensic-spider-brain-signal,
   .forensic-spider-brain-signal-track,
@@ -1584,6 +1587,14 @@ body {
   pointer-events: none;
 }
 
+.forensic-board-root.forensic-board-empty-idle::before {
+  animation: forensicBoardEmptyGridDrift 14s linear infinite;
+}
+
+.forensic-board-root.forensic-board-empty-idle::after {
+  animation: forensicBoardEmptyIdleSweep 8s ease-in-out infinite;
+}
+
 .forensic-busy-pill {
   border: 1px solid rgba(146, 224, 255, 0.32);
   background: linear-gradient(180deg, rgba(13, 26, 37, 0.94), rgba(8, 17, 24, 0.88));
@@ -1823,6 +1834,31 @@ body {
   overflow: hidden;
 }
 
+.forensic-discovery-empty-state {
+  position: relative;
+  overflow: hidden;
+}
+
+.forensic-discovery-empty-complete {
+  border-color: rgba(129, 227, 255, 0.22) !important;
+  background:
+    linear-gradient(180deg, rgba(129, 227, 255, 0.055), rgba(7, 14, 19, 0.74)),
+    radial-gradient(circle at top left, rgba(144, 243, 218, 0.08), transparent 48%) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.02),
+    0 0 22px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-discovery-empty-complete-sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 18%, rgba(129, 227, 255, 0.13) 46%, rgba(144, 243, 218, 0.1) 54%, transparent 76%);
+  transform: translateX(-110%);
+  animation: forensicDiscoveryEmptyCompleteSweep 1350ms ease-out 1;
+}
+
 .forensic-discovery-card-reveal {
   animation: forensicDiscoveryCardReveal 1350ms cubic-bezier(0.16, 0.84, 0.24, 1) both;
   box-shadow:
@@ -1934,6 +1970,40 @@ body {
   }
 }
 
+@keyframes forensicDiscoveryEmptyCompleteSweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-110%);
+  }
+  28% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(110%);
+  }
+}
+
+@keyframes forensicBoardEmptyGridDrift {
+  0% {
+    background-position: 0 0, 0 0;
+  }
+  100% {
+    background-position: 28px 28px, 28px 28px;
+  }
+}
+
+@keyframes forensicBoardEmptyIdleSweep {
+  0%, 100% {
+    opacity: 0.14;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.22;
+    transform: translateY(5px);
+  }
+}
+
 @keyframes forensicSynthesisSignalReveal {
   0% {
     opacity: 0;
@@ -1990,6 +2060,7 @@ body {
   .forensic-synthesis-theory-section-reveal,
   .forensic-discovery-card-reveal,
   .forensic-discovery-card-reveal::after,
+  .forensic-discovery-empty-complete-sweep::after,
   .forensic-discovery-evidence-panel {
     animation: none !important;
     transition: none !important;
@@ -2538,7 +2609,19 @@ body {
     inset 0 0 0 1px rgba(255, 140, 134, 0.16),
     0 18px 36px rgba(0,0,0,0.3),
     0 0 20px rgba(255, 140, 134, 0.18);
-  animation: forensicSpiderLegError 760ms steps(2, end) infinite;
+}
+
+.forensic-spider-leg-card-error-flash {
+  animation: forensicSpiderLegErrorFlash 760ms steps(2, end) 1;
+}
+
+.forensic-spider-leg-card-recovering {
+  border-color: rgba(144, 243, 218, 0.5);
+  box-shadow:
+    inset 0 0 0 1px rgba(144, 243, 218, 0.16),
+    0 18px 36px rgba(0,0,0,0.3),
+    0 0 20px rgba(144, 243, 218, 0.16);
+  animation: forensicSpiderLegRecover 820ms ease-out 1;
 }
 
 .forensic-spider-leg-card-cancelled {
@@ -3167,12 +3250,26 @@ body {
   }
 }
 
-@keyframes forensicSpiderLegError {
+@keyframes forensicSpiderLegErrorFlash {
   0%, 100% {
-    opacity: 0.92;
+    opacity: 0.96;
+    filter: brightness(1);
   }
   50% {
-    opacity: 0.68;
+    opacity: 0.72;
+    filter: brightness(1.38) saturate(1.18);
+  }
+}
+
+@keyframes forensicSpiderLegRecover {
+  0% {
+    filter: brightness(0.85) saturate(0.86);
+  }
+  42% {
+    filter: brightness(1.32) saturate(1.18);
+  }
+  100% {
+    filter: brightness(1) saturate(1);
   }
 }
 
@@ -3208,6 +3305,8 @@ body {
   .forensic-spider-brain-signal-scan,
   .forensic-spider-leg-card,
   .forensic-spider-leg-card::after,
+  .forensic-spider-leg-card-error-flash,
+  .forensic-spider-leg-card-recovering,
   .forensic-spider-pipeline-rail-button,
   .forensic-spider-pipeline-rail-button::before,
   .forensic-local-ingestion-stack,

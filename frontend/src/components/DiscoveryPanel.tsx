@@ -156,8 +156,9 @@ export default function DiscoveryPanel({
   }, [])
 
   useEffect(() => {
-    const handlePanelToggle = () => {
-      const next = !isOpen
+    const handlePanelToggle = (event: Event) => {
+      const detail = (event as CustomEvent<{ open?: boolean }>).detail
+      const next = typeof detail?.open === 'boolean' ? detail.open : !isOpen
       setIsOpen(next)
       if (next) {
         onMarkRead()
@@ -178,6 +179,12 @@ export default function DiscoveryPanel({
       [discoveryId]: !current[discoveryId],
     }))
   }
+  const isCompletedEmptyReview = hasCompletedReview && orderedDiscoveries.length === 0
+  const emptyStateClassName = [
+    'forensic-board-section forensic-discovery-empty-state rounded-2xl p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]',
+    isCompletedEmptyReview ? 'forensic-discovery-empty-complete' : '',
+    isCompletedEmptyReview && !prefersReducedMotion() ? 'forensic-discovery-empty-complete-sweep' : '',
+  ].filter(Boolean).join(' ')
 
   return (
     <>
@@ -231,7 +238,7 @@ export default function DiscoveryPanel({
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {orderedDiscoveries.length === 0 ? (
-            <div className="forensic-board-section rounded-2xl p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
+            <div data-testid="discovery-empty-state" className={emptyStateClassName}>
               {hasCompletedReview ? (
                 <>
                   Discovery review finished with no approved discoveries. Check the discovery log in <span className="font-mono text-[var(--forensic-accent-strong)]">abdomen_vault/discovery_logs</span> to see the full candidate and review trail.

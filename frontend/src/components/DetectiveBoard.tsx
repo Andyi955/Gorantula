@@ -57,6 +57,7 @@ import {
     BROWSER_QA_ANIMATION_DEMO_EVENT,
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
     BROWSER_QA_DISCOVERY_DEMO_EVENT,
+    BROWSER_QA_ERROR_EMPTY_DEMO_EVENT,
     BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
     BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
     BROWSER_QA_PIPELINE_DEMO_EVENT,
@@ -67,7 +68,7 @@ import {
     type BrowserQaEvidenceExpansionDemoDetail,
 } from '../utils/browserQaSeed';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -1161,6 +1162,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const isBoardBusy = isAnalyzing || isGathering || isReorganizing;
     const hasNodes = nodes.length > 0;
+    const isBoardEmptyIdle = showGrid && !isBoardBusy && !deepDiveTopic && nodes.length === 0 && edges.length === 0;
     const canConnectDots = !isAnalyzing && !isGathering && !isReorganizing && nodes.length >= 2;
     const canExport = hasNodes && !isReorganizing;
     const activeLightboxImage = imageLightbox ? imageLightbox.images[imageLightbox.index] : null;
@@ -3364,6 +3366,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }));
     }, [investigationId]);
 
+    const playBrowserQaErrorEmptyDemo = useCallback(() => {
+        const requestId = `qa-error-empty-${Date.now()}`;
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, {
+            detail: {
+                investigationId: requestId,
+                requestId,
+            },
+        }));
+    }, []);
+
     const playBrowserQaTimelineDemo = useCallback(() => {
         window.dispatchEvent(new CustomEvent(BROWSER_QA_TIMELINE_DEMO_EVENT, {
             detail: {
@@ -4057,7 +4069,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     };
 
 
-    const boardRootClassName = `forensic-board-root relative h-full w-full overflow-hidden ${isBoardCameraMoving ? 'forensic-board-camera-moving' : ''}`;
+    const boardRootClassName = `forensic-board-root relative h-full w-full overflow-hidden ${isBoardCameraMoving ? 'forensic-board-camera-moving' : ''} ${isBoardEmptyIdle ? 'forensic-board-empty-idle' : ''}`;
     const minimapCenterButtonClassName = `forensic-minimap-frame forensic-minimap-center-button pointer-events-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)] ${isBoardCameraMoving ? 'forensic-minimap-center-button-active' : ''}`;
     const utilityRecenterButtonClassName = `forensic-utility-button ${isBoardCameraMoving ? 'forensic-utility-button-camera-moving' : ''}`;
 
@@ -4613,6 +4625,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <FileText size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaErrorEmptyDemo}
+                                aria-label="Replay error/empty demo"
+                                title="Replay error/empty demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <AlertTriangle size={16} />
                             </button>
                             <button
                                 type="button"

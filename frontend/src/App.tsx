@@ -13,6 +13,7 @@ import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, type PersistedTimel
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_ERROR_EMPTY_DEMO_EVENT,
   BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
   BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
@@ -24,6 +25,7 @@ import {
   createBrowserQaSynthesisDemoTheory,
   createBrowserQaTimelineDemoSnapshot,
   type BrowserQaDiscoveryDemoDetail,
+  type BrowserQaErrorEmptyDemoDetail,
   type BrowserQaLocalIngestionDemoDetail,
   type BrowserQaPipelineDemoDetail,
   type BrowserQaSeedResult,
@@ -32,7 +34,7 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
-import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
+import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
 import {
   deleteInvestigationPersistence,
   getCachedBoardStateForInvestigation,
@@ -717,6 +719,7 @@ function App() {
   const [qaTimelineDemoByInvestigation, setQaTimelineDemoByInvestigation] = useState<Record<string, PersistedTimelineSnapshot>>({})
   const [qaSpiderTelemetryDemoRequest, setQaSpiderTelemetryDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
   const [qaLocalIngestionDemoRequest, setQaLocalIngestionDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
+  const [qaErrorEmptyDemoRequest, setQaErrorEmptyDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
   const [qaLocalIngestionFilePaths, setQaLocalIngestionFilePaths] = useState<string[]>([])
   const [activeLocalIngestionFilePaths, setActiveLocalIngestionFilePaths] = useState<string[]>([])
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
@@ -1601,6 +1604,51 @@ function App() {
       setBoardWorkspaceRevision((current) => current + 1)
     }
 
+    const handleBrowserQaErrorEmptyDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaErrorEmptyDemoDetail>).detail
+      const requestId = typeof detail?.requestId === 'string' && detail.requestId.trim()
+        ? detail.requestId.trim()
+        : `qa-error-empty-${Date.now()}`
+      const requestedInvestigationId = typeof detail?.investigationId === 'string'
+        ? detail.investigationId.trim()
+        : ''
+      const targetInvestigationId = requestedInvestigationId || `qa-error-empty-${requestId}`
+
+      setInvestigations((current) => (
+        current.some((investigation) => investigation.id === targetInvestigationId)
+          ? current
+          : [...current, createRootInvestigation(targetInvestigationId, 'QA Error / Empty Demo')]
+      ))
+      qaDiscoveryDemoByInvestigationRef.current = {
+        ...qaDiscoveryDemoByInvestigationRef.current,
+        [targetInvestigationId]: [],
+      }
+      setDiscoveriesByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: [],
+      }))
+      setCompletedDiscoveryReviewByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: true,
+      }))
+      setUnreadDiscoveriesByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: false,
+      }))
+      setQaErrorEmptyDemoRequest({
+        investigationId: targetInvestigationId,
+        requestId,
+      })
+      setCurrentInvestigationId(targetInvestigationId)
+      setReturnVaultId(null)
+      setFocusedNodeId(null)
+      setActiveTab('board')
+      setBoardWorkspaceRevision((current) => current + 1)
+      window.dispatchEvent(new CustomEvent(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, {
+        detail: { open: true },
+      }))
+    }
+
     const handleBrowserQaTimelineDemo = (event: Event) => {
       const detail = (event as CustomEvent<BrowserQaTimelineDemoDetail>).detail
       const requestedInvestigationId = typeof detail?.investigationId === 'string'
@@ -1810,6 +1858,7 @@ function App() {
     window.addEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
     window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
+    window.addEventListener(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, handleBrowserQaErrorEmptyDemo as EventListener)
     window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
     window.addEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, handleBrowserQaTimelineDemo as EventListener)
     window.addEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
@@ -1819,6 +1868,7 @@ function App() {
       window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
       window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
+      window.removeEventListener(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, handleBrowserQaErrorEmptyDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
       window.removeEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, handleBrowserQaTimelineDemo as EventListener)
       window.removeEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
@@ -2537,6 +2587,7 @@ function App() {
                       onOpenPipelineMonitor={() => setIsPipelineDrawerOpen(true)}
                       tokenReadout={spiderTokenReadout}
                       qaTelemetryDemoRequest={qaSpiderTelemetryDemoRequest}
+                      qaErrorEmptyDemoRequest={qaErrorEmptyDemoRequest}
                       operationMode={spiderOperationMode}
                       localIngestionFiles={localIngestionFiles}
                       localIngestionProgress={localIngestionProgress}

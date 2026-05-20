@@ -41,6 +41,61 @@ describe('DiscoveryPanel', () => {
     await user.click(screen.getByRole('button', { name: /open discoveries/i }))
 
     expect(screen.getByText(/Discovery review finished with no approved discoveries/i)).toBeInTheDocument()
+    expect(screen.getByTestId('discovery-empty-state')).toHaveClass('forensic-discovery-empty-complete')
+    expect(screen.getByTestId('discovery-empty-state')).toHaveClass('forensic-discovery-empty-complete-sweep')
+  })
+
+  it('does not animate incomplete empty discovery state as review complete', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[]}
+        evidenceByNodeId={{}}
+        hasUnread={false}
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /open discoveries/i }))
+
+    expect(screen.getByTestId('discovery-empty-state')).not.toHaveClass('forensic-discovery-empty-complete-sweep')
+    expect(screen.getByText(/No approved discoveries yet/i)).toBeInTheDocument()
+  })
+
+  it('renders completed empty discovery state statically for reduced motion', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    render(
+      <DiscoveryPanel
+        currentInvestigationId="inv-1"
+        discoveries={[]}
+        evidenceByNodeId={{}}
+        hasCompletedReview
+        hasUnread={false}
+        onOpenDiscovery={vi.fn()}
+        onClear={vi.fn()}
+        onMarkRead={vi.fn()}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /open discoveries/i }))
+
+    expect(screen.getByTestId('discovery-empty-state')).toHaveClass('forensic-discovery-empty-complete')
+    expect(screen.getByTestId('discovery-empty-state')).not.toHaveClass('forensic-discovery-empty-complete-sweep')
   })
 
   it('opens discoveries and routes to supporting evidence', async () => {
