@@ -57,6 +57,7 @@ import {
     BROWSER_QA_ANIMATION_DEMO_EVENT,
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
     BROWSER_QA_DISCOVERY_DEMO_EVENT,
+    BROWSER_QA_SYNTHESIS_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
 } from '../utils/browserQaSeed';
 
@@ -513,7 +514,6 @@ const NODE_ENTRY_STAGGER_MS = 120;
 const NODE_ENTRY_MAX_DELAY_MS = 840;
 const NODE_ENTRY_ANIMATION_DURATION_MS = 1800;
 const PERSONA_SCAN_DURATION_MS = 2200;
-const BOARD_QA_TOOLS_ENABLED_KEY = 'detective_board_qa_tools_enabled';
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
 const LAYOUT_CHOREOGRAPHY_NODE_CLASS = 'forensic-react-flow-node-moving';
 
@@ -792,12 +792,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
-    const [qaToolsEnabled, setQaToolsEnabled] = useState(() => {
-        if (!showBrowserQaBoardTools || typeof window === 'undefined') {
-            return false;
-        }
-        return window.localStorage.getItem(BOARD_QA_TOOLS_ENABLED_KEY) === 'true';
-    });
+    const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
     const lightboxFileInputRef = useRef<HTMLInputElement>(null);
     const lightboxDialogRef = useRef<HTMLDivElement>(null);
     const previousFocusedElementRef = useRef<HTMLElement | null>(null);
@@ -2330,11 +2325,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, [snapNodes]);
 
     useEffect(() => {
-        if (!showBrowserQaBoardTools) {
+        if (!showBrowserQaBoardTools || typeof window === 'undefined') {
             return;
         }
-        localStorage.setItem(BOARD_QA_TOOLS_ENABLED_KEY, String(qaToolsEnabled));
-    }, [qaToolsEnabled, showBrowserQaBoardTools]);
+        window.localStorage.removeItem('detective_board_qa_tools_enabled');
+    }, [showBrowserQaBoardTools]);
 
     useEffect(() => {
         const edgeTags = edges
@@ -3214,6 +3209,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             detail: {
                 investigationId,
                 requestId: `qa-discovery-${Date.now()}`,
+            },
+        }));
+    }, [investigationId]);
+
+    const playBrowserQaSynthesisDemo = useCallback(() => {
+        if (!investigationId) {
+            return;
+        }
+
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_SYNTHESIS_DEMO_EVENT, {
+            detail: {
+                investigationId,
+                requestId: `qa-synthesis-${Date.now()}`,
             },
         }));
     }, [investigationId]);
@@ -4242,7 +4250,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         {hasUnreadTheory && (
                             <span
                                 data-testid="theory-utility-notification"
-                                className="forensic-utility-notification-dot forensic-utility-notification-dot-theory"
+                                className="forensic-utility-notification-dot forensic-utility-notification-dot-theory forensic-utility-notification-dot-unread"
                                 aria-hidden="true"
                             />
                         )}
@@ -4291,6 +4299,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <Lightbulb size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaSynthesisDemo}
+                                aria-label="Replay synthesis demo"
+                                title="Replay synthesis demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <Network size={16} />
                             </button>
                         </>
                     )}

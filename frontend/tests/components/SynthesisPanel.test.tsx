@@ -46,7 +46,7 @@ describe('SynthesisPanel', () => {
       />,
     )
 
-    expect(await screen.findByText('ACME')).toBeInTheDocument()
+    expect((await screen.findAllByText('ACME')).length).toBeGreaterThan(0)
     await user.click(screen.getByText('CLEAR'))
     await waitFor(() => {
       expect(localStorage.getItem('gorantula_synthesis_alerts_by_investigation')).toBe('{}')

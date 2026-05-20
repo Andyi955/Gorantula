@@ -13,13 +13,21 @@ export const BROWSER_QA_SEEDED_EVENT = 'gorantula:browser-qa-seeded'
 export const BROWSER_QA_CLEARED_EVENT = 'gorantula:browser-qa-cleared'
 export const BROWSER_QA_ANIMATION_DEMO_EVENT = 'gorantula:browser-qa-play-animations'
 export const BROWSER_QA_DISCOVERY_DEMO_EVENT = 'gorantula:browser-qa-play-discovery-demo'
+export const BROWSER_QA_SYNTHESIS_DEMO_EVENT = 'gorantula:browser-qa-play-synthesis-demo'
 export const BROWSER_QA_ANIMATION_DEMO_PENDING_KEY = 'gorantula_browser_qa_animation_demo_pending'
 export const BROWSER_QA_SOURCE_INVESTIGATION_ID = 'qa-browser-source'
 export const BROWSER_QA_TARGET_INVESTIGATION_ID = 'qa-browser-target'
+export const BROWSER_QA_RELATED_INVESTIGATION_IDS = [
+  'qa-browser-capacity-costs',
+  'qa-browser-cooling-load',
+  'qa-browser-prior-near-miss',
+  'qa-browser-utility-planning',
+] as const
 
 const BROWSER_QA_INVESTIGATION_IDS = [
   BROWSER_QA_SOURCE_INVESTIGATION_ID,
   BROWSER_QA_TARGET_INVESTIGATION_ID,
+  ...BROWSER_QA_RELATED_INVESTIGATION_IDS,
 ]
 
 export interface BrowserQaSeedResult {
@@ -37,6 +45,71 @@ export interface BrowserQaDiscoveryDemoDetail {
   investigationId: string
   requestId?: string
 }
+
+export interface BrowserQaSynthesisDemoDetail {
+  investigationId: string
+  requestId?: string
+}
+
+export const createBrowserQaSynthesisDemoAlerts = (investigationId: string) => [
+  {
+    type: 'synthesis_alert',
+    alertKey: `qa-synthesis-grid-signal-${investigationId}`,
+    entity: 'grid reliability signal',
+    currentVaultId: investigationId,
+    connectedCases: [
+      investigationId,
+      BROWSER_QA_SOURCE_INVESTIGATION_ID,
+      BROWSER_QA_TARGET_INVESTIGATION_ID,
+      ...BROWSER_QA_RELATED_INVESTIGATION_IDS,
+    ],
+    nodes: [
+      {
+        vaultId: investigationId,
+        nodeId: 'qa-target-existing',
+        summary: 'Existing target lead shows recurring data center load pressure.',
+      },
+      {
+        vaultId: BROWSER_QA_SOURCE_INVESTIGATION_ID,
+        nodeId: 'qa-source-lead',
+        summary: 'Source case includes an earlier operational stress pattern.',
+      },
+    ],
+    analysis: 'QA signal links the active case with prior infrastructure stress evidence through a shared grid reliability pattern.',
+    timestamp: '2026-05-20T10:00:00Z',
+    score: 0.82,
+  },
+  {
+    type: 'synthesis_alert',
+    alertKey: `qa-synthesis-capacity-cost-${investigationId}`,
+    entity: 'capacity cost pressure',
+    currentVaultId: investigationId,
+    connectedCases: [
+      investigationId,
+      BROWSER_QA_SOURCE_INVESTIGATION_ID,
+      BROWSER_QA_RELATED_INVESTIGATION_IDS[0],
+      BROWSER_QA_RELATED_INVESTIGATION_IDS[3],
+    ],
+    nodes: [
+      {
+        vaultId: investigationId,
+        nodeId: 'imported-qa-target-node',
+        summary: 'Imported brief describes mitigation costs and demand-response pressure.',
+      },
+    ],
+    analysis: 'QA signal ties capacity planning language to the same operational reliability theme.',
+    timestamp: '2026-05-20T10:01:00Z',
+    score: 0.74,
+  },
+]
+
+export const createBrowserQaSynthesisDemoTheory = (investigationId: string) => [
+  'QA synthesis theory: shared infrastructure stress pattern.',
+  '',
+  `The active investigation (${investigationId}) and related QA cases point to the same reliability theme: concentrated compute load, emergency cooling draw, and capacity-cost pressure are clustering around grid operations rather than appearing as isolated notes.`,
+  '',
+  'The useful interpretation is not that every case is identical, but that each one exposes a different face of the same constraint: reliability margins are tightening before planning and mitigation processes fully catch up.',
+].join('\n')
 
 export const createBrowserQaDiscoveryDemoRecords = (investigationId: string) => [
   {
@@ -135,8 +208,14 @@ export const seedBrowserQaData = (): BrowserQaSeedResult => {
   const preservedInvestigations = getCachedInvestigations()
   const sourceInvestigation = createRootInvestigation(BROWSER_QA_SOURCE_INVESTIGATION_ID, 'QA: Source Case')
   const targetInvestigation = createRootInvestigation(BROWSER_QA_TARGET_INVESTIGATION_ID, 'QA: Imported Target')
+  const relatedInvestigations = [
+    createRootInvestigation(BROWSER_QA_RELATED_INVESTIGATION_IDS[0], 'QA: Capacity Costs'),
+    createRootInvestigation(BROWSER_QA_RELATED_INVESTIGATION_IDS[1], 'QA: Cooling Load'),
+    createRootInvestigation(BROWSER_QA_RELATED_INVESTIGATION_IDS[2], 'QA: Prior Near-Miss'),
+    createRootInvestigation(BROWSER_QA_RELATED_INVESTIGATION_IDS[3], 'QA: Utility Planning'),
+  ]
 
-  void saveInvestigations([targetInvestigation, sourceInvestigation, ...preservedInvestigations]).catch(() => undefined)
+  void saveInvestigations([targetInvestigation, sourceInvestigation, ...relatedInvestigations, ...preservedInvestigations]).catch(() => undefined)
 
   const sourceNodes = [
     createEvidenceNode(
