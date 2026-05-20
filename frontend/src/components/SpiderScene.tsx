@@ -1,7 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Color, Group, Mesh, Quaternion, Vector3 } from 'three';
-import type { SpiderEvidencePacket, SpiderLegVisualStatus } from './SpiderVisualizer';
+import type { SpiderEvidencePacket, SpiderLegVisualStatus, SpiderOperationMode } from './SpiderVisualizer';
 
 interface SpiderSceneProps {
     legStates: Record<number, string>;
@@ -9,6 +9,7 @@ interface SpiderSceneProps {
     brainState: string;
     pipelineStatus?: 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
     evidencePackets?: SpiderEvidencePacket[];
+    operationMode?: SpiderOperationMode;
 }
 
 const idleColor = '#36505d';
@@ -154,10 +155,23 @@ const EvidencePacket = ({ packet }: { packet: SpiderEvidencePacket }) => {
 
     return (
         <group ref={packetRef} position={start}>
-            <mesh>
-                <sphereGeometry args={[0.11, 18, 18]} />
-                <meshBasicMaterial color={color} transparent opacity={0.9} />
-            </mesh>
+            {packet.mode === 'local' ? (
+                <>
+                    <mesh rotation={[0, 0, Math.PI / 12]}>
+                        <boxGeometry args={[0.28, 0.2, 0.025]} />
+                        <meshBasicMaterial color={color} transparent opacity={0.86} />
+                    </mesh>
+                    <mesh position={[0.03, -0.04, 0.018]} rotation={[0, 0, Math.PI / 12]}>
+                        <boxGeometry args={[0.16, 0.012, 0.012]} />
+                        <meshBasicMaterial color="#061119" transparent opacity={0.74} />
+                    </mesh>
+                </>
+            ) : (
+                <mesh>
+                    <sphereGeometry args={[0.11, 18, 18]} />
+                    <meshBasicMaterial color={color} transparent opacity={0.9} />
+                </mesh>
+            )}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
                 <torusGeometry args={[0.19, 0.008, 12, 28]} />
                 <meshBasicMaterial color={color} transparent opacity={0.36} />
@@ -246,6 +260,7 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({
     brainState,
     pipelineStatus = 'idle',
     evidencePackets = [],
+    operationMode = 'web',
 }) => {
     const sceneRef = useRef<Group>(null);
     const active = brainState !== 'Offline' && brainState !== 'Disconnected' && pipelineStatus !== 'cancelled';
@@ -272,7 +287,7 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({
                 <SpiderLeg key={id} id={id} state={legStates[id] || 'Idle'} status={legVisualStatuses[id] || 'idle'} />
             ))}
             {evidencePackets.map((packet) => (
-                <EvidencePacket key={packet.id} packet={packet} />
+                <EvidencePacket key={packet.id} packet={{ ...packet, mode: packet.mode || operationMode }} />
             ))}
             <Core active={active} />
         </group>

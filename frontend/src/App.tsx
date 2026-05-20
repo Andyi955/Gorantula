@@ -13,15 +13,18 @@ import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, type PersistedTimel
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
   BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   BROWSER_QA_TIMELINE_DEMO_EVENT,
   createBrowserQaDiscoveryDemoRecords,
+  createBrowserQaLocalIngestionDemoFiles,
   createBrowserQaSynthesisDemoTheory,
   createBrowserQaTimelineDemoSnapshot,
   type BrowserQaDiscoveryDemoDetail,
+  type BrowserQaLocalIngestionDemoDetail,
   type BrowserQaPipelineDemoDetail,
   type BrowserQaSeedResult,
   type BrowserQaSpiderTelemetryDemoDetail,
@@ -45,6 +48,7 @@ import {
   saveVaultResultForInvestigation,
   type VaultResultPayload,
 } from './utils/investigationPersistence'
+import type { LocalIngestionFile, SpiderOperationMode } from './components/SpiderVisualizer'
 
 const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
 const DetectiveBoard = lazy(() => import('./components/DetectiveBoard'))
@@ -249,6 +253,24 @@ const clampSidebarWidth = (value: number) =>
   Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)))
 
 const createPipelineRunId = () => `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+const parseLocalCrawlPaths = (value: string) =>
+  value
+    .split('|')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+
+const getLocalFileName = (path: string) => {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] || path
+}
+
+const createLocalIngestionFiles = (paths: string[]): LocalIngestionFile[] =>
+  paths.map((path) => ({
+    path,
+    name: getLocalFileName(path),
+    state: 'queued',
+  }))
 
 const clampProgressPercent = (completedSteps: number, totalSteps: number) => {
   if (!Number.isFinite(completedSteps) || !Number.isFinite(totalSteps) || totalSteps <= 0) {
@@ -694,6 +716,9 @@ function App() {
   const qaSynthesisDemoByInvestigationRef = useRef<Record<string, VaultResultPayload>>({})
   const [qaTimelineDemoByInvestigation, setQaTimelineDemoByInvestigation] = useState<Record<string, PersistedTimelineSnapshot>>({})
   const [qaSpiderTelemetryDemoRequest, setQaSpiderTelemetryDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
+  const [qaLocalIngestionDemoRequest, setQaLocalIngestionDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
+  const [qaLocalIngestionFilePaths, setQaLocalIngestionFilePaths] = useState<string[]>([])
+  const [activeLocalIngestionFilePaths, setActiveLocalIngestionFilePaths] = useState<string[]>([])
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
@@ -1313,6 +1338,32 @@ function App() {
       : activePipelineRun.status === 'error' || activePipelineRun.status === 'cancelled'
         ? activePipelineRun.status
         : 'running'
+  const promptLocalFilePaths = useMemo(
+    () => (crawlMode === 'local' ? parseLocalCrawlPaths(prompt) : []),
+    [crawlMode, prompt],
+  )
+  const spiderOperationMode: SpiderOperationMode = qaLocalIngestionDemoRequest
+    ? 'local'
+    : activePipelineRun?.mode === 'local'
+      ? 'local'
+      : crawlMode
+  const visibleLocalIngestionPaths = qaLocalIngestionDemoRequest
+    ? qaLocalIngestionFilePaths
+    : promptLocalFilePaths.length > 0
+      ? promptLocalFilePaths
+      : spiderOperationMode === 'local'
+        ? activeLocalIngestionFilePaths
+        : []
+  const localIngestionFiles = useMemo(
+    () => createLocalIngestionFiles(visibleLocalIngestionPaths),
+    [visibleLocalIngestionPaths],
+  )
+  const localIngestionProgress = spiderOperationMode === 'local' && activePipelineRun
+    ? {
+      ...activePipelineRun,
+      counters: activePipelineProfile?.counters,
+    }
+    : null
   const canStopActivePipeline = Boolean(
     activePipelineRun &&
     socketConfig.socket &&
@@ -1736,6 +1787,26 @@ function App() {
       setActiveTab('spider')
     }
 
+    const handleBrowserQaLocalIngestionDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaLocalIngestionDemoDetail>).detail
+      const files = Array.isArray(detail?.files) && detail.files.length > 0
+        ? detail.files.filter((path): path is string => typeof path === 'string' && path.trim() !== '')
+        : createBrowserQaLocalIngestionDemoFiles()
+      const requestId = typeof detail?.requestId === 'string' && detail.requestId.trim()
+        ? detail.requestId.trim()
+        : `qa-local-ingestion-${Date.now()}`
+
+      setQaLocalIngestionDemoRequest({
+        investigationId: typeof detail?.investigationId === 'string' ? detail.investigationId : currentInvestigationId || undefined,
+        requestId,
+      })
+      setQaLocalIngestionFilePaths(files)
+      setActiveLocalIngestionFilePaths(files)
+      setCrawlMode('local')
+      setPrompt(files.join('|'))
+      setActiveTab('spider')
+    }
+
     window.addEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
     window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
@@ -1743,6 +1814,7 @@ function App() {
     window.addEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, handleBrowserQaTimelineDemo as EventListener)
     window.addEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
     window.addEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
+    window.addEventListener(BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT, handleBrowserQaLocalIngestionDemo as EventListener)
     return () => {
       window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
@@ -1751,6 +1823,7 @@ function App() {
       window.removeEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, handleBrowserQaTimelineDemo as EventListener)
       window.removeEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
+      window.removeEventListener(BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT, handleBrowserQaLocalIngestionDemo as EventListener)
     }
   }, [applyPipelineProgress, clearQaPipelineDemoTimers, currentInvestigationId, investigations])
 
@@ -1816,12 +1889,13 @@ function App() {
     if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
       const runId = createPipelineRunId()
+      const localPaths = modeToUse === 'local' ? parseLocalCrawlPaths(textToRun) : []
 
       // Extract folder name for better label
       let displayTopic = labelToUse;
       if (modeToUse === 'local') {
-        const parts = labelToUse.split(/[\\/]/);
-        displayTopic = `Local: ${parts[parts.length - 1] || labelToUse}`;
+        const primaryLocalLabel = localPaths[0] || labelToUse
+        displayTopic = `Local: ${getLocalFileName(primaryLocalLabel)}`;
       }
 
       const newInv = createRootInvestigation(id, displayTopic)
@@ -1834,6 +1908,10 @@ function App() {
           ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
           : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
       ))
+      if (modeToUse === 'local') {
+        setActiveLocalIngestionFilePaths(localPaths)
+        setQaLocalIngestionDemoRequest(null)
+      }
       if (!customPrompt) setPrompt('')
       setActiveTab('spider')
       return id;
@@ -2459,6 +2537,10 @@ function App() {
                       onOpenPipelineMonitor={() => setIsPipelineDrawerOpen(true)}
                       tokenReadout={spiderTokenReadout}
                       qaTelemetryDemoRequest={qaSpiderTelemetryDemoRequest}
+                      operationMode={spiderOperationMode}
+                      localIngestionFiles={localIngestionFiles}
+                      localIngestionProgress={localIngestionProgress}
+                      qaLocalIngestionDemoRequest={qaLocalIngestionDemoRequest}
                     />
                   </Suspense>
                 )}
@@ -2472,14 +2554,20 @@ function App() {
                     <div className="forensic-spider-mode-toggle" role="group" aria-label="Crawl mode">
                       <button
                         type="button"
-                        onClick={() => setCrawlMode('web')}
+                        onClick={() => {
+                          setCrawlMode('web')
+                          setQaLocalIngestionDemoRequest(null)
+                        }}
                         className={crawlMode === 'web' ? 'forensic-spider-mode-active' : ''}
                       >
                         WEB
                       </button>
                       <button
                         type="button"
-                        onClick={() => setCrawlMode('local')}
+                        onClick={() => {
+                          setCrawlMode('local')
+                          setQaLocalIngestionDemoRequest(null)
+                        }}
                         className={crawlMode === 'local' ? 'forensic-spider-mode-active' : ''}
                       >
                         LOCAL
@@ -2539,7 +2627,12 @@ function App() {
                         ref={crawlInputRef}
                         type="text"
                         value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
+                        onChange={(e) => {
+                          setPrompt(e.target.value)
+                          if (crawlMode === 'local') {
+                            setQaLocalIngestionDemoRequest(null)
+                          }
+                        }}
                         onKeyDown={(e) => e.key === 'Enter' && runSpider()}
                         placeholder={crawlMode === 'web' ? "ENTER A TOPIC OR URL TO CRAWL THE WEB..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
                         className="forensic-spider-command-input"
@@ -2555,6 +2648,8 @@ function App() {
                               const paths = await res.json();
                               if (paths && paths.length > 0) {
                                 setPrompt(paths.join('|'));
+                                setActiveLocalIngestionFilePaths(paths);
+                                setQaLocalIngestionDemoRequest(null);
                               }
                             } catch (err) {
                               console.error(err);

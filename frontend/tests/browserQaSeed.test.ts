@@ -8,6 +8,7 @@ import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
+  BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
   BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_RELATED_INVESTIGATION_IDS,
   BROWSER_QA_SEEDED_EVENT,
@@ -19,6 +20,7 @@ import {
   clearBrowserQaData,
   createBrowserQaSynthesisDemoAlerts,
   createBrowserQaSynthesisDemoTheory,
+  createBrowserQaLocalIngestionDemoFiles,
   createBrowserQaTimelineDemoSnapshot,
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
@@ -75,6 +77,7 @@ describe('browser QA seed helpers', () => {
     expect(BROWSER_QA_CLEARED_EVENT).toBe('gorantula:browser-qa-cleared')
     expect(BROWSER_QA_DISCOVERY_DEMO_EVENT).toBe('gorantula:browser-qa-play-discovery-demo')
     expect(BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT).toBe('gorantula:browser-qa-play-evidence-expansion-demo')
+    expect(BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT).toBe('gorantula:browser-qa-play-local-ingestion-demo')
     expect(BROWSER_QA_SYNTHESIS_DEMO_EVENT).toBe('gorantula:browser-qa-play-synthesis-demo')
     expect(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT).toBe('gorantula:browser-qa-play-spider-telemetry-demo')
     expect(BROWSER_QA_PIPELINE_DEMO_EVENT).toBe('gorantula:browser-qa-play-pipeline-demo')
@@ -106,5 +109,20 @@ describe('browser QA seed helpers', () => {
     expect(alerts[0].connectedCases).toContain(BROWSER_QA_TARGET_INVESTIGATION_ID)
     expect(alerts[0].connectedCases.length).toBeGreaterThan(5)
     expect(createBrowserQaSynthesisDemoTheory(BROWSER_QA_TARGET_INVESTIGATION_ID)).toContain('QA synthesis theory: shared infrastructure stress pattern')
+  })
+
+  it('creates deterministic browser-only local ingestion demo files', () => {
+    expect(createBrowserQaLocalIngestionDemoFiles()).toEqual([
+      'C:\\Gorantula QA\\grid-brief.pdf',
+      'C:\\Gorantula QA\\cooling-notes.docx',
+      'C:\\Gorantula QA\\capacity-watch.md',
+      'C:\\Gorantula QA\\operator-incident-log.md',
+      'C:\\Gorantula QA\\cooling-maintenance-note.md',
+      'C:\\Gorantula QA\\pjm-cost-watch.md',
+      'C:\\Gorantula QA\\regulator-profile-draft.md',
+      'C:\\Gorantula QA\\transformer-lead-times.md',
+      'C:\\Gorantula QA\\demand-response-proposal.md',
+      'C:\\Gorantula QA\\grid-risk-interview-notes.md',
+    ])
   })
 })

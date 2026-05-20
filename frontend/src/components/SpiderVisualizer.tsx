@@ -6,17 +6,33 @@ import { SpiderScene } from './SpiderScene';
 
 type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
 export type SpiderLegVisualStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
+export type SpiderOperationMode = 'web' | 'local';
+export type LocalIngestionFileState = 'queued' | 'parsing' | 'chunking' | 'summarizing' | 'imported' | 'failed';
 
 export interface SpiderEvidencePacket {
     id: string;
     legId: number;
     createdAt: number;
     status: SpiderLegVisualStatus;
+    mode?: SpiderOperationMode;
 }
 
 export interface SpiderTelemetryDemoRequest {
     investigationId?: string;
     requestId: string;
+}
+
+export interface LocalIngestionFile {
+    path: string;
+    name: string;
+    state: LocalIngestionFileState;
+}
+
+export interface LocalIngestionProgress {
+    stepId?: string;
+    status?: PipelineRailStatus | string;
+    detail?: string;
+    counters?: Record<string, number>;
 }
 
 interface SpiderVisualizerProps {
@@ -38,9 +54,14 @@ interface SpiderVisualizerProps {
         title?: string;
     };
     qaTelemetryDemoRequest?: SpiderTelemetryDemoRequest | null;
+    operationMode?: SpiderOperationMode;
+    localIngestionFiles?: LocalIngestionFile[];
+    localIngestionProgress?: LocalIngestionProgress | null;
+    qaLocalIngestionDemoRequest?: SpiderTelemetryDemoRequest | null;
 }
 
-const legRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
+const webLegRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
+const localLegRoles = ['Parser', 'Chunker', 'Summarizer', 'Classifier', 'Indexer', 'Verifier', 'Dossier', 'Archiver'];
 
 const getSignalColor = (state: string) => {
     if (state.includes('Error')) return '#ff8c86';
@@ -92,6 +113,39 @@ const getBrainVisualStatus = (
     return 'connected';
 };
 
+const prefersReducedMotion = () => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+        return false;
+    }
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+};
+
+const getLocalIngestionStateLabel = (state: LocalIngestionFileState) => {
+    if (state === 'parsing') return 'Parsing';
+    if (state === 'chunking') return 'Chunking';
+    if (state === 'summarizing') return 'Summarizing';
+    if (state === 'imported') return 'Imported';
+    if (state === 'failed') return 'Stopped';
+    return 'Queued';
+};
+
+const deriveLocalIngestionFileState = (
+    fallbackState: LocalIngestionFileState,
+    progress: LocalIngestionProgress | null,
+    pipelineStatus: PipelineRailStatus,
+): LocalIngestionFileState => {
+    if (pipelineStatus === 'cancelled' || progress?.status === 'cancelled') return 'failed';
+    if (pipelineStatus === 'error' || progress?.status === 'error') return 'failed';
+    if (pipelineStatus === 'complete' || progress?.status === 'complete' && progress?.stepId === 'complete') return 'imported';
+
+    const stepId = progress?.stepId || '';
+    const detail = progress?.detail || '';
+    if (/summar/i.test(detail) || stepId === 'gather_evidence' || stepId === 'rank_facts') return 'summarizing';
+    if (/chunk|dispatch/i.test(detail) || stepId === 'dispatch_legs') return 'chunking';
+    if (/pars/i.test(detail) || stepId === 'plan_queries') return 'parsing';
+    return fallbackState;
+};
+
 const MiniWaveform = ({ color, seed }: { color: string; seed: number }) => (
     <div className="forensic-spider-waveform" aria-hidden="true">
         {Array.from({ length: 18 }, (_, index) => (
@@ -119,7 +173,19 @@ const SignalBars = ({ level, color }: { level: number; color: string }) => (
     </div>
 );
 
-const LegTelemetryCard = ({ id, state, pipelineStatus }: { id: number; state: string; pipelineStatus: PipelineRailStatus }) => {
+const LegTelemetryCard = ({
+    id,
+    state,
+    pipelineStatus,
+    role,
+    operationMode,
+}: {
+    id: number;
+    state: string;
+    pipelineStatus: PipelineRailStatus;
+    role: string;
+    operationMode: SpiderOperationMode;
+}) => {
     const color = getSignalColor(state);
     const signalLevel = getSignalLevel(state);
     const visualStatus = getLegVisualStatus(state, pipelineStatus);
@@ -146,8 +212,8 @@ const LegTelemetryCard = ({ id, state, pipelineStatus }: { id: number; state: st
                 <dt>Signal</dt>
                 <dd><SignalBars level={signalLevel} color={color} /></dd>
                 <dt>Role</dt>
-                <dd>{legRoles[id]}</dd>
-                <dt>Crawl</dt>
+                <dd>{role}</dd>
+                <dt>{operationMode === 'local' ? 'Intake' : 'Crawl'}</dt>
                 <dd>{state}</dd>
             </dl>
             <MiniWaveform color={color} seed={id} />
@@ -162,6 +228,64 @@ const MetricReadout = ({ label, value, title }: { label: string; value: string |
     </div>
 );
 
+const LocalIngestionStack = ({
+    files,
+    progress,
+    pipelineStatus,
+}: {
+    files: LocalIngestionFile[];
+    progress: LocalIngestionProgress | null;
+    pipelineStatus: PipelineRailStatus;
+}) => {
+    const reducedMotion = prefersReducedMotion();
+    const visibleFiles = files.length > 0
+        ? files
+        : [{ path: 'local-intake-placeholder', name: 'Awaiting local files', state: 'queued' as LocalIngestionFileState }];
+    const state = deriveLocalIngestionFileState(visibleFiles[0]?.state || 'queued', progress, pipelineStatus);
+    const chunkCount = progress?.counters?.documentChunks;
+    const overflowCount = Math.max(0, visibleFiles.length - 6);
+    const hasScrollableStack = visibleFiles.length > 6;
+
+    return (
+        <div
+            data-testid="local-ingestion-file-stack"
+            className={`forensic-local-ingestion-stack forensic-local-ingestion-stack-${state} ${reducedMotion ? 'forensic-local-ingestion-reduced-motion' : ''}`}
+        >
+            <div className="forensic-local-ingestion-stack-header">
+                <span>Local File Stack</span>
+                <strong>{getLocalIngestionStateLabel(state)}</strong>
+            </div>
+            <div
+                data-testid="local-ingestion-file-list"
+                className={`forensic-local-ingestion-file-list ${hasScrollableStack ? 'forensic-local-ingestion-file-list-scrollable' : ''}`}
+            >
+                {visibleFiles.map((file, index) => {
+                    const fileState = deriveLocalIngestionFileState(file.state, progress, pipelineStatus);
+                    return (
+                        <div
+                            key={`${file.path}-${index}`}
+                            className={`forensic-local-ingestion-file forensic-local-ingestion-file-${fileState}`}
+                            style={{ '--local-file-index': index } as React.CSSProperties}
+                            title={file.path}
+                        >
+                            <span className="forensic-local-ingestion-file-icon" aria-hidden="true" />
+                            <span className="forensic-local-ingestion-file-name">{file.name}</span>
+                            <strong>{getLocalIngestionStateLabel(fileState)}</strong>
+                        </div>
+                    );
+                })}
+            </div>
+            <div className="forensic-local-ingestion-stack-footer">
+                <span>{visibleFiles.length} file{visibleFiles.length === 1 ? '' : 's'}</span>
+                <span>
+                    {overflowCount > 0 ? `+${overflowCount} more | ` : ''}
+                    {Number.isFinite(chunkCount) && chunkCount ? `${chunkCount} chunks` : progress?.detail || 'Ready for local intake'}
+                </span>
+            </div>
+        </div>
+    );
+};
+
 const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     sharedSocket,
     displayMetrics,
@@ -171,11 +295,16 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     onOpenPipelineMonitor,
     tokenReadout,
     qaTelemetryDemoRequest,
+    operationMode = 'web',
+    localIngestionFiles = [],
+    localIngestionProgress = null,
+    qaLocalIngestionDemoRequest,
 }) => {
     const [legStates, setLegStates] = useState<Record<number, string>>(resetLegStates);
     const [brainState, setBrainState] = useState<string>('Offline');
     const [evidencePackets, setEvidencePackets] = useState<SpiderEvidencePacket[]>([]);
     const [qaPipelineStatus, setQaPipelineStatus] = useState<PipelineRailStatus | null>(null);
+    const [qaLocalProgress, setQaLocalProgress] = useState<LocalIngestionProgress | null>(null);
     const legStatesRef = useRef(legStates);
     const lastActiveLegRef = useRef(0);
     const fallbackLegRef = useRef(0);
@@ -183,7 +312,10 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     const packetTimeoutsRef = useRef<number[]>([]);
     const qaTimeoutsRef = useRef<number[]>([]);
     const lastQaRequestIdRef = useRef<string | null>(null);
+    const lastQaLocalRequestIdRef = useRef<string | null>(null);
     const effectivePipelineStatus = qaPipelineStatus || pipelineStatus;
+    const effectiveOperationMode: SpiderOperationMode = qaLocalIngestionDemoRequest ? 'local' : operationMode;
+    const effectiveLocalProgress = qaLocalProgress || localIngestionProgress;
 
     useEffect(() => {
         legStatesRef.current = legStates;
@@ -215,6 +347,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
             legId,
             createdAt: Date.now(),
             status: getLegVisualStatus(state, effectivePipelineStatus),
+            mode: effectiveOperationMode,
         };
 
         setEvidencePackets((current) => [...current, packet].slice(-7));
@@ -223,7 +356,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
             packetTimeoutsRef.current = packetTimeoutsRef.current.filter((entry) => entry !== timeoutId);
         }, 1900);
         packetTimeoutsRef.current.push(timeoutId);
-    }, [effectivePipelineStatus]);
+    }, [effectiveOperationMode, effectivePipelineStatus]);
 
     const clearQaTimeouts = useCallback(() => {
         qaTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
@@ -288,6 +421,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     useEffect(() => {
         if (pipelineStatus === 'cancelled' || pipelineStatus === 'error') {
             setQaPipelineStatus(null);
+            setQaLocalProgress(null);
             clearEvidencePackets();
         }
     }, [clearEvidencePackets, pipelineStatus]);
@@ -329,6 +463,49 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         });
     }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearQaTimeouts, qaTelemetryDemoRequest?.requestId, scheduleQaStep]);
 
+    useEffect(() => {
+        const requestId = qaLocalIngestionDemoRequest?.requestId?.trim();
+        if (!requestId || lastQaLocalRequestIdRef.current === requestId) {
+            return;
+        }
+
+        lastQaLocalRequestIdRef.current = requestId;
+        clearQaTimeouts();
+        clearEvidencePackets();
+        setBrainState('Connected');
+        setQaPipelineStatus('running');
+        setQaLocalProgress({ stepId: 'plan_queries', status: 'running', detail: 'Parsing local files into chunks' });
+        setLegStates(resetLegStates());
+        applyLegState(0, 'Parsing local files');
+        applyLegState(1, 'Chunking document text');
+
+        scheduleQaStep(360, () => addEvidencePacket(0));
+        scheduleQaStep(620, () => {
+            setQaLocalProgress({ stepId: 'dispatch_legs', status: 'running', detail: 'Dispatching document chunks to legs' });
+            applyLegState(2, 'Summarizing document chunks');
+            addEvidencePacket(1);
+        });
+        scheduleQaStep(980, () => {
+            setQaLocalProgress({ stepId: 'gather_evidence', status: 'running', detail: 'Summarizing local document chunks', counters: { documentChunks: 12 } });
+            applyLegState(3, 'Classifying local evidence');
+            addEvidencePacket(2);
+        });
+        scheduleQaStep(1360, () => {
+            setQaLocalProgress({ stepId: 'complete', status: 'complete', detail: 'Imported local evidence', counters: { documentChunks: 12 } });
+            setQaPipelineStatus('complete');
+            applyLegState(0, 'Complete');
+            applyLegState(1, 'Complete');
+            applyLegState(2, 'Complete');
+            applyLegState(3, 'Complete');
+        });
+        scheduleQaStep(2450, () => {
+            setQaPipelineStatus(null);
+            setQaLocalProgress(null);
+            setLegStates(resetLegStates());
+            clearEvidencePackets();
+        });
+    }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearQaTimeouts, qaLocalIngestionDemoRequest?.requestId, scheduleQaStep]);
+
     const legIds = useMemo(() => Array.from({ length: 8 }, (_, index) => index), []);
     const legVisualStatuses = useMemo(
         () => Object.fromEntries(legIds.map((id) => [id, getLegVisualStatus(legStates[id] || 'Idle', effectivePipelineStatus)])) as Record<number, SpiderLegVisualStatus>,
@@ -336,17 +513,32 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     );
     const activeLegCount = legIds.filter((id) => legVisualStatuses[id] !== 'idle').length;
     const evidenceCount = displayMetrics?.evidenceCount ?? 0;
+    const localFileCount = localIngestionFiles.length;
+    const localChunkCount = effectiveLocalProgress?.counters?.documentChunks || 0;
     const confidenceScore = Math.round((displayMetrics?.confidenceScore ?? 0) * 100);
     const uptime = sharedSocket ? '02:34:18' : '00:00:00';
-    const throughput = activeLegCount > 0 ? `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps` : 'Standby';
+    const throughput = activeLegCount > 0
+        ? (effectiveOperationMode === 'local' ? `${Math.max(2, activeLegCount * 3)} docs/min` : `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps`)
+        : 'Standby';
     const normalizedPipelinePercent = Math.max(0, Math.min(100, Math.round(pipelineProgressPercent)));
     const pipelineTitle = normalizedPipelinePercent > 0
         ? `Pipeline: ${pipelineLabel} (${normalizedPipelinePercent}%)`
         : `Pipeline: ${pipelineLabel}`;
     const brainVisualStatus = getBrainVisualStatus(brainState, activeLegCount, effectivePipelineStatus);
+    const legRoles = effectiveOperationMode === 'local' ? localLegRoles : webLegRoles;
+    const stageTopLabel = effectiveOperationMode === 'local' ? 'Document Intake' : 'Neural Mesh';
+    const stageTopValue = effectiveOperationMode === 'local'
+        ? (localFileCount > 0 ? `${localFileCount} file${localFileCount === 1 ? '' : 's'}` : 'Local Files')
+        : (brainState === 'Offline' ? 'Local Preview' : 'Connected');
+    const stageBottomLabel = effectiveOperationMode === 'local' ? 'Case File Index' : 'Scan Radius';
+    const stageBottomValue = effectiveOperationMode === 'local'
+        ? `${displayMetrics?.nodeCount ?? 0} evidence / ${localChunkCount || 'queued'} chunks`
+        : `${displayMetrics?.nodeCount ?? 0} nodes / ${displayMetrics?.edgeCount ?? 0} links`;
+    const intakeHeading = effectiveOperationMode === 'local' ? 'Document Intake' : 'Evidence Intake';
+    const healthHeading = effectiveOperationMode === 'local' ? 'Import Health' : 'Crawl Health';
 
     return (
-        <section data-testid="spider-view-root" className={`forensic-board-root forensic-spider-root forensic-spider-root-${brainVisualStatus} h-full overflow-hidden text-[var(--forensic-text)]`}>
+        <section data-testid="spider-view-root" className={`forensic-board-root forensic-spider-root forensic-spider-root-${brainVisualStatus} forensic-spider-root-${effectiveOperationMode} h-full overflow-hidden text-[var(--forensic-text)]`}>
             <div className="forensic-spider-frame">
                 <header className="forensic-spider-status-strip">
                     <div className={`forensic-spider-brain-title forensic-spider-brain-title-${brainVisualStatus}`} aria-label={`Brain: ${brainState}`}>
@@ -374,14 +566,21 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                 <div className="forensic-spider-workbench">
                     <div className="forensic-spider-leg-bank">
                         {[0, 2, 4, 6].map((id) => (
-                            <LegTelemetryCard key={id} id={id} state={legStates[id] || 'Idle'} pipelineStatus={effectivePipelineStatus} />
+                            <LegTelemetryCard
+                                key={id}
+                                id={id}
+                                state={legStates[id] || 'Idle'}
+                                pipelineStatus={effectivePipelineStatus}
+                                role={legRoles[id]}
+                                operationMode={effectiveOperationMode}
+                            />
                         ))}
                     </div>
 
                     <div data-testid="spider-lab-stage" className="forensic-spider-lab-stage">
                         <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-top">
-                            <span>Neural Mesh</span>
-                            <strong>{brainState === 'Offline' ? 'Local Preview' : 'Connected'}</strong>
+                            <span>{stageTopLabel}</span>
+                            <strong>{stageTopValue}</strong>
                         </div>
                         <Canvas
                             camera={{ position: [0, -0.4, 13], fov: 45 }}
@@ -394,44 +593,59 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                                 brainState={brainState}
                                 pipelineStatus={effectivePipelineStatus}
                                 evidencePackets={evidencePackets}
+                                operationMode={effectiveOperationMode}
                             />
                             <EffectComposer>
                                 <Bloom luminanceThreshold={0.18} mipmapBlur intensity={0.72} />
                             </EffectComposer>
                         </Canvas>
                         <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-bottom">
-                            <span>Scan Radius</span>
-                            <strong>{displayMetrics?.nodeCount ?? 0} nodes / {displayMetrics?.edgeCount ?? 0} links</strong>
+                            <span>{stageBottomLabel}</span>
+                            <strong>{stageBottomValue}</strong>
                         </div>
                     </div>
 
                     <div className="forensic-spider-leg-bank">
                         {[1, 3, 5, 7].map((id) => (
-                            <LegTelemetryCard key={id} id={id} state={legStates[id] || 'Idle'} pipelineStatus={effectivePipelineStatus} />
+                            <LegTelemetryCard
+                                key={id}
+                                id={id}
+                                state={legStates[id] || 'Idle'}
+                                pipelineStatus={effectivePipelineStatus}
+                                role={legRoles[id]}
+                                operationMode={effectiveOperationMode}
+                            />
                         ))}
                     </div>
 
                     <aside data-testid="spider-evidence-intake" className="forensic-spider-intake-panel">
                         <div className="flex items-center justify-between gap-3">
-                            <div className="forensic-spider-panel-heading">Evidence Intake</div>
+                            <div className="forensic-spider-panel-heading">{intakeHeading}</div>
                             <span className="forensic-spider-live-chip">Live</span>
                         </div>
+                        {effectiveOperationMode === 'local' && (
+                            <LocalIngestionStack
+                                files={localIngestionFiles}
+                                progress={effectiveLocalProgress}
+                                pipelineStatus={effectivePipelineStatus}
+                            />
+                        )}
                         <div className="forensic-spider-intake-grid">
-                            <MetricReadout label="New Items" value={evidenceCount} />
+                            <MetricReadout label={effectiveOperationMode === 'local' ? 'Evidence' : 'New Items'} value={evidenceCount} />
                             <MetricReadout label="Duplicates" value={Math.max(0, Math.round(evidenceCount * 0.25))} />
-                            <MetricReadout label="Sources" value={Math.max(0, displayMetrics?.nodeCount ?? 0)} />
-                            <MetricReadout label="Images" value={displayMetrics?.imageCount ?? 0} />
+                            <MetricReadout label={effectiveOperationMode === 'local' ? 'Files' : 'Sources'} value={effectiveOperationMode === 'local' ? localFileCount : Math.max(0, displayMetrics?.nodeCount ?? 0)} />
+                            <MetricReadout label={effectiveOperationMode === 'local' ? 'Chunks' : 'Images'} value={effectiveOperationMode === 'local' ? localChunkCount : displayMetrics?.imageCount ?? 0} />
                         </div>
                         <div className="forensic-spider-bar-chart" aria-hidden="true">
                             {Array.from({ length: 18 }, (_, index) => (
                                 <span key={index} style={{ height: `${18 + ((index * 11) % 58)}%` }} />
                             ))}
                         </div>
-                        <div className="forensic-spider-panel-heading mt-5">Crawl Health</div>
+                        <div className="forensic-spider-panel-heading mt-5">{healthHeading}</div>
                         <dl className="forensic-spider-health-list">
                             <div><dt>Success Rate</dt><dd>{confidenceScore || 98}%</dd></div>
-                            <div><dt>Avg Response</dt><dd>{activeLegCount > 0 ? '412 ms' : 'Ready'}</dd></div>
-                            <div><dt>Retry Rate</dt><dd>{activeLegCount > 0 ? '1.2%' : '0.0%'}</dd></div>
+                            <div><dt>{effectiveOperationMode === 'local' ? 'Parser State' : 'Avg Response'}</dt><dd>{activeLegCount > 0 ? (effectiveOperationMode === 'local' ? 'Active' : '412 ms') : 'Ready'}</dd></div>
+                            <div><dt>{effectiveOperationMode === 'local' ? 'Import Rate' : 'Retry Rate'}</dt><dd>{activeLegCount > 0 ? (effectiveOperationMode === 'local' ? 'Live' : '1.2%') : '0.0%'}</dd></div>
                             <div><dt>Last Activity</dt><dd>{displayMetrics?.lastActivityLabel ?? '--'}</dd></div>
                         </dl>
                     </aside>

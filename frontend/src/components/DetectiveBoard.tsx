@@ -58,6 +58,7 @@ import {
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
     BROWSER_QA_DISCOVERY_DEMO_EVENT,
     BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
+    BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
     BROWSER_QA_PIPELINE_DEMO_EVENT,
     BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
@@ -3354,6 +3355,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }));
     }, [investigationId]);
 
+    const playBrowserQaLocalIngestionDemo = useCallback(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT, {
+            detail: {
+                investigationId,
+                requestId: `qa-local-ingestion-${Date.now()}`,
+            },
+        }));
+    }, [investigationId]);
+
     const playBrowserQaTimelineDemo = useCallback(() => {
         window.dispatchEvent(new CustomEvent(BROWSER_QA_TIMELINE_DEMO_EVENT, {
             detail: {
@@ -4594,6 +4604,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <Activity size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaLocalIngestionDemo}
+                                aria-label="Replay local ingestion demo"
+                                title="Replay local ingestion demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <FileText size={16} />
                             </button>
                             <button
                                 type="button"
