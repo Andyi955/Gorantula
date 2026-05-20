@@ -7,6 +7,7 @@ import {
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_RELATED_INVESTIGATION_IDS,
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
@@ -72,6 +73,7 @@ describe('browser QA seed helpers', () => {
     expect(BROWSER_QA_DISCOVERY_DEMO_EVENT).toBe('gorantula:browser-qa-play-discovery-demo')
     expect(BROWSER_QA_SYNTHESIS_DEMO_EVENT).toBe('gorantula:browser-qa-play-synthesis-demo')
     expect(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT).toBe('gorantula:browser-qa-play-spider-telemetry-demo')
+    expect(BROWSER_QA_PIPELINE_DEMO_EVENT).toBe('gorantula:browser-qa-play-pipeline-demo')
   })
 
   it('creates deterministic browser-only synthesis demo payloads', () => {

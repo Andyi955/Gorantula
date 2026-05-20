@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
@@ -143,6 +144,7 @@ describe('App', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -647,6 +649,7 @@ describe('App', () => {
     const chip = await screen.findByTestId('pipeline-progress-chip')
     expect(chip).toHaveTextContent('25%')
     expect(chip).toHaveTextContent('Dispatching legs')
+    expect(chip).toHaveClass('forensic-pipeline-chip-scanning')
     expect(chip).toHaveAttribute('title', expect.stringContaining('elapsed 4s'))
     expect(chip).toHaveAttribute('title', expect.stringContaining('ETA 13s'))
     expect(within(chip).getByRole('button', { name: /dismiss pipeline status chip/i })).toBeInTheDocument()
@@ -656,9 +659,13 @@ describe('App', () => {
 
     await user.click(spiderPipelineRailButton)
     const drawer = screen.getByTestId('pipeline-progress-drawer')
+    expect(drawer).toHaveClass('forensic-pipeline-drawer-running')
     expect(drawer).toHaveTextContent('Pipeline Monitor')
+    expect(screen.getByTestId('pipeline-progress-bar')).toHaveClass('forensic-pipeline-progress-fill-scanning')
     expect(screen.getByTestId('pipeline-progress-bar')).toHaveStyle({ width: '25%' })
-    expect(screen.getAllByTestId('pipeline-progress-step')).toHaveLength(3)
+    const steps = screen.getAllByTestId('pipeline-progress-step')
+    expect(steps).toHaveLength(3)
+    expect(steps[2]).toHaveClass('forensic-pipeline-step-transition-running')
 
     await user.click(screen.getByText('Detective Board'))
     expect(await screen.findByText('DetectiveBoard')).toBeInTheDocument()
@@ -755,10 +762,13 @@ describe('App', () => {
     })
 
     expect(screen.getByTestId('mock-spider-pipeline-rail')).toHaveTextContent('cancelled Pipeline stopped 38%')
+    await user.click(screen.getByTestId('mock-spider-pipeline-rail'))
+    expect(screen.getByTestId('pipeline-progress-drawer')).toHaveClass('forensic-pipeline-drawer-cancelled')
+    expect(screen.getByTestId('pipeline-progress-bar')).not.toHaveClass('forensic-pipeline-progress-fill-scanning')
     expect(screen.queryByRole('button', { name: /stop current investigation/i })).not.toBeInTheDocument()
   })
 
-  it('renders saved pipeline performance profiles in the monitor drawer', async () => {
+  it('renders saved pipeline performance profiles in the monitor drawer with an animated token readout', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
@@ -820,8 +830,112 @@ describe('App', () => {
     expect(await within(drawer).findByText('Performance')).toBeInTheDocument()
     expect(within(drawer).getByText('Node summary')).toBeInTheDocument()
     expect(within(drawer).getByText(/44% of run/i)).toBeInTheDocument()
-    expect(within(drawer).getByText(/14\.2K tokens/i)).toBeInTheDocument()
+    const tokenReadout = within(drawer).getByTestId('pipeline-token-hotspot-value')
+    expect(tokenReadout).toHaveClass('forensic-pipeline-token-count-animating')
+    await waitFor(() => expect(tokenReadout).toHaveTextContent(/14\.2K tokens/i))
     expect(within(drawer).getByText(/3m 06s total/i)).toBeInTheDocument()
+  })
+
+  it('shows final pipeline token values immediately when reduced motion is preferred', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve([
+        {
+          runId: 'run-reduced-motion',
+          vaultId: 'inv-reduced-motion',
+          mode: 'web',
+          status: 'complete',
+          totalElapsedMs: 86000,
+          bottlenecks: [
+            { kind: 'token', id: 'persona_analysis', label: 'Persona analysis', totalTokens: 9800 },
+          ],
+          tokenUsage: [
+            { operation: 'persona_analysis', provider: 'deepseek', callCount: 4, totalTokens: 9800 },
+          ],
+        },
+      ]),
+    } as Response)))
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: 'run-reduced-motion',
+        vaultId: 'inv-reduced-motion',
+        mode: 'web',
+        stepId: 'complete',
+        stepLabel: 'Pipeline complete',
+        status: 'complete',
+        completedSteps: 12,
+        totalSteps: 12,
+        elapsedMs: 86000,
+      })
+    })
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROFILE_SAVED', {
+        runId: 'run-reduced-motion',
+      })
+    })
+
+    await user.click(await screen.findByTestId('mock-spider-pipeline-rail'))
+
+    const tokenReadout = await screen.findByTestId('pipeline-token-hotspot-value')
+    expect(tokenReadout).toHaveTextContent(/9\.8K tokens/i)
+    expect(tokenReadout).not.toHaveClass('forensic-pipeline-token-count-animating')
+  })
+
+  it('runs the browser-only QA pipeline monitor demo without backend messages or persistence', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    act(() => {
+      const result = seedBrowserQaData()
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SEEDED_EVENT, { detail: result }))
+    })
+
+    vi.useFakeTimers()
+
+    try {
+      act(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_PIPELINE_DEMO_EVENT, {
+          detail: {
+            investigationId: BROWSER_QA_TARGET_INVESTIGATION_ID,
+            requestId: 'qa-pipeline-test',
+          },
+        }))
+      })
+
+      expect(screen.getByTestId('pipeline-progress-drawer')).toHaveTextContent('QA pipeline warmup')
+      expect(screen.getByTestId('pipeline-progress-chip')).toHaveClass('forensic-pipeline-chip-scanning')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1700)
+      })
+
+      expect(screen.getByTestId('pipeline-progress-drawer')).toHaveTextContent('QA pipeline cancelled')
+      expect(screen.getByTestId('pipeline-progress-drawer')).toHaveClass('forensic-pipeline-drawer-cancelled')
+      expect(screen.getByTestId('pipeline-token-hotspot-value')).toHaveTextContent(/8\.4K tokens/i)
+      expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
+      expect(localStorage.getItem('gorantula_pipeline_qa_demo')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('surfaces board autosave failures in the global status area', async () => {

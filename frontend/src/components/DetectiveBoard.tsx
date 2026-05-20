@@ -57,12 +57,13 @@ import {
     BROWSER_QA_ANIMATION_DEMO_EVENT,
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
     BROWSER_QA_DISCOVERY_DEMO_EVENT,
+    BROWSER_QA_PIPELINE_DEMO_EVENT,
     BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
 } from '../utils/browserQaSeed';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -3236,6 +3237,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }));
     }, [investigationId]);
 
+    const playBrowserQaPipelineDemo = useCallback(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_PIPELINE_DEMO_EVENT, {
+            detail: {
+                investigationId,
+                requestId: `qa-pipeline-${Date.now()}`,
+            },
+        }));
+    }, [investigationId]);
+
     useEffect(() => {
         const handleBrowserQaAnimationDemo = (event: Event) => {
             const detail = (event as CustomEvent<BrowserQaAnimationDemoDetail>).detail;
@@ -4327,6 +4337,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <RadioTower size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaPipelineDemo}
+                                aria-label="Replay pipeline demo"
+                                title="Replay pipeline demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <Activity size={16} />
                             </button>
                         </>
                     )}
