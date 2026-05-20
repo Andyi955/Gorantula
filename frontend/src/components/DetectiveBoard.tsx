@@ -57,14 +57,16 @@ import {
     BROWSER_QA_ANIMATION_DEMO_EVENT,
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
     BROWSER_QA_DISCOVERY_DEMO_EVENT,
+    BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
     BROWSER_QA_PIPELINE_DEMO_EVENT,
     BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
     BROWSER_QA_TIMELINE_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
+    type BrowserQaEvidenceExpansionDemoDetail,
 } from '../utils/browserQaSeed';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -612,6 +614,9 @@ const getQaAnimationDemoStagingPosition = (index: number) =>
         y: 96 + Math.floor(index / 3) * 288,
     };
 
+const QA_EVIDENCE_EXPANSION_NODE_ID = 'qa-evidence-expansion-node';
+const QA_EVIDENCE_EXPANSION_IMAGE_SRC = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22071118%22/%3E%3Crect x=%2238%22 y=%2244%22 width=%22564%22 height=%22272%22 fill=%220c1a22%22 stroke=%2281e3ff%22 stroke-width=%222%22 opacity=%220.78%22/%3E%3Cpath d=%22M70 112h260M70 150h430M70 188h380M70 226h300%22 stroke=%22%2381e3ff%22 stroke-width=%229%22 opacity=%220.28%22/%3E%3Ccircle cx=%22522%22 cy=%22128%22 r=%2248%22 fill=%22%23f6c879%22 opacity=%220.22%22/%3E%3Ctext x=%2270%22 y=%2286%22 fill=%22%2381e3ff%22 font-size=%2224%22 font-family=%22monospace%22 font-weight=%22700%22%3EQA VISUAL EVIDENCE%3C/text%3E%3C/svg%3E';
+
 const QA_ANIMATION_DEMO_INSIGHTS = [
     {
         personaName: 'Discovery',
@@ -845,6 +850,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const connectChoreographyBaseEdgesRef = useRef<Edge[]>([]);
     const qaAnimationTimeoutsRef = useRef<number[]>([]);
     const qaAnimationDemoActiveRef = useRef(false);
+    const qaEvidenceExpansionDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
     const timelineFocusTimeoutRef = useRef<number | null>(null);
     const boardCameraMovementTimeoutRef = useRef<number | null>(null);
@@ -2407,6 +2413,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearBoardCameraMovement();
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
+        qaEvidenceExpansionDemoActiveRef.current = false;
     }, [clearBoardCameraMovement, clearLayoutChoreographyState, investigationId]);
 
     useEffect(() => {
@@ -2557,7 +2564,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         applyBoardState(immediateState);
 
         void loadBoardStateForInvestigation(investigationId).then((backendState) => {
-            if (qaAnimationDemoActiveRef.current) {
+            if (qaAnimationDemoActiveRef.current || qaEvidenceExpansionDemoActiveRef.current) {
                 return;
             }
             if (backendState && backendState !== immediateState) {
@@ -2573,6 +2580,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
         if (nodes.length === 0 && edges.length === 0) return;
+        if (qaEvidenceExpansionDemoActiveRef.current || nodes.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID)) return;
         if (isDraggingNodeRef.current) return;
 
         if (persistTimerRef.current) {
@@ -3354,6 +3362,130 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             },
         }));
     }, [investigationId]);
+
+    const playBrowserQaEvidenceExpansionDemo = useCallback(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId) {
+            return;
+        }
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
+        clearLayoutChoreographyState();
+        qaAnimationDemoActiveRef.current = false;
+        qaEvidenceExpansionDemoActiveRef.current = true;
+        nodeEntrySequenceRef.current = 0;
+        setBoardMode('strict-grid');
+        setPendingIntegrationNodeIds([]);
+        setHasConnectedDots(false);
+        setIsGathering(false);
+        setIsAnalyzing(false);
+        setAnalysisMode(null);
+        setDeepDiveTopic(null);
+        setEditingNodeId(null);
+        setEdges([]);
+
+        const summary = 'A QA case file combines a long report body, a source link, visual evidence, and persona discussion so node expansion can be tuned without a backend run.';
+        const fullText = [
+            'A QA case file combines a long report body, a source link, visual evidence, and persona discussion so node expansion can be tuned without a backend run.',
+            '',
+            'The first paragraph is deliberately compact enough to look like a normal evidence card while collapsed.',
+            '',
+            'The expanded body adds operational detail: a facilities note, a dated source link, and a visual appendix all point to the same reliability pattern. The copy is long enough to make the smooth case-file reveal visible while preserving React Flow edge routing.',
+            '',
+            'A second paragraph gives the persona discussion something to react to. Analysts should be able to open the discussion modal, see each specialist card arrive in sequence, and close it without the board stealing wheel events.',
+        ].join('\n');
+        const frame = calculateNodeFrame(summary, fullText, true, true);
+        const qaNode: Node = {
+            id: QA_EVIDENCE_EXPANSION_NODE_ID,
+            type: 'custom',
+            zIndex: STRICT_GRID_NODE_Z_INDEX,
+            position: { x: 160, y: 128 },
+            style: frame,
+            sourcePosition: Position.Right,
+            targetPosition: Position.Left,
+            data: {
+                id: QA_EVIDENCE_EXPANSION_NODE_ID,
+                title: 'QA Evidence Expansion Case File',
+                summary,
+                fullText,
+                sourceURL: 'https://example.com/qa-evidence-expansion',
+                images: [
+                    {
+                        id: 'qa-evidence-expansion-image',
+                        path: QA_EVIDENCE_EXPANSION_IMAGE_SRC,
+                        sourceURL: 'https://example.com/qa-evidence-expansion',
+                        caption: 'QA visual evidence attachment',
+                        origin: 'manual',
+                        mimeType: 'image/svg+xml',
+                        width: 640,
+                        height: 360,
+                    },
+                ],
+                personaInsights: [
+                    {
+                        personaName: 'Connector',
+                        perspective: 'Looks for hidden relationships across evidence.',
+                        confidence: 0.88,
+                        keyFindings: ['The source, image, and long-form note all support the same operational signal.'],
+                        connections: ['Source link and visual appendix both strengthen the case-file reading.'],
+                        questions: ['Which source detail should be promoted into a relationship candidate?'],
+                        fullAnalysis: 'The QA file is intentionally dense enough to verify the staggered discussion reveal and expanded text rhythm.',
+                        nodeIDs: [QA_EVIDENCE_EXPANSION_NODE_ID],
+                    },
+                    {
+                        personaName: 'Skeptic',
+                        perspective: 'Checks whether the evidence is overstated.',
+                        confidence: 0.72,
+                        keyFindings: ['The evidence is useful, but the demo should remain visibly marked as QA-only.'],
+                        connections: ['The image and report body are corroborative rather than independent findings.'],
+                        questions: ['Does the source link remain easy to verify after the hover polish?'],
+                        fullAnalysis: 'This card helps tune the reveal without pretending the demo contains real provider output.',
+                        nodeIDs: [QA_EVIDENCE_EXPANSION_NODE_ID],
+                    },
+                ],
+                onReadFull: () => setSelectedContent(fullText),
+                onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                onDelete: (id: string) => handleDeleteNode(id),
+                onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                onSetEditing: (id: string | null) => handleSetEditing(id),
+                onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                isDeepDiveSource: false,
+                expanded: true,
+                boardMode: 'strict-grid' as BoardMode,
+            },
+        };
+
+        setNodes([qaNode]);
+        const detail: BrowserQaEvidenceExpansionDemoDetail = {
+            investigationId,
+            requestId: `qa-evidence-expansion-${Date.now()}`,
+        };
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, { detail }));
+    }, [
+        clearLayoutChoreographyState,
+        handleAttachImage,
+        handleDeleteNode,
+        handleNodeExpand,
+        handleRemoveImage,
+        handleSaveNode,
+        handleSetEditing,
+        handleUpdateNode,
+        investigationId,
+        loadedInvestigationId,
+        onDeepDiveNode,
+        onNavigateToChild,
+        openImageLightbox,
+    ]);
 
     useEffect(() => {
         const handleBrowserQaAnimationDemo = (event: Event) => {
@@ -4471,6 +4603,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <Clock size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaEvidenceExpansionDemo}
+                                aria-label="Replay evidence expansion demo"
+                                title="Replay evidence expansion demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <FileSearch size={16} />
                             </button>
                         </>
                     )}

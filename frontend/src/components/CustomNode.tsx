@@ -187,6 +187,11 @@ const logNodeImageDebug = (stage: string, payload: Record<string, unknown>) => {
     console.debug(`[CustomNode][Image:${stage}]`, payload);
 };
 
+const prefersReducedMotion = () =>
+    typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
     currentInvestigationId?: string | null, 
@@ -221,6 +226,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const imageRetryTimeoutRef = useRef<number | null>(null);
     const [imageLoadState, setImageLoadState] = useState<NodeImageLoadState>('idle');
     const [imageRetryAttempt, setImageRetryAttempt] = useState(0);
+    const reducedMotion = prefersReducedMotion();
 
     // Let the browser handle the smooth scrolling natively!
     // All we do is stop the event from bubbling up to React Flow to prevent canvas zooming.
@@ -333,6 +339,15 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
     const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
     const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
+    const detailMotionClassName = reducedMotion
+        ? 'forensic-node-detail-motion forensic-node-detail-reduced-motion'
+        : `forensic-node-detail-motion ${isExpanded ? 'forensic-node-detail-expanded' : 'forensic-node-detail-collapsed'}`;
+    const imagePreviewMotionClassName = reducedMotion
+        ? 'forensic-node-image-reduced-motion'
+        : `forensic-node-image-fade ${imageLoadState === 'loaded' ? 'forensic-node-image-loaded' : 'forensic-node-image-loading'} ${data.isAnalyzing ? 'forensic-node-image-analyzing' : ''}`;
+    const personaCardMotionClassName = reducedMotion
+        ? 'forensic-persona-card-reduced-motion'
+        : 'forensic-persona-card-reveal';
 
     useEffect(() => {
         if (imageRetryTimeoutRef.current) {
@@ -846,7 +861,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                             e.stopPropagation();
                                             data.onViewImages?.(images, 0, data.title, data.id);
                                         }}
-                                        className={`forensic-node-image nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-xl text-left transition-all hover:border-[rgba(129,227,255,0.34)] hover:shadow-[0_0_0_1px_rgba(129,227,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                        className={`forensic-node-image ${imagePreviewMotionClassName} nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-xl text-left transition-all hover:border-[rgba(129,227,255,0.34)] hover:shadow-[0_0_0_1px_rgba(129,227,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                         style={{ height: NODE_IMAGE_PREVIEW_HEIGHT }}
                                         title={images.length > 1 ? `View ${images.length} attached images` : 'View attached image'}
                                     >
@@ -857,7 +872,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                             crossOrigin="anonymous"
                                             onLoad={handlePreviewImageLoad}
                                             onError={handlePreviewImageError}
-                                            className={`h-full w-full object-cover transition-opacity duration-300 ${imageLoadState === 'loaded' ? 'opacity-100' : 'opacity-35'}`}
+                                            className={`h-full w-full object-cover transition-opacity duration-300 ${imageLoadState === 'loaded' ? 'forensic-node-image-loaded opacity-100' : 'forensic-node-image-loading opacity-35'}`}
                                         />
                                         {imageLoadState !== 'loaded' && (
                                             <div className="pointer-events-none absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-2 bg-[rgba(4,9,14,0.62)] px-3 text-center text-[10px] font-black uppercase tracking-[0.16em] text-[var(--forensic-text-faint)]">
@@ -882,7 +897,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     </button>
                                 )}
                                 <div
-                                    className={`forensic-node-text flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    data-testid="node-detail-motion"
+                                    className={`forensic-node-text ${detailMotionClassName} flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                     style={isExpanded ? undefined : { maxHeight: COLLAPSED_TEXT_MAX_HEIGHT }}
                                     dangerouslySetInnerHTML={{
                                         __html: parseHighlightedText(displayContent || '')
@@ -928,7 +944,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 {data.personaInsights.map((insight, idx) => (
                                     <div
                                         key={idx}
-                                        className={`p-4 rounded-lg border ${insight.personaName === 'Skeptic' ? 'bg-red-500/10 border-red-400/30' :
+                                        data-testid="persona-insight-card"
+                                        className={`${personaCardMotionClassName} p-4 rounded-lg border ${insight.personaName === 'Skeptic' ? 'bg-red-500/10 border-red-400/30' :
                                             insight.personaName === 'Connector' ? 'bg-purple-500/10 border-purple-400/30' :
                                                 insight.personaName === 'Timeline Analyst' ? 'bg-cyan-500/10 border-cyan-400/30' :
                                                     insight.personaName === 'Entity Hunter' ? 'bg-green-500/10 border-green-400/30' :
@@ -936,6 +953,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                                             insight.personaName === 'Implications Mapper' ? 'bg-pink-500/10 border-pink-400/30' :
                                                                 'bg-cyber-purple/10 border-cyber-purple/30'
                                             }`}
+                                        style={{ '--persona-card-delay': reducedMotion ? '0ms' : `${idx * 90}ms` } as CSSProperties}
                                     >
                                         <div className="flex items-center gap-2 mb-2">
                                             <span className="font-bold text-white">{insight.personaName}</span>
@@ -1062,7 +1080,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 target="_blank"
                                 rel="noreferrer"
                                 onClick={(e) => e.stopPropagation()}
-                                className="ml-1 text-[var(--forensic-text-faint)] transition-colors hover:text-[var(--forensic-accent)]"
+                                className="forensic-node-source-link nodrag nowheel ml-1 text-[var(--forensic-text-faint)] transition-colors hover:text-[var(--forensic-accent)]"
                                 title="Verify Source"
                             >
                                 <ExternalLink size={12} />
