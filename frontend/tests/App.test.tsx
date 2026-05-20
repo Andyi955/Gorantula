@@ -4,6 +4,7 @@ import App from '../src/App'
 import {
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
+  BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   BROWSER_QA_TARGET_INVESTIGATION_ID,
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
@@ -73,8 +74,17 @@ vi.mock('../src/components/VaultChatbot', () => ({
 }))
 
 vi.mock('../src/components/SynthesisPanel', () => ({
-  default: ({ showHandle = true }: { showHandle?: boolean }) => (
-    <div>{showHandle ? 'SynthesisPanel Handle' : null}</div>
+  default: ({
+    showHandle = true,
+    currentTheoryReport,
+  }: {
+    showHandle?: boolean
+    currentTheoryReport?: string | null
+  }) => (
+    <div>
+      {showHandle ? 'SynthesisPanel Handle' : null}
+      {currentTheoryReport?.includes('QA synthesis theory') ? <span>{currentTheoryReport}</span> : null}
+    </div>
   ),
 }))
 
@@ -1078,5 +1088,28 @@ describe('App', () => {
     expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread true')
     expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
     expect(localStorage.getItem('gorantula_discoveries_by_investigation')).toBeNull()
+  })
+
+  it('injects temporary QA synthesis demo theory without backend messages or persistence', async () => {
+    render(<App />)
+
+    act(() => {
+      const result = seedBrowserQaData()
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SEEDED_EVENT, { detail: result }))
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SYNTHESIS_DEMO_EVENT, {
+        detail: {
+          investigationId: BROWSER_QA_TARGET_INVESTIGATION_ID,
+          requestId: 'qa-synthesis-test',
+        },
+      }))
+    })
+
+    expect((await screen.findAllByText(/QA synthesis theory: shared infrastructure stress pattern/i)).length).toBeGreaterThan(0)
+    expect(screen.getByTestId('mock-board-theory-state')).toHaveTextContent('theory-ready true theory-unread true')
+    expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
+    expect(localStorage.getItem(`vault_result_${BROWSER_QA_TARGET_INVESTIGATION_ID}`)).toBeNull()
   })
 })

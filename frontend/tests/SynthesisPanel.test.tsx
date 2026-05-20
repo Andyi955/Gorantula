@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { vi } from 'vitest'
 import SynthesisPanel from '../src/components/SynthesisPanel'
@@ -28,6 +28,8 @@ class SocketMock {
 describe('SynthesisPanel', () => {
   beforeEach(() => {
     localStorage.clear()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('shows alerts only for the selected investigation and clears only that bucket', () => {
@@ -85,7 +87,7 @@ describe('SynthesisPanel', () => {
       />,
     )
 
-    expect(screen.getByText('beta')).toBeInTheDocument()
+    expect(screen.getAllByText('beta').length).toBeGreaterThan(0)
     expect(screen.queryByText('alice')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByText('CLEAR'))
@@ -347,11 +349,11 @@ describe('SynthesisPanel', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText('live-entity').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('Newest live alert should remain visible').length).toBeGreaterThan(1)
+      expect(screen.getAllByText('Newest live alert should remain visible').length).toBeGreaterThan(0)
     })
   })
 
-  it('auto-opens when a new alert arrives for the current investigation', () => {
+  it('keeps the synthesis panel closed and unread when a new alert arrives for the current investigation', async () => {
     const socket = new SocketMock() as unknown as WebSocket
 
     render(
@@ -380,14 +382,210 @@ describe('SynthesisPanel', () => {
       })
     })
 
-    return waitFor(() => {
-      const panel = screen.getByText('GRAND UNIFIED THEORY').closest('.translate-x-0')
-      expect(panel).not.toBeNull()
-      expect(screen.getByLabelText('Hide synthesis panel')).toBeInTheDocument()
-    })
+    const card = await screen.findByTestId('synthesis-alert-card-inv-a::alice::inv-a')
+    expect(card).toHaveTextContent('Alert A')
+
+    const panel = screen.getByText('GRAND UNIFIED THEORY').closest('.translate-x-full')
+    expect(panel).not.toBeNull()
+    expect(screen.getByLabelText('Show synthesis panel')).toBeInTheDocument()
+    expect(screen.getByText('!')).toBeInTheDocument()
   })
 
-  it('shows a toast for the active investigation and review opens the panel', async () => {
+  it('animates a new synthesis alert without rendering a duplicate constellation graphic', async () => {
+    const socket = new SocketMock() as unknown as WebSocket
+
+    render(
+      <SynthesisPanel
+        sharedSocket={socket}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-a', topic: 'Investigation A' },
+          { id: 'inv-b', topic: 'Investigation B' },
+          { id: 'inv-c', topic: 'Investigation C' },
+        ]}
+      />,
+    )
+
+    act(() => {
+      ;(socket as unknown as SocketMock).emit('message', {
+        type: 'SYNTHESIS_ALERT',
+        payload: {
+          type: 'synthesis_alert',
+          alertKey: 'inv-a::nvidia::inv-a|inv-b|inv-c',
+          entity: 'nvidia',
+          currentVaultId: 'inv-a',
+          connectedCases: ['inv-a', 'inv-b', 'inv-c'],
+          nodes: [{ vaultId: 'inv-a', nodeId: 'node-a', summary: 'Nvidia context' }],
+          analysis: 'Signal links several AI infrastructure investigations.',
+          timestamp: '12:20:00',
+        },
+      })
+    })
+
+    const card = await screen.findByTestId('synthesis-alert-card-inv-a::nvidia::inv-a|inv-b|inv-c')
+    expect(card).toHaveClass('forensic-synthesis-alert-reveal')
+    expect(screen.queryByTestId('synthesis-overlap-toast')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('synthesis-constellation-inv-a::nvidia::inv-a|inv-b|inv-c')).not.toBeInTheDocument()
+    expect(screen.getByText('Connected Vaults')).toBeInTheDocument()
+    expect(screen.getAllByText('Investigation B').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Investigation C').length).toBeGreaterThan(0)
+  })
+
+  it('does not replay alert reveal animation for persisted synthesis alerts', async () => {
+    localStorage.setItem('gorantula_synthesis_alerts_by_investigation', JSON.stringify({
+      'inv-a': [
+        {
+          type: 'synthesis_alert',
+          alertKey: 'inv-a::alice::inv-a|inv-b',
+          entity: 'alice',
+          currentVaultId: 'inv-a',
+          connectedCases: ['inv-a', 'inv-b'],
+          nodes: [{ vaultId: 'inv-a', nodeId: 'node-a', summary: 'Alice mention' }],
+          analysis: 'Persisted synthesis alert',
+          timestamp: '12:00:00',
+        },
+      ],
+    }))
+
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[{ id: 'inv-a', topic: 'Investigation A' }]}
+      />,
+    )
+
+    const card = await screen.findByTestId('synthesis-alert-card-inv-a::alice::inv-a|inv-b')
+    expect(card).not.toHaveClass('forensic-synthesis-alert-reveal')
+  })
+
+  it('does not reanimate deduped synthesis alerts with the same alert key', async () => {
+    vi.useFakeTimers()
+    const socket = new SocketMock() as unknown as WebSocket
+
+    render(
+      <SynthesisPanel
+        sharedSocket={socket}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[{ id: 'inv-a', topic: 'Investigation A' }]}
+      />,
+    )
+
+    const alertPayload = {
+      type: 'synthesis_alert',
+      alertKey: 'inv-a::acme::inv-a',
+      entity: 'ACME',
+      currentVaultId: 'inv-a',
+      connectedCases: ['inv-a'],
+      nodes: [{ vaultId: 'inv-a', nodeId: 'node-a', summary: 'ACME mention' }],
+      analysis: 'First analysis',
+      timestamp: '12:10:00',
+    }
+
+    act(() => {
+      ;(socket as unknown as SocketMock).emit('message', {
+        type: 'SYNTHESIS_ALERT',
+        payload: alertPayload,
+      })
+    })
+
+    const card = screen.getByTestId('synthesis-alert-card-inv-a::acme::inv-a')
+    expect(card).toHaveClass('forensic-synthesis-alert-reveal')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800)
+    })
+    expect(card).not.toHaveClass('forensic-synthesis-alert-reveal')
+
+    act(() => {
+      ;(socket as unknown as SocketMock).emit('message', {
+        type: 'SYNTHESIS_ALERT',
+        payload: {
+          ...alertPayload,
+          analysis: 'Updated analysis',
+          timestamp: '12:11:00',
+        },
+      })
+    })
+
+    expect(screen.getAllByText('Updated analysis').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('synthesis-alert-card-inv-a::acme::inv-a')).not.toHaveClass('forensic-synthesis-alert-reveal')
+  })
+
+  it('renders final synthesis signal state immediately when reduced motion is preferred', async () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    const socket = new SocketMock() as unknown as WebSocket
+
+    render(
+      <SynthesisPanel
+        sharedSocket={socket}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[{ id: 'inv-a', topic: 'Investigation A' }]}
+      />,
+    )
+
+    act(() => {
+      ;(socket as unknown as SocketMock).emit('message', {
+        type: 'SYNTHESIS_ALERT',
+        payload: {
+          type: 'synthesis_alert',
+          alertKey: 'inv-a::reduced::inv-a',
+          entity: 'reduced',
+          currentVaultId: 'inv-a',
+          connectedCases: ['inv-a'],
+          nodes: [],
+          analysis: 'Reduced motion alert',
+          timestamp: '12:10:00',
+        },
+      })
+    })
+
+    const card = await screen.findByTestId('synthesis-alert-card-inv-a::reduced::inv-a')
+    expect(card).not.toHaveClass('forensic-synthesis-alert-reveal')
+    expect(screen.queryByTestId('synthesis-overlap-toast')).not.toBeInTheDocument()
+  })
+
+  it('reveals new theory report sections progressively but keeps initial theory calm', () => {
+    const { rerender } = render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[{ id: 'inv-a', topic: 'Investigation A' }]}
+        currentTheoryReport={'Initial theory section.\n\nInitial second section.'}
+      />,
+    )
+
+    expect(screen.getByTestId('synthesis-theory-section-0')).not.toHaveClass('forensic-synthesis-theory-section-reveal')
+
+    rerender(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[{ id: 'inv-a', topic: 'Investigation A' }]}
+        currentTheoryReport={'New theory section.\n\nSecond new section.'}
+      />,
+    )
+
+    expect(screen.getByTestId('synthesis-theory-section-0')).toHaveClass('forensic-synthesis-theory-section-reveal')
+    expect(screen.getByTestId('synthesis-theory-section-1')).toHaveClass('forensic-synthesis-theory-section-reveal')
+  })
+
+  it('keeps the synthesis panel closed for active investigation alerts without the legacy toast', async () => {
     const socket = new SocketMock() as unknown as WebSocket
 
     render(
@@ -417,14 +615,13 @@ describe('SynthesisPanel', () => {
       })
     })
 
-    expect(await screen.findByTestId('synthesis-overlap-toast')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /review/i }))
+    const card = await screen.findByTestId('synthesis-alert-card-inv-a::acme::inv-a')
+    expect(card).toHaveTextContent('Overlap ready for review')
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('synthesis-overlap-toast')).not.toBeInTheDocument()
-      const panel = screen.getByText('GRAND UNIFIED THEORY').closest('.translate-x-0')
-      expect(panel).not.toBeNull()
-    })
+    expect(screen.queryByTestId('synthesis-overlap-toast')).not.toBeInTheDocument()
+    const panel = screen.getByText('GRAND UNIFIED THEORY').closest('.translate-x-full')
+    expect(panel).not.toBeNull()
+    expect(screen.getByLabelText('Show synthesis panel')).toBeInTheDocument()
   })
 
   it('does not crash when localStorage quota is exceeded', () => {

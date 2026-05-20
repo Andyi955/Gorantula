@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -568,7 +568,7 @@ describe('DetectiveBoard relationship legend', () => {
       fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
 
       expect(screen.getByRole('button', { name: /replay board animation demo/i })).toBeInTheDocument()
-      expect(localStorage.getItem('detective_board_qa_tools_enabled')).toBe('true')
+      expect(localStorage.getItem('detective_board_qa_tools_enabled')).toBeNull()
 
       fireEvent.click(screen.getByRole('button', { name: /replay board animation demo/i }))
       await act(async () => {
@@ -617,9 +617,44 @@ describe('DetectiveBoard relationship legend', () => {
     const discoveryButton = screen.getByRole('button', { name: /discoveries ready/i })
 
     expect(theoryButton).toHaveClass('forensic-utility-button-complete')
-    expect(within(theoryButton).getByTestId('theory-utility-notification')).toBeInTheDocument()
+    expect(within(theoryButton).getByTestId('theory-utility-notification')).toHaveClass('forensic-utility-notification-dot-unread')
     expect(discoveryButton).toHaveClass('forensic-utility-button-discovery-complete')
     expect(within(discoveryButton).getByTestId('discovery-utility-notification')).toHaveClass('forensic-utility-notification-dot-unread')
+  })
+
+  it('replays the synthesis demo from the QA utility rail without backend socket messages', () => {
+    const socket = new MockSocket()
+    const synthesisDemoListener = vi.fn()
+    window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, synthesisDemoListener as EventListener)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      fireEvent.click(screen.getByRole('button', { name: /replay synthesis demo/i }))
+
+      expect(synthesisDemoListener).toHaveBeenCalledTimes(1)
+      expect((synthesisDemoListener.mock.calls[0][0] as CustomEvent).detail).toEqual(expect.objectContaining({
+        investigationId: 'investigation-1',
+        requestId: expect.any(String),
+      }))
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, synthesisDemoListener as EventListener)
+    }
+  })
+
+  it('keeps QA tools off by default even if an old saved flag exists', () => {
+    localStorage.setItem('detective_board_qa_tools_enabled', 'true')
+
+    renderBoard('investigation-1', new MockSocket() as unknown as WebSocket)
+
+    expect(screen.queryByRole('button', { name: /replay board animation demo/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+    expect(screen.getByRole('button', { name: /enable qa tools/i })).toHaveAttribute('aria-pressed', 'false')
+    expect(localStorage.getItem('detective_board_qa_tools_enabled')).toBeNull()
   })
 
   it('replays the discovery demo from the QA utility rail without backend socket messages', async () => {

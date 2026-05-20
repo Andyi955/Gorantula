@@ -14,9 +14,12 @@ import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
+  BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   createBrowserQaDiscoveryDemoRecords,
+  createBrowserQaSynthesisDemoTheory,
   type BrowserQaDiscoveryDemoDetail,
   type BrowserQaSeedResult,
+  type BrowserQaSynthesisDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
@@ -662,6 +665,7 @@ function App() {
   const [unreadDiscoveriesByInvestigation, setUnreadDiscoveriesByInvestigation] = useState<Record<string, boolean>>({})
   const [completedDiscoveryReviewByInvestigation, setCompletedDiscoveryReviewByInvestigation] = useState<Record<string, boolean>>({})
   const qaDiscoveryDemoByInvestigationRef = useRef<Record<string, DiscoveryRecord[]>>({})
+  const qaSynthesisDemoByInvestigationRef = useRef<Record<string, VaultResultPayload>>({})
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
@@ -747,9 +751,10 @@ function App() {
 
     const savedBoardState = getCachedBoardStateForInvestigation(currentInvestigationId)
     const hasHydratedVaultResult = Object.prototype.hasOwnProperty.call(vaultResultsByInvestigation, currentInvestigationId)
-    const savedVaultResult = hasHydratedVaultResult
+    const qaSynthesisDemoResult = qaSynthesisDemoByInvestigationRef.current[currentInvestigationId]
+    const savedVaultResult = qaSynthesisDemoResult || (hasHydratedVaultResult
       ? vaultResultsByInvestigation[currentInvestigationId]
-      : getCachedVaultResultForInvestigation(currentInvestigationId)
+      : getCachedVaultResultForInvestigation(currentInvestigationId))
     const persistedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
     const savedDiscoveries = persistedDiscoveries
     const nodes = savedBoardState?.nodes || []
@@ -1049,6 +1054,7 @@ function App() {
             return
           }
 
+          delete qaSynthesisDemoByInvestigationRef.current[vaultId]
           setVaultResultsByInvestigation((current) => ({
             ...current,
             [vaultId]: payload,
@@ -1257,6 +1263,7 @@ function App() {
 
     const handleBrowserQaCleared = () => {
       qaDiscoveryDemoByInvestigationRef.current = {}
+      qaSynthesisDemoByInvestigationRef.current = {}
       const nextInvestigations = getCachedInvestigations()
       setInvestigations(nextInvestigations)
       setCurrentInvestigationId((current) => (
@@ -1270,6 +1277,45 @@ function App() {
           : null
       ))
       setFocusedNodeId(null)
+      setBoardWorkspaceRevision((current) => current + 1)
+    }
+
+    const handleBrowserQaSynthesisDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaSynthesisDemoDetail>).detail
+      const requestedInvestigationId = typeof detail?.investigationId === 'string'
+        ? detail.investigationId.trim()
+        : ''
+      const targetInvestigationId = requestedInvestigationId || currentInvestigationId
+      const availableInvestigations = getCachedInvestigations()
+      const investigationExists = Boolean(targetInvestigationId) && (
+        investigations.some((investigation) => investigation.id === targetInvestigationId) ||
+        availableInvestigations.some((investigation) => investigation.id === targetInvestigationId)
+      )
+      if (!targetInvestigationId || !investigationExists) {
+        return
+      }
+
+      const demoResult: VaultResultPayload = {
+        vaultId: targetInvestigationId,
+        result: createBrowserQaSynthesisDemoTheory(targetInvestigationId),
+        qaOnly: true,
+      }
+      qaSynthesisDemoByInvestigationRef.current = {
+        ...qaSynthesisDemoByInvestigationRef.current,
+        [targetInvestigationId]: demoResult,
+      }
+      setVaultResultsByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: demoResult,
+      }))
+      setUnreadTheoryByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: true,
+      }))
+      setCurrentInvestigationId(targetInvestigationId)
+      setReturnVaultId(null)
+      setFocusedNodeId(null)
+      setActiveTab('board')
       setBoardWorkspaceRevision((current) => current + 1)
     }
 
@@ -1310,10 +1356,12 @@ function App() {
     window.addEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
     window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
+    window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
     return () => {
       window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
       window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
+      window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
     }
   }, [currentInvestigationId, investigations])
 
@@ -1343,9 +1391,10 @@ function App() {
         return
       }
 
+      const qaSynthesisDemo = qaSynthesisDemoByInvestigationRef.current[currentInvestigationId]
       setVaultResultsByInvestigation((current) => ({
         ...current,
-        [currentInvestigationId]: vaultResult,
+        [currentInvestigationId]: qaSynthesisDemo || vaultResult,
       }))
       const qaDemoDiscoveries = qaDiscoveryDemoByInvestigationRef.current[currentInvestigationId]
       setDiscoveriesByInvestigation((current) => ({

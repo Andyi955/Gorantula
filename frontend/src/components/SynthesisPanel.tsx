@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
 import { type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
 import { BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT } from '../utils/boardWorkspaceEvents';
@@ -7,6 +7,11 @@ import {
     loadBoardStateForInvestigation,
     saveBoardStateForInvestigation,
 } from '../utils/investigationPersistence';
+import {
+    BROWSER_QA_SYNTHESIS_DEMO_EVENT,
+    createBrowserQaSynthesisDemoAlerts,
+    type BrowserQaSynthesisDemoDetail,
+} from '../utils/browserQaSeed';
 
 interface NodeContextPayload {
     vaultId: string;
@@ -40,7 +45,17 @@ const MAX_ALERTS_PER_INVESTIGATION = 20;
 const MAX_TOTAL_ALERTS = 80;
 const MAX_ANALYSIS_LENGTH = 700;
 const MAX_NODE_SUMMARY_LENGTH = 220;
-const TOAST_DURATION_MS = 5000;
+const SYNTHESIS_REVEAL_DURATION_MS = 1700;
+const THEORY_REVEAL_DURATION_MS = 1600;
+const THEORY_SECTION_STAGGER_MS = 90;
+
+const prefersReducedMotion = () => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+        return false;
+    }
+
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+};
 
 const parseAlertBuckets = (raw: string | null): AlertBuckets => {
     if (!raw) {
@@ -108,6 +123,11 @@ const normalizeAlert = (alert: SynthesisAlert): SynthesisAlert => ({
         }))
         : [],
 });
+
+const splitTheoryReport = (report: string) => report
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
 
 const upsertAlertBucket = (alerts: SynthesisAlert[], incomingAlert: SynthesisAlert): SynthesisAlert[] => {
     const deduped = alerts.filter((alert) => (alert.alertKey || buildAlertKey(alert)) !== incomingAlert.alertKey);
@@ -258,12 +278,24 @@ export default function SynthesisPanel({
     onMarkTheoryRead,
 }: SynthesisPanelProps) {
     const [alertsByInvestigation, setAlertsByInvestigation] = useState<AlertBuckets>({});
+    const [qaAlertsByInvestigation, setQaAlertsByInvestigation] = useState<AlertBuckets>({});
     const [isOpen, setIsOpen] = useState(false);
     const [unreadByInvestigation, setUnreadByInvestigation] = useState<Record<string, boolean>>({});
     const [pulledNodeId, setPulledNodeId] = useState<string | null>(null);
-    const [activeToast, setActiveToast] = useState<SynthesisAlert | null>(null);
+    const [revealingAlertKeys, setRevealingAlertKeys] = useState<Set<string>>(() => new Set());
+    const [revealingTheoryKey, setRevealingTheoryKey] = useState<string | null>(null);
+    const knownAlertKeysRef = useRef<Set<string>>(new Set());
+    const alertRevealTimersRef = useRef<Map<string, number>>(new Map());
+    const knownTheoryByInvestigationRef = useRef<Record<string, string>>({});
+    const theoryRevealTimerRef = useRef<number | null>(null);
     const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
+    const currentQaAlerts = currentInvestigationId ? (qaAlertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const trimmedTheoryReport = (currentTheoryReport || '').trim();
+    const theorySections = useMemo(() => splitTheoryReport(trimmedTheoryReport), [trimmedTheoryReport]);
+    const currentTheoryKey = currentInvestigationId && trimmedTheoryReport
+        ? `${currentInvestigationId}::${trimmedTheoryReport}`
+        : null;
+    const shouldRevealTheorySections = Boolean(currentTheoryKey && revealingTheoryKey === currentTheoryKey);
     const hasUnread = currentInvestigationId
         ? Boolean(unreadByInvestigation[currentInvestigationId]) || Boolean(hasUnreadTheory)
         : false;
@@ -276,7 +308,37 @@ export default function SynthesisPanel({
             ...prev,
             [currentInvestigationId]: false,
         }));
+        setQaAlertsByInvestigation(prev => {
+            const updated = { ...prev };
+            delete updated[currentInvestigationId];
+            return updated;
+        });
         onMarkTheoryRead?.();
+    };
+
+    const markAlertForReveal = (alertKey?: string) => {
+        if (!alertKey || prefersReducedMotion()) {
+            return;
+        }
+
+        if (alertRevealTimersRef.current.has(alertKey)) {
+            window.clearTimeout(alertRevealTimersRef.current.get(alertKey));
+        }
+        setRevealingAlertKeys((current) => {
+            const next = new Set(current);
+            next.add(alertKey);
+            return next;
+        });
+
+        const timerId = window.setTimeout(() => {
+            alertRevealTimersRef.current.delete(alertKey);
+            setRevealingAlertKeys((current) => {
+                const next = new Set(current);
+                next.delete(alertKey);
+                return next;
+            });
+        }, SYNTHESIS_REVEAL_DURATION_MS);
+        alertRevealTimersRef.current.set(alertKey, timerId);
     };
 
     useEffect(() => {
@@ -285,15 +347,64 @@ export default function SynthesisPanel({
     }, []);
 
     useEffect(() => {
+        Object.values(alertsByInvestigation).forEach((alerts) => {
+            alerts.forEach((alert) => {
+                knownAlertKeysRef.current.add(alert.alertKey || buildAlertKey(alert));
+            });
+        });
+    }, [alertsByInvestigation]);
+
+    useEffect(() => () => {
+        alertRevealTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+        alertRevealTimersRef.current.clear();
+        if (theoryRevealTimerRef.current !== null) {
+            window.clearTimeout(theoryRevealTimerRef.current);
+            theoryRevealTimerRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!currentInvestigationId) {
+            setRevealingTheoryKey(null);
+            return;
+        }
+
+        const previousReport = knownTheoryByInvestigationRef.current[currentInvestigationId];
+        if (previousReport === undefined) {
+            knownTheoryByInvestigationRef.current[currentInvestigationId] = trimmedTheoryReport;
+            setRevealingTheoryKey(null);
+            return;
+        }
+
+        if (!trimmedTheoryReport || previousReport === trimmedTheoryReport) {
+            return;
+        }
+
+        knownTheoryByInvestigationRef.current[currentInvestigationId] = trimmedTheoryReport;
+        if (prefersReducedMotion()) {
+            setRevealingTheoryKey(null);
+            return;
+        }
+
+        const nextTheoryKey = `${currentInvestigationId}::${trimmedTheoryReport}`;
+        setRevealingTheoryKey(nextTheoryKey);
+        if (theoryRevealTimerRef.current !== null) {
+            window.clearTimeout(theoryRevealTimerRef.current);
+        }
+        theoryRevealTimerRef.current = window.setTimeout(() => {
+            setRevealingTheoryKey((current) => current === nextTheoryKey ? null : current);
+            theoryRevealTimerRef.current = null;
+        }, THEORY_REVEAL_DURATION_MS);
+    }, [currentInvestigationId, trimmedTheoryReport]);
+
+    useEffect(() => {
         console.debug('[SynthesisPanel] Investigation state changed', {
             currentInvestigationId,
             alertCount: currentAlerts.length,
             hasUnread,
             isOpen,
-            hasToast: Boolean(activeToast),
-            toastVaultId: activeToast?.currentVaultId || null,
         });
-    }, [activeToast, currentAlerts.length, currentInvestigationId, hasUnread, isOpen]);
+    }, [currentAlerts.length, currentInvestigationId, hasUnread, isOpen]);
 
     useEffect(() => {
         if (!currentInvestigationId) {
@@ -365,6 +476,12 @@ export default function SynthesisPanel({
                         console.warn('[SynthesisPanel] Ignoring alert without currentVaultId', newAlert);
                         return;
                     }
+                    const alertKey = newAlert.alertKey || buildAlertKey(newAlert);
+                    const isNewAlertKey = !knownAlertKeysRef.current.has(alertKey);
+                    knownAlertKeysRef.current.add(alertKey);
+                    if (isNewAlertKey) {
+                        markAlertForReveal(alertKey);
+                    }
                     setAlertsByInvestigation(prev => {
                         const currentAlertsForVault = prev[newAlert.currentVaultId] || [];
                         const updatedBucket = upsertAlertBucket(currentAlertsForVault, newAlert);
@@ -385,18 +502,7 @@ export default function SynthesisPanel({
                         ...prev,
                         [newAlert.currentVaultId]: true,
                     }));
-                    if (newAlert.currentVaultId === currentInvestigationId) {
-                        console.debug('[SynthesisPanel] Auto-opening panel for active investigation alert', {
-                            currentInvestigationId,
-                            alertKey: newAlert.alertKey,
-                        });
-                        setActiveToast(newAlert);
-                        setIsOpen(true);
-                        setUnreadByInvestigation(prev => ({
-                            ...prev,
-                            [newAlert.currentVaultId]: false,
-                        }));
-                    } else {
+                    if (newAlert.currentVaultId !== currentInvestigationId) {
                         console.debug('[SynthesisPanel] Alert stored for non-active investigation', {
                             currentInvestigationId,
                             alertCurrentVaultId: newAlert.currentVaultId,
@@ -411,30 +517,34 @@ export default function SynthesisPanel({
     }, [currentInvestigationId, sharedSocket]);
 
     useEffect(() => {
-        if (!activeToast || activeToast.currentVaultId !== currentInvestigationId) {
-            return;
-        }
+        const handleBrowserQaSynthesisDemo = (event: Event) => {
+            const detail = (event as CustomEvent<BrowserQaSynthesisDemoDetail>).detail;
+            const targetInvestigationId = typeof detail?.investigationId === 'string'
+                ? detail.investigationId.trim()
+                : '';
+            if (!targetInvestigationId) {
+                return;
+            }
 
-        console.debug('[SynthesisPanel] Starting toast auto-dismiss timer', {
-            alertKey: activeToast.alertKey,
-            currentInvestigationId,
-        });
-        const timeoutId = window.setTimeout(() => {
-            setActiveToast((current) => current?.alertKey === activeToast.alertKey ? null : current);
-        }, TOAST_DURATION_MS);
-
-        return () => window.clearTimeout(timeoutId);
-    }, [activeToast, currentInvestigationId]);
-
-    useEffect(() => {
-        if (activeToast && activeToast.currentVaultId !== currentInvestigationId) {
-            console.debug('[SynthesisPanel] Clearing toast because investigation changed', {
-                toastVaultId: activeToast.currentVaultId,
-                currentInvestigationId,
+            const demoAlerts = createBrowserQaSynthesisDemoAlerts(targetInvestigationId).map((alert) => normalizeAlert(alert as SynthesisAlert));
+            demoAlerts.forEach((alert) => {
+                const alertKey = alert.alertKey || buildAlertKey(alert);
+                knownAlertKeysRef.current.add(alertKey);
+                markAlertForReveal(alertKey);
             });
-            setActiveToast(null);
-        }
-    }, [activeToast, currentInvestigationId]);
+            setQaAlertsByInvestigation((current) => ({
+                ...current,
+                [targetInvestigationId]: demoAlerts,
+            }));
+            setUnreadByInvestigation((current) => ({
+                ...current,
+                [targetInvestigationId]: true,
+            }));
+        };
+
+        window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener);
+        return () => window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener);
+    }, [currentInvestigationId]);
 
     const togglePanel = () => {
         setIsOpen(!isOpen);
@@ -487,23 +597,8 @@ export default function SynthesisPanel({
         }
     };
 
-    const handleReviewToast = () => {
-        console.debug('[SynthesisPanel] Review toast clicked', {
-            currentInvestigationId,
-            alertKey: activeToast?.alertKey || null,
-        });
-        setIsOpen(true);
-        setActiveToast(null);
-        if (!currentInvestigationId) {
-            return;
-        }
-        markCurrentTheoryRead();
-    };
-
-    const showToast = Boolean(activeToast && activeToast.currentVaultId === currentInvestigationId);
-    const displayedAlerts = currentAlerts.length > 0
-        ? currentAlerts
-        : (showToast && activeToast ? [activeToast] : []);
+    const combinedCurrentAlerts = [...currentQaAlerts, ...currentAlerts];
+    const displayedAlerts = combinedCurrentAlerts;
     const hasPanelAlerts = displayedAlerts.length > 0;
     const showPanelHandle = Boolean(currentInvestigationId) && showHandle;
 
@@ -511,34 +606,6 @@ export default function SynthesisPanel({
 
     return (
         <>
-            {showToast && activeToast && (
-                <div
-                    data-testid="synthesis-overlap-toast"
-                    className="forensic-overlay-toast absolute right-4 top-4 z-[60] w-[min(24rem,calc(100vw-2rem))] rounded-[1.15rem] p-4"
-                >
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">New Overlap Detected</span>
-                        <button
-                            onClick={() => setActiveToast(null)}
-                            className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--forensic-text-faint)] transition-colors hover:text-white"
-                        >
-                            Dismiss
-                        </button>
-                    </div>
-                    <div className="text-sm font-black text-[var(--forensic-text)]">{activeToast.entity}</div>
-                    <p className="mt-2 text-xs leading-relaxed text-[var(--forensic-text-muted)]">{activeToast.analysis}</p>
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                        <span className="text-[10px] text-[var(--forensic-text-faint)]">{activeToast.connectedCases.length} linked investigations</span>
-                        <button
-                            onClick={handleReviewToast}
-                            className="forensic-badge rounded px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] transition-colors hover:bg-[var(--forensic-accent)] hover:text-black"
-                        >
-                            Review
-                        </button>
-                    </div>
-                </div>
-            )}
-
             {/* Floating Toggle Button */}
             {showPanelHandle && (
                 <button
@@ -548,9 +615,9 @@ export default function SynthesisPanel({
                     className="forensic-overlay-handle absolute right-0 top-24 z-[60] flex items-center gap-2 rounded-l-xl p-3 transition-all hover:bg-[var(--forensic-accent)] hover:text-black"
                 >
                     {isOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-                    <Network size={20} className={hasUnread ? "animate-pulse text-[var(--forensic-accent)]" : hasTheoryReady ? "text-[var(--forensic-accent)]" : ""} />
+                    <Network size={20} className={hasUnread ? "forensic-synthesis-handle-unread text-[var(--forensic-accent)]" : hasTheoryReady ? "text-[var(--forensic-accent)]" : ""} />
                     {hasUnread && (
-                        <span className="absolute -top-2 -left-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full">
+                        <span className="forensic-synthesis-handle-badge absolute -top-2 -left-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full">
                             !
                         </span>
                     )}
@@ -588,8 +655,16 @@ export default function SynthesisPanel({
                 </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {hasPanelAlerts ? displayedAlerts.map((alert, idx) => (
-                        <div key={alert.alertKey || idx} className="forensic-board-section p-4 rounded-[1.25rem] relative group hover:border-[var(--forensic-border-strong)] transition-colors">
+                    {hasPanelAlerts ? displayedAlerts.map((alert, idx) => {
+                        const alertKey = alert.alertKey || buildAlertKey(alert);
+                        const isRevealing = revealingAlertKeys.has(alertKey);
+
+                        return (
+                        <div
+                            key={alertKey || idx}
+                            data-testid={`synthesis-alert-card-${alertKey}`}
+                            className={`forensic-board-section forensic-synthesis-alert-card p-4 rounded-[1.25rem] relative group hover:border-[var(--forensic-border-strong)] transition-colors ${isRevealing ? 'forensic-synthesis-alert-reveal' : ''}`}
+                        >
                             <div className="absolute top-0 right-0 p-2 opacity-[0.08]">
                                 <Network size={40} />
                             </div>
@@ -699,14 +774,26 @@ export default function SynthesisPanel({
                                 </div>
                             </div>
                         </div>
-                    )) : trimmedTheoryReport ? (
+                        );
+                    }) : trimmedTheoryReport ? (
                         <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
                             <div className="mb-3 flex items-center gap-2 text-[var(--forensic-accent)]">
                                 <Database size={12} />
                                 <span className="text-[10px] font-black uppercase tracking-[0.18em]">Current Investigation Theory</span>
                             </div>
-                            <div className="max-h-[52vh] overflow-y-auto whitespace-pre-wrap pr-1">
-                                {trimmedTheoryReport}
+                            <div className="max-h-[52vh] overflow-y-auto pr-1">
+                                {theorySections.map((section, index) => (
+                                    <p
+                                        key={`${index}-${section.slice(0, 24)}`}
+                                        data-testid={`synthesis-theory-section-${index}`}
+                                        className={`whitespace-pre-wrap ${shouldRevealTheorySections ? 'forensic-synthesis-theory-section-reveal' : ''}`}
+                                        style={{
+                                            '--synthesis-theory-section-delay': `${index * THEORY_SECTION_STAGGER_MS}ms`,
+                                        } as CSSProperties}
+                                    >
+                                        {section}
+                                    </p>
+                                ))}
                             </div>
                         </div>
                     ) : (
