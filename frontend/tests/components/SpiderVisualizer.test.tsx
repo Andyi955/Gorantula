@@ -7,18 +7,21 @@ const { spiderSceneMock } = vi.hoisted(() => ({
     brainState,
     evidencePackets = [],
     pipelineStatus = 'idle',
+    operationMode = 'web',
   }: {
     brainState: string
-    evidencePackets?: Array<{ id: string; legId: number }>
+    evidencePackets?: Array<{ id: string; legId: number; mode?: string }>
     pipelineStatus?: string
+    operationMode?: string
   }) => (
     <div>
       <span>SpiderScene</span>
       <span>{brainState}</span>
       <span data-testid="mock-scene-pipeline-status">{pipelineStatus}</span>
+      <span data-testid="mock-scene-operation-mode">{operationMode}</span>
       <span data-testid="mock-scene-packet-count">{evidencePackets.length}</span>
       {evidencePackets.map((packet) => (
-        <span key={packet.id} data-testid="mock-scene-packet">{packet.legId}</span>
+        <span key={packet.id} data-testid="mock-scene-packet">{packet.legId}:{packet.mode || 'web'}</span>
       ))}
     </div>
   )),
@@ -67,6 +70,10 @@ describe('SpiderVisualizer', () => {
     spiderSceneMock.mockClear()
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('shows the offline state without a websocket', () => {
     const { container } = render(<SpiderVisualizer sharedSocket={null} />)
 
@@ -83,6 +90,74 @@ describe('SpiderVisualizer', () => {
     expect(screen.getAllByTestId(/spider-leg-telemetry-/)).toHaveLength(8)
     expect(screen.getByTestId('spider-leg-telemetry-1')).toHaveTextContent('Leg 1')
     expect(screen.getByTestId('spider-leg-telemetry-8')).toHaveTextContent('Leg 8')
+  })
+
+  it('switches copy and leg roles to local document intake mode', () => {
+    render(<SpiderVisualizer sharedSocket={null} operationMode="local" />)
+
+    expect(screen.getByTestId('spider-evidence-intake')).toHaveTextContent('Document Intake')
+    expect(screen.getByTestId('spider-lab-stage')).toHaveTextContent('Document Intake')
+    expect(screen.getByTestId('spider-lab-stage')).toHaveTextContent('Case File Index')
+    expect(screen.getByTestId('spider-leg-telemetry-1')).toHaveTextContent('Parser')
+    expect(screen.getByTestId('spider-leg-telemetry-2')).toHaveTextContent('Chunker')
+    expect(screen.getByTestId('mock-scene-operation-mode')).toHaveTextContent('local')
+  })
+
+  it('renders and advances a local file stack from pipeline progress', () => {
+    const { rerender } = render(
+      <SpiderVisualizer
+        sharedSocket={null}
+        operationMode="local"
+        localIngestionFiles={[
+          { path: 'C:\\Cases\\grid.pdf', name: 'grid.pdf', state: 'queued' },
+          { path: 'C:\\Cases\\notes.docx', name: 'notes.docx', state: 'queued' },
+        ]}
+        localIngestionProgress={{ stepId: 'plan_queries', status: 'running', detail: 'Parsing local files into chunks' }}
+      />,
+    )
+
+    expect(screen.getByTestId('local-ingestion-file-stack')).toHaveTextContent('grid.pdf')
+    expect(screen.getByTestId('local-ingestion-file-stack')).toHaveTextContent('Parsing')
+
+    rerender(
+      <SpiderVisualizer
+        sharedSocket={null}
+        operationMode="local"
+        localIngestionFiles={[
+          { path: 'C:\\Cases\\grid.pdf', name: 'grid.pdf', state: 'queued' },
+          { path: 'C:\\Cases\\notes.docx', name: 'notes.docx', state: 'queued' },
+        ]}
+        localIngestionProgress={{ stepId: 'dispatch_legs', status: 'running', detail: 'Dispatching document chunks to legs' }}
+      />,
+    )
+
+    expect(screen.getByTestId('local-ingestion-file-stack')).toHaveTextContent('Chunking')
+  })
+
+  it('keeps long local file stacks scrollable and shows the overflow count', () => {
+    const files = Array.from({ length: 10 }, (_, index) => ({
+      path: `C:\\Cases\\doc-${index + 1}.md`,
+      name: `doc-${index + 1}.md`,
+      state: 'queued' as const,
+    }))
+
+    render(
+      <SpiderVisualizer
+        sharedSocket={null}
+        operationMode="local"
+        localIngestionFiles={files}
+        localIngestionProgress={{ stepId: 'complete', status: 'complete', detail: 'Imported local evidence' }}
+      />,
+    )
+
+    const stack = screen.getByTestId('local-ingestion-file-stack')
+    const list = screen.getByTestId('local-ingestion-file-list')
+
+    expect(list).toHaveClass('forensic-local-ingestion-file-list-scrollable')
+    expect(stack).toHaveTextContent('doc-1.md')
+    expect(stack).toHaveTextContent('doc-10.md')
+    expect(stack).toHaveTextContent('+4 more')
+    expect(stack).toHaveTextContent('10 files')
   })
 
   it('switches to connected when a websocket is provided', () => {
@@ -150,6 +225,22 @@ describe('SpiderVisualizer', () => {
     expect(screen.getByTestId('mock-scene-packet')).toHaveTextContent('3')
   })
 
+  it('creates local document packets without changing MEMORY_NODE_GATHERED handling', () => {
+    const sharedSocket = new MockSocket()
+    render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} operationMode="local" />)
+
+    act(() => {
+      sharedSocket.emit('LEG_UPDATE', { legId: 2, state: 'Processing document chunk' })
+      sharedSocket.emit('MEMORY_NODE_GATHERED', {
+        vaultId: 'investigation-1',
+        node: { id: 'node-local', title: '[IMPORTED] Local note' },
+      })
+    })
+
+    expect(screen.getByTestId('mock-scene-packet-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('mock-scene-packet')).toHaveTextContent('2:local')
+  })
+
   it('clears active legs and evidence packets when synthesis completes', () => {
     const sharedSocket = new MockSocket()
     render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
@@ -183,6 +274,59 @@ describe('SpiderVisualizer', () => {
     expect(screen.getByTestId('spider-view-root')).toHaveClass('forensic-spider-root-cancelled')
     expect(screen.getByTestId('spider-leg-telemetry-2')).toHaveClass('forensic-spider-leg-card-cancelled')
     expect(screen.getByTestId('mock-scene-packet-count')).toHaveTextContent('0')
+  })
+
+  it('settles the local file stack when a local pipeline is cancelled', () => {
+    const sharedSocket = new MockSocket()
+    const { rerender } = render(
+      <SpiderVisualizer
+        sharedSocket={sharedSocket as unknown as WebSocket}
+        operationMode="local"
+        pipelineStatus="running"
+        localIngestionFiles={[{ path: 'C:\\Cases\\grid.pdf', name: 'grid.pdf', state: 'queued' }]}
+        localIngestionProgress={{ stepId: 'gather_evidence', status: 'running', detail: 'Summarizing local document chunks' }}
+      />,
+    )
+
+    rerender(
+      <SpiderVisualizer
+        sharedSocket={sharedSocket as unknown as WebSocket}
+        operationMode="local"
+        pipelineStatus="cancelled"
+        localIngestionFiles={[{ path: 'C:\\Cases\\grid.pdf', name: 'grid.pdf', state: 'queued' }]}
+        localIngestionProgress={{ stepId: 'complete', status: 'cancelled', detail: 'Stopped by operator' }}
+      />,
+    )
+
+    act(() => {
+      sharedSocket.emit('MEMORY_NODE_GATHERED', { node: { id: 'node-local' } })
+    })
+
+    expect(screen.getByTestId('local-ingestion-file-stack')).toHaveTextContent('Stopped')
+    expect(screen.getByTestId('mock-scene-packet-count')).toHaveTextContent('0')
+  })
+
+  it('uses a reduced-motion local ingestion stack state', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    render(
+      <SpiderVisualizer
+        sharedSocket={null}
+        operationMode="local"
+        localIngestionFiles={[{ path: 'C:\\Cases\\grid.pdf', name: 'grid.pdf', state: 'queued' }]}
+      />,
+    )
+
+    expect(screen.getByTestId('local-ingestion-file-stack')).toHaveClass('forensic-local-ingestion-reduced-motion')
   })
 
   it('runs the browser-only QA telemetry replay without sending websocket messages', async () => {

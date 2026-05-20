@@ -22,6 +22,7 @@ build/
 
 # Project Specific
 abdomen_vault/
+local-test-docs/
 
 # Agent Configuration (Private)
 .agents/

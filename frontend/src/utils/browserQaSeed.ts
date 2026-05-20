@@ -18,6 +18,7 @@ export const BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT = 'gorantula:browser-qa-play
 export const BROWSER_QA_PIPELINE_DEMO_EVENT = 'gorantula:browser-qa-play-pipeline-demo'
 export const BROWSER_QA_TIMELINE_DEMO_EVENT = 'gorantula:browser-qa-play-timeline-demo'
 export const BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT = 'gorantula:browser-qa-play-evidence-expansion-demo'
+export const BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT = 'gorantula:browser-qa-play-local-ingestion-demo'
 export const BROWSER_QA_ANIMATION_DEMO_PENDING_KEY = 'gorantula_browser_qa_animation_demo_pending'
 export const BROWSER_QA_SOURCE_INVESTIGATION_ID = 'qa-browser-source'
 export const BROWSER_QA_TARGET_INVESTIGATION_ID = 'qa-browser-target'
@@ -74,6 +75,25 @@ export interface BrowserQaEvidenceExpansionDemoDetail {
   investigationId?: string
   requestId?: string
 }
+
+export interface BrowserQaLocalIngestionDemoDetail {
+  investigationId?: string
+  requestId?: string
+  files?: string[]
+}
+
+export const createBrowserQaLocalIngestionDemoFiles = () => [
+  'C:\\Gorantula QA\\grid-brief.pdf',
+  'C:\\Gorantula QA\\cooling-notes.docx',
+  'C:\\Gorantula QA\\capacity-watch.md',
+  'C:\\Gorantula QA\\operator-incident-log.md',
+  'C:\\Gorantula QA\\cooling-maintenance-note.md',
+  'C:\\Gorantula QA\\pjm-cost-watch.md',
+  'C:\\Gorantula QA\\regulator-profile-draft.md',
+  'C:\\Gorantula QA\\transformer-lead-times.md',
+  'C:\\Gorantula QA\\demand-response-proposal.md',
+  'C:\\Gorantula QA\\grid-risk-interview-notes.md',
+]
 
 export const createBrowserQaTimelineDemoSnapshot = (investigationId: string): PersistedTimelineSnapshot => ({
   generatedAt: '2026-05-20T12:00:00.000Z',

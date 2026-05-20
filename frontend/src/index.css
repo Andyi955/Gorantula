@@ -2730,6 +2730,161 @@ body {
   padding: 0.65rem;
 }
 
+.forensic-local-ingestion-stack {
+  position: relative;
+  overflow: hidden;
+  margin-top: 0.75rem;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(5, 12, 18, 0.92), rgba(4, 8, 13, 0.96)),
+    radial-gradient(circle at top left, rgba(144, 243, 218, 0.12), transparent 42%);
+  padding: 0.62rem;
+}
+
+.forensic-local-ingestion-stack::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(115deg, transparent 30%, rgba(144, 243, 218, 0.13) 48%, transparent 66%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-100%);
+}
+
+.forensic-local-ingestion-stack-parsing::before,
+.forensic-local-ingestion-stack-chunking::before,
+.forensic-local-ingestion-stack-summarizing::before {
+  animation: forensicLocalIngestionSweep 1.55s ease-in-out infinite;
+}
+
+.forensic-local-ingestion-stack-header,
+.forensic-local-ingestion-stack-footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  color: var(--forensic-text-faint);
+  font-size: 0.55rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.forensic-local-ingestion-stack-header strong {
+  color: var(--forensic-accent);
+}
+
+.forensic-local-ingestion-stack-footer {
+  margin-top: 0.5rem;
+  text-transform: none;
+}
+
+.forensic-local-ingestion-stack-footer span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forensic-text-muted);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-local-ingestion-file-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.forensic-local-ingestion-file-list-scrollable {
+  max-height: 13.25rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  scrollbar-color: rgba(89, 228, 255, 0.42) rgba(4, 10, 15, 0.78);
+  scrollbar-width: thin;
+}
+
+.forensic-local-ingestion-file-list-scrollable::-webkit-scrollbar {
+  width: 0.45rem;
+}
+
+.forensic-local-ingestion-file-list-scrollable::-webkit-scrollbar-track {
+  background: rgba(4, 10, 15, 0.78);
+}
+
+.forensic-local-ingestion-file-list-scrollable::-webkit-scrollbar-thumb {
+  border: 1px solid rgba(4, 10, 15, 0.88);
+  background: rgba(89, 228, 255, 0.42);
+}
+
+.forensic-local-ingestion-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 1.9rem;
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  background: rgba(4, 10, 15, 0.78);
+  color: var(--forensic-text-muted);
+  padding: 0.35rem 0.45rem;
+  transform-origin: left center;
+  animation: forensicLocalFileEnter 420ms ease-out both;
+  animation-delay: calc(var(--local-file-index, 0) * 70ms);
+}
+
+.forensic-local-ingestion-file-icon {
+  width: 0.72rem;
+  height: 0.92rem;
+  border: 1px solid rgba(144, 243, 218, 0.38);
+  background:
+    linear-gradient(180deg, rgba(144, 243, 218, 0.22), rgba(89, 228, 255, 0.08)),
+    linear-gradient(90deg, transparent 62%, rgba(255,255,255,0.14) 62%);
+  box-shadow: 0 0 10px rgba(144, 243, 218, 0.12);
+}
+
+.forensic-local-ingestion-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forensic-text);
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-local-ingestion-file strong {
+  color: var(--forensic-text-faint);
+  font-size: 0.5rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.forensic-local-ingestion-file-parsing,
+.forensic-local-ingestion-file-chunking,
+.forensic-local-ingestion-file-summarizing {
+  border-color: rgba(89, 228, 255, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(89, 228, 255, 0.06), 0 0 12px rgba(89, 228, 255, 0.08);
+}
+
+.forensic-local-ingestion-file-imported {
+  border-color: rgba(33, 255, 113, 0.28);
+}
+
+.forensic-local-ingestion-file-imported strong {
+  color: var(--forensic-success);
+}
+
+.forensic-local-ingestion-file-failed {
+  border-color: rgba(246, 200, 121, 0.3);
+  filter: saturate(0.72);
+  opacity: 0.78;
+}
+
+.forensic-local-ingestion-file-failed strong {
+  color: var(--forensic-warning);
+}
+
 .forensic-spider-bar-chart {
   display: flex;
   height: 4.8rem;
@@ -2738,6 +2893,31 @@ body {
   margin-top: 0.85rem;
   border-bottom: 1px solid rgba(129, 227, 255, 0.16);
   padding: 0 0.25rem 0.3rem;
+}
+
+@keyframes forensicLocalFileEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(0.28rem) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes forensicLocalIngestionSweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-112%);
+  }
+  42% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(112%);
+  }
 }
 
 .forensic-spider-bar-chart span {
@@ -3030,6 +3210,9 @@ body {
   .forensic-spider-leg-card::after,
   .forensic-spider-pipeline-rail-button,
   .forensic-spider-pipeline-rail-button::before,
+  .forensic-local-ingestion-stack,
+  .forensic-local-ingestion-stack::before,
+  .forensic-local-ingestion-file,
   .forensic-pipeline-chip,
   .forensic-pipeline-chip::before,
   .forensic-pipeline-drawer,

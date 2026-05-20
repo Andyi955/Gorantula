@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
   BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
@@ -19,6 +20,10 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     pipelineLabel = 'Pipeline idle',
     pipelineProgressPercent = 0,
     onOpenPipelineMonitor,
+    operationMode = 'web',
+    localIngestionFiles = [],
+    localIngestionProgress,
+    qaLocalIngestionDemoRequest,
     qaTelemetryDemoRequest,
     tokenReadout,
   }: {
@@ -26,6 +31,10 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     pipelineLabel?: string
     pipelineProgressPercent?: number
     onOpenPipelineMonitor?: () => void
+    operationMode?: 'web' | 'local'
+    localIngestionFiles?: Array<{ path: string; name: string; state: string }>
+    localIngestionProgress?: { stepId?: string; status?: string; detail?: string } | null
+    qaLocalIngestionDemoRequest?: { requestId: string } | null
     qaTelemetryDemoRequest?: { requestId: string } | null
     tokenReadout?: { value: string; title?: string }
   }) => (
@@ -38,6 +47,14 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
       <button type="button" data-testid="mock-spider-pipeline-rail" onClick={onOpenPipelineMonitor}>
         Pipeline rail {pipelineStatus} {pipelineLabel} {pipelineProgressPercent}%
       </button>
+      <span data-testid="mock-spider-operation-mode">{operationMode}</span>
+      <span data-testid="mock-local-ingestion-files">
+        {localIngestionFiles.map((file) => `${file.name}:${file.state}`).join('|')}
+      </span>
+      <span data-testid="mock-local-ingestion-progress">
+        {localIngestionProgress?.stepId || 'none'} {localIngestionProgress?.status || 'idle'} {localIngestionProgress?.detail || ''}
+      </span>
+      <span data-testid="mock-local-ingestion-demo-request">{qaLocalIngestionDemoRequest?.requestId || 'none'}</span>
       <span data-testid="mock-spider-telemetry-demo-request">{qaTelemetryDemoRequest?.requestId || 'none'}</span>
     </div>
   ),
@@ -1040,6 +1057,91 @@ describe('App', () => {
 
     expect(within(crawlConsole).queryByRole('button', { name: /browse/i })).not.toBeInTheDocument()
     expect(screen.getByRole('switch', { name: /scrape images/i })).toBeInTheDocument()
+  })
+
+  it('passes local operation mode and manual document file stack into the spider visualizer', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /local/i }))
+    await user.type(screen.getByPlaceholderText(/enter absolute os paths/i), 'C:\\Cases\\alpha.pdf|C:\\Cases\\beta.docx')
+
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('local')
+    expect(screen.getByTestId('mock-local-ingestion-files')).toHaveTextContent('alpha.pdf:queued')
+    expect(screen.getByTestId('mock-local-ingestion-files')).toHaveTextContent('beta.docx:queued')
+  })
+
+  it('populates the local document stack from Browse without sending backend messages', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes('/api/pick-files')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(['C:\\Docs\\grid.pdf', 'C:\\Docs\\notes.md']),
+        } as Response)
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /local/i }))
+    await user.click(within(crawlConsole).getByRole('button', { name: /browse/i }))
+
+    await waitFor(() => expect(screen.getByTestId('mock-local-ingestion-files')).toHaveTextContent('grid.pdf:queued'))
+    expect(screen.getByTestId('mock-local-ingestion-files')).toHaveTextContent('notes.md:queued')
+    expect(WebSocketMock.instances[0]?.send).not.toHaveBeenCalled()
+  })
+
+  it('keeps local runs on the existing CRAWL_LOCAL websocket contract', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /local/i }))
+    await user.type(screen.getByPlaceholderText(/enter absolute os paths/i), 'C:\\Cases\\alpha.pdf|C:\\Cases\\beta.docx')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL_LOCAL',
+      payload: 'C:\\Cases\\alpha.pdf|C:\\Cases\\beta.docx',
+      vaultId: expect.any(String),
+      runId: expect.any(String),
+    }))
+  })
+
+  it('routes browser-only local ingestion QA replay into the spider view without backend messages', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT, {
+        detail: {
+          investigationId: 'qa-local-ingestion',
+          requestId: 'qa-local-ingestion-test',
+        },
+      }))
+    })
+
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('local')
+    expect(screen.getByTestId('mock-local-ingestion-demo-request')).toHaveTextContent('qa-local-ingestion-test')
+    expect(screen.getByTestId('mock-local-ingestion-files')).toHaveTextContent('grid-brief.pdf')
+    expect(WebSocketMock.instances[0]?.send).not.toHaveBeenCalled()
+    expect(localStorage.getItem('gorantula_local_ingestion_qa_demo')).toBeNull()
   })
 
   it('renders compact token usage from websocket events', async () => {
