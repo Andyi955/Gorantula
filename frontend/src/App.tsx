@@ -13,12 +13,14 @@ import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard } from './utils/hier
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   createBrowserQaDiscoveryDemoRecords,
   createBrowserQaSynthesisDemoTheory,
   type BrowserQaDiscoveryDemoDetail,
+  type BrowserQaPipelineDemoDetail,
   type BrowserQaSeedResult,
   type BrowserQaSpiderTelemetryDemoDetail,
   type BrowserQaSynthesisDemoDetail,
@@ -142,6 +144,13 @@ interface PipelinePerformanceProfile {
   tokenUsage: PipelineProfileTokenUsage[]
 }
 
+interface AnimatedPipelineTokenState {
+  runId: string | null
+  target: number
+  display: number
+  isAnimating: boolean
+}
+
 interface AutosaveWarning {
   investigationId?: string
   errorName?: string
@@ -183,6 +192,8 @@ const SIDEBAR_BOARD_DEFAULT_WIDTH = 336
 const SIDEBAR_MIN_WIDTH = 240
 const SIDEBAR_MAX_WIDTH = 424
 const SIDEBAR_COLLAPSED_WIDTH = 64
+const PIPELINE_STEP_TRANSITION_MS = 900
+const PIPELINE_TOKEN_COUNT_MS = 600
 const compactTokenFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -190,6 +201,16 @@ const compactTokenFormatter = new Intl.NumberFormat('en-US', {
 const investigationTimestampPattern = /(?:inv|merge)-(\d{10,})$/i
 
 const formatCompactTokens = (value: number) => compactTokenFormatter.format(value)
+
+const prefersReducedMotion = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false
+  }
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+const getPipelineStepTransitionKey = (runId: string, stepId: string, status: PipelineProgressStepState['status']) =>
+  `${runId}:${stepId}:${status}`
 
 const formatProviderName = (provider: string) => {
   const normalized = provider.trim().toLowerCase()
@@ -677,6 +698,13 @@ function App() {
   const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
   const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
   const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
+  const [pipelineStepTransitions, setPipelineStepTransitions] = useState<Record<string, PipelineProgressStepState['status']>>({})
+  const [animatedPipelineToken, setAnimatedPipelineToken] = useState<AnimatedPipelineTokenState>({
+    runId: null,
+    target: 0,
+    display: 0,
+    isAnimating: false,
+  })
   const [autosaveWarning, setAutosaveWarning] = useState<AutosaveWarning | null>(null)
   const [systemNotice, setSystemNotice] = useState<string | null>(null)
   const [dismissedSystemNotice, setDismissedSystemNotice] = useState<string | null>(null)
@@ -690,6 +718,10 @@ function App() {
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
   const sidebarResizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
+  const pipelineRunsByIdRef = useRef<Record<string, PipelineRunState>>({})
+  const pipelineStepTransitionTimeoutsRef = useRef<Record<string, number>>({})
+  const qaPipelineDemoTimeoutsRef = useRef<number[]>([])
+  const animatedPipelineTokenRef = useRef(animatedPipelineToken)
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
   const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'chat' || activeTab === 'settings'
@@ -878,6 +910,90 @@ function App() {
     }
   }, [])
 
+  const clearPipelineStepTransitions = useCallback(() => {
+    Object.values(pipelineStepTransitionTimeoutsRef.current).forEach((timeoutId) => {
+      window.clearTimeout(timeoutId)
+    })
+    pipelineStepTransitionTimeoutsRef.current = {}
+    setPipelineStepTransitions({})
+  }, [])
+
+  const recordPipelineStepTransitions = useCallback((progress: PipelineProgressPayload) => {
+    const previousRun = pipelineRunsByIdRef.current[progress.runId]
+    const previousSteps = new Map((previousRun?.steps || []).map((step) => [step.id, step.status]))
+    const transitions: Record<string, PipelineProgressStepState['status']> = {}
+
+    ;(progress.steps || []).forEach((step) => {
+      const previousStatus = previousSteps.get(step.id)
+      const isNewActiveStep = !previousStatus && step.status !== 'pending'
+      const changedStatus = Boolean(previousStatus && previousStatus !== step.status)
+      if (!isNewActiveStep && !changedStatus) {
+        return
+      }
+      transitions[getPipelineStepTransitionKey(progress.runId, step.id, step.status)] = step.status
+    })
+
+    const transitionKeys = Object.keys(transitions)
+    if (transitionKeys.length === 0) {
+      return
+    }
+
+    setPipelineStepTransitions((current) => ({
+      ...current,
+      ...transitions,
+    }))
+
+    transitionKeys.forEach((key) => {
+      const existingTimeout = pipelineStepTransitionTimeoutsRef.current[key]
+      if (existingTimeout) {
+        window.clearTimeout(existingTimeout)
+      }
+      pipelineStepTransitionTimeoutsRef.current[key] = window.setTimeout(() => {
+        delete pipelineStepTransitionTimeoutsRef.current[key]
+        setPipelineStepTransitions((current) => {
+          if (!current[key]) {
+            return current
+          }
+          const next = { ...current }
+          delete next[key]
+          return next
+        })
+      }, PIPELINE_STEP_TRANSITION_MS)
+    })
+  }, [])
+
+  const applyPipelineProgress = useCallback((progress: PipelineProgressPayload) => {
+    recordPipelineStepTransitions(progress)
+    setPipelineRunsById((current) => {
+      const next = {
+        ...current,
+        [progress.runId]: {
+          ...(current[progress.runId] || {}),
+          ...progress,
+          updatedAt: Date.now(),
+        },
+      }
+      pipelineRunsByIdRef.current = next
+      return next
+    })
+    setActivePipelineRunId(progress.runId)
+  }, [recordPipelineStepTransitions])
+
+  const closePipelineDrawer = useCallback(() => {
+    setIsPipelineDrawerOpen(false)
+    clearPipelineStepTransitions()
+    setAnimatedPipelineToken((current) => ({
+      ...current,
+      display: current.target,
+      isAnimating: false,
+    }))
+  }, [clearPipelineStepTransitions])
+
+  const clearQaPipelineDemoTimers = useCallback(() => {
+    qaPipelineDemoTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId))
+    qaPipelineDemoTimeoutsRef.current = []
+  }, [])
+
   const scheduleReconnect = (delay = WEBSOCKET_RETRY_DELAY_MS) => {
     if (isUnmounted.current) {
       return
@@ -998,15 +1114,7 @@ function App() {
             return
           }
 
-          setPipelineRunsById((current) => ({
-            ...current,
-            [progress.runId]: {
-              ...(current[progress.runId] || {}),
-              ...progress,
-              updatedAt: Date.now(),
-            },
-          }))
-          setActivePipelineRunId(progress.runId)
+          applyPipelineProgress(progress)
           const completedDiscoveryVaultId = typeof progress.vaultId === 'string' ? progress.vaultId.trim() : ''
           if (completedDiscoveryVaultId && progress.stepId === 'discovery_review' && progress.status === 'complete') {
             setCompletedDiscoveryReviewByInvestigation((current) => ({
@@ -1131,7 +1239,7 @@ function App() {
 
     socketConfig.socket.addEventListener('message', handleMessage)
     return () => socketConfig.socket?.removeEventListener('message', handleMessage)
-  }, [currentInvestigationId, refreshPipelineProfiles, socketConfig.socket])
+  }, [applyPipelineProgress, currentInvestigationId, refreshPipelineProfiles, socketConfig.socket])
 
   const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
   const sessionTokenSummary = `Session: ${formatCompactTokens(sessionTokenUsage.totalTokens)} total, ${formatCompactTokens(sessionTokenUsage.promptTokens)} in, ${formatCompactTokens(sessionTokenUsage.completionTokens)} out, ${sessionTokenUsage.callCount} calls | ${formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}`
@@ -1171,6 +1279,16 @@ function App() {
   const activePipelineDurationBottleneck = getTopPipelineDurationBottleneck(activePipelineProfile)
   const activePipelineTokenBottleneck = getTopPipelineTokenBottleneck(activePipelineProfile)
   const activePipelineTokenUsageHotspot = getTopPipelineTokenUsage(activePipelineProfile)
+  const activePipelineTokenTotal = activePipelineTokenBottleneck?.totalTokens || activePipelineTokenUsageHotspot?.totalTokens || 0
+  const activePipelineTokenDisplayTotal = activePipelineRun && animatedPipelineToken.runId === activePipelineRun.runId
+    ? animatedPipelineToken.display
+    : activePipelineTokenTotal
+  const isActivePipelineTokenAnimating = Boolean(
+    activePipelineRun &&
+    animatedPipelineToken.runId === activePipelineRun.runId &&
+    animatedPipelineToken.target === activePipelineTokenTotal &&
+    animatedPipelineToken.isAnimating,
+  )
   const activePipelineImpactMs = comparisonPipelineProfile && activePipelineProfile
     ? comparisonPipelineProfile.totalElapsedMs - activePipelineProfile.totalElapsedMs
     : 0
@@ -1202,6 +1320,77 @@ function App() {
   const isPipelineChipDismissed = activePipelineRun
     ? Boolean(dismissedPipelineChipRuns[activePipelineRun.runId])
     : false
+  const isActivePipelineRunning = activePipelineRailStatus === 'running'
+
+  useEffect(() => {
+    animatedPipelineTokenRef.current = animatedPipelineToken
+  }, [animatedPipelineToken])
+
+  useEffect(() => {
+    if (!activePipelineRun || activePipelineTokenTotal <= 0) {
+      setAnimatedPipelineToken({
+        runId: activePipelineRun?.runId || null,
+        target: activePipelineTokenTotal,
+        display: activePipelineTokenTotal,
+        isAnimating: false,
+      })
+      return
+    }
+
+    const runId = activePipelineRun.runId
+    const previous = animatedPipelineTokenRef.current
+    const from = previous.runId === runId ? previous.display : 0
+    const shouldShowFinalValue = prefersReducedMotion() ||
+      activePipelineRun.status === 'cancelled' ||
+      activePipelineRun.status === 'error' ||
+      from === activePipelineTokenTotal
+    if (shouldShowFinalValue) {
+      setAnimatedPipelineToken({
+        runId,
+        target: activePipelineTokenTotal,
+        display: activePipelineTokenTotal,
+        isAnimating: false,
+      })
+      return
+    }
+
+    const startedAt = performance.now()
+    setAnimatedPipelineToken({
+      runId,
+      target: activePipelineTokenTotal,
+      display: from,
+      isAnimating: true,
+    })
+
+    const intervalId = window.setInterval(() => {
+      const elapsed = performance.now() - startedAt
+      const progress = Math.min(1, elapsed / PIPELINE_TOKEN_COUNT_MS)
+      const display = Math.round(from + ((activePipelineTokenTotal - from) * progress))
+      setAnimatedPipelineToken({
+        runId,
+        target: activePipelineTokenTotal,
+        display,
+        isAnimating: progress < 1,
+      })
+      if (progress >= 1) {
+        window.clearInterval(intervalId)
+      }
+    }, 40)
+
+    return () => window.clearInterval(intervalId)
+  }, [activePipelineRun?.runId, activePipelineRun?.status, activePipelineTokenTotal])
+
+  useEffect(() => {
+    clearPipelineStepTransitions()
+  }, [clearPipelineStepTransitions, currentInvestigationId])
+
+  useEffect(() => () => {
+    Object.values(pipelineStepTransitionTimeoutsRef.current).forEach((timeoutId) => {
+      window.clearTimeout(timeoutId)
+    })
+    pipelineStepTransitionTimeoutsRef.current = {}
+    clearQaPipelineDemoTimers()
+  }, [clearQaPipelineDemoTimers])
 
   const stopActivePipeline = useCallback(() => {
     if (!activePipelineRun || !socketConfig.socket || !socketConfig.ready) {
@@ -1356,6 +1545,154 @@ function App() {
       setBoardWorkspaceRevision((current) => current + 1)
     }
 
+    const handleBrowserQaPipelineDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaPipelineDemoDetail>).detail
+      const requestedInvestigationId = typeof detail?.investigationId === 'string'
+        ? detail.investigationId.trim()
+        : ''
+      const targetInvestigationId = requestedInvestigationId || currentInvestigationId || 'qa-pipeline-demo-vault'
+      const requestId = typeof detail?.requestId === 'string' && detail.requestId.trim()
+        ? detail.requestId.trim()
+        : `qa-pipeline-${Date.now()}`
+      const runId = `qa-pipeline-demo-${requestId}`
+
+      clearQaPipelineDemoTimers()
+      setCurrentInvestigationId((current) => (
+        targetInvestigationId && investigations.some((investigation) => investigation.id === targetInvestigationId)
+          ? targetInvestigationId
+          : current
+      ))
+      setReturnVaultId(null)
+      setFocusedNodeId(null)
+      setIsPipelineDrawerOpen(true)
+      setDismissedPipelineChipRuns((current) => {
+        const next = { ...current }
+        delete next[runId]
+        return next
+      })
+
+      const makeProfile = (status: PipelinePerformanceProfile['status'], totalElapsedMs: number, totalTokens: number): PipelinePerformanceProfile => ({
+        runId,
+        vaultId: targetInvestigationId,
+        mode: 'qa',
+        status,
+        totalElapsedMs,
+        bottlenecks: [
+          { kind: 'span', id: 'qa-layout', label: 'QA layout synthesis', durationMs: Math.max(600, Math.round(totalElapsedMs * 0.44)), percentOfTotal: 44 },
+          { kind: 'token', id: 'qa-token-hotspot', label: 'QA persona review', totalTokens },
+        ],
+        tokenUsage: [
+          { operation: 'qa_persona_review', provider: 'demo', callCount: 3, totalTokens },
+        ],
+      })
+
+      const publishProfile = (profile: PipelinePerformanceProfile) => {
+        setPipelineProfiles((current) => [
+          profile,
+          ...current.filter((entry) => entry.runId !== runId),
+        ])
+      }
+
+      const publishProgress = (progress: PipelineProgressPayload, tokenTotal: number) => {
+        applyPipelineProgress(progress)
+        publishProfile(makeProfile(progress.status, progress.elapsedMs || 1, tokenTotal))
+      }
+
+      const baseSteps: PipelineProgressStepState[] = [
+        { id: 'qa_warmup', label: 'QA monitor warmup', status: 'running', detail: 'Priming pipeline telemetry' },
+        { id: 'qa_gather', label: 'QA evidence intake', status: 'pending' },
+        { id: 'qa_profile', label: 'QA token profiling', status: 'pending' },
+        { id: 'qa_terminal', label: 'QA terminal state', status: 'pending' },
+      ]
+
+      publishProgress({
+        runId,
+        vaultId: targetInvestigationId,
+        mode: 'qa',
+        stepId: 'qa_warmup',
+        stepLabel: 'QA pipeline warmup',
+        status: 'running',
+        completedSteps: 0,
+        totalSteps: 4,
+        elapsedMs: 240,
+        estimatedRemainingMs: 1800,
+        steps: baseSteps,
+      }, 1200)
+
+      const sequence: Array<{ delay: number; progress: PipelineProgressPayload; tokens: number }> = [
+        {
+          delay: 450,
+          tokens: 3600,
+          progress: {
+            runId,
+            vaultId: targetInvestigationId,
+            mode: 'qa',
+            stepId: 'qa_gather',
+            stepLabel: 'QA evidence intake',
+            status: 'running',
+            completedSteps: 1,
+            totalSteps: 4,
+            elapsedMs: 720,
+            estimatedRemainingMs: 1200,
+            steps: [
+              { ...baseSteps[0], status: 'complete', durationMs: 420 },
+              { ...baseSteps[1], status: 'running', detail: 'Staggering live run updates' },
+              baseSteps[2],
+              baseSteps[3],
+            ],
+          },
+        },
+        {
+          delay: 950,
+          tokens: 8400,
+          progress: {
+            runId,
+            vaultId: targetInvestigationId,
+            mode: 'qa',
+            stepId: 'qa_profile',
+            stepLabel: 'QA token profiling',
+            status: 'running',
+            completedSteps: 2,
+            totalSteps: 4,
+            elapsedMs: 1280,
+            estimatedRemainingMs: 700,
+            steps: [
+              { ...baseSteps[0], status: 'complete', durationMs: 420 },
+              { ...baseSteps[1], status: 'complete', durationMs: 560 },
+              { ...baseSteps[2], status: 'running', detail: 'Counting profile tokens' },
+              baseSteps[3],
+            ],
+          },
+        },
+        {
+          delay: 1500,
+          tokens: 8400,
+          progress: {
+            runId,
+            vaultId: targetInvestigationId,
+            mode: 'qa',
+            stepId: 'qa_terminal',
+            stepLabel: 'QA pipeline cancelled',
+            status: 'cancelled',
+            completedSteps: 2,
+            totalSteps: 4,
+            elapsedMs: 1780,
+            detail: 'QA terminal state preview',
+            steps: [
+              { ...baseSteps[0], status: 'complete', durationMs: 420 },
+              { ...baseSteps[1], status: 'complete', durationMs: 560 },
+              { ...baseSteps[2], status: 'cancelled', detail: 'Stopped before profile writeback' },
+              { ...baseSteps[3], status: 'cancelled', detail: 'Power-down state preview' },
+            ],
+          },
+        },
+      ]
+
+      qaPipelineDemoTimeoutsRef.current = sequence.map(({ delay, progress, tokens }) => (
+        window.setTimeout(() => publishProgress(progress, tokens), delay)
+      ))
+    }
+
     const handleBrowserQaSpiderTelemetryDemo = (event: Event) => {
       const detail = (event as CustomEvent<BrowserQaSpiderTelemetryDemoDetail>).detail
       setQaSpiderTelemetryDemoRequest({
@@ -1371,15 +1708,17 @@ function App() {
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
     window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
     window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
+    window.addEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
     window.addEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
     return () => {
       window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
       window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
+      window.removeEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
     }
-  }, [currentInvestigationId, investigations])
+  }, [applyPipelineProgress, clearQaPipelineDemoTimers, currentInvestigationId, investigations])
 
   useEffect(() => {
     const handleBoardWorkspaceUpdate = () => {
@@ -2319,7 +2658,7 @@ function App() {
           {activePipelineRun && !isPipelineChipDismissed && (
             <div
               data-testid="pipeline-progress-chip"
-              className="forensic-pipeline-chip forensic-status-segment text-left text-[10px]"
+              className={`forensic-pipeline-chip forensic-pipeline-chip-${activePipelineRailStatus} ${isActivePipelineRunning ? 'forensic-pipeline-chip-scanning' : ''} forensic-status-segment text-left text-[10px]`}
               title={`${activePipelineRun.stepLabel} | elapsed ${formatDuration(activePipelineRun.elapsedMs)} | ETA ${activePipelineEta}`}
             >
               <button
@@ -2361,7 +2700,7 @@ function App() {
       </footer>
 
       {isPipelineDrawerOpen && activePipelineRun && (
-        <aside data-testid="pipeline-progress-drawer" className="forensic-pipeline-drawer">
+        <aside data-testid="pipeline-progress-drawer" className={`forensic-pipeline-drawer forensic-pipeline-drawer-${activePipelineRailStatus} ${isActivePipelineRunning ? 'forensic-pipeline-drawer-scanning' : ''}`}>
           <div className="flex items-start justify-between gap-4 border-b border-[rgba(129,227,255,0.16)] pb-4">
             <div>
               <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-accent-muted)]">Pipeline Monitor</div>
@@ -2385,7 +2724,7 @@ function App() {
               )}
               <button
                 type="button"
-                onClick={() => setIsPipelineDrawerOpen(false)}
+                onClick={closePipelineDrawer}
                 className="rounded-lg border border-white/10 p-2 text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
                 aria-label="Close pipeline monitor"
               >
@@ -2402,7 +2741,7 @@ function App() {
             <div className="forensic-pipeline-progress-track">
               <div
                 data-testid="pipeline-progress-bar"
-                className="forensic-pipeline-progress-fill"
+                className={`forensic-pipeline-progress-fill ${isActivePipelineRunning ? 'forensic-pipeline-progress-fill-scanning' : ''}`}
                 style={{ width: `${activePipelinePercent}%` }}
               />
             </div>
@@ -2419,20 +2758,28 @@ function App() {
                 detail: activePipelineRun.detail,
                 error: activePipelineRun.error,
               } as PipelineProgressStepState]
-            ).map((step) => (
-              <div key={step.id} data-testid="pipeline-progress-step" className={`forensic-pipeline-step forensic-pipeline-step-${step.status}`}>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="forensic-pipeline-step-dot" />
-                    <strong>{step.label}</strong>
+            ).map((step) => {
+              const transitionKey = getPipelineStepTransitionKey(activePipelineRun.runId, step.id, step.status)
+              const transitionStatus = pipelineStepTransitions[transitionKey]
+              return (
+                <div
+                  key={step.id}
+                  data-testid="pipeline-progress-step"
+                  className={`forensic-pipeline-step forensic-pipeline-step-${step.status} ${transitionStatus ? `forensic-pipeline-step-transition forensic-pipeline-step-transition-${transitionStatus}` : ''}`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="forensic-pipeline-step-dot" />
+                      <strong>{step.label}</strong>
+                    </div>
+                    {(step.error || step.detail) && (
+                      <p>{step.error || step.detail}</p>
+                    )}
                   </div>
-                  {(step.error || step.detail) && (
-                    <p>{step.error || step.detail}</p>
-                  )}
+                  <span>{step.status === 'pending' ? '--' : formatDuration(step.durationMs)}</span>
                 </div>
-                <span>{step.status === 'pending' ? '--' : formatDuration(step.durationMs)}</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {activePipelineProfile && (
@@ -2457,8 +2804,11 @@ function App() {
                   <div className="forensic-pipeline-profile-card">
                     <span>Token hotspot</span>
                     <strong>{activePipelineTokenBottleneck?.label || activePipelineTokenUsageHotspot?.operation}</strong>
-                    <p>
-                      {formatCompactTokens(activePipelineTokenBottleneck?.totalTokens || activePipelineTokenUsageHotspot?.totalTokens || 0)} tokens
+                    <p
+                      data-testid="pipeline-token-hotspot-value"
+                      className={`forensic-pipeline-token-count ${isActivePipelineTokenAnimating ? 'forensic-pipeline-token-count-animating' : ''}`}
+                    >
+                      {formatCompactTokens(activePipelineTokenDisplayTotal)} tokens
                       {activePipelineTokenUsageHotspot ? ` / ${activePipelineTokenUsageHotspot.provider}` : ''}
                     </p>
                   </div>

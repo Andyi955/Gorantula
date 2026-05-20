@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -665,6 +665,29 @@ describe('DetectiveBoard relationship legend', () => {
       expect(socket.sentMessages).toEqual([])
     } finally {
       window.removeEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, spiderTelemetryDemoListener as EventListener)
+    }
+  })
+
+  it('replays the pipeline monitor demo from the QA utility rail without backend socket messages', () => {
+    const socket = new MockSocket()
+    const pipelineDemoListener = vi.fn()
+    window.addEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, pipelineDemoListener as EventListener)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      fireEvent.click(screen.getByRole('button', { name: /replay pipeline demo/i }))
+
+      expect(pipelineDemoListener).toHaveBeenCalledTimes(1)
+      expect((pipelineDemoListener.mock.calls[0][0] as CustomEvent).detail).toEqual(expect.objectContaining({
+        investigationId: 'investigation-1',
+        requestId: expect.any(String),
+      }))
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      window.removeEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, pipelineDemoListener as EventListener)
     }
   })
 
