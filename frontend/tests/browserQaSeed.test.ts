@@ -7,6 +7,7 @@ import {
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_ERROR_EMPTY_DEMO_EVENT,
   BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
   BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
   BROWSER_QA_PIPELINE_DEMO_EVENT,
@@ -76,6 +77,7 @@ describe('browser QA seed helpers', () => {
     expect(BROWSER_QA_SEEDED_EVENT).toBe('gorantula:browser-qa-seeded')
     expect(BROWSER_QA_CLEARED_EVENT).toBe('gorantula:browser-qa-cleared')
     expect(BROWSER_QA_DISCOVERY_DEMO_EVENT).toBe('gorantula:browser-qa-play-discovery-demo')
+    expect(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT).toBe('gorantula:browser-qa-play-error-empty-demo')
     expect(BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT).toBe('gorantula:browser-qa-play-evidence-expansion-demo')
     expect(BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT).toBe('gorantula:browser-qa-play-local-ingestion-demo')
     expect(BROWSER_QA_SYNTHESIS_DEMO_EVENT).toBe('gorantula:browser-qa-play-synthesis-demo')

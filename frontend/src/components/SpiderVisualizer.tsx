@@ -58,6 +58,7 @@ interface SpiderVisualizerProps {
     localIngestionFiles?: LocalIngestionFile[];
     localIngestionProgress?: LocalIngestionProgress | null;
     qaLocalIngestionDemoRequest?: SpiderTelemetryDemoRequest | null;
+    qaErrorEmptyDemoRequest?: SpiderTelemetryDemoRequest | null;
 }
 
 const webLegRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
@@ -179,12 +180,14 @@ const LegTelemetryCard = ({
     pipelineStatus,
     role,
     operationMode,
+    transientStatus,
 }: {
     id: number;
     state: string;
     pipelineStatus: PipelineRailStatus;
     role: string;
     operationMode: SpiderOperationMode;
+    transientStatus?: 'error' | 'recovering';
 }) => {
     const color = getSignalColor(state);
     const signalLevel = getSignalLevel(state);
@@ -195,7 +198,7 @@ const LegTelemetryCard = ({
     return (
         <article
             data-testid={`spider-leg-telemetry-${displayId}`}
-            className={`forensic-spider-leg-card forensic-spider-leg-card-${visualStatus} ${isActive ? 'forensic-spider-leg-card-active' : ''}`}
+            className={`forensic-spider-leg-card forensic-spider-leg-card-${visualStatus} ${isActive ? 'forensic-spider-leg-card-active' : ''} ${transientStatus === 'error' ? 'forensic-spider-leg-card-error-flash' : ''} ${transientStatus === 'recovering' ? 'forensic-spider-leg-card-recovering' : ''}`}
             style={{ '--spider-leg-color': color } as React.CSSProperties}
         >
             <header className="flex items-center justify-between gap-3">
@@ -299,20 +302,25 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     localIngestionFiles = [],
     localIngestionProgress = null,
     qaLocalIngestionDemoRequest,
+    qaErrorEmptyDemoRequest,
 }) => {
     const [legStates, setLegStates] = useState<Record<number, string>>(resetLegStates);
     const [brainState, setBrainState] = useState<string>('Offline');
     const [evidencePackets, setEvidencePackets] = useState<SpiderEvidencePacket[]>([]);
     const [qaPipelineStatus, setQaPipelineStatus] = useState<PipelineRailStatus | null>(null);
     const [qaLocalProgress, setQaLocalProgress] = useState<LocalIngestionProgress | null>(null);
+    const [legTransitionStates, setLegTransitionStates] = useState<Record<number, 'error' | 'recovering'>>({});
     const legStatesRef = useRef(legStates);
+    const legVisualStatusesRef = useRef<Record<number, SpiderLegVisualStatus>>({});
     const lastActiveLegRef = useRef(0);
     const fallbackLegRef = useRef(0);
     const packetCounterRef = useRef(0);
     const packetTimeoutsRef = useRef<number[]>([]);
     const qaTimeoutsRef = useRef<number[]>([]);
+    const legTransitionTimeoutsRef = useRef<Record<number, number>>({});
     const lastQaRequestIdRef = useRef<string | null>(null);
     const lastQaLocalRequestIdRef = useRef<string | null>(null);
+    const lastQaErrorEmptyRequestIdRef = useRef<string | null>(null);
     const effectivePipelineStatus = qaPipelineStatus || pipelineStatus;
     const effectiveOperationMode: SpiderOperationMode = qaLocalIngestionDemoRequest ? 'local' : operationMode;
     const effectiveLocalProgress = qaLocalProgress || localIngestionProgress;
@@ -330,6 +338,38 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         clearPacketTimeouts();
         setEvidencePackets([]);
     }, [clearPacketTimeouts]);
+
+    const clearLegTransitions = useCallback(() => {
+        Object.values(legTransitionTimeoutsRef.current).forEach((timeoutId) => window.clearTimeout(timeoutId));
+        legTransitionTimeoutsRef.current = {};
+        setLegTransitionStates({});
+    }, []);
+
+    const markLegTransition = useCallback((legId: number, transition: 'error' | 'recovering') => {
+        if (prefersReducedMotion()) {
+            return;
+        }
+
+        const existingTimeout = legTransitionTimeoutsRef.current[legId];
+        if (existingTimeout) {
+            window.clearTimeout(existingTimeout);
+        }
+
+        setLegTransitionStates((current) => ({
+            ...current,
+            [legId]: transition,
+        }));
+
+        const timeoutId = window.setTimeout(() => {
+            setLegTransitionStates((current) => {
+                const next = { ...current };
+                delete next[legId];
+                return next;
+            });
+            delete legTransitionTimeoutsRef.current[legId];
+        }, 900);
+        legTransitionTimeoutsRef.current[legId] = timeoutId;
+    }, []);
 
     const addEvidencePacket = useCallback((preferredLegId?: number) => {
         if (effectivePipelineStatus === 'cancelled' || effectivePipelineStatus === 'error') {
@@ -372,15 +412,25 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     }, []);
 
     const applyLegState = useCallback((legId: number, state: string) => {
+        const previousVisualStatus = legVisualStatusesRef.current[legId] || getLegVisualStatus(legStatesRef.current[legId] || 'Idle', effectivePipelineStatus);
+        const nextVisualStatus = getLegVisualStatus(state, effectivePipelineStatus);
+        legVisualStatusesRef.current[legId] = nextVisualStatus;
+        if (nextVisualStatus === 'error') {
+            markLegTransition(legId, 'error');
+        } else if (previousVisualStatus === 'error' && nextVisualStatus === 'running') {
+            markLegTransition(legId, 'recovering');
+        }
         setLegStates((prev) => ({ ...prev, [legId]: state }));
         if (!isIdleState(state)) {
             lastActiveLegRef.current = legId;
         }
-    }, []);
+    }, [effectivePipelineStatus, markLegTransition]);
 
     useEffect(() => {
         if (!sharedSocket) {
             setBrainState('Offline');
+            legVisualStatusesRef.current = {};
+            clearLegTransitions();
             clearEvidencePackets();
             return;
         }
@@ -395,10 +445,14 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
             } else if (msg.type === 'BRAIN_STATE') {
                 setBrainState(msg.payload);
                 if (['Done', 'Offline', 'Disconnected'].includes(msg.payload)) {
+                    legVisualStatusesRef.current = {};
+                    clearLegTransitions();
                     setLegStates(resetLegStates());
                     clearEvidencePackets();
                 }
             } else if (msg.type === 'SYNTHESIS_COMPLETE') {
+                legVisualStatusesRef.current = {};
+                clearLegTransitions();
                 setLegStates(resetLegStates());
                 clearEvidencePackets();
             } else if (msg.type === 'MEMORY_NODE_GATHERED') {
@@ -416,20 +470,22 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [addEvidencePacket, applyLegState, clearEvidencePackets, sharedSocket]);
+    }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearLegTransitions, sharedSocket]);
 
     useEffect(() => {
         if (pipelineStatus === 'cancelled' || pipelineStatus === 'error') {
             setQaPipelineStatus(null);
             setQaLocalProgress(null);
+            clearLegTransitions();
             clearEvidencePackets();
         }
-    }, [clearEvidencePackets, pipelineStatus]);
+    }, [clearEvidencePackets, clearLegTransitions, pipelineStatus]);
 
     useEffect(() => () => {
         clearPacketTimeouts();
         clearQaTimeouts();
-    }, [clearPacketTimeouts, clearQaTimeouts]);
+        clearLegTransitions();
+    }, [clearLegTransitions, clearPacketTimeouts, clearQaTimeouts]);
 
     useEffect(() => {
         const requestId = qaTelemetryDemoRequest?.requestId?.trim();
@@ -440,6 +496,8 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         lastQaRequestIdRef.current = requestId;
         clearQaTimeouts();
         clearEvidencePackets();
+        clearLegTransitions();
+        legVisualStatusesRef.current = {};
         setBrainState('Connected');
         setQaPipelineStatus('running');
         setLegStates(resetLegStates());
@@ -458,10 +516,40 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         scheduleQaStep(2150, () => setQaPipelineStatus('cancelled'));
         scheduleQaStep(2850, () => {
             setQaPipelineStatus(null);
+            legVisualStatusesRef.current = {};
+            clearLegTransitions();
             setLegStates(resetLegStates());
             clearEvidencePackets();
         });
-    }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearQaTimeouts, qaTelemetryDemoRequest?.requestId, scheduleQaStep]);
+    }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearLegTransitions, clearQaTimeouts, qaTelemetryDemoRequest?.requestId, scheduleQaStep]);
+
+    useEffect(() => {
+        const requestId = qaErrorEmptyDemoRequest?.requestId?.trim();
+        if (!requestId || lastQaErrorEmptyRequestIdRef.current === requestId) {
+            return;
+        }
+
+        lastQaErrorEmptyRequestIdRef.current = requestId;
+        clearQaTimeouts();
+        clearEvidencePackets();
+        clearLegTransitions();
+        legVisualStatusesRef.current = {};
+        setBrainState('Connected');
+        setQaPipelineStatus('running');
+        setLegStates(resetLegStates());
+        applyLegState(2, 'Checking source health');
+
+        scheduleQaStep(180, () => applyLegState(2, 'Error: source timeout'));
+        scheduleQaStep(700, () => applyLegState(2, 'Retrying source fetch'));
+        scheduleQaStep(1220, () => applyLegState(2, 'Complete'));
+        scheduleQaStep(1800, () => {
+            setQaPipelineStatus(null);
+            legVisualStatusesRef.current = {};
+            clearLegTransitions();
+            setLegStates(resetLegStates());
+            clearEvidencePackets();
+        });
+    }, [applyLegState, clearEvidencePackets, clearLegTransitions, clearQaTimeouts, qaErrorEmptyDemoRequest?.requestId, scheduleQaStep]);
 
     useEffect(() => {
         const requestId = qaLocalIngestionDemoRequest?.requestId?.trim();
@@ -472,6 +560,8 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         lastQaLocalRequestIdRef.current = requestId;
         clearQaTimeouts();
         clearEvidencePackets();
+        clearLegTransitions();
+        legVisualStatusesRef.current = {};
         setBrainState('Connected');
         setQaPipelineStatus('running');
         setQaLocalProgress({ stepId: 'plan_queries', status: 'running', detail: 'Parsing local files into chunks' });
@@ -501,10 +591,12 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         scheduleQaStep(2450, () => {
             setQaPipelineStatus(null);
             setQaLocalProgress(null);
+            legVisualStatusesRef.current = {};
+            clearLegTransitions();
             setLegStates(resetLegStates());
             clearEvidencePackets();
         });
-    }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearQaTimeouts, qaLocalIngestionDemoRequest?.requestId, scheduleQaStep]);
+    }, [addEvidencePacket, applyLegState, clearEvidencePackets, clearLegTransitions, clearQaTimeouts, qaLocalIngestionDemoRequest?.requestId, scheduleQaStep]);
 
     const legIds = useMemo(() => Array.from({ length: 8 }, (_, index) => index), []);
     const legVisualStatuses = useMemo(
@@ -573,6 +665,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                                 pipelineStatus={effectivePipelineStatus}
                                 role={legRoles[id]}
                                 operationMode={effectiveOperationMode}
+                                transientStatus={legTransitionStates[id]}
                             />
                         ))}
                     </div>
@@ -614,6 +707,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                                 pipelineStatus={effectivePipelineStatus}
                                 role={legRoles[id]}
                                 operationMode={effectiveOperationMode}
+                                transientStatus={legTransitionStates[id]}
                             />
                         ))}
                     </div>

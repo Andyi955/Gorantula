@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import App from '../src/App'
 import {
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
+  BROWSER_QA_ERROR_EMPTY_DEMO_EVENT,
   BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
   BROWSER_QA_PIPELINE_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
@@ -13,6 +14,7 @@ import {
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
 import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
+import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../src/utils/boardWorkspaceEvents'
 
 vi.mock('../src/components/SpiderVisualizer', () => ({
   default: ({
@@ -24,6 +26,7 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     localIngestionFiles = [],
     localIngestionProgress,
     qaLocalIngestionDemoRequest,
+    qaErrorEmptyDemoRequest,
     qaTelemetryDemoRequest,
     tokenReadout,
   }: {
@@ -35,6 +38,7 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     localIngestionFiles?: Array<{ path: string; name: string; state: string }>
     localIngestionProgress?: { stepId?: string; status?: string; detail?: string } | null
     qaLocalIngestionDemoRequest?: { requestId: string } | null
+    qaErrorEmptyDemoRequest?: { requestId: string } | null
     qaTelemetryDemoRequest?: { requestId: string } | null
     tokenReadout?: { value: string; title?: string }
   }) => (
@@ -55,6 +59,7 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
         {localIngestionProgress?.stepId || 'none'} {localIngestionProgress?.status || 'idle'} {localIngestionProgress?.detail || ''}
       </span>
       <span data-testid="mock-local-ingestion-demo-request">{qaLocalIngestionDemoRequest?.requestId || 'none'}</span>
+      <span data-testid="mock-error-empty-demo-request">{qaErrorEmptyDemoRequest?.requestId || 'none'}</span>
       <span data-testid="mock-spider-telemetry-demo-request">{qaTelemetryDemoRequest?.requestId || 'none'}</span>
     </div>
   ),
@@ -62,11 +67,13 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
 
 vi.mock('../src/components/DetectiveBoard', () => ({
   default: ({
+    investigationId,
     hasTheoryReady = false,
     hasUnreadTheory = false,
     hasDiscoveryReady = false,
     hasUnreadDiscoveries = false,
   }: {
+    investigationId?: string | null
     hasTheoryReady?: boolean
     hasUnreadTheory?: boolean
     hasDiscoveryReady?: boolean
@@ -74,6 +81,7 @@ vi.mock('../src/components/DetectiveBoard', () => ({
   }) => (
     <div>
       DetectiveBoard
+      <span data-testid="mock-board-investigation-id">{investigationId || 'none'}</span>
       <span data-testid="mock-board-theory-state">
         theory-ready {String(hasTheoryReady)} theory-unread {String(hasUnreadTheory)}
       </span>
@@ -117,9 +125,22 @@ vi.mock('../src/components/SynthesisPanel', () => ({
 }))
 
 vi.mock('../src/components/DiscoveryPanel', () => ({
-  default: ({ showHandle = true, discoveries = [] }: { showHandle?: boolean, discoveries?: Array<{ title: string }> }) => (
+  default: ({
+    showHandle = true,
+    discoveries = [],
+    hasCompletedReview = false,
+    hasUnread = false,
+  }: {
+    showHandle?: boolean,
+    discoveries?: Array<{ title: string }>,
+    hasCompletedReview?: boolean,
+    hasUnread?: boolean,
+  }) => (
     <div>
       {showHandle ? 'DiscoveryPanel Handle' : null}
+      <span data-testid="mock-discovery-panel-empty-state">
+        completed {String(hasCompletedReview)} unread {String(hasUnread)} count {discoveries.length}
+      </span>
       {discoveries.map((discovery) => <span key={discovery.title}>{discovery.title}</span>)}
     </div>
   ),
@@ -1142,6 +1163,39 @@ describe('App', () => {
     expect(screen.getByTestId('mock-local-ingestion-files')).toHaveTextContent('grid-brief.pdf')
     expect(WebSocketMock.instances[0]?.send).not.toHaveBeenCalled()
     expect(localStorage.getItem('gorantula_local_ingestion_qa_demo')).toBeNull()
+  })
+
+  it('routes browser-only error empty QA replay without discoveries, unread dots, or backend messages', async () => {
+    const openDiscoveryListener = vi.fn()
+    window.addEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, openDiscoveryListener as EventListener)
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    try {
+      await act(async () => {
+        WebSocketMock.instances[0]?.onopen?.()
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, {
+          detail: {
+            requestId: 'qa-error-empty-test',
+          },
+        }))
+      })
+
+      expect(screen.getByText('DetectiveBoard')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-board-investigation-id')).toHaveTextContent('qa-error-empty-qa-error-empty-test')
+      expect(screen.getByTestId('mock-board-discovery-state')).toHaveTextContent('discovery-ready true discovery-unread false')
+      expect(screen.getByTestId('mock-discovery-panel-empty-state')).toHaveTextContent('completed true unread false count 0')
+      expect(openDiscoveryListener).toHaveBeenCalledTimes(1)
+      expect((openDiscoveryListener.mock.calls[0][0] as CustomEvent).detail).toEqual({ open: true })
+      expect(WebSocketMock.instances[0]?.send).not.toHaveBeenCalled()
+      expect(localStorage.getItem('gorantula_error_empty_qa_demo')).toBeNull()
+
+      await userEvent.click(screen.getByText('Spider View'))
+      expect(screen.getByTestId('mock-error-empty-demo-request')).toHaveTextContent('qa-error-empty-test')
+    } finally {
+      window.removeEventListener(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, openDiscoveryListener as EventListener)
+    }
   })
 
   it('renders compact token usage from websocket events', async () => {

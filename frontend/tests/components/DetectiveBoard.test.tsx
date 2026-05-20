@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -550,6 +550,41 @@ describe('DetectiveBoard relationship legend', () => {
     }
   })
 
+  it('adds idle grid motion only for an empty idle board', async () => {
+    const { unmount } = renderBoard()
+
+    expect(document.getElementById('detective-board-container')).toHaveClass('forensic-board-empty-idle')
+    unmount()
+
+    localStorage.setItem(
+      'inv_data_investigation-2',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 320, height: 180 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-2')
+
+    await waitFor(() => {
+      expect(document.getElementById('detective-board-container')).not.toHaveClass('forensic-board-empty-idle')
+    })
+  })
+
+  it('does not idle-animate the empty board while gathering', () => {
+    const socket = new MockSocket()
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    act(() => {
+      socket.emit('BRAIN_STATE', 'Gathering Intel...')
+    })
+
+    expect(document.getElementById('detective-board-container')).not.toHaveClass('forensic-board-empty-idle')
+  })
+
   it('uses static board navigation when reduced motion is preferred', () => {
     vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
       matches: query.includes('prefers-reduced-motion'),
@@ -653,6 +688,29 @@ describe('DetectiveBoard relationship legend', () => {
       expect(socket.sentMessages).toEqual([])
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('replays the error and empty state demo from the QA utility rail without backend socket messages', async () => {
+    const socket = new MockSocket()
+    const errorEmptyListener = vi.fn()
+    window.addEventListener(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, errorEmptyListener as EventListener)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      fireEvent.click(screen.getByRole('button', { name: /replay error\/empty demo/i }))
+
+      expect(errorEmptyListener).toHaveBeenCalledTimes(1)
+      expect((errorEmptyListener.mock.calls[0][0] as CustomEvent).detail).toEqual(expect.objectContaining({
+        investigationId: expect.stringMatching(/^qa-error-empty-/),
+        requestId: expect.stringMatching(/^qa-error-empty-/),
+      }))
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      window.removeEventListener(BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, errorEmptyListener as EventListener)
     }
   })
 

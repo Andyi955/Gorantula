@@ -207,6 +207,43 @@ describe('SpiderVisualizer', () => {
     })
 
     expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-error')
+    expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-error-flash')
+  })
+
+  it('applies recovery styling when a failed leg starts running again', () => {
+    const sharedSocket = new MockSocket()
+    render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
+
+    act(() => {
+      sharedSocket.emit('LEG_UPDATE', { legId: 2, state: 'Error: timeout while scraping' })
+      sharedSocket.emit('LEG_UPDATE', { legId: 2, state: 'Retrying source fetch' })
+    })
+
+    expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-running')
+    expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-recovering')
+  })
+
+  it('uses static failed styling when reduced motion is preferred', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    const sharedSocket = new MockSocket()
+    render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
+
+    act(() => {
+      sharedSocket.emit('LEG_UPDATE', { legId: 2, state: 'Error: timeout while scraping' })
+    })
+
+    expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-error')
+    expect(screen.getByTestId('spider-leg-telemetry-3')).not.toHaveClass('forensic-spider-leg-card-error-flash')
   })
 
   it('creates a transient evidence packet from the most recently active leg when evidence arrives', () => {
@@ -349,6 +386,38 @@ describe('SpiderVisualizer', () => {
 
       expect(screen.getByTestId('spider-leg-telemetry-1')).toHaveClass('forensic-spider-leg-card-running')
       expect(Number(screen.getByTestId('mock-scene-packet-count').textContent)).toBeGreaterThan(0)
+      expect(sharedSocket.sentMessages).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runs the browser-only QA error empty replay through failed and recovered leg states', async () => {
+    vi.useFakeTimers()
+    const sharedSocket = new MockSocket()
+
+    try {
+      const { rerender } = render(<SpiderVisualizer sharedSocket={sharedSocket as unknown as WebSocket} />)
+
+      rerender(
+        <SpiderVisualizer
+          sharedSocket={sharedSocket as unknown as WebSocket}
+          qaErrorEmptyDemoRequest={{ requestId: 'qa-error-empty-test' }}
+        />,
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(420)
+      })
+
+      expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-error')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(520)
+      })
+
+      expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-running')
+      expect(screen.getByTestId('spider-leg-telemetry-3')).toHaveClass('forensic-spider-leg-card-recovering')
       expect(sharedSocket.sentMessages).toEqual([])
     } finally {
       vi.useRealTimers()
