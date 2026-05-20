@@ -1,6 +1,6 @@
 import type { Edge, Node } from 'reactflow'
 import { calculateNodeFrame } from '../components/boardGeometry'
-import { type PersistedBoardState } from './hierarchicalCanvas'
+import { type PersistedBoardState, type PersistedTimelineSnapshot } from './hierarchicalCanvas'
 import { createRootInvestigation } from './investigations'
 import {
   deleteInvestigationPersistence,
@@ -16,6 +16,7 @@ export const BROWSER_QA_DISCOVERY_DEMO_EVENT = 'gorantula:browser-qa-play-discov
 export const BROWSER_QA_SYNTHESIS_DEMO_EVENT = 'gorantula:browser-qa-play-synthesis-demo'
 export const BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT = 'gorantula:browser-qa-play-spider-telemetry-demo'
 export const BROWSER_QA_PIPELINE_DEMO_EVENT = 'gorantula:browser-qa-play-pipeline-demo'
+export const BROWSER_QA_TIMELINE_DEMO_EVENT = 'gorantula:browser-qa-play-timeline-demo'
 export const BROWSER_QA_ANIMATION_DEMO_PENDING_KEY = 'gorantula_browser_qa_animation_demo_pending'
 export const BROWSER_QA_SOURCE_INVESTIGATION_ID = 'qa-browser-source'
 export const BROWSER_QA_TARGET_INVESTIGATION_ID = 'qa-browser-target'
@@ -62,6 +63,58 @@ export interface BrowserQaPipelineDemoDetail {
   investigationId?: string
   requestId?: string
 }
+
+export interface BrowserQaTimelineDemoDetail {
+  investigationId?: string
+  requestId?: string
+}
+
+export const createBrowserQaTimelineDemoSnapshot = (investigationId: string): PersistedTimelineSnapshot => ({
+  generatedAt: '2026-05-20T12:00:00.000Z',
+  sourceFingerprint: `qa-timeline-demo:${investigationId}`,
+  events: [
+    {
+      id: `qa-timeline-demo-grid-alert-${investigationId}`,
+      timestamp: '2026-05-13',
+      event: 'QA grid alert opened.',
+      sourceNodeId: 'qa-target-existing',
+      sourceTitle: 'Existing target lead',
+      provenance: 'persona',
+      parsedDate: 1778630400000,
+      datePrecision: 'day',
+    },
+    {
+      id: `qa-timeline-demo-cooling-${investigationId}`,
+      timestamp: '2026-05-14',
+      event: 'Emergency cooling draw was logged against the same substation corridor.',
+      sourceNodeId: 'imported-qa-target-node',
+      sourceTitle: '[IMPORTED] Pulled dossier',
+      provenance: 'date-tag',
+      parsedDate: 1778716800000,
+      datePrecision: 'day',
+    },
+    {
+      id: `qa-timeline-demo-capacity-${investigationId}`,
+      timestamp: '2026-05',
+      event: 'Capacity planning notes connected the reliability pressure to forecast demand growth.',
+      sourceNodeId: 'qa-target-existing',
+      sourceTitle: 'Existing target lead',
+      provenance: 'text-date',
+      parsedDate: 1777593600000,
+      datePrecision: 'month',
+    },
+    {
+      id: `qa-timeline-demo-imprecise-${investigationId}`,
+      timestamp: 'Unknown',
+      event: 'A facilities note references follow-up mitigation without a specific date.',
+      sourceNodeId: 'imported-qa-target-node',
+      sourceTitle: '[IMPORTED] Pulled dossier',
+      provenance: 'text-date',
+      parsedDate: null,
+      datePrecision: 'unknown',
+    },
+  ],
+})
 
 export const createBrowserQaSynthesisDemoAlerts = (investigationId: string) => [
   {

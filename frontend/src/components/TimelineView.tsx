@@ -29,6 +29,7 @@ interface TimelineViewProps {
     investigationId: string | null;
     investigationTitle?: string | null;
     onNavigateToNode?: (nodeId: string) => void;
+    qaTimelineDemoSnapshot?: PersistedTimelineSnapshot | null;
 }
 
 type TimelineProvenanceFilter = 'all' | PersistedTimelineEvent['provenance'];
@@ -160,6 +161,16 @@ const timelineFiltersAreActive = (filters: TimelineFilters) =>
     filters.sourceNodeId !== DEFAULT_TIMELINE_FILTERS.sourceNodeId ||
     filters.minConfidence !== DEFAULT_TIMELINE_FILTERS.minConfidence;
 
+type TimelineMotionKind = 'entering' | 'reordering';
+
+const TIMELINE_EVENT_MOTION_DURATION_MS = 1800;
+
+const prefersReducedMotion = () => (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+);
+
 const eventMatchesFilters = (event: PersistedTimelineEvent, filters: TimelineFilters) => {
     if (filters.provenance !== 'all' && event.provenance !== filters.provenance) {
         return false;
@@ -189,6 +200,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     investigationId,
     investigationTitle,
     onNavigateToNode,
+    qaTimelineDemoSnapshot = null,
 }) => {
     const [boardState, setBoardState] = useState<PersistedBoardState | null>(null);
     const [snapshot, setSnapshot] = useState<PersistedTimelineSnapshot | null>(null);
@@ -200,6 +212,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     const [isDragging, setIsDragging] = useState(false);
     const [draftFilters, setDraftFilters] = useState<TimelineFilters>(() => ({ ...DEFAULT_TIMELINE_FILTERS }));
     const [appliedFilters, setAppliedFilters] = useState<TimelineFilters>(() => ({ ...DEFAULT_TIMELINE_FILTERS }));
+    const [eventMotionById, setEventMotionById] = useState<Record<string, TimelineMotionKind>>({});
 
     const containerRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -207,8 +220,35 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     const dragStartTranslateXRef = useRef(0);
     const pointerHistoryRef = useRef<{ t: number; x: number }[]>([]);
     const animationFrameRef = useRef<number | null>(null);
+    const motionCleanupTimeoutRef = useRef<number | null>(null);
     const zoomLevelRef = useRef(zoomLevel);
     const translateXRef = useRef(translateX);
+
+    const clearEventMotion = useCallback(() => {
+        if (motionCleanupTimeoutRef.current !== null) {
+            window.clearTimeout(motionCleanupTimeoutRef.current);
+            motionCleanupTimeoutRef.current = null;
+        }
+        setEventMotionById({});
+    }, []);
+
+    const markTimelineEventsForMotion = useCallback((motionEvents: PersistedTimelineEvent[], kind: TimelineMotionKind) => {
+        if (prefersReducedMotion() || motionEvents.length === 0) {
+            clearEventMotion();
+            return;
+        }
+
+        if (motionCleanupTimeoutRef.current !== null) {
+            window.clearTimeout(motionCleanupTimeoutRef.current);
+            motionCleanupTimeoutRef.current = null;
+        }
+
+        setEventMotionById(Object.fromEntries(motionEvents.map((event) => [event.id, kind])));
+        motionCleanupTimeoutRef.current = window.setTimeout(() => {
+            setEventMotionById({});
+            motionCleanupTimeoutRef.current = null;
+        }, TIMELINE_EVENT_MOTION_DURATION_MS);
+    }, [clearEventMotion]);
 
     const resetViewport = useCallback(() => {
         if (animationFrameRef.current) {
@@ -249,6 +289,11 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         try {
             const savedState = await loadBoardStateForInvestigation(investigationId);
             setBoardState(savedState);
+            if (qaTimelineDemoSnapshot) {
+                setSnapshot(qaTimelineDemoSnapshot);
+                markTimelineEventsForMotion(qaTimelineDemoSnapshot.events, 'entering');
+                return;
+            }
             setSnapshot(savedState?.timelineSnapshot || null);
         } catch (loadError) {
             console.error('[TimelineView] Failed to load timeline board state:', loadError);
@@ -258,17 +303,18 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         } finally {
             setIsLoading(false);
         }
-    }, [investigationId]);
+    }, [investigationId, markTimelineEventsForMotion, qaTimelineDemoSnapshot]);
 
     useEffect(() => {
         setBoardState(null);
         setSnapshot(null);
         setError(null);
+        clearEventMotion();
         setDraftFilters({ ...DEFAULT_TIMELINE_FILTERS });
         setAppliedFilters({ ...DEFAULT_TIMELINE_FILTERS });
         resetViewport();
         void loadTimelineState();
-    }, [loadTimelineState, resetViewport]);
+    }, [clearEventMotion, loadTimelineState, resetViewport]);
 
     useEffect(() => {
         if (!investigationId) {
@@ -300,6 +346,9 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             if (animationFrameRef.current) {
                 cancelAnimationFrame(animationFrameRef.current);
             }
+            if (motionCleanupTimeoutRef.current !== null) {
+                window.clearTimeout(motionCleanupTimeoutRef.current);
+            }
         };
     }, []);
 
@@ -327,7 +376,8 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     ), [boardState]);
 
     const events = snapshot?.events || [];
-    const isStale = Boolean(snapshot && sourceFingerprint && snapshot.sourceFingerprint !== sourceFingerprint);
+    const isQaTimelineDemoActive = Boolean(qaTimelineDemoSnapshot && snapshot?.sourceFingerprint === qaTimelineDemoSnapshot.sourceFingerprint);
+    const isStale = Boolean(!isQaTimelineDemoActive && snapshot && sourceFingerprint && snapshot.sourceFingerprint !== sourceFingerprint);
     const filteredEvents = useMemo(() => (
         events.filter((event) => eventMatchesFilters(event, appliedFilters))
     ), [appliedFilters, events]);
@@ -379,11 +429,23 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         return Array.from(counts.values())
             .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
     }, [filteredEvents]);
+    const getTimelineEventMotionClass = useCallback((event: PersistedTimelineEvent) => {
+        const classes: string[] = [];
+        if (eventMotionById[event.id] === 'entering') {
+            classes.push('forensic-timeline-event-entering');
+        }
+        if (eventMotionById[event.id] === 'reordering') {
+            classes.push('forensic-timeline-event-reordering');
+        }
+        return classes.join(' ');
+    }, [eventMotionById]);
 
     const getMeterWidth = (count: number) => `${filteredEvents.length > 0 ? Math.max(7, (count / filteredEvents.length) * 100) : 0}%`;
 
     const applyFilters = () => {
+        const nextVisibleEvents = events.filter((event) => eventMatchesFilters(event, draftFilters));
         setAppliedFilters(draftFilters);
+        markTimelineEventsForMotion(nextVisibleEvents, 'reordering');
         resetViewport();
     };
 
@@ -391,6 +453,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         const nextFilters = { ...DEFAULT_TIMELINE_FILTERS };
         setDraftFilters(nextFilters);
         setAppliedFilters(nextFilters);
+        markTimelineEventsForMotion(events, 'reordering');
         resetViewport();
     };
 
@@ -411,6 +474,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             };
             setBoardState(nextState);
             setSnapshot(nextSnapshot);
+            markTimelineEventsForMotion(nextSnapshot.events, 'entering');
             resetViewport();
             await saveBoardStateForInvestigation(investigationId, nextState);
         } catch (generateError) {
@@ -419,7 +483,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         } finally {
             setIsGenerating(false);
         }
-    }, [boardState, investigationId, resetViewport]);
+    }, [boardState, investigationId, markTimelineEventsForMotion, resetViewport]);
 
     const handlePointerDown = (event: React.PointerEvent) => {
         if (!snapshot || snapshot.events.length === 0) {
@@ -639,7 +703,8 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                                         {knownEvents.map((event, index) => (
                                             <article
                                                 key={event.id}
-                                                className={`forensic-timeline-event forensic-timeline-event-${getEventTone(event)} ${getTimelineEventSizeClass(event)} ${index % 2 === 0 ? 'forensic-timeline-event-top' : 'forensic-timeline-event-bottom'}`}
+                                                className={`forensic-timeline-event forensic-timeline-event-${getEventTone(event)} ${getTimelineEventSizeClass(event)} ${index % 2 === 0 ? 'forensic-timeline-event-top' : 'forensic-timeline-event-bottom'} ${getTimelineEventMotionClass(event)}`}
+                                                style={{ '--timeline-event-stagger': `${Math.min(index * 70, 560)}ms` } as React.CSSProperties}
                                             >
                                                 <div className="forensic-timeline-pin" />
                                                 <div className="forensic-timeline-stem" />
@@ -692,8 +757,12 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                                     </div>
                                     {hasUnknownEvents ? (
                                         <div className="forensic-timeline-unknown-list">
-                                            {unknownEvents.map((event) => (
-                                                <article key={event.id} className={`forensic-timeline-unknown-card forensic-timeline-event-${getEventTone(event)}`}>
+                                            {unknownEvents.map((event, index) => (
+                                                <article
+                                                    key={event.id}
+                                                    className={`forensic-timeline-unknown-card forensic-timeline-event-${getEventTone(event)} ${getTimelineEventMotionClass(event)} ${eventMotionById[event.id] === 'entering' ? 'forensic-timeline-unknown-card-entering' : ''}`}
+                                                    style={{ '--timeline-event-stagger': `${Math.min(index * 60, 420)}ms` } as React.CSSProperties}
+                                                >
                                                     <div className="forensic-timeline-unknown-head">
                                                         <div className="forensic-timeline-event-icon">{getEventIcon(event)}</div>
                                                         <div>
@@ -844,7 +913,11 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                             ) : (
                                 <div className="forensic-timeline-source-list">
                                     {sourceBreakdown.map((source) => (
-                                        <div key={source.nodeId} className="forensic-timeline-source-row">
+                                        <div
+                                            key={source.nodeId}
+                                            data-testid={`timeline-source-row-${source.nodeId}`}
+                                            className="forensic-timeline-source-row"
+                                        >
                                             <span title={source.title}>{source.title}</span>
                                             <strong>{source.count}</strong>
                                             <div className="forensic-timeline-source-meter">
