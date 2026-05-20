@@ -9,7 +9,7 @@ import {
   removeInvestigationRecord,
   type InvestigationRecord,
 } from './utils/investigations'
-import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard } from './utils/hierarchicalCanvas'
+import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, type PersistedTimelineSnapshot } from './utils/hierarchicalCanvas'
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
@@ -17,13 +17,16 @@ import {
   BROWSER_QA_SEEDED_EVENT,
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
+  BROWSER_QA_TIMELINE_DEMO_EVENT,
   createBrowserQaDiscoveryDemoRecords,
   createBrowserQaSynthesisDemoTheory,
+  createBrowserQaTimelineDemoSnapshot,
   type BrowserQaDiscoveryDemoDetail,
   type BrowserQaPipelineDemoDetail,
   type BrowserQaSeedResult,
   type BrowserQaSpiderTelemetryDemoDetail,
   type BrowserQaSynthesisDemoDetail,
+  type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
@@ -689,6 +692,7 @@ function App() {
   const [completedDiscoveryReviewByInvestigation, setCompletedDiscoveryReviewByInvestigation] = useState<Record<string, boolean>>({})
   const qaDiscoveryDemoByInvestigationRef = useRef<Record<string, DiscoveryRecord[]>>({})
   const qaSynthesisDemoByInvestigationRef = useRef<Record<string, VaultResultPayload>>({})
+  const [qaTimelineDemoByInvestigation, setQaTimelineDemoByInvestigation] = useState<Record<string, PersistedTimelineSnapshot>>({})
   const [qaSpiderTelemetryDemoRequest, setQaSpiderTelemetryDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
@@ -1456,6 +1460,7 @@ function App() {
     const handleBrowserQaCleared = () => {
       qaDiscoveryDemoByInvestigationRef.current = {}
       qaSynthesisDemoByInvestigationRef.current = {}
+      setQaTimelineDemoByInvestigation({})
       const nextInvestigations = getCachedInvestigations()
       setInvestigations(nextInvestigations)
       setCurrentInvestigationId((current) => (
@@ -1542,6 +1547,33 @@ function App() {
       setReturnVaultId(null)
       setFocusedNodeId(null)
       setActiveTab('board')
+      setBoardWorkspaceRevision((current) => current + 1)
+    }
+
+    const handleBrowserQaTimelineDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaTimelineDemoDetail>).detail
+      const requestedInvestigationId = typeof detail?.investigationId === 'string'
+        ? detail.investigationId.trim()
+        : ''
+      const targetInvestigationId = requestedInvestigationId || currentInvestigationId
+      const availableInvestigations = getCachedInvestigations()
+      const investigationExists = Boolean(targetInvestigationId) && (
+        investigations.some((investigation) => investigation.id === targetInvestigationId) ||
+        availableInvestigations.some((investigation) => investigation.id === targetInvestigationId)
+      )
+      if (!targetInvestigationId || !investigationExists) {
+        return
+      }
+
+      const demoSnapshot = createBrowserQaTimelineDemoSnapshot(targetInvestigationId)
+      setQaTimelineDemoByInvestigation((current) => ({
+        ...current,
+        [targetInvestigationId]: demoSnapshot,
+      }))
+      setCurrentInvestigationId(targetInvestigationId)
+      setReturnVaultId(null)
+      setFocusedNodeId(null)
+      setActiveTab('timeline')
       setBoardWorkspaceRevision((current) => current + 1)
     }
 
@@ -1708,6 +1740,7 @@ function App() {
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
     window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
     window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
+    window.addEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, handleBrowserQaTimelineDemo as EventListener)
     window.addEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
     window.addEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
     return () => {
@@ -1715,6 +1748,7 @@ function App() {
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
       window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
+      window.removeEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, handleBrowserQaTimelineDemo as EventListener)
       window.removeEventListener(BROWSER_QA_PIPELINE_DEMO_EVENT, handleBrowserQaPipelineDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
     }
@@ -1952,9 +1986,18 @@ function App() {
     const removal = removeInvestigationRecord(investigations, idToRemove)
     persistInvestigations(removal.investigations)
     removal.removedIds.forEach((removedId) => {
+      delete qaDiscoveryDemoByInvestigationRef.current[removedId]
+      delete qaSynthesisDemoByInvestigationRef.current[removedId]
       void deleteInvestigationPersistence(removedId).catch((error) => {
         console.warn('[App] Failed to delete persisted investigation data', error)
       })
+    })
+    setQaTimelineDemoByInvestigation((current) => {
+      const next = { ...current }
+      removal.removedIds.forEach((removedId) => {
+        delete next[removedId]
+      })
+      return next
     })
 
     removal.investigations.forEach((investigation) => {
@@ -2578,6 +2621,7 @@ function App() {
               <TimelineView
                 investigationId={currentInvestigationId}
                 investigationTitle={currentInvestigation?.displayTopic || null}
+                qaTimelineDemoSnapshot={currentInvestigationId ? qaTimelineDemoByInvestigation[currentInvestigationId] || null : null}
                 onNavigateToNode={(nodeId) => {
                   setFocusedNodeId(nodeId);
                   setActiveTab('board');

@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -116,6 +116,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       nodeEntryDelayMs?: number
       isPersonaScanActive?: boolean
       isLayoutChoreographyActive?: boolean
+      isTimelineFocused?: boolean
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -134,6 +135,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.nodeEntryAnimation ? React.createElement('span', null, `entry ${data.nodeEntryAnimation} ${data.nodeEntryDelayMs || 0}`) : null,
       data?.isPersonaScanActive ? React.createElement('span', null, 'persona scan') : null,
       data?.isLayoutChoreographyActive ? React.createElement('span', null, 'layout choreography') : null,
+      data?.isTimelineFocused ? React.createElement('span', null, 'timeline focus') : null,
       React.createElement(
         'button',
         {
@@ -691,6 +693,29 @@ describe('DetectiveBoard relationship legend', () => {
     }
   })
 
+  it('replays the timeline demo from the QA utility rail without backend socket messages', () => {
+    const socket = new MockSocket()
+    const timelineDemoListener = vi.fn()
+    window.addEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, timelineDemoListener as EventListener)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      fireEvent.click(screen.getByRole('button', { name: /replay timeline demo/i }))
+
+      expect(timelineDemoListener).toHaveBeenCalledTimes(1)
+      expect((timelineDemoListener.mock.calls[0][0] as CustomEvent).detail).toEqual(expect.objectContaining({
+        investigationId: 'investigation-1',
+        requestId: expect.any(String),
+      }))
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      window.removeEventListener(BROWSER_QA_TIMELINE_DEMO_EVENT, timelineDemoListener as EventListener)
+    }
+  })
+
   it('keeps QA tools off by default even if an old saved flag exists', () => {
     localStorage.setItem('detective_board_qa_tools_enabled', 'true')
 
@@ -735,6 +760,50 @@ describe('DetectiveBoard relationship legend', () => {
     const discoveryButton = screen.getByRole('button', { name: /discoveries ready/i })
 
     expect(within(discoveryButton).queryByTestId('discovery-utility-notification')).not.toBeInTheDocument()
+  })
+
+  it('applies a transient timeline focus pulse when timeline navigation targets a board node', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-a',
+            type: 'custom',
+            position: { x: 0, y: 0 },
+            data: { title: 'Timeline source node', summary: 'Matched from the chronology.' },
+            style: { width: 320, height: 180 },
+          },
+        ],
+        edges: [],
+      }),
+    )
+    const baseProps = {
+      investigationId: 'investigation-1',
+      sharedSocket: null,
+      onDeepDiveNode: vi.fn(),
+      onNavigateToChild: vi.fn(),
+    }
+    const view = render(<DetectiveBoard {...baseProps} focusNodeId={null} />)
+
+    expect(await screen.findByText('Timeline source node')).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    try {
+      view.rerender(<DetectiveBoard {...baseProps} focusNodeId="node-a" />)
+
+      expect(fitViewMock).toHaveBeenCalled()
+      expect(screen.getByText('timeline focus')).toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(1400)
+      })
+
+      expect(screen.queryByText('timeline focus')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('renders board controls in an overlay outside the action bar', async () => {

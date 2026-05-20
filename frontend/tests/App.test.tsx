@@ -8,6 +8,7 @@ import {
   BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   BROWSER_QA_TARGET_INVESTIGATION_ID,
+  BROWSER_QA_TIMELINE_DEMO_EVENT,
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
 import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
@@ -71,7 +72,12 @@ vi.mock('../src/components/SettingsDashboard', () => ({
 }))
 
 vi.mock('../src/components/TimelineView', () => ({
-  default: () => <div>TimelineView</div>,
+  default: ({ qaTimelineDemoSnapshot }: { qaTimelineDemoSnapshot?: { events?: Array<{ id: string; event: string }> } | null }) => (
+    <div>
+      TimelineView
+      {qaTimelineDemoSnapshot?.events?.map((event) => <span key={event.id}>{event.event}</span>)}
+    </div>
+  ),
 }))
 
 vi.mock('../src/components/VaultChatbot', () => ({
@@ -1251,5 +1257,28 @@ describe('App', () => {
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
     expect(screen.getByTestId('mock-spider-telemetry-demo-request')).toHaveTextContent('qa-spider-test')
     expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
+  })
+
+  it('routes the browser-only QA timeline demo to Timeline View without backend messages or persistence', async () => {
+    render(<App />)
+
+    act(() => {
+      const result = seedBrowserQaData()
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SEEDED_EVENT, { detail: result }))
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_TIMELINE_DEMO_EVENT, {
+        detail: {
+          investigationId: BROWSER_QA_TARGET_INVESTIGATION_ID,
+          requestId: 'qa-timeline-test',
+        },
+      }))
+    })
+
+    expect(await screen.findByText('TimelineView')).toBeInTheDocument()
+    expect(screen.getByText('QA grid alert opened.')).toBeInTheDocument()
+    expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
+    expect(localStorage.getItem(`inv_data_${BROWSER_QA_TARGET_INVESTIGATION_ID}`)).not.toContain('QA grid alert opened.')
   })
 })

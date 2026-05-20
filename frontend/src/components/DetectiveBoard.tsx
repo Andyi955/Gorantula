@@ -60,10 +60,11 @@ import {
     BROWSER_QA_PIPELINE_DEMO_EVENT,
     BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
+    BROWSER_QA_TIMELINE_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
 } from '../utils/browserQaSeed';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -516,6 +517,7 @@ const NODE_ENTRY_STAGGER_MS = 120;
 const NODE_ENTRY_MAX_DELAY_MS = 840;
 const NODE_ENTRY_ANIMATION_DURATION_MS = 1800;
 const PERSONA_SCAN_DURATION_MS = 2200;
+const TIMELINE_FOCUS_DURATION_MS = 1300;
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
 const LAYOUT_CHOREOGRAPHY_NODE_CLASS = 'forensic-react-flow-node-moving';
 
@@ -664,6 +666,8 @@ const stripTransientNodeData = (node: Node): Node => {
         personaScanStartedAt: _personaScanStartedAt,
         isLayoutChoreographyActive: _isLayoutChoreographyActive,
         layoutChoreographyStartedAt: _layoutChoreographyStartedAt,
+        isTimelineFocused: _isTimelineFocused,
+        timelineFocusStartedAt: _timelineFocusStartedAt,
         ...stableNodeData
     } = node.data || {};
     const stableClassName = removeClassName((node as Node & { className?: string }).className, LAYOUT_CHOREOGRAPHY_NODE_CLASS);
@@ -830,6 +834,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const qaAnimationTimeoutsRef = useRef<number[]>([]);
     const qaAnimationDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
+    const timelineFocusTimeoutRef = useRef<number | null>(null);
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -2061,6 +2066,27 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, [deleteRelationshipEdge, edges, handleConnectionHover, renameRelationshipEdge, snapConnectionLabels]);
 
     const lastFocusedRef = useRef<string | null>(null);
+    const clearTimelineFocus = useCallback(() => {
+        if (timelineFocusTimeoutRef.current !== null) {
+            window.clearTimeout(timelineFocusTimeoutRef.current);
+            timelineFocusTimeoutRef.current = null;
+        }
+        setNodes((currentNodes) => currentNodes.map((node) => {
+            if (!node.data?.isTimelineFocused && !node.data?.timelineFocusStartedAt) {
+                return node;
+            }
+
+            const {
+                isTimelineFocused: _isTimelineFocused,
+                timelineFocusStartedAt: _timelineFocusStartedAt,
+                ...stableData
+            } = node.data || {};
+            return {
+                ...node,
+                data: stableData,
+            };
+        }));
+    }, [setNodes]);
 
     // Handle node focusing from props (e.g. from Timeline)
     useEffect(() => {
@@ -2080,13 +2106,27 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 // Visually select it
                 setNodes(nds => nds.map(n => ({
                     ...n,
-                    selected: n.id === focusNodeId
+                    selected: n.id === focusNodeId,
+                    data: n.id === focusNodeId
+                        ? {
+                            ...n.data,
+                            isTimelineFocused: true,
+                            timelineFocusStartedAt: Date.now(),
+                        }
+                        : n.data,
                 })));
+                if (timelineFocusTimeoutRef.current !== null) {
+                    window.clearTimeout(timelineFocusTimeoutRef.current);
+                }
+                timelineFocusTimeoutRef.current = window.setTimeout(() => {
+                    clearTimelineFocus();
+                }, TIMELINE_FOCUS_DURATION_MS);
             }
         } else if (!focusNodeId) {
             lastFocusedRef.current = null;
+            clearTimelineFocus();
         }
-    }, [focusNodeId, fitView]);
+    }, [clearTimelineFocus, focusNodeId, fitView]);
 
     // Help distribute edges evenly
 
@@ -2534,6 +2574,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         layoutChoreographyTimeoutsRef.current = [];
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
+        if (timelineFocusTimeoutRef.current !== null) {
+            window.clearTimeout(timelineFocusTimeoutRef.current);
+            timelineFocusTimeoutRef.current = null;
+        }
     }, []);
 
     const onNodesChange: OnNodesChange = useCallback(
@@ -3242,6 +3286,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             detail: {
                 investigationId,
                 requestId: `qa-pipeline-${Date.now()}`,
+            },
+        }));
+    }, [investigationId]);
+
+    const playBrowserQaTimelineDemo = useCallback(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_TIMELINE_DEMO_EVENT, {
+            detail: {
+                investigationId,
+                requestId: `qa-timeline-${Date.now()}`,
             },
         }));
     }, [investigationId]);
@@ -4346,6 +4399,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <Activity size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaTimelineDemo}
+                                aria-label="Replay timeline demo"
+                                title="Replay timeline demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <Clock size={16} />
                             </button>
                         </>
                     )}

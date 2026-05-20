@@ -14,9 +14,11 @@ import {
   BROWSER_QA_SOURCE_INVESTIGATION_ID,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   BROWSER_QA_TARGET_INVESTIGATION_ID,
+  BROWSER_QA_TIMELINE_DEMO_EVENT,
   clearBrowserQaData,
   createBrowserQaSynthesisDemoAlerts,
   createBrowserQaSynthesisDemoTheory,
+  createBrowserQaTimelineDemoSnapshot,
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
 
@@ -74,6 +76,20 @@ describe('browser QA seed helpers', () => {
     expect(BROWSER_QA_SYNTHESIS_DEMO_EVENT).toBe('gorantula:browser-qa-play-synthesis-demo')
     expect(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT).toBe('gorantula:browser-qa-play-spider-telemetry-demo')
     expect(BROWSER_QA_PIPELINE_DEMO_EVENT).toBe('gorantula:browser-qa-play-pipeline-demo')
+    expect(BROWSER_QA_TIMELINE_DEMO_EVENT).toBe('gorantula:browser-qa-play-timeline-demo')
+  })
+
+  it('creates deterministic browser-only timeline demo snapshots', () => {
+    const snapshot = createBrowserQaTimelineDemoSnapshot(BROWSER_QA_TARGET_INVESTIGATION_ID)
+
+    expect(snapshot.sourceFingerprint).toBe(`qa-timeline-demo:${BROWSER_QA_TARGET_INVESTIGATION_ID}`)
+    expect(snapshot.events.length).toBeGreaterThanOrEqual(4)
+    expect(snapshot.events[0]).toEqual(expect.objectContaining({
+      id: `qa-timeline-demo-grid-alert-${BROWSER_QA_TARGET_INVESTIGATION_ID}`,
+      sourceNodeId: 'qa-target-existing',
+      sourceTitle: 'Existing target lead',
+    }))
+    expect(snapshot.events.some((event) => event.parsedDate === null)).toBe(true)
   })
 
   it('creates deterministic browser-only synthesis demo payloads', () => {

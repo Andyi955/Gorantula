@@ -87,6 +87,7 @@ describe('TimelineView', () => {
     await user.click(await screen.findByRole('button', { name: /generate timeline/i }))
 
     expect(await screen.findByText('Shipment departed.')).toBeInTheDocument()
+    expect(screen.getByText('Shipment departed.').closest('article')).toHaveClass('forensic-timeline-event-entering')
     expect(screen.getAllByText('2026-05-13').length).toBeGreaterThan(0)
     const saved = JSON.parse(localStorage.getItem('inv_data_inv-1') || '{}')
     expect(saved.timelineSnapshot.events).toHaveLength(2)
@@ -132,6 +133,7 @@ describe('TimelineView', () => {
     render(<TimelineView investigationId="inv-1" investigationTitle="Case Alpha" />)
 
     expect(await screen.findByText('Shipment departed.')).toBeInTheDocument()
+    expect(screen.getByText('Shipment departed.').closest('article')).not.toHaveClass('forensic-timeline-event-entering')
     expect(screen.getByText('Governance rules changed.')).toBeInTheDocument()
 
     await user.selectOptions(screen.getByLabelText(/timeline event type/i), 'date-tag')
@@ -139,6 +141,7 @@ describe('TimelineView', () => {
 
     await waitFor(() => expect(screen.queryByText('Shipment departed.')).not.toBeInTheDocument())
     expect(screen.getByText('Governance rules changed.')).toBeInTheDocument()
+    expect(screen.getByText('Governance rules changed.').closest('article')).toHaveClass('forensic-timeline-event-reordering')
 
     await user.selectOptions(screen.getByLabelText(/timeline source/i), 'node-1')
     await user.click(screen.getByRole('button', { name: /apply filters/i }))
@@ -276,6 +279,147 @@ describe('TimelineView', () => {
     await user.click(await screen.findByRole('button', { name: /source intel node/i }))
 
     expect(onNavigateToNode).toHaveBeenCalledWith('node-1')
+  })
+
+  it('does not cross-highlight related events or source rows while hovering a timeline card', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'inv_data_inv-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [],
+        edges: [],
+        timelineSnapshot: {
+          generatedAt: '2026-05-14T12:00:00.000Z',
+          sourceFingerprint: 'tl-related',
+          events: [
+            {
+              id: 'event-alpha-a',
+              timestamp: '2024-01-15',
+              event: 'Alpha source event one.',
+              sourceNodeId: 'node-alpha',
+              sourceTitle: 'Alpha Node',
+              provenance: 'persona',
+              parsedDate: 1705276800000,
+              datePrecision: 'day',
+            },
+            {
+              id: 'event-alpha-b',
+              timestamp: '2024-01-16',
+              event: 'Alpha source event two.',
+              sourceNodeId: 'node-alpha',
+              sourceTitle: 'Alpha Node',
+              provenance: 'date-tag',
+              parsedDate: 1705363200000,
+              datePrecision: 'day',
+            },
+            {
+              id: 'event-date-match',
+              timestamp: '2024-01-15',
+              event: 'Different source same date.',
+              sourceNodeId: 'node-beta',
+              sourceTitle: 'Beta Node',
+              provenance: 'text-date',
+              parsedDate: 1705276800000,
+              datePrecision: 'day',
+            },
+          ],
+        },
+      }),
+    )
+
+    render(<TimelineView investigationId="inv-1" investigationTitle="Case Alpha" />)
+
+    const hoveredArticle = (await screen.findByText('Alpha source event one.')).closest('article')!
+    const hoveredCard = hoveredArticle.querySelector('.forensic-timeline-event-card')!
+    await user.hover(hoveredCard)
+
+    expect(hoveredArticle).not.toHaveClass('forensic-timeline-event-hovered')
+    expect(screen.getByText('Alpha source event two.').closest('article')).not.toHaveClass('forensic-timeline-event-related-active')
+    expect(screen.getByText('Alpha source event two.').closest('article')).not.toHaveClass('forensic-timeline-event-related-source')
+    expect(screen.getByText('Different source same date.').closest('article')).not.toHaveClass('forensic-timeline-event-related-date')
+    expect(screen.getByTestId('timeline-source-row-node-alpha')).not.toHaveClass('forensic-timeline-source-row-related')
+    expect(screen.getByTestId('timeline-source-row-node-alpha')).not.toHaveClass('forensic-timeline-source-row-related-source')
+    expect(screen.getByTestId('timeline-source-row-node-beta')).not.toHaveClass('forensic-timeline-source-row-related-date')
+
+    await user.unhover(hoveredCard)
+    expect(hoveredArticle).not.toHaveClass('forensic-timeline-event-hovered')
+  })
+
+  it('renders generated timeline events without motion classes when reduced motion is preferred', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    localStorage.setItem(
+      'inv_data_inv-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-1',
+            data: {
+              title: 'Intel Node',
+              summary: '[DATE:2026-05-13] Governance rules changed.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    render(<TimelineView investigationId="inv-1" investigationTitle="Case Alpha" />)
+
+    await user.click(await screen.findByRole('button', { name: /generate timeline/i }))
+
+    const eventArticle = (await screen.findByText('Governance rules changed.')).closest('article')
+    expect(eventArticle).not.toHaveClass('forensic-timeline-event-entering')
+    expect(eventArticle).not.toHaveClass('forensic-timeline-event-reordering')
+  })
+
+  it('animates browser QA timeline snapshots without saving them as real board data', async () => {
+    localStorage.setItem(
+      'inv_data_inv-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [],
+        edges: [],
+      }),
+    )
+
+    render(
+      <TimelineView
+        investigationId="inv-1"
+        investigationTitle="Case Alpha"
+        qaTimelineDemoSnapshot={{
+          generatedAt: '2026-05-20T12:00:00.000Z',
+          sourceFingerprint: 'qa-timeline-demo',
+          events: [
+            {
+              id: 'qa-timeline-event-1',
+              timestamp: '2026-05-13',
+              event: 'QA grid alert opened.',
+              sourceNodeId: 'qa-source-1',
+              sourceTitle: 'QA Grid Alert',
+              provenance: 'persona',
+              parsedDate: 1778630400000,
+              datePrecision: 'day',
+            },
+          ],
+        }}
+      />,
+    )
+
+    const eventArticle = (await screen.findByText('QA grid alert opened.')).closest('article')
+    expect(eventArticle).toHaveClass('forensic-timeline-event-entering')
+    expect(localStorage.getItem('inv_data_inv-1')).not.toContain('QA grid alert opened.')
   })
 
   it('widens only verbose event cards so long evidence snippets do not show a clipped extra line', async () => {
