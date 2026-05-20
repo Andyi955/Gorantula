@@ -520,8 +520,57 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(setCenterMock).toHaveBeenCalledWith(420, 310, {
       zoom: 0.82,
-      duration: 180,
+      duration: 620,
     })
+  })
+
+  it('shows board camera movement feedback during a minimap glide', () => {
+    vi.useFakeTimers()
+
+    try {
+      renderBoard()
+
+      const boardRoot = document.getElementById('detective-board-container')
+      expect(boardRoot).not.toHaveClass('forensic-board-camera-moving')
+      expect(screen.getByText('0 nodes')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByTestId('reactflow-minimap'))
+
+      expect(boardRoot).toHaveClass('forensic-board-camera-moving')
+      expect(screen.getByText('Moving')).toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(760)
+      })
+
+      expect(boardRoot).not.toHaveClass('forensic-board-camera-moving')
+      expect(screen.getByText('0 nodes')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses static board navigation when reduced motion is preferred', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    renderBoard()
+
+    fireEvent.click(screen.getByTestId('reactflow-minimap'))
+
+    expect(setCenterMock).toHaveBeenCalledWith(420, 310, {
+      zoom: 0.82,
+      duration: 0,
+    })
+    expect(document.getElementById('detective-board-container')).not.toHaveClass('forensic-board-camera-moving')
   })
 
   it('uses the right utility rail to trigger existing workspace actions', async () => {
@@ -547,7 +596,7 @@ describe('DetectiveBoard relationship legend', () => {
 
     await user.click(screen.getByRole('button', { name: /recenter board viewport/i }))
     expect(fitViewMock).toHaveBeenCalledWith({
-      duration: 220,
+      duration: 900,
       padding: 0.16,
       minZoom: 0.72,
       maxZoom: 1,
