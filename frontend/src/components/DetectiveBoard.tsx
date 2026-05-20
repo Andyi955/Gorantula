@@ -490,6 +490,9 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
 const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 96, zoom: 1 };
 const BOARD_MIN_ZOOM = 0.5;
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.16, minZoom: 0.72, maxZoom: 1 };
+const BOARD_MINIMAP_GLIDE_DURATION_MS = 620;
+const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
+const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const MINIMAP_NODE_STROKE = '#06080b';
 const MINIMAP_MASK_STROKE = 'rgba(152, 255, 255, 1)';
@@ -536,6 +539,14 @@ const getConnectLayoutSettleDelay = () => {
     }
 
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CONNECT_LAYOUT_SETTLE_MS;
+};
+
+const getBoardCameraMotionDuration = (durationMs: number) => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+        return durationMs;
+    }
+
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : durationMs;
 };
 
 const isImportedEvidenceNode = (nodeLike: { id?: string; title?: string } | null | undefined) =>
@@ -796,6 +807,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
+    const [isBoardCameraMoving, setIsBoardCameraMoving] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
     const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
@@ -835,6 +847,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const qaAnimationDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
     const timelineFocusTimeoutRef = useRef<number | null>(null);
+    const boardCameraMovementTimeoutRef = useRef<number | null>(null);
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -1207,12 +1220,50 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         };
     }, []);
 
+    const clearBoardCameraMovement = useCallback(() => {
+        if (boardCameraMovementTimeoutRef.current !== null) {
+            window.clearTimeout(boardCameraMovementTimeoutRef.current);
+            boardCameraMovementTimeoutRef.current = null;
+        }
+        setIsBoardCameraMoving(false);
+    }, []);
+
+    const startBoardCameraMovement = useCallback((durationMs: number) => {
+        const motionDuration = getBoardCameraMotionDuration(durationMs);
+
+        if (boardCameraMovementTimeoutRef.current !== null) {
+            window.clearTimeout(boardCameraMovementTimeoutRef.current);
+            boardCameraMovementTimeoutRef.current = null;
+        }
+
+        if (motionDuration <= 0) {
+            setIsBoardCameraMoving(false);
+            return 0;
+        }
+
+        setIsBoardCameraMoving(true);
+        boardCameraMovementTimeoutRef.current = window.setTimeout(() => {
+            setIsBoardCameraMoving(false);
+            boardCameraMovementTimeoutRef.current = null;
+        }, motionDuration + BOARD_CAMERA_SETTLE_BUFFER_MS);
+
+        return motionDuration;
+    }, []);
+
+    useEffect(() => () => {
+        if (boardCameraMovementTimeoutRef.current !== null) {
+            window.clearTimeout(boardCameraMovementTimeoutRef.current);
+            boardCameraMovementTimeoutRef.current = null;
+        }
+    }, []);
+
     const handleMiniMapClick = useCallback((_: React.MouseEvent, position: XYPosition) => {
+        const duration = startBoardCameraMovement(BOARD_MINIMAP_GLIDE_DURATION_MS);
         setCenter(position.x, position.y, {
             zoom: getZoom(),
-            duration: 180,
+            duration,
         });
-    }, [getZoom, setCenter]);
+    }, [getZoom, setCenter, startBoardCameraMovement]);
 
     const getViewportCenteredNodePosition = useCallback((
         frame: { width: number; height: number },
@@ -1738,9 +1789,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setNodes(markNodesForLayoutChoreography(layoutState.nodes));
         setEdges(layoutState.edges);
         trackLayoutChoreographyTimeout(() => {
-            fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
+            const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
+            fitView({ duration, ...BOARD_FIT_VIEW_OPTIONS });
         }, 100);
-    }, [boardMode, buildConnectLayoutState, cancelNodeEntryCleanupForNodes, clearLayoutChoreographyTimeouts, fitView, markNodesForLayoutChoreography, stripNodeEntryFromNodes, trackLayoutChoreographyTimeout]);
+    }, [boardMode, buildConnectLayoutState, cancelNodeEntryCleanupForNodes, clearLayoutChoreographyTimeouts, fitView, markNodesForLayoutChoreography, startBoardCameraMovement, stripNodeEntryFromNodes, trackLayoutChoreographyTimeout]);
 
     const finishConnectLayoutChoreography = useCallback((finalNodes: Node[], immediateEdges: Edge[], finalEdges: Edge[], delayedEdgeIds: string[], pendingIdsForPersistence = pendingIntegrationNodeIdsRef.current) => {
         clearLayoutChoreographyTimeouts();
@@ -1772,10 +1824,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             setIsAnalyzing(false);
             setAnalysisMode(null);
             trackLayoutChoreographyTimeout(() => {
-                fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
+                const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
+                fitView({ duration, ...BOARD_FIT_VIEW_OPTIONS });
             }, 100);
         }, settleDelayMs);
-    }, [boardMode, cancelNodeEntryCleanupForNodes, clearLayoutChoreographyTimeouts, fitView, investigationId, loadedInvestigationId, markNodesForLayoutChoreography, scheduleConnectionRevealCleanup, stripLayoutChoreographyFromNodes, stripNodeEntryFromNodes, trackLayoutChoreographyTimeout]);
+    }, [boardMode, cancelNodeEntryCleanupForNodes, clearLayoutChoreographyTimeouts, fitView, investigationId, loadedInvestigationId, markNodesForLayoutChoreography, scheduleConnectionRevealCleanup, startBoardCameraMovement, stripLayoutChoreographyFromNodes, stripNodeEntryFromNodes, trackLayoutChoreographyTimeout]);
 
     const handleDeleteNode = useCallback((id: string) => {
         setNodes(nds => nds.filter(n => n.id !== id));
@@ -2101,7 +2154,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 setSelectedContent(null);
 
                 // Center and zoom in slightly on the node
-                fitView({ nodes: [{ id: focusNodeId }], duration: 800, padding: 0.32, minZoom: 1, maxZoom: 1.12 });
+                const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
+                fitView({ nodes: [{ id: focusNodeId }], duration, padding: 0.32, minZoom: 1, maxZoom: 1.12 });
 
                 // Visually select it
                 setNodes(nds => nds.map(n => ({
@@ -2126,7 +2180,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             lastFocusedRef.current = null;
             clearTimelineFocus();
         }
-    }, [clearTimelineFocus, focusNodeId, fitView]);
+    }, [clearTimelineFocus, focusNodeId, fitView, startBoardCameraMovement]);
 
     // Help distribute edges evenly
 
@@ -2246,11 +2300,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const recenterBoardViewport = useCallback(() => {
         setShowExportMenu(false);
         setShowBoardControls(false);
+        const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
         fitView({
             ...BOARD_FIT_VIEW_OPTIONS,
-            duration: 220,
+            duration,
         });
-    }, [fitView]);
+    }, [fitView, startBoardCameraMovement]);
 
     const toggleDiscoveryWorkspacePanel = useCallback(() => {
         emitBoardWorkspaceEvent(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT);
@@ -2349,9 +2404,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setAnalysisMode(null);
         setImageLightbox(null);
         nodeEntrySequenceRef.current = 0;
+        clearBoardCameraMovement();
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
-    }, [clearLayoutChoreographyState, investigationId]);
+    }, [clearBoardCameraMovement, clearLayoutChoreographyState, investigationId]);
 
     useEffect(() => {
         console.debug('[DetectiveBoard] Grid visibility changed:', showGrid);
@@ -3735,6 +3791,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const clearBoard = () => {
         if (window.confirm("Clear board?")) {
+            clearBoardCameraMovement();
             clearLayoutChoreographyState();
             setBoardMode('strict-grid');
             setPendingIntegrationNodeIds([]);
@@ -3763,11 +3820,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     const normalizedNodes = getStrictGridLayoutedNodes(nodes, edges);
                     syncStrictGridEdgesToNodes(edges, normalizedNodes);
                     setTimeout(() => {
-                        fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
+                        const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
+                        fitView({ duration, ...BOARD_FIT_VIEW_OPTIONS });
                         setTimeout(() => {
                             setIsReorganizing(false);
                             console.debug('[TidyUp] Reorganization cycle complete.');
-                        }, 850);
+                        }, duration + 50);
                     }, 850);
                     return;
                 }
@@ -3789,20 +3847,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 // Wait for the SLIDE transition to complete (0.8s) before fitting view
                 setTimeout(() => {
                     console.debug('[TidyUp] Triggering fitView...');
-                    fitView({ duration: 800, ...BOARD_FIT_VIEW_OPTIONS });
+                    const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
+                    fitView({ duration, ...BOARD_FIT_VIEW_OPTIONS });
 
                     // Final finish after animation
                     setTimeout(() => {
                         setIsReorganizing(false);
                         console.debug('[TidyUp] Reorganization cycle complete.');
-                    }, 850);
+                    }, duration + 50);
                 }, 850); // Matches the CSS transition duration
             } catch (err) {
                 console.error('[TidyUp] Error during reorganization:', err);
                 setIsReorganizing(false);
             }
         }, 100);
-    }, [boardMode, edges, fitView, nodes, syncStrictGridEdgesToNodes]);
+    }, [boardMode, edges, fitView, nodes, startBoardCameraMovement, syncStrictGridEdgesToNodes]);
 
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
@@ -3856,8 +3915,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     };
 
 
+    const boardRootClassName = `forensic-board-root relative h-full w-full overflow-hidden ${isBoardCameraMoving ? 'forensic-board-camera-moving' : ''}`;
+    const minimapCenterButtonClassName = `forensic-minimap-frame forensic-minimap-center-button pointer-events-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)] ${isBoardCameraMoving ? 'forensic-minimap-center-button-active' : ''}`;
+    const utilityRecenterButtonClassName = `forensic-utility-button ${isBoardCameraMoving ? 'forensic-utility-button-camera-moving' : ''}`;
+
     return (
-        <div ref={boardContainerRef} className="forensic-board-root relative h-full w-full overflow-hidden" id="detective-board-container">
+        <div ref={boardContainerRef} className={boardRootClassName} id="detective-board-container">
             <div
                 className="absolute top-4 z-20 flex flex-col items-stretch gap-3 px-0"
                 style={toolbarPosition}
@@ -4280,7 +4343,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 Navigator
                             </div>
                             <div className="forensic-minimap-readout text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-text-faint)]">
-                                {nodes.length} nodes
+                                {isBoardCameraMoving ? 'Moving' : `${nodes.length} nodes`}
                             </div>
                         </div>
                         <div
@@ -4292,7 +4355,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 type="button"
                                 onClick={recenterBoardViewport}
                                 aria-label="Center board from minimap"
-                                className="forensic-minimap-frame pointer-events-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
+                                className={minimapCenterButtonClassName}
                             >
                                 <Crosshair size={11} />
                                 Center
@@ -4416,7 +4479,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         onClick={recenterBoardViewport}
                         aria-label="Recenter board viewport"
                         title="Recenter board viewport"
-                        className="forensic-utility-button"
+                        className={utilityRecenterButtonClassName}
                     >
                         <Target size={16} />
                     </button>
