@@ -15,6 +15,7 @@ vi.mock('@reactflow/node-resizer', () => ({
 describe('CustomNode', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('fires read and expand actions from the footer and header', async () => {
@@ -47,6 +48,78 @@ describe('CustomNode', () => {
 
     expect(onExpand).toHaveBeenCalledWith('node-1', true)
     expect(onReadFull).toHaveBeenCalled()
+  })
+
+  it('animates evidence detail expansion without changing the expand callback contract', async () => {
+    const user = userEvent.setup()
+    const onExpand = vi.fn()
+
+    render(
+      <CustomNode
+        id="node-expansion"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-expansion',
+          title: 'Expandable Node',
+          summary: 'Short summary',
+          fullText: 'Long detail '.repeat(48),
+          onReadFull: vi.fn(),
+          onExpand,
+        }}
+      />,
+    )
+
+    const detail = screen.getByTestId('node-detail-motion')
+    expect(detail).toHaveClass('forensic-node-detail-motion')
+    expect(detail).toHaveClass('forensic-node-detail-collapsed')
+
+    await user.click(screen.getByTitle('Expand'))
+
+    expect(onExpand).toHaveBeenCalledWith('node-expansion', true)
+    expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-expanded')
+  })
+
+  it('renders detail content without motion classes when reduced motion is preferred', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    render(
+      <CustomNode
+        id="node-reduced-motion"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-reduced-motion',
+          title: 'Reduced Motion Node',
+          summary: 'Short summary',
+          fullText: 'Long detail',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const detail = screen.getByTestId('node-detail-motion')
+    expect(detail).toHaveClass('forensic-node-detail-reduced-motion')
+    expect(detail).not.toHaveClass('forensic-node-detail-collapsed')
   })
 
   it('shows a visible selected highlight when the node is selected', () => {
@@ -234,6 +307,7 @@ describe('CustomNode', () => {
     )
 
     expect(screen.getByTestId('node-image-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('node-image-preview')).toHaveClass('forensic-node-image-fade')
     expect(screen.getByTestId('node-image-count')).toHaveTextContent('+1')
 
     await user.click(screen.getByTestId('node-image-preview'))
@@ -247,6 +321,37 @@ describe('CustomNode', () => {
       'Visual Node',
       'node-3',
     )
+  })
+
+  it('marks visual evidence as loaded after the preview image fades in', () => {
+    render(
+      <CustomNode
+        id="node-image-fade"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-image-fade',
+          title: 'Image Fade Node',
+          summary: 'Summary',
+          onReadFull: vi.fn(),
+          images: [
+            { id: 'img-fade-1', path: '/evidence/fade.png', caption: 'Fade evidence' },
+          ],
+        }}
+      />,
+    )
+
+    const image = screen.getByAltText('Fade evidence')
+    expect(image).toHaveClass('forensic-node-image-loading')
+
+    fireEvent.load(image)
+
+    expect(screen.getByAltText('Fade evidence')).toHaveClass('forensic-node-image-loaded')
   })
 
   it('renders backend-served node images while the websocket reconnects', () => {
@@ -282,6 +387,88 @@ describe('CustomNode', () => {
       'http://localhost:8080/vault-assets/inv-1/images/evidence.jpg',
     )
     expect(screen.queryByText('Backend offline')).not.toBeInTheDocument()
+  })
+
+  it('styles the source link as a focused source control while preserving link behavior', () => {
+    render(
+      <CustomNode
+        id="node-source"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-source',
+          title: 'Source Node',
+          summary: 'Summary',
+          sourceURL: 'https://example.com/source, https://example.com/secondary',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const sourceLink = screen.getByTitle('Verify Source')
+    expect(sourceLink).toHaveClass('forensic-node-source-link')
+    expect(sourceLink).toHaveAttribute('href', 'https://example.com/source')
+    expect(sourceLink).toHaveAttribute('target', '_blank')
+    expect(sourceLink).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('reveals persona discussion cards with stagger metadata', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <CustomNode
+        id="node-personas"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-personas',
+          title: 'Persona Node',
+          summary: 'Summary',
+          onReadFull: vi.fn(),
+          personaInsights: [
+            {
+              personaName: 'Connector',
+              perspective: 'Pattern finder',
+              keyFindings: ['Shared entity'],
+              connections: [],
+              questions: ['What changed?'],
+              confidence: 0.82,
+              fullAnalysis: 'Connector analysis',
+              nodeIDs: ['node-personas'],
+            },
+            {
+              personaName: 'Skeptic',
+              perspective: 'Risk reviewer',
+              keyFindings: ['Check source'],
+              connections: [],
+              questions: [],
+              confidence: 0.64,
+              fullAnalysis: 'Skeptic analysis',
+              nodeIDs: ['node-personas'],
+            },
+          ],
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTitle('Review Specialist Insights'))
+
+    const cards = screen.getAllByTestId('persona-insight-card')
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toHaveClass('forensic-persona-card-reveal')
+    expect(cards[0]).toHaveStyle({ '--persona-card-delay': '0ms' })
+    expect(cards[1]).toHaveClass('forensic-persona-card-reveal')
+    expect(cards[1]).toHaveStyle({ '--persona-card-delay': '90ms' })
   })
 
   it('retries backend-served node images before showing an unavailable state', async () => {

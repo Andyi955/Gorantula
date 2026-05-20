@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -797,6 +797,37 @@ describe('DetectiveBoard relationship legend', () => {
       expect(socket.sentMessages).toEqual([])
     } finally {
       window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, discoveryDemoListener as EventListener)
+    }
+  })
+
+  it('replays the evidence expansion demo from the QA utility rail without backend socket messages or persistence', async () => {
+    const socket = new MockSocket()
+    const evidenceDemoListener = vi.fn()
+    window.addEventListener(BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, evidenceDemoListener as EventListener)
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      fireEvent.click(screen.getByRole('button', { name: /replay evidence expansion demo/i }))
+
+      expect(evidenceDemoListener).toHaveBeenCalledTimes(1)
+      expect((evidenceDemoListener.mock.calls[0][0] as CustomEvent).detail).toEqual(expect.objectContaining({
+        investigationId: 'investigation-1',
+        requestId: expect.any(String),
+      }))
+      expect(socket.sentMessages).toEqual([])
+
+      const demoNodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(demoNodes.some((node) => node.id === 'qa-evidence-expansion-node')).toBe(true)
+      expect(demoNodes.find((node) => node.id === 'qa-evidence-expansion-node')?.data).toEqual(expect.objectContaining({
+        expanded: true,
+        sourceURL: 'https://example.com/qa-evidence-expansion',
+      }))
+      expect(localStorage.getItem('inv_data_investigation-1')).toBeNull()
+    } finally {
+      window.removeEventListener(BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, evidenceDemoListener as EventListener)
     }
   })
 
