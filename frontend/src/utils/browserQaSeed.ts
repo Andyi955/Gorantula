@@ -14,6 +14,7 @@ export const BROWSER_QA_CLEARED_EVENT = 'gorantula:browser-qa-cleared'
 export const BROWSER_QA_ANIMATION_DEMO_EVENT = 'gorantula:browser-qa-play-animations'
 export const BROWSER_QA_DISCOVERY_DEMO_EVENT = 'gorantula:browser-qa-play-discovery-demo'
 export const BROWSER_QA_SYNTHESIS_DEMO_EVENT = 'gorantula:browser-qa-play-synthesis-demo'
+export const BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT = 'gorantula:browser-qa-play-spider-telemetry-demo'
 export const BROWSER_QA_ANIMATION_DEMO_PENDING_KEY = 'gorantula_browser_qa_animation_demo_pending'
 export const BROWSER_QA_SOURCE_INVESTIGATION_ID = 'qa-browser-source'
 export const BROWSER_QA_TARGET_INVESTIGATION_ID = 'qa-browser-target'
@@ -48,6 +49,11 @@ export interface BrowserQaDiscoveryDemoDetail {
 
 export interface BrowserQaSynthesisDemoDetail {
   investigationId: string
+  requestId?: string
+}
+
+export interface BrowserQaSpiderTelemetryDemoDetail {
+  investigationId?: string
   requestId?: string
 }
 

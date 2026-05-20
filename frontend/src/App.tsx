@@ -14,11 +14,13 @@ import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
+  BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   createBrowserQaDiscoveryDemoRecords,
   createBrowserQaSynthesisDemoTheory,
   type BrowserQaDiscoveryDemoDetail,
   type BrowserQaSeedResult,
+  type BrowserQaSpiderTelemetryDemoDetail,
   type BrowserQaSynthesisDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
@@ -666,6 +668,7 @@ function App() {
   const [completedDiscoveryReviewByInvestigation, setCompletedDiscoveryReviewByInvestigation] = useState<Record<string, boolean>>({})
   const qaDiscoveryDemoByInvestigationRef = useRef<Record<string, DiscoveryRecord[]>>({})
   const qaSynthesisDemoByInvestigationRef = useRef<Record<string, VaultResultPayload>>({})
+  const [qaSpiderTelemetryDemoRequest, setQaSpiderTelemetryDemoRequest] = useState<{ investigationId?: string; requestId: string } | null>(null)
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
@@ -1353,15 +1356,28 @@ function App() {
       setBoardWorkspaceRevision((current) => current + 1)
     }
 
+    const handleBrowserQaSpiderTelemetryDemo = (event: Event) => {
+      const detail = (event as CustomEvent<BrowserQaSpiderTelemetryDemoDetail>).detail
+      setQaSpiderTelemetryDemoRequest({
+        investigationId: typeof detail?.investigationId === 'string' ? detail.investigationId : currentInvestigationId || undefined,
+        requestId: typeof detail?.requestId === 'string' && detail.requestId.trim()
+          ? detail.requestId.trim()
+          : `qa-spider-${Date.now()}`,
+      })
+      setActiveTab('spider')
+    }
+
     window.addEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
     window.addEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
     window.addEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
     window.addEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
+    window.addEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
     return () => {
       window.removeEventListener(BROWSER_QA_SEEDED_EVENT, handleBrowserQaSeeded as EventListener)
       window.removeEventListener(BROWSER_QA_CLEARED_EVENT, handleBrowserQaCleared as EventListener)
       window.removeEventListener(BROWSER_QA_DISCOVERY_DEMO_EVENT, handleBrowserQaDiscoveryDemo as EventListener)
       window.removeEventListener(BROWSER_QA_SYNTHESIS_DEMO_EVENT, handleBrowserQaSynthesisDemo as EventListener)
+      window.removeEventListener(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, handleBrowserQaSpiderTelemetryDemo as EventListener)
     }
   }, [currentInvestigationId, investigations])
 
@@ -2060,6 +2076,7 @@ function App() {
                       pipelineProgressPercent={activePipelinePercent}
                       onOpenPipelineMonitor={() => setIsPipelineDrawerOpen(true)}
                       tokenReadout={spiderTokenReadout}
+                      qaTelemetryDemoRequest={qaSpiderTelemetryDemoRequest}
                     />
                   </Suspense>
                 )}

@@ -4,6 +4,7 @@ import App from '../src/App'
 import {
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
   BROWSER_QA_SEEDED_EVENT,
+  BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
   BROWSER_QA_SYNTHESIS_DEMO_EVENT,
   BROWSER_QA_TARGET_INVESTIGATION_ID,
   seedBrowserQaData,
@@ -16,12 +17,14 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     pipelineLabel = 'Pipeline idle',
     pipelineProgressPercent = 0,
     onOpenPipelineMonitor,
+    qaTelemetryDemoRequest,
     tokenReadout,
   }: {
     pipelineStatus?: string
     pipelineLabel?: string
     pipelineProgressPercent?: number
     onOpenPipelineMonitor?: () => void
+    qaTelemetryDemoRequest?: { requestId: string } | null
     tokenReadout?: { value: string; title?: string }
   }) => (
     <div>
@@ -33,6 +36,7 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
       <button type="button" data-testid="mock-spider-pipeline-rail" onClick={onOpenPipelineMonitor}>
         Pipeline rail {pipelineStatus} {pipelineLabel} {pipelineProgressPercent}%
       </button>
+      <span data-testid="mock-spider-telemetry-demo-request">{qaTelemetryDemoRequest?.requestId || 'none'}</span>
     </div>
   ),
 }))
@@ -1111,5 +1115,27 @@ describe('App', () => {
     expect(screen.getByTestId('mock-board-theory-state')).toHaveTextContent('theory-ready true theory-unread true')
     expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
     expect(localStorage.getItem(`vault_result_${BROWSER_QA_TARGET_INVESTIGATION_ID}`)).toBeNull()
+  })
+
+  it('routes the browser-only QA spider telemetry demo to the spider view without backend messages', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    await user.click(screen.getByText('Detective Board'))
+    expect(await screen.findByText('DetectiveBoard')).toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, {
+        detail: {
+          investigationId: BROWSER_QA_TARGET_INVESTIGATION_ID,
+          requestId: 'qa-spider-test',
+        },
+      }))
+    })
+
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-spider-telemetry-demo-request')).toHaveTextContent('qa-spider-test')
+    expect(WebSocketMock.instances.every((socket) => socket.send.mock.calls.length === 0)).toBe(true)
   })
 })

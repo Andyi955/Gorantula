@@ -1,15 +1,28 @@
 import React, { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Color, Group, Mesh, Quaternion, Vector3 } from 'three';
+import type { SpiderEvidencePacket, SpiderLegVisualStatus } from './SpiderVisualizer';
 
 interface SpiderSceneProps {
     legStates: Record<number, string>;
+    legVisualStatuses?: Record<number, SpiderLegVisualStatus>;
     brainState: string;
+    pipelineStatus?: 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
+    evidencePackets?: SpiderEvidencePacket[];
 }
 
 const idleColor = '#36505d';
 
-const getLegColor = (state: string) => {
+const getStatusColor = (status?: SpiderLegVisualStatus) => {
+    if (status === 'cancelled') return '#f6c879';
+    if (status === 'error') return '#ff8c86';
+    if (status === 'complete') return '#21ff71';
+    return '';
+};
+
+const getLegColor = (state: string, status?: SpiderLegVisualStatus) => {
+    const statusColor = getStatusColor(status);
+    if (statusColor) return statusColor;
     if (state.includes('Searching')) return '#90f3da';
     if (state.includes('Scraping')) return '#59e4ff';
     if (state.includes('Reading') || state.includes('Processing')) return '#bc13fe';
@@ -78,10 +91,11 @@ const Joint = ({ position, color, active }: { position: [number, number, number]
     </mesh>
 );
 
-const SpiderLeg = ({ id, state }: { id: number; state: string }) => {
+const SpiderLeg = ({ id, state, status = 'idle' }: { id: number; state: string; status?: SpiderLegVisualStatus }) => {
     const legRef = useRef<Group>(null);
-    const color = getLegColor(state);
-    const active = state !== 'Idle';
+    const color = getLegColor(state, status);
+    const active = status === 'running' || status === 'complete' || status === 'error';
+    const powerDown = status === 'cancelled';
     const angle = (id / 8) * Math.PI * 2;
     const sideBend = id % 2 === 0 ? 0.76 : -0.76;
     const hoverOffset = (id % 4) * 0.08;
@@ -90,8 +104,8 @@ const SpiderLeg = ({ id, state }: { id: number; state: string }) => {
         if (!legRef.current) return;
 
         const time = clock.getElapsedTime();
-        const lift = active ? Math.sin(time * 3.6 + id) * 0.18 : Math.sin(time * 1.2 + id) * 0.06;
-        const sweep = active ? Math.sin(time * 1.8 + id) * 0.055 : Math.sin(time * 0.8 + id) * 0.018;
+        const lift = active ? Math.sin(time * 3.6 + id) * 0.18 : Math.sin(time * 1.2 + id) * (powerDown ? 0.02 : 0.06);
+        const sweep = active ? Math.sin(time * 1.8 + id) * 0.055 : Math.sin(time * 0.8 + id) * (powerDown ? 0.006 : 0.018);
         legRef.current.position.z = lift;
         legRef.current.rotation.z = angle + sweep;
     });
@@ -114,10 +128,39 @@ const SpiderLeg = ({ id, state }: { id: number; state: string }) => {
                 <meshStandardMaterial
                     color={active ? color : '#102532'}
                     emissive={new Color(color)}
-                    emissiveIntensity={active ? 1.4 : 0.18}
+                    emissiveIntensity={active ? 1.4 : (powerDown ? 0.08 : 0.18)}
                     transparent
-                    opacity={active ? 0.82 : 0.38}
+                    opacity={active ? 0.82 : (powerDown ? 0.22 : 0.38)}
                 />
+            </mesh>
+        </group>
+    );
+};
+
+const EvidencePacket = ({ packet }: { packet: SpiderEvidencePacket }) => {
+    const packetRef = useRef<Group>(null);
+    const angle = (packet.legId / 8) * Math.PI * 2;
+    const start = useMemo(() => new Vector3(Math.cos(angle) * 5.4, Math.sin(angle) * 5.4, 0.42), [angle]);
+    const end = useMemo(() => new Vector3(0, 0, 0.62), []);
+    const color = getStatusColor(packet.status) || '#90f3da';
+
+    useFrame(() => {
+        if (!packetRef.current) return;
+        const progress = Math.min(1, Math.max(0, (Date.now() - packet.createdAt) / 1500));
+        const eased = 1 - Math.pow(1 - progress, 3);
+        packetRef.current.position.copy(start.clone().lerp(end, eased));
+        packetRef.current.scale.setScalar(0.8 + Math.sin(progress * Math.PI) * 0.36);
+    });
+
+    return (
+        <group ref={packetRef} position={start}>
+            <mesh>
+                <sphereGeometry args={[0.11, 18, 18]} />
+                <meshBasicMaterial color={color} transparent opacity={0.9} />
+            </mesh>
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.19, 0.008, 12, 28]} />
+                <meshBasicMaterial color={color} transparent opacity={0.36} />
             </mesh>
         </group>
     );
@@ -197,15 +240,22 @@ const Core = ({ active }: { active: boolean }) => {
     );
 };
 
-export const SpiderScene: React.FC<SpiderSceneProps> = ({ legStates, brainState }) => {
+export const SpiderScene: React.FC<SpiderSceneProps> = ({
+    legStates,
+    legVisualStatuses = {},
+    brainState,
+    pipelineStatus = 'idle',
+    evidencePackets = [],
+}) => {
     const sceneRef = useRef<Group>(null);
-    const active = brainState !== 'Offline' && brainState !== 'Disconnected';
+    const active = brainState !== 'Offline' && brainState !== 'Disconnected' && pipelineStatus !== 'cancelled';
+    const dimmed = pipelineStatus === 'cancelled' || pipelineStatus === 'error';
 
     useFrame(({ clock }) => {
         if (!sceneRef.current) return;
         const time = clock.getElapsedTime();
-        sceneRef.current.rotation.x = -0.18 + Math.sin(time * 0.28) * 0.025;
-        sceneRef.current.rotation.y = Math.sin(time * 0.22) * 0.08;
+        sceneRef.current.rotation.x = -0.18 + Math.sin(time * 0.28) * (dimmed ? 0.008 : 0.025);
+        sceneRef.current.rotation.y = Math.sin(time * 0.22) * (dimmed ? 0.025 : 0.08);
     });
 
     return (
@@ -219,7 +269,10 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({ legStates, brainState 
 
             <ScanRings active={active} />
             {Array.from({ length: 8 }, (_, id) => (
-                <SpiderLeg key={id} id={id} state={legStates[id] || 'Idle'} />
+                <SpiderLeg key={id} id={id} state={legStates[id] || 'Idle'} status={legVisualStatuses[id] || 'idle'} />
+            ))}
+            {evidencePackets.map((packet) => (
+                <EvidencePacket key={packet.id} packet={packet} />
             ))}
             <Core active={active} />
         </group>

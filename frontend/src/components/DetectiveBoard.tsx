@@ -57,11 +57,12 @@ import {
     BROWSER_QA_ANIMATION_DEMO_EVENT,
     BROWSER_QA_ANIMATION_DEMO_PENDING_KEY,
     BROWSER_QA_DISCOVERY_DEMO_EVENT,
+    BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
 } from '../utils/browserQaSeed';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -3226,6 +3227,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }));
     }, [investigationId]);
 
+    const playBrowserQaSpiderTelemetryDemo = useCallback(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, {
+            detail: {
+                investigationId,
+                requestId: `qa-spider-${Date.now()}`,
+            },
+        }));
+    }, [investigationId]);
+
     useEffect(() => {
         const handleBrowserQaAnimationDemo = (event: Event) => {
             const detail = (event as CustomEvent<BrowserQaAnimationDemoDetail>).detail;
@@ -4308,6 +4318,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
                                 <Network size={16} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={playBrowserQaSpiderTelemetryDemo}
+                                aria-label="Replay spider telemetry demo"
+                                title="Replay spider telemetry demo"
+                                className="forensic-utility-button forensic-utility-button-qa"
+                            >
+                                <RadioTower size={16} />
                             </button>
                         </>
                     )}
