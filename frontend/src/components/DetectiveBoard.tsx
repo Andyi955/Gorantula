@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useState, useRef } from 'react';
 import ReactFlow, {
     Background,
     BackgroundVariant,
-    MiniMap,
     applyEdgeChanges,
     applyNodeChanges,
     addEdge,
     useReactFlow,
+    useViewport,
     ReactFlowProvider,
     Position,
     reconnectEdge,
@@ -20,6 +20,7 @@ import type {
     Connection,
     OnConnect,
     XYPosition,
+    Viewport,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode, { type NodeSaveMode } from './CustomNode';
@@ -495,14 +496,13 @@ const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 96, zoom: 1 };
 const BOARD_MIN_ZOOM = 0.5;
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.16, minZoom: 0.72, maxZoom: 1 };
 const BOARD_MINIMAP_GLIDE_DURATION_MS = 620;
+const BOARD_MINIMAP_DRAG_DURATION_MS = 120;
 const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
 const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
-const MINIMAP_NODE_STROKE = '#06080b';
-const MINIMAP_MASK_STROKE = 'rgba(152, 255, 255, 1)';
-const MINIMAP_MASK_FILL = 'rgba(129, 227, 255, 0.018)';
-const MINIMAP_MASK_STROKE_WIDTH = 4;
-const MINIMAP_OFFSET_SCALE = 2.5;
+const BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE = { width: 960, height: 540 };
+const BOARD_NAVIGATOR_BOUNDS_PADDING = BOARD_GRID_SIZE * 3;
+const BOARD_NAVIGATOR_MIN_SPAN = BOARD_GRID_SIZE * 10;
 const MINIMAP_PANEL_LAYOUT = {
     compact: {
         panel: { width: 244, height: 178 },
@@ -754,6 +754,245 @@ const getMiniMapNodeColor = (node: Node) => {
     return '#00f3ff';
 };
 
+type BoardNavigatorInteraction = 'click' | 'drag';
+
+interface BoardNavigatorSize {
+    width: number;
+    height: number;
+}
+
+interface BoardNavigatorRect extends BoardNavigatorSize {
+    x: number;
+    y: number;
+}
+
+interface BoardNavigatorNodeRect extends BoardNavigatorRect {
+    node: Node;
+}
+
+interface BoardNavigatorProps {
+    nodes: Node[];
+    viewport: Viewport;
+    viewportSize: BoardNavigatorSize;
+    width: number;
+    height: number;
+    isCameraMoving: boolean;
+    getNodeColor: (node: Node) => string;
+    onNavigate: (position: XYPosition, interaction: BoardNavigatorInteraction) => void;
+}
+
+const clamp = (value: number, min: number, max: number) =>
+    Math.min(Math.max(value, min), max);
+
+const getSafeNavigatorZoom = (viewport: Viewport) =>
+    Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1;
+
+const getNavigatorViewportSize = (viewportSize: BoardNavigatorSize) => ({
+    width: viewportSize.width > 0 ? viewportSize.width : BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE.width,
+    height: viewportSize.height > 0 ? viewportSize.height : BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE.height,
+});
+
+const getVisibleBoardRect = (viewport: Viewport, viewportSize: BoardNavigatorSize): BoardNavigatorRect => {
+    const zoom = getSafeNavigatorZoom(viewport);
+    const safeViewportSize = getNavigatorViewportSize(viewportSize);
+
+    return {
+        x: -viewport.x / zoom,
+        y: -viewport.y / zoom,
+        width: safeViewportSize.width / zoom,
+        height: safeViewportSize.height / zoom,
+    };
+};
+
+const getBoardNavigatorBounds = (rects: BoardNavigatorRect[]): BoardNavigatorRect => {
+    const minX = Math.min(...rects.map((rect) => rect.x));
+    const minY = Math.min(...rects.map((rect) => rect.y));
+    const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+    const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const width = Math.max(maxX - minX, BOARD_NAVIGATOR_MIN_SPAN);
+    const height = Math.max(maxY - minY, BOARD_NAVIGATOR_MIN_SPAN);
+
+    return {
+        x: centerX - width / 2 - BOARD_NAVIGATOR_BOUNDS_PADDING,
+        y: centerY - height / 2 - BOARD_NAVIGATOR_BOUNDS_PADDING,
+        width: width + BOARD_NAVIGATOR_BOUNDS_PADDING * 2,
+        height: height + BOARD_NAVIGATOR_BOUNDS_PADDING * 2,
+    };
+};
+
+const getNavigatorProjection = (bounds: BoardNavigatorRect, width: number, height: number) => {
+    const scale = Math.min(width / bounds.width, height / bounds.height);
+    const projectedWidth = bounds.width * scale;
+    const projectedHeight = bounds.height * scale;
+
+    return {
+        scale,
+        offsetX: (width - projectedWidth) / 2,
+        offsetY: (height - projectedHeight) / 2,
+    };
+};
+
+const projectNavigatorRect = (
+    rect: BoardNavigatorRect,
+    bounds: BoardNavigatorRect,
+    projection: ReturnType<typeof getNavigatorProjection>
+) => ({
+    x: projection.offsetX + (rect.x - bounds.x) * projection.scale,
+    y: projection.offsetY + (rect.y - bounds.y) * projection.scale,
+    width: Math.max(2, rect.width * projection.scale),
+    height: Math.max(2, rect.height * projection.scale),
+});
+
+const BoardNavigator: React.FC<BoardNavigatorProps> = ({
+    nodes,
+    viewport,
+    viewportSize,
+    width,
+    height,
+    isCameraMoving,
+    getNodeColor,
+    onNavigate,
+}) => {
+    const activePointerIdRef = useRef<number | null>(null);
+    const hasDraggedRef = useRef(false);
+    const suppressClickRef = useRef(false);
+    const nodeRects: BoardNavigatorNodeRect[] = nodes
+        .filter((node) => !node.hidden)
+        .map((node) => {
+            const dimensions = getNodeDimensions(node);
+
+            return {
+                node,
+                x: node.position.x,
+                y: node.position.y,
+                width: dimensions.width,
+                height: dimensions.height,
+            };
+        });
+    const visibleRect = getVisibleBoardRect(viewport, viewportSize);
+    const bounds = getBoardNavigatorBounds([...nodeRects, visibleRect]);
+    const projection = getNavigatorProjection(bounds, width, height);
+    const viewportRect = projectNavigatorRect(visibleRect, bounds, projection);
+    const getFlowPositionFromEvent = (
+        event: React.MouseEvent<SVGSVGElement> | React.PointerEvent<SVGSVGElement>
+    ): XYPosition => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const renderedWidth = rect.width || width;
+        const renderedHeight = rect.height || height;
+        const localX = clamp(((event.clientX - rect.left) / renderedWidth) * width, 0, width);
+        const localY = clamp(((event.clientY - rect.top) / renderedHeight) * height, 0, height);
+
+        return {
+            x: bounds.x + (localX - projection.offsetX) / projection.scale,
+            y: bounds.y + (localY - projection.offsetY) / projection.scale,
+        };
+    };
+    const navigateFromEvent = (
+        event: React.MouseEvent<SVGSVGElement> | React.PointerEvent<SVGSVGElement>,
+        interaction: BoardNavigatorInteraction
+    ) => {
+        onNavigate(getFlowPositionFromEvent(event), interaction);
+    };
+
+    return (
+        <svg
+            data-testid="board-navigator"
+            aria-label="Board minimap navigator"
+            className="forensic-board-navigator pointer-events-auto rounded-xl"
+            role="button"
+            tabIndex={0}
+            width={width}
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            style={{ width, height }}
+            onClick={(event) => {
+                if (suppressClickRef.current) {
+                    suppressClickRef.current = false;
+                    return;
+                }
+
+                navigateFromEvent(event, 'click');
+            }}
+            onPointerDown={(event) => {
+                if (event.button !== 0) {
+                    return;
+                }
+
+                activePointerIdRef.current = event.pointerId;
+                hasDraggedRef.current = false;
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+                if (activePointerIdRef.current !== event.pointerId) {
+                    return;
+                }
+
+                hasDraggedRef.current = true;
+                suppressClickRef.current = true;
+                navigateFromEvent(event, 'drag');
+            }}
+            onPointerUp={(event) => {
+                if (activePointerIdRef.current !== event.pointerId) {
+                    return;
+                }
+
+                activePointerIdRef.current = null;
+                event.currentTarget.releasePointerCapture?.(event.pointerId);
+                if (hasDraggedRef.current) {
+                    window.setTimeout(() => {
+                        suppressClickRef.current = false;
+                    }, 0);
+                }
+            }}
+            onPointerCancel={(event) => {
+                if (activePointerIdRef.current === event.pointerId) {
+                    activePointerIdRef.current = null;
+                }
+                suppressClickRef.current = false;
+            }}
+        >
+            <rect
+                className="forensic-board-navigator-background"
+                x={0}
+                y={0}
+                width={width}
+                height={height}
+                rx={14}
+            />
+            <g aria-hidden="true">
+                {nodeRects.map((nodeRect) => {
+                    const projectedNode = projectNavigatorRect(nodeRect, bounds, projection);
+
+                    return (
+                        <rect
+                            key={nodeRect.node.id}
+                            data-testid="board-navigator-node"
+                            className="forensic-board-navigator-node"
+                            x={projectedNode.x}
+                            y={projectedNode.y}
+                            width={projectedNode.width}
+                            height={projectedNode.height}
+                            rx={4}
+                            fill={getNodeColor(nodeRect.node)}
+                        />
+                    );
+                })}
+            </g>
+            <rect
+                data-testid="board-navigator-viewport"
+                className={`forensic-board-navigator-viewport ${isCameraMoving ? 'forensic-board-navigator-viewport-moving' : ''}`}
+                x={viewportRect.x}
+                y={viewportRect.y}
+                width={viewportRect.width}
+                height={viewportRect.height}
+                rx={7}
+            />
+        </svg>
+    );
+};
+
 const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     investigationId,
     returnVaultId,
@@ -769,6 +1008,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     hasUnreadDiscoveries = false,
 }) => {
     const { fitView, screenToFlowPosition, setCenter, getZoom } = useReactFlow();
+    const boardViewport = useViewport();
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
 
@@ -827,6 +1067,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const boardControlsButtonRef = useRef<HTMLButtonElement>(null);
     const boardControlsPanelRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
+    const [boardViewportSize, setBoardViewportSize] = useState<BoardNavigatorSize>(BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
     const pendingIntegrationNodeIdsRef = useRef<string[]>([]);
@@ -861,6 +1102,32 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     edgesRef.current = edges;
     pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds;
     analysisModeRef.current = analysisMode;
+
+    useEffect(() => {
+        const updateViewportSize = () => {
+            const rect = flowWrapperRef.current?.getBoundingClientRect();
+            if (!rect || rect.width <= 0 || rect.height <= 0) {
+                return;
+            }
+
+            setBoardViewportSize((current) => (
+                current.width === rect.width && current.height === rect.height
+                    ? current
+                    : { width: rect.width, height: rect.height }
+            ));
+        };
+
+        updateViewportSize();
+
+        if (!flowWrapperRef.current || typeof ResizeObserver === 'undefined') {
+            return;
+        }
+
+        const observer = new ResizeObserver(updateViewportSize);
+        observer.observe(flowWrapperRef.current);
+
+        return () => observer.disconnect();
+    }, []);
 
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
@@ -1189,10 +1456,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const canAppendSearch = !!investigationId && !isBoardBusy && appendSearchPrompt.trim().length > 0;
     const hasPendingEvidenceIntegration = pendingIntegrationNodeIds.length > 0;
     const minimapLayout = isMiniMapExpanded ? MINIMAP_PANEL_LAYOUT.expanded : MINIMAP_PANEL_LAYOUT.compact;
-    const minimapMapPosition = {
-        left: MINIMAP_PANEL_OFFSET.left + MINIMAP_PANEL_OFFSET.padding,
-        top: MINIMAP_PANEL_OFFSET.top + MINIMAP_PANEL_OFFSET.header,
-    };
     const toolbarPosition = {
         left: MINIMAP_PANEL_OFFSET.left + minimapLayout.panel.width + MINIMAP_PANEL_OFFSET.toolbarGap,
         right: 24,
@@ -1266,8 +1529,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
     }, []);
 
-    const handleMiniMapClick = useCallback((_: React.MouseEvent, position: XYPosition) => {
-        const duration = startBoardCameraMovement(BOARD_MINIMAP_GLIDE_DURATION_MS);
+    const handleMiniMapNavigate = useCallback((position: XYPosition, interaction: BoardNavigatorInteraction) => {
+        const duration = startBoardCameraMovement(interaction === 'drag'
+            ? BOARD_MINIMAP_DRAG_DURATION_MS
+            : BOARD_MINIMAP_GLIDE_DURATION_MS);
         setCenter(position.x, position.y, {
             zoom: getZoom(),
             duration,
@@ -4453,33 +4718,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             size={1}
                         />
                     )}
-                    <MiniMap
-                        position="top-left"
-                        onClick={handleMiniMapClick}
-                        pannable
-                        zoomable={false}
-                        maskStrokeColor={MINIMAP_MASK_STROKE}
-                        maskStrokeWidth={MINIMAP_MASK_STROKE_WIDTH}
-                        nodeColor={getMiniMapNodeColor}
-                        nodeStrokeColor={MINIMAP_NODE_STROKE}
-                        nodeStrokeWidth={2}
-                        nodeBorderRadius={6}
-                        maskColor={MINIMAP_MASK_FILL}
-                        offsetScale={MINIMAP_OFFSET_SCALE}
-                        data-testid="reactflow-minimap"
-                        style={{
-                            width: minimapLayout.map.width,
-                            height: minimapLayout.map.height,
-                            top: minimapMapPosition.top,
-                            left: minimapMapPosition.left,
-                            margin: 0,
-                            zIndex: 25,
-                            background: 'rgba(4, 8, 12, 0.96)',
-                            border: '1px solid rgba(0, 243, 255, 0.18)',
-                            borderRadius: 14,
-                            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 16px rgba(0,243,255,0.08), 0 0 0 1px rgba(120,255,255,0.08)',
-                        }}
-                    />
                 </ReactFlow>
                 <div
                     data-testid="minimap-panel"
@@ -4503,7 +4741,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         <div
                             className="forensic-minimap-map-slot rounded-xl"
                             style={{ height: minimapLayout.map.height }}
-                        />
+                        >
+                            <BoardNavigator
+                                nodes={nodes}
+                                viewport={boardViewport}
+                                viewportSize={boardViewportSize}
+                                width={minimapLayout.map.width}
+                                height={minimapLayout.map.height}
+                                isCameraMoving={isBoardCameraMoving}
+                                getNodeColor={getMiniMapNodeColor}
+                                onNavigate={handleMiniMapNavigate}
+                            />
+                        </div>
                         <div className="forensic-minimap-footer flex items-center justify-between gap-3">
                             <button
                                 type="button"

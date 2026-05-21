@@ -14,8 +14,8 @@ const localStorage = window.localStorage
 const fitViewMock = vi.fn()
 const setCenterMock = vi.fn()
 const getZoomMock = vi.fn(() => 0.82)
+let viewportMock = { x: -160, y: -90, zoom: 1 }
 let lastReactFlowProps: Record<string, unknown> | null = null
-let lastMiniMapProps: Record<string, unknown> | null = null
 
 vi.mock('reactflow', () => {
   return {
@@ -72,13 +72,6 @@ vi.mock('reactflow', () => {
     ReactFlowProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
     Background: () => null,
     Controls: () => React.createElement('div', { 'data-testid': 'reactflow-controls' }),
-    MiniMap: ({ onClick, ...props }: React.HTMLAttributes<HTMLDivElement> & { onClick?: (event: React.MouseEvent, position: { x: number; y: number }) => void }) => {
-      lastMiniMapProps = props as Record<string, unknown>
-      return React.createElement('div', {
-        ...props,
-        onClick: (event: React.MouseEvent) => onClick?.(event, { x: 420, y: 310 }),
-      })
-    },
     Handle: () => null,
     applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
     applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
@@ -90,6 +83,7 @@ vi.mock('reactflow', () => {
       setCenter: setCenterMock,
       getZoom: getZoomMock,
     }),
+    useViewport: () => viewportMock,
     BackgroundVariant: { Lines: 'lines' },
     ConnectionMode: { Loose: 'Loose', Strict: 'Strict' },
     Position: { Left: 'Left', Right: 'Right', Top: 'Top', Bottom: 'Bottom' },
@@ -270,7 +264,7 @@ describe('DetectiveBoard relationship legend', () => {
   beforeEach(() => {
     localStorage.clear()
     lastReactFlowProps = null
-    lastMiniMapProps = null
+    viewportMock = { x: -160, y: -90, zoom: 1 }
     fitViewMock.mockReset()
     setCenterMock.mockReset()
     getZoomMock.mockReset()
@@ -440,21 +434,24 @@ describe('DetectiveBoard relationship legend', () => {
     renderBoard()
 
     expect(screen.getByText('Navigator')).toBeInTheDocument()
-    expect(screen.getByTestId('reactflow-minimap')).toBeInTheDocument()
+    expect(screen.getByTestId('board-navigator')).toBeInTheDocument()
     expect(screen.getByTestId('minimap-panel')).toBeInTheDocument()
     expect(screen.getByTestId('board-utility-rail')).toBeInTheDocument()
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
   })
 
-  it('anchors the minimap to the top-left workstation position', () => {
+  it('renders a clean custom navigator without React Flow minimap artifacts', async () => {
+    seedExportableBoard()
     renderBoard()
 
-    expect(lastMiniMapProps?.position).toBe('top-left')
-    expect(lastMiniMapProps?.offsetScale).toBe(2.5)
-    expect(lastMiniMapProps?.maskColor).toBe('rgba(129, 227, 255, 0.018)')
-    expect(lastMiniMapProps?.maskStrokeColor).toBe('rgba(152, 255, 255, 1)')
-    expect(lastMiniMapProps?.maskStrokeWidth).toBe(4)
+    const navigator = screen.getByTestId('board-navigator')
+    expect(navigator).toHaveClass('forensic-board-navigator')
+    expect(document.querySelector('.react-flow__minimap')).not.toBeInTheDocument()
+    expect(document.querySelector('.react-flow__minimap-mask')).not.toBeInTheDocument()
+    expect(navigator.querySelector('filter')).not.toBeInTheDocument()
+    expect(navigator.querySelector('[style*="filter"]')).not.toBeInTheDocument()
+    expect(await screen.findAllByTestId('board-navigator-node')).toHaveLength(1)
   })
 
   it('does not render the default React Flow controls', () => {
@@ -498,29 +495,67 @@ describe('DetectiveBoard relationship legend', () => {
     const user = userEvent.setup()
     renderBoard()
 
-    const minimap = screen.getByTestId('reactflow-minimap')
+    const minimap = screen.getByTestId('board-navigator')
     const minimapPanel = screen.getByTestId('minimap-panel')
     expect(minimapPanel).toHaveStyle({ width: '244px', height: '178px', left: '24px', top: '16px' })
-    expect(minimap).toHaveStyle({ width: '212px', height: '116px', left: '40px', top: '58px' })
+    expect(minimap).toHaveStyle({ width: '212px', height: '116px' })
 
     await user.click(screen.getByRole('button', { name: /enlarge minimap/i }))
     expect(minimapPanel).toHaveStyle({ width: '320px', height: '238px', left: '24px', top: '16px' })
-    expect(minimap).toHaveStyle({ width: '288px', height: '176px', left: '40px', top: '58px' })
+    expect(minimap).toHaveStyle({ width: '288px', height: '176px' })
 
     await user.click(screen.getByRole('button', { name: /shrink minimap/i }))
     expect(minimapPanel).toHaveStyle({ width: '244px', height: '178px', left: '24px', top: '16px' })
-    expect(minimap).toHaveStyle({ width: '212px', height: '116px', left: '40px', top: '58px' })
+    expect(minimap).toHaveStyle({ width: '212px', height: '116px' })
   })
 
-  it('recenters the board when the minimap is clicked without changing board zoom', async () => {
-    const user = userEvent.setup()
+  it('recenters the board when the custom navigator is clicked without changing board zoom', () => {
     renderBoard()
 
-    await user.click(screen.getByTestId('reactflow-minimap'))
+    const navigator = screen.getByTestId('board-navigator')
+    vi.spyOn(navigator, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      width: 212,
+      height: 116,
+      right: 212,
+      bottom: 116,
+      toJSON: () => ({}),
+    })
 
-    expect(setCenterMock).toHaveBeenCalledWith(420, 310, {
+    fireEvent.click(navigator, { clientX: 106, clientY: 58 })
+
+    expect(setCenterMock).toHaveBeenCalledWith(640, 360, {
       zoom: 0.82,
       duration: 620,
+    })
+  })
+
+  it('pans from custom navigator drag without changing board zoom', () => {
+    renderBoard()
+
+    const navigator = screen.getByTestId('board-navigator')
+    vi.spyOn(navigator, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      width: 212,
+      height: 116,
+      right: 212,
+      bottom: 116,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(navigator, { clientX: 20, clientY: 20, pointerId: 7 })
+    fireEvent.pointerMove(navigator, { clientX: 106, clientY: 58, pointerId: 7 })
+    fireEvent.pointerUp(navigator, { clientX: 106, clientY: 58, pointerId: 7 })
+
+    expect(setCenterMock).toHaveBeenLastCalledWith(640, 360, {
+      zoom: 0.82,
+      duration: 120,
     })
   })
 
@@ -534,7 +569,7 @@ describe('DetectiveBoard relationship legend', () => {
       expect(boardRoot).not.toHaveClass('forensic-board-camera-moving')
       expect(screen.getByText('0 nodes')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByTestId('reactflow-minimap'))
+      fireEvent.click(screen.getByTestId('board-navigator'))
 
       expect(boardRoot).toHaveClass('forensic-board-camera-moving')
       expect(screen.getByText('Moving')).toBeInTheDocument()
@@ -599,9 +634,22 @@ describe('DetectiveBoard relationship legend', () => {
 
     renderBoard()
 
-    fireEvent.click(screen.getByTestId('reactflow-minimap'))
+    const navigator = screen.getByTestId('board-navigator')
+    vi.spyOn(navigator, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      width: 212,
+      height: 116,
+      right: 212,
+      bottom: 116,
+      toJSON: () => ({}),
+    })
 
-    expect(setCenterMock).toHaveBeenCalledWith(420, 310, {
+    fireEvent.click(navigator, { clientX: 106, clientY: 58 })
+
+    expect(setCenterMock).toHaveBeenCalledWith(640, 360, {
       zoom: 0.82,
       duration: 0,
     })
