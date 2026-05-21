@@ -92,6 +92,13 @@ describe('SpiderVisualizer', () => {
     expect(screen.getByTestId('spider-leg-telemetry-8')).toHaveTextContent('Leg 8')
   })
 
+  it('does not show decorative uptime telemetry', () => {
+    render(<SpiderVisualizer sharedSocket={null} />)
+
+    expect(screen.queryByText('Uptime')).not.toBeInTheDocument()
+    expect(screen.queryByText('00:00:00')).not.toBeInTheDocument()
+  })
+
   it('switches copy and leg roles to local document intake mode', () => {
     render(<SpiderVisualizer sharedSocket={null} operationMode="local" />)
 
