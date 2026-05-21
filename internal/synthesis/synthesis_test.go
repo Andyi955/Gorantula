@@ -1,4 +1,4 @@
-package main
+package synthesis
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func TestMemoryNodesFromPersistedBoard(t *testing.T) {
 		]
 	}`)
 
-	nodes := memoryNodesFromPersistedBoard(raw)
+	nodes := MemoryNodesFromPersistedBoard(raw)
 	if len(nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(nodes))
 	}
@@ -86,12 +86,12 @@ func TestSyncSynthesisIndexWithActiveVaultsBackfillsBoardEntities(t *testing.T) 
 		t.Fatalf("SaveJSON new board failed: %v", err)
 	}
 
-	syncSynthesisIndexWithActiveVaults(engine, store, map[string]bool{
+	SyncIndexWithActiveVaults(engine, store, map[string]bool{
 		"inv-old": true,
 		"inv-new": true,
 	})
 
-	newNodes := memoryNodesFromPersistedBoard(newBoard)
+	newNodes := MemoryNodesFromPersistedBoard(newBoard)
 	engine.AnalyzeOverlap(context.Background(), "inv-new", newNodes, newNodes, nil)
 
 	select {
@@ -108,10 +108,10 @@ func TestSyncSynthesisIndexWithActiveVaultsBackfillsBoardEntities(t *testing.T) 
 }
 
 func TestPersonaAnalysisCompletionDetail(t *testing.T) {
-	if got := personaAnalysisCompletionDetail(7, 7); got != "Generated 7 persona insight sets" {
+	if got := PersonaAnalysisCompletionDetail(7, 7); got != "Generated 7 persona insight sets" {
 		t.Fatalf("full success detail = %q", got)
 	}
-	if got := personaAnalysisCompletionDetail(5, 7); got != "Partial persona analysis completed (5/7 insight sets)" {
+	if got := PersonaAnalysisCompletionDetail(5, 7); got != "Partial persona analysis completed (5/7 insight sets)" {
 		t.Fatalf("partial success detail = %q", got)
 	}
 }

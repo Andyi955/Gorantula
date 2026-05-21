@@ -1,4 +1,4 @@
-package main
+package settings
 
 import (
 	"bytes"
@@ -84,7 +84,7 @@ func TestSettingsHandler(t *testing.T) {
 			// for testability. Since the original handler is an inline anonymous
 			// function in main.go, we reproduce the core logic here with the injected test path.
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				handleSettings(w, r, tempEnvFile.Name(), &envMutex, nil)
+				Handle(w, r, tempEnvFile.Name(), &envMutex, nil)
 			})
 
 			handler.ServeHTTP(rr, req)
@@ -127,7 +127,7 @@ func TestSettingsHandler_GetExposesModelOverridesAndHosts(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
 	rr := httptest.NewRecorder()
 
-	handleSettings(rr, req, tempEnvFile.Name(), &envMutex, nil)
+	Handle(rr, req, tempEnvFile.Name(), &envMutex, nil)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rr.Code)
