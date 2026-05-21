@@ -219,7 +219,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const [editTitle, setEditTitle] = useState(data.title || '');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const shellRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const detailTextRef = useRef<HTMLDivElement>(null);
     const chatContentRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const previewImageRef = useRef<HTMLImageElement>(null);
@@ -242,6 +244,30 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         el.addEventListener('wheel', handleWheel);
         return () => el.removeEventListener('wheel', handleWheel);
     }, [showChat]);
+
+    useEffect(() => {
+        const shell = shellRef.current;
+        const detail = detailTextRef.current;
+        if (!shell || !detail || !isExpanded || isEditing || showDeleteConfirm) return;
+
+        const handleWheel = (event: WheelEvent) => {
+            if (detail.scrollHeight <= detail.clientHeight) {
+                return;
+            }
+
+            event.stopPropagation();
+            if (event.target instanceof Node && detail.contains(event.target)) {
+                return;
+            }
+
+            event.preventDefault();
+            const maxScrollTop = Math.max(0, detail.scrollHeight - detail.clientHeight);
+            detail.scrollTop = Math.max(0, Math.min(maxScrollTop, detail.scrollTop + event.deltaY));
+        };
+
+        shell.addEventListener('wheel', handleWheel, { passive: false });
+        return () => shell.removeEventListener('wheel', handleWheel);
+    }, [isEditing, isExpanded, showDeleteConfirm]);
 
     // Sync edit state when entering edit mode or data updates
     useEffect(() => {
@@ -477,6 +503,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
     return (
         <div
+            ref={shellRef}
             data-testid="custom-node-shell"
             className={shellClassName}
             style={{
@@ -897,6 +924,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     </button>
                                 )}
                                 <div
+                                    ref={detailTextRef}
                                     data-testid="node-detail-motion"
                                     className={`forensic-node-text ${detailMotionClassName} flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                     style={isExpanded ? undefined : { maxHeight: COLLAPSED_TEXT_MAX_HEIGHT }}
