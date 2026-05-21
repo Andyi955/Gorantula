@@ -484,7 +484,6 @@ body {
   .forensic-timeline-event-entering,
   .forensic-timeline-event-reordering,
   .forensic-timeline-unknown-card-entering,
-  .forensic-board-camera-moving .react-flow__minimap-mask,
   .forensic-board-empty-idle::before,
   .forensic-board-empty-idle::after,
   .forensic-minimap-center-button-active,
@@ -1689,24 +1688,50 @@ body {
 }
 
 .forensic-minimap-map-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0 0 0.6rem;
   border: 0;
   background: rgba(3, 8, 12, 0.22);
   box-shadow: none;
 }
 
-.forensic-board-root .react-flow__minimap-mask {
-  fill: rgba(129, 227, 255, 0.018) !important;
-  stroke: rgba(152, 255, 255, 1) !important;
-  stroke-width: 4px !important;
-  filter:
-    drop-shadow(0 0 1px rgba(0, 0, 0, 0.95))
-    drop-shadow(0 0 7px rgba(129, 227, 255, 0.6));
+.forensic-board-navigator {
+  border: 1px solid rgba(0, 243, 255, 0.18);
+  background: rgba(4, 8, 12, 0.96);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.forensic-board-navigator:focus-visible {
+  outline: 2px solid rgba(129, 227, 255, 0.64);
+  outline-offset: 2px;
+}
+
+.forensic-board-navigator-background {
+  fill: rgba(4, 8, 12, 0.96);
+  stroke: rgba(120, 255, 255, 0.12);
+  stroke-width: 1;
+}
+
+.forensic-board-navigator-node {
+  stroke: rgba(6, 8, 11, 0.9);
+  stroke-width: 1.5;
+  opacity: 0.9;
   vector-effect: non-scaling-stroke;
 }
 
-.forensic-board-root.forensic-board-camera-moving .react-flow__minimap-mask {
-  animation: forensic-minimap-camera-pulse 1.04s ease-in-out infinite;
+.forensic-board-navigator-viewport {
+  fill: rgba(129, 227, 255, 0.035);
+  stroke: rgba(152, 255, 255, 0.94);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.forensic-board-navigator-viewport-moving {
+  stroke: rgba(236, 253, 255, 0.98);
 }
 
 .forensic-minimap-center-button-active,
@@ -1722,23 +1747,6 @@ body {
   background:
     linear-gradient(180deg, rgba(13, 27, 36, 0.96), rgba(7, 15, 21, 0.98)),
     linear-gradient(90deg, transparent, rgba(129, 227, 255, 0.12), transparent);
-}
-
-@keyframes forensic-minimap-camera-pulse {
-  0%,
-  100% {
-    stroke: rgba(152, 255, 255, 0.82);
-    filter:
-      drop-shadow(0 0 1px rgba(0, 0, 0, 0.95))
-      drop-shadow(0 0 6px rgba(129, 227, 255, 0.44));
-  }
-  48% {
-    stroke: rgba(255, 255, 255, 0.98);
-    filter:
-      drop-shadow(0 0 1px rgba(0, 0, 0, 0.95))
-      drop-shadow(0 0 12px rgba(129, 227, 255, 0.82))
-      drop-shadow(0 0 22px rgba(129, 227, 255, 0.2));
-  }
 }
 
 .forensic-minimap-readout {
