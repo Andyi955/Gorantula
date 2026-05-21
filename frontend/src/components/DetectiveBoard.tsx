@@ -599,6 +599,34 @@ const QA_ANIMATION_DEMO_NODES = [
         fullText: 'Emergency backup generation was briefly dispatched after cooling systems and compute racks peaked at the same time.',
         sourceURL: 'https://example.com/qa-backup-dispatch',
     },
+    {
+        id: 'qa-animation-interconnection-queue',
+        title: 'Interconnection Queue Delay',
+        summary: 'A utility queue filing shows delayed interconnection studies for the same constrained substation corridor.',
+        fullText: 'A utility queue filing shows delayed interconnection studies for the same constrained substation corridor.',
+        sourceURL: 'https://example.com/qa-interconnection-queue',
+    },
+    {
+        id: 'qa-animation-transformer-order',
+        title: 'Transformer Order Slip',
+        summary: 'A procurement note warns that transformer lead times slipped again, delaying planned upgrades for the load pocket.',
+        fullText: 'A procurement note warns that transformer lead times slipped again, delaying planned upgrades for the load pocket.',
+        sourceURL: 'https://example.com/qa-transformer-order',
+    },
+    {
+        id: 'qa-animation-water-permit',
+        title: 'Water Permit Constraint',
+        summary: 'A cooling water permit amendment caps withdrawals during heat events, narrowing the operating window for the campus.',
+        fullText: 'A cooling water permit amendment caps withdrawals during heat events, narrowing the operating window for the campus.',
+        sourceURL: 'https://example.com/qa-water-permit',
+    },
+    {
+        id: 'qa-animation-community-hearing',
+        title: 'Community Hearing Pushback',
+        summary: 'A local hearing transcript shows residents pressing officials about backup generators, water use, and grid reliability.',
+        fullText: 'A local hearing transcript shows residents pressing officials about backup generators, water use, and grid reliability.',
+        sourceURL: 'https://example.com/qa-community-hearing',
+    },
 ] as const;
 
 const QA_ANIMATION_DEMO_STAGING_POSITIONS = [
@@ -608,6 +636,10 @@ const QA_ANIMATION_DEMO_STAGING_POSITIONS = [
     { x: 864, y: 96 },
     { x: 96, y: 456 },
     { x: 576, y: 672 },
+    { x: 528, y: 96 },
+    { x: 960, y: 456 },
+    { x: 288, y: 384 },
+    { x: 864, y: 672 },
 ] as const;
 
 const getQaAnimationDemoStagingPosition = (index: number) =>
@@ -615,6 +647,9 @@ const getQaAnimationDemoStagingPosition = (index: number) =>
         x: 96 + (index % 3) * 384,
         y: 96 + Math.floor(index / 3) * 288,
     };
+
+const QA_ANIMATION_DEMO_NODE_STEP_MS = 220;
+const QA_ANIMATION_DEMO_NODE_COMPLETE_MS = (QA_ANIMATION_DEMO_NODES.length - 1) * QA_ANIMATION_DEMO_NODE_STEP_MS;
 
 const QA_EVIDENCE_EXPANSION_NODE_ID = 'qa-evidence-expansion-node';
 const QA_EVIDENCE_EXPANSION_IMAGE_SRC = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22071118%22/%3E%3Crect x=%2238%22 y=%2244%22 width=%22564%22 height=%22272%22 fill=%220c1a22%22 stroke=%2281e3ff%22 stroke-width=%222%22 opacity=%220.78%22/%3E%3Cpath d=%22M70 112h260M70 150h430M70 188h380M70 226h300%22 stroke=%22%2381e3ff%22 stroke-width=%229%22 opacity=%220.28%22/%3E%3Ccircle cx=%22522%22 cy=%22128%22 r=%2248%22 fill=%22%23f6c879%22 opacity=%220.22%22/%3E%3Ctext x=%2270%22 y=%2286%22 fill=%22%2381e3ff%22 font-size=%2224%22 font-family=%22monospace%22 font-weight=%22700%22%3EQA VISUAL EVIDENCE%3C/text%3E%3C/svg%3E';
@@ -669,6 +704,34 @@ const QA_ANIMATION_DEMO_CONNECTIONS = [
         tag: 'RESILIENCE_GAP',
         reasoning: 'Backup dispatch coincides with the same cooling-demand peak flagged in the facilities alert.',
         confidence: 0.78,
+    },
+    {
+        source: 'qa-animation-interconnection-queue',
+        target: 'qa-animation-capacity-auction',
+        tag: 'INTERCONNECTION_DELAY',
+        reasoning: 'Delayed interconnection studies explain why capacity prices are reacting faster than physical upgrades.',
+        confidence: 0.81,
+    },
+    {
+        source: 'qa-animation-transformer-order',
+        target: 'qa-animation-interconnection-queue',
+        tag: 'SUPPLY_CHAIN',
+        reasoning: 'Transformer lead-time slips compound the interconnection queue and keep the constrained corridor underbuilt.',
+        confidence: 0.79,
+    },
+    {
+        source: 'qa-animation-water-permit',
+        target: 'qa-animation-thermal-cooling',
+        tag: 'WATER_CONSTRAINT',
+        reasoning: 'The permit cap constrains cooling during the same heat windows that trigger the thermal alert.',
+        confidence: 0.83,
+    },
+    {
+        source: 'qa-animation-community-hearing',
+        target: 'qa-animation-backup-dispatch',
+        tag: 'PUBLIC_PRESSURE',
+        reasoning: 'Community concerns focus on the backup dispatch pattern and its reliability tradeoffs.',
+        confidence: 0.77,
     },
 ] as const;
 
@@ -1058,6 +1121,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
     const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
+    const [showQaReplayMenu, setShowQaReplayMenu] = useState(false);
     const lightboxFileInputRef = useRef<HTMLInputElement>(null);
     const lightboxDialogRef = useRef<HTMLDivElement>(null);
     const previousFocusedElementRef = useRef<HTMLElement | null>(null);
@@ -1765,6 +1829,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    routeStrategy: route.strategy,
+                    routeLabelPoint: route.labelPoint,
                     routeSourcePoint,
                     routeTargetPoint,
                     sourcePortSide: route.sourceSide,
@@ -1870,6 +1936,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     ...edge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
+                    routeStrategy: route.strategy,
+                    routeLabelPoint: route.labelPoint,
                     routeSourcePoint: sourceNode ? getPortById(sourceNode, route.sourcePortId) : undefined,
                     routeTargetPoint: targetNode ? getPortById(targetNode, route.targetPortId) : undefined,
                     sourcePortSide: route.sourceSide,
@@ -1930,44 +1998,50 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
-        setEdges((currentEdges) => currentEdges.map((edge) => {
-            if (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target)) {
-                return edge;
-            }
+        setEdges((currentEdges) => {
+            const assignments = assignStrictGridPorts(currentEdges, nextNodes);
 
-            const sourceNode = nodeMap.get(edge.source);
-            const targetNode = nodeMap.get(edge.target);
-            if (!sourceNode || !targetNode) {
-                return edge;
-            }
-
-            const route = buildStrictGridRoute(
-                sourceNode,
-                targetNode,
-                edge.sourceHandle,
-                edge.targetHandle
-            );
-            const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
-            const routeTargetPoint = getPortById(targetNode, route.targetPortId);
-
-            return {
-                ...edge,
-                sourceHandle: route.sourcePortId,
-                targetHandle: route.targetPortId,
-                type: 'customEdge',
-                zIndex: STRICT_GRID_EDGE_Z_INDEX,
-                data: {
-                    ...edge.data,
-                    boardMode: 'strict-grid' as BoardMode,
-                    routePoints: route.points,
-                    routeSourcePoint,
-                    routeTargetPoint,
-                    sourcePortSide: route.sourceSide,
-                    targetPortSide: route.targetSide,
-                    snapEnabled: snapConnectionLabels,
+            return currentEdges.map((edge) => {
+                if (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target)) {
+                    return edge;
                 }
-            };
-        }));
+
+                const sourceNode = nodeMap.get(edge.source);
+                const targetNode = nodeMap.get(edge.target);
+                if (!sourceNode || !targetNode) {
+                    return edge;
+                }
+
+                const route = assignments.get(edge.id)?.route || buildStrictGridRoute(
+                    sourceNode,
+                    targetNode,
+                    edge.sourceHandle,
+                    edge.targetHandle
+                );
+                const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
+                const routeTargetPoint = getPortById(targetNode, route.targetPortId);
+
+                return {
+                    ...edge,
+                    sourceHandle: route.sourcePortId,
+                    targetHandle: route.targetPortId,
+                    type: 'customEdge',
+                    zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                    data: {
+                        ...edge.data,
+                        boardMode: 'strict-grid' as BoardMode,
+                        routePoints: route.points,
+                        routeStrategy: route.strategy,
+                        routeLabelPoint: route.labelPoint,
+                        routeSourcePoint,
+                        routeTargetPoint,
+                        sourcePortSide: route.sourceSide,
+                        targetPortSide: route.targetSide,
+                        snapEnabled: snapConnectionLabels,
+                    }
+                };
+            });
+        });
     }, [snapConnectionLabels]);
 
     const openRelationshipEditor = useCallback((draft: RelationshipDraft) => {
@@ -2705,6 +2779,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
         window.localStorage.removeItem('detective_board_qa_tools_enabled');
     }, [showBrowserQaBoardTools]);
+
+    useEffect(() => {
+        if (!qaToolsEnabled) {
+            setShowQaReplayMenu(false);
+        }
+    }, [qaToolsEnabled]);
 
     useEffect(() => {
         const edgeTags = edges
@@ -3481,13 +3561,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 if (isImported) {
                     markNodeAsRecentlyImported(demoNode.id);
                 }
-            }, index * 220);
+            }, index * QA_ANIMATION_DEMO_NODE_STEP_MS);
             qaAnimationTimeoutsRef.current.push(timeoutId);
         });
 
         const insightsTimeout = window.setTimeout(() => {
             applyPersonaInsightsToNodes(QA_ANIMATION_DEMO_INSIGHTS);
-        }, 1120);
+        }, QA_ANIMATION_DEMO_NODE_COMPLETE_MS + 120);
 
         qaAnimationTimeoutsRef.current.push(insightsTimeout);
 
@@ -3531,7 +3611,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     });
                 }, 180);
                 qaAnimationTimeoutsRef.current.push(revealTimeout);
-            }, 1280);
+            }, QA_ANIMATION_DEMO_NODE_COMPLETE_MS + 520);
 
             qaAnimationTimeoutsRef.current.push(connectTimeout);
         }
@@ -4785,7 +4865,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 </div>
                 <div
                     data-testid="board-utility-rail"
-                    className="forensic-utility-rail absolute right-5 top-24 z-20 flex flex-col items-center gap-2"
+                    className={`forensic-utility-rail absolute right-5 top-24 ${showQaReplayMenu ? 'z-[90]' : 'z-20'} flex flex-col items-center gap-2`}
                 >
                     <button
                         type="button"
@@ -4832,85 +4912,119 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         <>
                             <button
                                 type="button"
-                                onClick={() => playBrowserQaAnimationDemo()}
-                                aria-label="Replay board animation demo"
-                                title="Replay board animation demo"
+                                onClick={() => setShowQaReplayMenu((current) => !current)}
+                                aria-label="Open QA replay menu"
+                                title="Open QA replay menu"
                                 className="forensic-utility-button forensic-utility-button-qa"
                             >
-                                <PlayCircle size={16} />
+                                <FlaskConical size={16} />
                             </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaDiscoveryDemo}
-                                aria-label="Replay discovery demo"
-                                title="Replay discovery demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <Lightbulb size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaSynthesisDemo}
-                                aria-label="Replay synthesis demo"
-                                title="Replay synthesis demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <Network size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaSpiderTelemetryDemo}
-                                aria-label="Replay spider telemetry demo"
-                                title="Replay spider telemetry demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <RadioTower size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaPipelineDemo}
-                                aria-label="Replay pipeline demo"
-                                title="Replay pipeline demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <Activity size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaLocalIngestionDemo}
-                                aria-label="Replay local ingestion demo"
-                                title="Replay local ingestion demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <FileText size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaErrorEmptyDemo}
-                                aria-label="Replay error/empty demo"
-                                title="Replay error/empty demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <AlertTriangle size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaTimelineDemo}
-                                aria-label="Replay timeline demo"
-                                title="Replay timeline demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <Clock size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={playBrowserQaEvidenceExpansionDemo}
-                                aria-label="Replay evidence expansion demo"
-                                title="Replay evidence expansion demo"
-                                className="forensic-utility-button forensic-utility-button-qa"
-                            >
-                                <FileSearch size={16} />
-                            </button>
+                            {showQaReplayMenu && (
+                                <div
+                                    data-testid="board-qa-menu"
+                                    className="forensic-board-dialog absolute right-[3.75rem] top-0 z-30 flex w-64 max-h-[min(28rem,calc(100vh-8rem))] flex-col gap-1 overflow-y-auto rounded-2xl p-2 backdrop-blur-xl"
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaAnimationDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay board animation demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <PlayCircle size={14} /> Board animation
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaDiscoveryDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay discovery demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <Lightbulb size={14} /> Discovery
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaSynthesisDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay synthesis demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <Network size={14} /> Synthesis
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaSpiderTelemetryDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay spider telemetry demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <RadioTower size={14} /> Spider telemetry
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaPipelineDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay pipeline demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <Activity size={14} /> Pipeline
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaLocalIngestionDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay local ingestion demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileText size={14} /> Local ingestion
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaErrorEmptyDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay error/empty demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <AlertTriangle size={14} /> Error and empty
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaTimelineDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay timeline demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <Clock size={14} /> Timeline
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaEvidenceExpansionDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay evidence expansion demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileSearch size={14} /> Evidence expansion
+                                    </button>
+                                </div>
+                            )}
                         </>
                     )}
                     <button
