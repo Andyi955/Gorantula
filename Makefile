@@ -25,14 +25,14 @@ check: fmt vet test
 # Build the main application
 build: check
 	@echo "=> Building Gorantula..."
-	go build -o gorantula main.go
+	go build -o gorantula ./cmd/gorantula
 
 # Clean up builds
 clean:
 	@echo "=> Cleaning up..."
 	go clean
-	rm -f gorantula
+	rm -f gorantula gorantula.exe
 
 # Run the backend locally
 run:
-	go run main.go
+	go run ./cmd/gorantula

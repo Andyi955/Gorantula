@@ -1,4 +1,4 @@
-package main
+package pipeline
 
 import "testing"
 
@@ -8,7 +8,7 @@ func TestExtractPipelineRunMetadataUsesProvidedRunAndVault(t *testing.T) {
 		"vaultId": "inv-123",
 	}
 
-	meta := extractPipelineRunMetadata(msg, "fallback-vault", "web")
+	meta := ExtractRunMetadata(msg, "fallback-vault", "web")
 
 	if meta.RunID != "run-123" {
 		t.Fatalf("RunID = %q, want run-123", meta.RunID)
@@ -22,7 +22,7 @@ func TestExtractPipelineRunMetadataUsesProvidedRunAndVault(t *testing.T) {
 }
 
 func TestExtractPipelineRunMetadataFallsBackSafely(t *testing.T) {
-	meta := extractPipelineRunMetadata(map[string]interface{}{}, "fallback-vault", "local")
+	meta := ExtractRunMetadata(map[string]interface{}{}, "fallback-vault", "local")
 
 	if meta.RunID == "" {
 		t.Fatal("expected generated RunID")

@@ -3,6 +3,7 @@
 
 # Go binaries
 *.exe
+/gorantula
 spider-agent
 server
 
@@ -21,10 +22,11 @@ dist/
 build/
 
 # Project Specific
+.superpowers/
 abdomen_vault/
 local-test-docs/
 
 # Agent Configuration (Private)
 .agents/
 .agents/*
-**/ .agents/**
+**/.agents/**

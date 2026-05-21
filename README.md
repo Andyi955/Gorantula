@@ -60,7 +60,7 @@ npm.cmd install
 Start the backend from the repository root:
 
 ```powershell
-go run .
+go run ./cmd/gorantula
 ```
 
 The backend runs at:
@@ -146,7 +146,7 @@ Provider switches are separate from credentials. Set `*_ENABLED=true` only for p
 Backend:
 
 ```powershell
-go run .
+go run ./cmd/gorantula
 go test ./...
 ```
 
