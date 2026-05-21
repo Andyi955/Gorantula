@@ -278,6 +278,15 @@ describe('DetectiveBoard relationship legend', () => {
     vi.restoreAllMocks()
   })
 
+  const enableQaTools = () => {
+    fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
+    fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+  }
+
+  const openQaReplayMenu = () => {
+    fireEvent.click(screen.getByRole('button', { name: /open qa replay menu/i }))
+  }
+
   it('shows the legend by default when no preference exists', () => {
     renderBoard()
 
@@ -755,15 +764,26 @@ describe('DetectiveBoard relationship legend', () => {
 
       expect(screen.queryByRole('button', { name: /replay board animation demo/i })).not.toBeInTheDocument()
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
 
-      expect(screen.getByRole('button', { name: /replay board animation demo/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /open qa replay menu/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /replay board animation demo/i })).not.toBeInTheDocument()
       expect(localStorage.getItem('detective_board_qa_tools_enabled')).toBeNull()
 
+      openQaReplayMenu()
+      expect(screen.getByTestId('board-utility-rail')).toHaveClass('z-[90]')
+      expect(screen.getByTestId('board-qa-menu')).toHaveClass('max-h-[min(28rem,calc(100vh-8rem))]', 'overflow-y-auto')
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay discovery demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay synthesis demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay spider telemetry demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay pipeline demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay local ingestion demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay error\/empty demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay timeline demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay evidence expansion demo/i })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: /replay board animation demo/i }))
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(1600)
+        await vi.advanceTimersByTimeAsync(2400)
       })
 
       const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
@@ -774,8 +794,12 @@ describe('DetectiveBoard relationship legend', () => {
         'qa-animation-capacity-auction',
         'qa-animation-demand-response',
         'qa-animation-backup-dispatch',
+        'qa-animation-interconnection-queue',
+        'qa-animation-transformer-order',
+        'qa-animation-water-permit',
+        'qa-animation-community-hearing',
       ]))
-      expect(nodes).toHaveLength(6)
+      expect(nodes).toHaveLength(10)
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1800)
@@ -788,6 +812,10 @@ describe('DetectiveBoard relationship legend', () => {
         'MARKET_PRESSURE',
         'DEMAND_RESPONSE',
         'RESILIENCE_GAP',
+        'INTERCONNECTION_DELAY',
+        'SUPPLY_CHAIN',
+        'WATER_CONSTRAINT',
+        'PUBLIC_PRESSURE',
       ]))
       expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
       expect(socket.sentMessages).toEqual([])
@@ -804,8 +832,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay error\/empty demo/i }))
 
       expect(errorEmptyListener).toHaveBeenCalledTimes(1)
@@ -844,8 +872,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay synthesis demo/i }))
 
       expect(synthesisDemoListener).toHaveBeenCalledTimes(1)
@@ -867,8 +895,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay spider telemetry demo/i }))
 
       expect(spiderTelemetryDemoListener).toHaveBeenCalledTimes(1)
@@ -890,8 +918,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay pipeline demo/i }))
 
       expect(pipelineDemoListener).toHaveBeenCalledTimes(1)
@@ -913,8 +941,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay timeline demo/i }))
 
       expect(timelineDemoListener).toHaveBeenCalledTimes(1)
@@ -948,8 +976,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay discovery demo/i }))
 
       expect(discoveryDemoListener).toHaveBeenCalledTimes(1)
@@ -971,8 +999,8 @@ describe('DetectiveBoard relationship legend', () => {
     try {
       renderBoard('investigation-1', socket as unknown as WebSocket)
 
-      fireEvent.click(screen.getByRole('button', { name: /board controls/i }))
-      fireEvent.click(screen.getByRole('button', { name: /enable qa tools/i }))
+      enableQaTools()
+      openQaReplayMenu()
       fireEvent.click(screen.getByRole('button', { name: /replay evidence expansion demo/i }))
 
       expect(evidenceDemoListener).toHaveBeenCalledTimes(1)
@@ -2266,7 +2294,7 @@ describe('DetectiveBoard relationship legend', () => {
       })
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(1170)
+        await vi.advanceTimersByTimeAsync(2400)
       })
 
       let nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
@@ -2277,8 +2305,12 @@ describe('DetectiveBoard relationship legend', () => {
         'qa-animation-capacity-auction',
         'qa-animation-demand-response',
         'qa-animation-backup-dispatch',
+        'qa-animation-interconnection-queue',
+        'qa-animation-transformer-order',
+        'qa-animation-water-permit',
+        'qa-animation-community-hearing',
       ]))
-      expect(nodes).toHaveLength(6)
+      expect(nodes).toHaveLength(10)
       const stagedPositions = new Map(nodes.map((node) => [node.id, `${node.position?.x},${node.position?.y}`]))
 
       await act(async () => {
@@ -2301,6 +2333,10 @@ describe('DetectiveBoard relationship legend', () => {
         'MARKET_PRESSURE',
         'DEMAND_RESPONSE',
         'RESILIENCE_GAP',
+        'INTERCONNECTION_DELAY',
+        'SUPPLY_CHAIN',
+        'WATER_CONSTRAINT',
+        'PUBLIC_PRESSURE',
       ]))
       expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
       expect(socket.sentMessages).toEqual([])

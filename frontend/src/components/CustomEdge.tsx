@@ -423,6 +423,7 @@ const getStrictRouteData = (data: any, sourceX: number, sourceY: number, targetX
     const hasRouteAnchor = typeof data?.routeAnchorX === 'number' && typeof data?.routeAnchorY === 'number';
     const sourcePoint = coerceRoutePoint(data?.routeSourcePoint) || { x: sourceX, y: sourceY };
     const targetPoint = coerceRoutePoint(data?.routeTargetPoint) || { x: targetX, y: targetY };
+    const routeLabelPoint = coerceRoutePoint(data?.routeLabelPoint);
     const rawPathPoints: StrictGridPoint[] = hasRouteAnchor
         ? buildStrictRoutePointsFromAnchor(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y, data.routeAnchorX, data.routeAnchorY)
         : [
@@ -443,12 +444,13 @@ const getStrictRouteData = (data: any, sourceX: number, sourceY: number, targetX
     });
     const labelPoint = (typeof data?.labelX === 'number' && typeof data?.labelY === 'number')
         ? { x: data.labelX, y: data.labelY }
-        : getBestStrictLabelPoint(pathPoints);
+        : (routeLabelPoint || getBestStrictLabelPoint(pathPoints));
 
     return {
         pathPoints,
         edgePath: buildPolylinePath(pathPoints),
         labelPoint,
+        hasAutoLabelPoint: Boolean(routeLabelPoint),
     };
 };
 
@@ -526,13 +528,13 @@ export default function CustomEdge({
             { x: targetX, y: targetY },
         ];
     const currentLabelPoint = useMemo(() => {
-        if (hasManualLabelPlacement) {
+        if (hasManualLabelPlacement || (isStrictGrid && strictRoute.hasAutoLabelPoint)) {
             return defaultLabelPoint;
         }
 
         const nodeRects = getNodeRects(getNodes(), new Set([source, target]));
         return getVisibleLabelPoint(defaultLabelPoint, routePoints, label, labelStyle, nodeRects);
-    }, [defaultLabelPoint, getNodes, hasManualLabelPlacement, label, labelStyle, routePoints, source, target]);
+    }, [defaultLabelPoint, getNodes, hasManualLabelPlacement, isStrictGrid, label, labelStyle, routePoints, source, strictRoute.hasAutoLabelPoint, target]);
     const resolvedEdgeStyle = useMemo(() => {
         const pattern = normalizeRelationshipPattern(data?.pattern);
         const shape = normalizeRelationshipShape(data?.shape);

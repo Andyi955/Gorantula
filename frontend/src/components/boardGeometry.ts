@@ -8,6 +8,15 @@ export interface StrictGridPoint {
     y: number;
 }
 
+export interface StrictGridRect {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+}
+
+export type StrictGridRouteStrategy = 'direct' | 'maze';
+
 export interface StrictGridPortSlot {
     id: string;
     side: PortSide;
@@ -21,17 +30,14 @@ export interface StrictGridRoute {
     sourceSide: PortSide;
     targetSide: PortSide;
     points: StrictGridPoint[];
+    strategy: StrictGridRouteStrategy;
+    labelPoint?: StrictGridPoint;
+    labelRect?: StrictGridRect;
 }
 
 interface StrictGridPortAssignment {
     route: StrictGridRoute;
 }
-
-type StrictGridPortPair = {
-    source: StrictGridPortSlot & StrictGridPoint;
-    target: StrictGridPortSlot & StrictGridPoint;
-    score: number;
-};
 
 export const BOARD_GRID_SIZE = 24;
 export const NODE_FRAME_GRID_SIZE = BOARD_GRID_SIZE * 2;
@@ -39,6 +45,17 @@ export const MIN_NODE_WIDTH = 288;
 export const MIN_NODE_HEIGHT = 192;
 export const NODE_IMAGE_PREVIEW_HEIGHT = 96;
 const PORT_MARGIN = BOARD_GRID_SIZE;
+const ROUTE_OBSTACLE_PADDING = BOARD_GRID_SIZE;
+const ROUTE_SEARCH_MARGIN = BOARD_GRID_SIZE * 6;
+const ROUTE_TURN_PENALTY = BOARD_GRID_SIZE * 2;
+const ROUTE_OBSTACLE_PENALTY = BOARD_GRID_SIZE * 1200;
+const ROUTE_LABEL_COLLISION_PENALTY = BOARD_GRID_SIZE * 600;
+const ROUTE_REUSED_LANE_PENALTY = BOARD_GRID_SIZE * 18;
+const ROUTE_STALE_HANDLE_PENALTY = BOARD_GRID_SIZE * 900;
+const ROUTE_LABEL_WIDTH = BOARD_GRID_SIZE * 5;
+const ROUTE_LABEL_HEIGHT = BOARD_GRID_SIZE * 2;
+const ROUTE_LABEL_CLEARANCE = BOARD_GRID_SIZE;
+const ROUTE_MAX_MAZE_ITERATIONS = 6000;
 
 export const snapCoordinateToGrid = (value: number, gridSize = BOARD_GRID_SIZE) =>
     Math.round(value / gridSize) * gridSize;
@@ -237,6 +254,58 @@ const getPreferredSidePairs = (sourceNode: Node, targetNode: Node): Array<[PortS
         : [verticalPair, horizontalPair];
 };
 
+const isVerticalPortSide = (side: PortSide) => side === 'top' || side === 'bottom';
+const isHorizontalPortSide = (side: PortSide) => side === 'left' || side === 'right';
+
+const getAxisGap = (sourceNode: Node, targetNode: Node) => {
+    const sourceBounds = getNodeBounds(sourceNode);
+    const targetBounds = getNodeBounds(targetNode);
+    const horizontalGap = targetBounds.left >= sourceBounds.right
+        ? targetBounds.left - sourceBounds.right
+        : (sourceBounds.left >= targetBounds.right ? sourceBounds.left - targetBounds.right : 0);
+    const verticalGap = targetBounds.top >= sourceBounds.bottom
+        ? targetBounds.top - sourceBounds.bottom
+        : (sourceBounds.top >= targetBounds.bottom ? sourceBounds.top - targetBounds.bottom : 0);
+    const horizontalOverlap = Math.min(sourceBounds.right, targetBounds.right) - Math.max(sourceBounds.left, targetBounds.left);
+    const verticalOverlap = Math.min(sourceBounds.bottom, targetBounds.bottom) - Math.max(sourceBounds.top, targetBounds.top);
+
+    return {
+        horizontalGap,
+        verticalGap,
+        horizontalOverlap: Math.max(0, horizontalOverlap),
+        verticalOverlap: Math.max(0, verticalOverlap),
+    };
+};
+
+const getStrongAxisPreference = (sourceNode: Node, targetNode: Node): 'horizontal' | 'vertical' | null => {
+    const { horizontalGap, verticalGap, horizontalOverlap, verticalOverlap } = getAxisGap(sourceNode, targetNode);
+    const strongGap = BOARD_GRID_SIZE * 4;
+    const meaningfulOverlap = BOARD_GRID_SIZE * 2;
+
+    if (verticalGap >= strongGap && horizontalOverlap >= meaningfulOverlap) {
+        return 'vertical';
+    }
+
+    if (horizontalGap >= strongGap && verticalOverlap >= meaningfulOverlap) {
+        return 'horizontal';
+    }
+
+    if (verticalGap >= horizontalGap + strongGap) {
+        return 'vertical';
+    }
+
+    if (horizontalGap >= verticalGap + strongGap) {
+        return 'horizontal';
+    }
+
+    return null;
+};
+
+const routeUsesAxis = (route: Pick<StrictGridRoute, 'sourceSide' | 'targetSide'>, axis: 'horizontal' | 'vertical') =>
+    axis === 'vertical'
+        ? isVerticalPortSide(route.sourceSide) && isVerticalPortSide(route.targetSide)
+        : isHorizontalPortSide(route.sourceSide) && isHorizontalPortSide(route.targetSide);
+
 const getPairPenalty = (
     sourceSide: PortSide,
     targetSide: PortSide,
@@ -331,9 +400,10 @@ const compactRoutePoints = (points: StrictGridPoint[]) => {
 const buildOrthogonalPoints = (
     sourcePort: StrictGridPortSlot & StrictGridPoint,
     targetPort: StrictGridPortSlot & StrictGridPoint,
+    stubDistance = BOARD_GRID_SIZE,
 ): StrictGridPoint[] => {
-    const startStub = movePoint(sourcePort, sourcePort.side);
-    const endStub = movePoint(targetPort, targetPort.side);
+    const startStub = movePoint(sourcePort, sourcePort.side, stubDistance);
+    const endStub = movePoint(targetPort, targetPort.side, stubDistance);
     const points: StrictGridPoint[] = [startStub];
 
     if (startStub.x === endStub.x || startStub.y === endStub.y) {
@@ -372,6 +442,362 @@ const getNodeBounds = (node: Node) => {
         top: node.position.y,
         bottom: node.position.y + height,
     };
+};
+
+const padRect = (rect: StrictGridRect, padding: number): StrictGridRect => ({
+    left: rect.left - padding,
+    right: rect.right + padding,
+    top: rect.top - padding,
+    bottom: rect.bottom + padding,
+});
+
+const getPaddedNodeBounds = (node: Node, padding = ROUTE_OBSTACLE_PADDING) =>
+    padRect(getNodeBounds(node), padding);
+
+const rectsOverlap = (left: StrictGridRect, right: StrictGridRect) =>
+    left.left < right.right &&
+    left.right > right.left &&
+    left.top < right.bottom &&
+    left.bottom > right.top;
+
+const pointInRect = (point: StrictGridPoint, rect: StrictGridRect) =>
+    point.x >= rect.left &&
+    point.x <= rect.right &&
+    point.y >= rect.top &&
+    point.y <= rect.bottom;
+
+const rangesOverlap = (leftStart: number, leftEnd: number, rightStart: number, rightEnd: number) =>
+    Math.max(Math.min(leftStart, leftEnd), Math.min(rightStart, rightEnd)) <=
+    Math.min(Math.max(leftStart, leftEnd), Math.max(rightStart, rightEnd));
+
+const segmentIntersectsRect = (start: StrictGridPoint, end: StrictGridPoint, rect: StrictGridRect) => {
+    if (start.x === end.x) {
+        return start.x >= rect.left &&
+            start.x <= rect.right &&
+            rangesOverlap(start.y, end.y, rect.top, rect.bottom);
+    }
+
+    if (start.y === end.y) {
+        return start.y >= rect.top &&
+            start.y <= rect.bottom &&
+            rangesOverlap(start.x, end.x, rect.left, rect.right);
+    }
+
+    return rectsOverlap(
+        {
+            left: Math.min(start.x, end.x),
+            right: Math.max(start.x, end.x),
+            top: Math.min(start.y, end.y),
+            bottom: Math.max(start.y, end.y),
+        },
+        rect,
+    );
+};
+
+const getPathObstacleHits = (path: StrictGridPoint[], obstacles: StrictGridRect[]) =>
+    path.slice(1).reduce((hitCount, point, index) => {
+        const start = path[index];
+        const segmentHits = obstacles.reduce(
+            (count, obstacle) => count + (segmentIntersectsRect(start, point, obstacle) ? 1 : 0),
+            0,
+        );
+
+        return hitCount + segmentHits;
+    }, 0);
+
+const getPathLength = (path: StrictGridPoint[]) =>
+    path.slice(1).reduce((sum, point, index) => {
+        const start = path[index];
+        return sum + Math.abs(point.x - start.x) + Math.abs(point.y - start.y);
+    }, 0);
+
+const getPathBendCount = (path: StrictGridPoint[]) => {
+    let bends = 0;
+    let previousDirection: 'horizontal' | 'vertical' | null = null;
+
+    path.slice(1).forEach((point, index) => {
+        const start = path[index];
+        const direction = start.x === point.x ? 'vertical' : 'horizontal';
+        if (previousDirection && previousDirection !== direction) {
+            bends += 1;
+        }
+        previousDirection = direction;
+    });
+
+    return bends;
+};
+
+const getRoutePath = (
+    sourcePort: StrictGridPortSlot & StrictGridPoint,
+    targetPort: StrictGridPortSlot & StrictGridPoint,
+    routePoints: StrictGridPoint[],
+) => compactRoutePoints([sourcePort, ...routePoints, targetPort]);
+
+const toLabelRect = (point: StrictGridPoint): StrictGridRect => ({
+    left: point.x - (ROUTE_LABEL_WIDTH / 2),
+    right: point.x + (ROUTE_LABEL_WIDTH / 2),
+    top: point.y - (ROUTE_LABEL_HEIGHT / 2),
+    bottom: point.y + (ROUTE_LABEL_HEIGHT / 2),
+});
+
+const getExpandedLabelRect = (point: StrictGridPoint) => padRect(toLabelRect(point), ROUTE_LABEL_CLEARANCE);
+
+const getPolylineMidpoint = (path: StrictGridPoint[]) => {
+    const length = getPathLength(path);
+    if (path.length < 2 || length === 0) {
+        return path[0] || { x: 0, y: 0 };
+    }
+
+    const halfway = length / 2;
+    let travelled = 0;
+
+    for (let index = 1; index < path.length; index += 1) {
+        const start = path[index - 1];
+        const end = path[index];
+        const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+        if (travelled + segmentLength >= halfway) {
+            const remaining = halfway - travelled;
+            if (start.x === end.x) {
+                return { x: start.x, y: start.y + (end.y >= start.y ? remaining : -remaining) };
+            }
+
+            return { x: start.x + (end.x >= start.x ? remaining : -remaining), y: start.y };
+        }
+
+        travelled += segmentLength;
+    }
+
+    return path[Math.floor(path.length / 2)];
+};
+
+const getSegmentMidpoint = (start: StrictGridPoint, end: StrictGridPoint) => ({
+    x: start.x === end.x ? start.x : start.x + ((end.x - start.x) / 2),
+    y: start.y === end.y ? start.y : start.y + ((end.y - start.y) / 2),
+});
+
+const dedupePoints = (points: StrictGridPoint[]) => {
+    const seen = new Set<string>();
+
+    return points.filter((point) => {
+        const key = `${snapCoordinateToGrid(point.x)}:${snapCoordinateToGrid(point.y)}`;
+        if (seen.has(key)) {
+            return false;
+        }
+
+        seen.add(key);
+        return true;
+    });
+};
+
+const getRouteLabelCandidates = (path: StrictGridPoint[]) => {
+    const candidates: StrictGridPoint[] = [getPolylineMidpoint(path)];
+
+    path.slice(1).forEach((point, index) => {
+        const start = path[index];
+        const length = Math.abs(point.x - start.x) + Math.abs(point.y - start.y);
+        if (length < BOARD_GRID_SIZE * 2) {
+            return;
+        }
+
+        const midpoint = getSegmentMidpoint(start, point);
+        candidates.push(midpoint);
+
+        if (length >= BOARD_GRID_SIZE * 3) {
+            for (let distance = BOARD_GRID_SIZE; distance < length; distance += BOARD_GRID_SIZE) {
+                const ratio = distance / length;
+                candidates.push({
+                    x: start.x + ((point.x - start.x) * ratio),
+                    y: start.y + ((point.y - start.y) * ratio),
+                });
+            }
+        }
+    });
+
+    return dedupePoints(candidates).map((point) => ({
+        x: snapCoordinateToGrid(point.x),
+        y: snapCoordinateToGrid(point.y),
+    }));
+};
+
+const scoreLabelPoint = (
+    point: StrictGridPoint,
+    basePoint: StrictGridPoint,
+    obstacles: StrictGridRect[],
+    reservedLabelRects: StrictGridRect[],
+) => {
+    const labelRect = getExpandedLabelRect(point);
+    const labelRectCollisions = obstacles.reduce(
+        (count, obstacle) => count + (rectsOverlap(labelRect, obstacle) ? 1 : 0),
+        0,
+    );
+    const pointCollisions = obstacles.reduce(
+        (count, obstacle) => count + (pointInRect(point, obstacle) ? 1 : 0),
+        0,
+    );
+    const reservedCollisions = reservedLabelRects.reduce(
+        (count, reservedRect) => count + (rectsOverlap(labelRect, reservedRect) ? 1 : 0),
+        0,
+    );
+
+    return {
+        labelRect,
+        score:
+            (pointCollisions * ROUTE_LABEL_COLLISION_PENALTY * 4) +
+            (labelRectCollisions * ROUTE_LABEL_COLLISION_PENALTY) +
+            (reservedCollisions * ROUTE_LABEL_COLLISION_PENALTY) +
+            Math.abs(point.x - basePoint.x) +
+            Math.abs(point.y - basePoint.y),
+    };
+};
+
+const pickRouteLabel = (
+    path: StrictGridPoint[],
+    obstacles: StrictGridRect[],
+    reservedLabelRects: StrictGridRect[],
+) => {
+    const basePoint = getPolylineMidpoint(path);
+    const candidates = getRouteLabelCandidates(path);
+    const scoredCandidates = candidates.map((point) => ({
+        point,
+        ...scoreLabelPoint(point, basePoint, obstacles, reservedLabelRects),
+    }));
+
+    scoredCandidates.sort((left, right) => left.score - right.score);
+
+    const best = scoredCandidates[0] || {
+        point: basePoint,
+        labelRect: getExpandedLabelRect(basePoint),
+        score: 0,
+    };
+
+    return {
+        point: best.point,
+        rect: best.labelRect,
+        score: best.score,
+    };
+};
+
+const getSearchBounds = (
+    sourceNode: Node,
+    targetNode: Node,
+    start: StrictGridPoint,
+    end: StrictGridPoint,
+    obstacles: StrictGridRect[],
+) => {
+    const sourceBounds = getNodeBounds(sourceNode);
+    const targetBounds = getNodeBounds(targetNode);
+    const rects = [sourceBounds, targetBounds, ...obstacles];
+    const minX = Math.min(start.x, end.x, ...rects.map((rect) => rect.left)) - ROUTE_SEARCH_MARGIN;
+    const maxX = Math.max(start.x, end.x, ...rects.map((rect) => rect.right)) + ROUTE_SEARCH_MARGIN;
+    const minY = Math.min(start.y, end.y, ...rects.map((rect) => rect.top)) - ROUTE_SEARCH_MARGIN;
+    const maxY = Math.max(start.y, end.y, ...rects.map((rect) => rect.bottom)) + ROUTE_SEARCH_MARGIN;
+
+    return {
+        left: Math.floor(minX / BOARD_GRID_SIZE) * BOARD_GRID_SIZE,
+        right: Math.ceil(maxX / BOARD_GRID_SIZE) * BOARD_GRID_SIZE,
+        top: Math.floor(minY / BOARD_GRID_SIZE) * BOARD_GRID_SIZE,
+        bottom: Math.ceil(maxY / BOARD_GRID_SIZE) * BOARD_GRID_SIZE,
+    };
+};
+
+const pointKey = (point: StrictGridPoint) => `${point.x}:${point.y}`;
+
+const parsePointKey = (key: string): StrictGridPoint => {
+    const [x, y] = key.split(':').map(Number);
+    return { x, y };
+};
+
+const getDirectionKey = (from: StrictGridPoint, to: StrictGridPoint) =>
+    from.x === to.x ? 'vertical' : 'horizontal';
+
+const buildMazeRoutePoints = (
+    sourceNode: Node,
+    targetNode: Node,
+    sourcePort: StrictGridPortSlot & StrictGridPoint,
+    targetPort: StrictGridPortSlot & StrictGridPoint,
+    obstacles: StrictGridRect[],
+) => {
+    const start = movePoint(sourcePort, sourcePort.side);
+    const end = movePoint(targetPort, targetPort.side);
+    const searchBounds = getSearchBounds(sourceNode, targetNode, start, end, obstacles);
+    const startKey = pointKey(start);
+    const endKey = pointKey(end);
+    const open: Array<{ key: string; point: StrictGridPoint; cost: number; priority: number; direction: string | null }> = [{
+        key: startKey,
+        point: start,
+        cost: 0,
+        priority: Math.abs(end.x - start.x) + Math.abs(end.y - start.y),
+        direction: null,
+    }];
+    const cameFrom = new Map<string, string>();
+    const costs = new Map<string, number>([[startKey, 0]]);
+    const directions = new Map<string, string | null>([[startKey, null]]);
+
+    let iterations = 0;
+    while (open.length > 0 && iterations < ROUTE_MAX_MAZE_ITERATIONS) {
+        iterations += 1;
+        open.sort((left, right) => left.priority - right.priority);
+        const current = open.shift();
+        if (!current) {
+            break;
+        }
+
+        if (current.key === endKey) {
+            const keys = [endKey];
+            let cursor = endKey;
+            while (cameFrom.has(cursor)) {
+                cursor = cameFrom.get(cursor) as string;
+                keys.push(cursor);
+            }
+
+            return compactRoutePoints(keys.reverse().map(parsePointKey));
+        }
+
+        const neighbors = [
+            { x: current.point.x + BOARD_GRID_SIZE, y: current.point.y },
+            { x: current.point.x - BOARD_GRID_SIZE, y: current.point.y },
+            { x: current.point.x, y: current.point.y + BOARD_GRID_SIZE },
+            { x: current.point.x, y: current.point.y - BOARD_GRID_SIZE },
+        ].filter((neighbor) =>
+            neighbor.x >= searchBounds.left &&
+            neighbor.x <= searchBounds.right &&
+            neighbor.y >= searchBounds.top &&
+            neighbor.y <= searchBounds.bottom
+        );
+
+        neighbors.forEach((neighbor) => {
+            const neighborKey = pointKey(neighbor);
+            const isEndpoint = neighborKey === endKey || neighborKey === startKey;
+            if (!isEndpoint && obstacles.some((obstacle) => pointInRect(neighbor, obstacle))) {
+                return;
+            }
+
+            if (obstacles.some((obstacle) => segmentIntersectsRect(current.point, neighbor, obstacle))) {
+                return;
+            }
+
+            const direction = getDirectionKey(current.point, neighbor);
+            const previousDirection = directions.get(current.key);
+            const turnPenalty = previousDirection && previousDirection !== direction ? ROUTE_TURN_PENALTY : 0;
+            const nextCost = current.cost + BOARD_GRID_SIZE + turnPenalty;
+            if ((costs.get(neighborKey) ?? Number.POSITIVE_INFINITY) <= nextCost) {
+                return;
+            }
+
+            cameFrom.set(neighborKey, current.key);
+            costs.set(neighborKey, nextCost);
+            directions.set(neighborKey, direction);
+            open.push({
+                key: neighborKey,
+                point: neighbor,
+                cost: nextCost,
+                priority: nextCost + Math.abs(end.x - neighbor.x) + Math.abs(end.y - neighbor.y),
+                direction,
+            });
+        });
+    }
+
+    return null;
 };
 
 const buildFallbackFacingRoute = (
@@ -434,6 +860,7 @@ const buildFallbackFacingRoute = (
         sourceSide: sourcePort.side,
         targetSide: targetPort.side,
         points: compactRoutePoints(points),
+        strategy: 'direct',
     };
 };
 
@@ -538,6 +965,7 @@ export const buildStrictGridRoute = (
         sourceSide: resolvedPair.source.side,
         targetSide: resolvedPair.target.side,
         points: buildOrthogonalPoints(resolvedPair.source, resolvedPair.target),
+        strategy: 'direct' as const,
     };
 
     if (resolvedRoute.points.length < 2) {
@@ -581,12 +1009,183 @@ const getPortPairScore = (
     );
 };
 
+const allPortSides: PortSide[] = ['top', 'right', 'bottom', 'left'];
+
+type StrictGridRouteCandidate = {
+    source: StrictGridPortSlot & StrictGridPoint;
+    target: StrictGridPortSlot & StrictGridPoint;
+    route: StrictGridRoute;
+    score: number;
+};
+
+const getCandidateSidePairs = (preferredPairs: Array<[PortSide, PortSide]>) => {
+    const pairs: Array<[PortSide, PortSide]> = [...preferredPairs];
+
+    allPortSides.forEach((sourceSide) => {
+        allPortSides.forEach((targetSide) => {
+            if (!pairs.some(([existingSourceSide, existingTargetSide]) =>
+                existingSourceSide === sourceSide && existingTargetSide === targetSide
+            )) {
+                pairs.push([sourceSide, targetSide]);
+            }
+        });
+    });
+
+    return pairs;
+};
+
+const hasManualStrictGridPlacement = (edge: Edge) => {
+    const data = edge.data as Record<string, unknown> | undefined;
+    return (
+        typeof data?.labelX === 'number' &&
+        typeof data?.labelY === 'number'
+    ) || (
+        typeof data?.routeAnchorX === 'number' &&
+        typeof data?.routeAnchorY === 'number'
+    );
+};
+
+const applyRouteLabel = (
+    route: StrictGridRoute,
+    sourcePort: StrictGridPortSlot & StrictGridPoint,
+    targetPort: StrictGridPortSlot & StrictGridPoint,
+    obstacles: StrictGridRect[],
+    reservedLabelRects: StrictGridRect[],
+) => {
+    const path = getRoutePath(sourcePort, targetPort, route.points);
+    const label = pickRouteLabel(path, obstacles, reservedLabelRects);
+
+    return {
+        ...route,
+        labelPoint: label.point,
+        labelRect: label.rect,
+    };
+};
+
+const buildScoredRouteCandidate = (
+    sourceNode: Node,
+    targetNode: Node,
+    sourcePort: StrictGridPortSlot & StrictGridPoint,
+    targetPort: StrictGridPortSlot & StrictGridPoint,
+    baseScore: number,
+    obstacles: StrictGridRect[],
+    reservedLabelRects: StrictGridRect[],
+    allowMaze = true,
+): StrictGridRouteCandidate => {
+    const directPoints = buildOrthogonalPoints(sourcePort, targetPort);
+    const directPath = getRoutePath(sourcePort, targetPort, directPoints);
+    const directObstacleHits = getPathObstacleHits(directPath, obstacles);
+    let route: StrictGridRoute = {
+        sourcePortId: sourcePort.id,
+        targetPortId: targetPort.id,
+        sourceSide: sourcePort.side,
+        targetSide: targetPort.side,
+        points: directPoints,
+        strategy: 'direct',
+    };
+    let path = directPath;
+    let obstacleHits = directObstacleHits;
+
+    if (allowMaze && directObstacleHits > 0) {
+        const mazePoints = buildMazeRoutePoints(sourceNode, targetNode, sourcePort, targetPort, obstacles);
+        if (mazePoints) {
+            const mazePath = getRoutePath(sourcePort, targetPort, mazePoints);
+            const mazeObstacleHits = getPathObstacleHits(mazePath, obstacles);
+            if (mazeObstacleHits <= directObstacleHits) {
+                route = {
+                    ...route,
+                    points: mazePoints,
+                    strategy: 'maze',
+                };
+                path = mazePath;
+                obstacleHits = mazeObstacleHits;
+            }
+        }
+    }
+
+    const labelObstacles = [getPaddedNodeBounds(sourceNode), getPaddedNodeBounds(targetNode), ...obstacles];
+    let label = pickRouteLabel(path, labelObstacles, reservedLabelRects);
+    let routeScore =
+        baseScore +
+        (obstacleHits * ROUTE_OBSTACLE_PENALTY) +
+        getPathLength(path) +
+        (getPathBendCount(path) * ROUTE_TURN_PENALTY) +
+        label.score;
+
+    if (route.strategy === 'direct' && label.score >= ROUTE_LABEL_COLLISION_PENALTY) {
+        [BOARD_GRID_SIZE * 3, BOARD_GRID_SIZE * 5].forEach((stubDistance) => {
+            const alternatePoints = buildOrthogonalPoints(sourcePort, targetPort, stubDistance);
+            const alternatePath = getRoutePath(sourcePort, targetPort, alternatePoints);
+            const alternateObstacleHits = getPathObstacleHits(alternatePath, obstacles);
+            const alternateLabel = pickRouteLabel(alternatePath, labelObstacles, reservedLabelRects);
+            const alternateScore =
+                baseScore +
+                (alternateObstacleHits * ROUTE_OBSTACLE_PENALTY) +
+                getPathLength(alternatePath) +
+                (getPathBendCount(alternatePath) * ROUTE_TURN_PENALTY) +
+                alternateLabel.score;
+
+            if (alternateScore < routeScore) {
+                route = {
+                    ...route,
+                    points: alternatePoints,
+                };
+                path = alternatePath;
+                obstacleHits = alternateObstacleHits;
+                label = alternateLabel;
+                routeScore = alternateScore;
+            }
+        });
+    }
+
+    route = {
+        ...route,
+        labelPoint: label.point,
+        labelRect: label.rect,
+    };
+
+    return {
+        source: sourcePort,
+        target: targetPort,
+        route,
+        score: routeScore,
+    };
+};
+
+const selectCandidatePorts = (
+    ports: Array<StrictGridPortSlot & StrictGridPoint>,
+    node: Node,
+    targetPoint: StrictGridPoint,
+    occupancy: Set<string>,
+    lockedPortId?: string | null,
+) => {
+    const selected = ports
+        .map((port) => ({
+            port,
+            score:
+                getAlignmentPenalty(port, node, targetPoint) +
+                getCenterSlotPenalty(port.slotIndex, ports.length) +
+                (occupancy.has(port.id) ? ROUTE_REUSED_LANE_PENALTY : 0),
+        }))
+        .sort((left, right) => left.score - right.score)
+        .slice(0, 5)
+        .map(({ port }) => port);
+
+    const lockedPort = lockedPortId ? ports.find((port) => port.id === lockedPortId) : null;
+    if (lockedPort && !selected.some((port) => port.id === lockedPort.id)) {
+        selected.push(lockedPort);
+    }
+
+    return selected;
+};
+
 export const assignStrictGridPorts = (
     edges: Edge[],
     nodes: Node[],
 ) => {
     const nodeMap = new Map(nodes.map((node) => [node.id, node]));
     const occupancy = new Map<string, Set<string>>();
+    const reservedLabelRects: StrictGridRect[] = [];
     const assignments = new Map<string, StrictGridPortAssignment>();
 
     const sortedEdges = [...edges].sort((left, right) => {
@@ -612,21 +1211,34 @@ export const assignStrictGridPorts = (
 
         const sourceAbsoluteSlots = getAbsolutePortSlots(sourceNode);
         const targetAbsoluteSlots = getAbsolutePortSlots(targetNode);
-        const allSides: PortSide[] = ['top', 'right', 'bottom', 'left'];
-        const hasLockedSourcePort = Boolean(edge.sourceHandle) && allSides.some((side) =>
+        const obstacles = nodes
+            .filter((node) => node.id !== sourceNode.id && node.id !== targetNode.id)
+            .map((node) => getPaddedNodeBounds(node));
+        const hasLockedSourcePort = Boolean(edge.sourceHandle) && allPortSides.some((side) =>
             sourceAbsoluteSlots[side].some((port) => port.id === edge.sourceHandle),
         );
-        const hasLockedTargetPort = Boolean(edge.targetHandle) && allSides.some((side) =>
+        const hasLockedTargetPort = Boolean(edge.targetHandle) && allPortSides.some((side) =>
             targetAbsoluteSlots[side].some((port) => port.id === edge.targetHandle),
         );
+        const hasLockedPorts = hasLockedSourcePort && hasLockedTargetPort;
+        const hasManualPlacement = hasManualStrictGridPlacement(edge);
 
-        if (hasLockedSourcePort && hasLockedTargetPort) {
+        if (hasLockedPorts && hasManualPlacement) {
+            const sourcePort = getPortById(sourceNode, edge.sourceHandle);
+            const targetPort = getPortById(targetNode, edge.targetHandle);
             const lockedRoute = buildStrictGridRoute(sourceNode, targetNode, edge.sourceHandle, edge.targetHandle);
-            assignments.set(edge.id, { route: lockedRoute });
+            const labelObstacles = [getPaddedNodeBounds(sourceNode), getPaddedNodeBounds(targetNode), ...obstacles];
+            const labelledRoute = sourcePort && targetPort
+                ? applyRouteLabel(lockedRoute, sourcePort, targetPort, labelObstacles, reservedLabelRects)
+                : lockedRoute;
+            assignments.set(edge.id, { route: labelledRoute });
+            if (labelledRoute.labelRect) {
+                reservedLabelRects.push(labelledRoute.labelRect);
+            }
             if (!occupancy.has(edge.source)) occupancy.set(edge.source, new Set<string>());
             if (!occupancy.has(edge.target)) occupancy.set(edge.target, new Set<string>());
-            occupancy.get(edge.source)?.add(lockedRoute.sourcePortId);
-            occupancy.get(edge.target)?.add(lockedRoute.targetPortId);
+            occupancy.get(edge.source)?.add(labelledRoute.sourcePortId);
+            occupancy.get(edge.target)?.add(labelledRoute.targetPortId);
             return;
         }
 
@@ -638,13 +1250,65 @@ export const assignStrictGridPorts = (
         const sourceOccupancy = occupancy.get(edge.source) || new Set<string>();
         const targetOccupancy = occupancy.get(edge.target) || new Set<string>();
 
-        let best: StrictGridPortPair | null = null;
+        let best: StrictGridRouteCandidate | null = null;
+        const lockedRoute = hasLockedPorts
+            ? buildStrictGridRoute(sourceNode, targetNode, edge.sourceHandle, edge.targetHandle)
+            : null;
+        const lockedSourcePort = lockedRoute ? getPortById(sourceNode, lockedRoute.sourcePortId) : null;
+        const lockedTargetPort = lockedRoute ? getPortById(targetNode, lockedRoute.targetPortId) : null;
+        const strongAxisPreference = getStrongAxisPreference(sourceNode, targetNode);
+        const lockedRouteIsBad = Boolean(
+            lockedRoute &&
+            lockedSourcePort &&
+            lockedTargetPort &&
+            (
+                getPathObstacleHits(getRoutePath(lockedSourcePort, lockedTargetPort, lockedRoute.points), obstacles) > 0 ||
+                (strongAxisPreference !== null && !routeUsesAxis(lockedRoute, strongAxisPreference))
+            )
+        );
 
-        const candidatePairs = preferredPairs.length > 0 ? preferredPairs : [['right', 'left'] as [PortSide, PortSide]];
+        if (lockedRoute && lockedSourcePort && lockedTargetPort && !lockedRouteIsBad) {
+            const labelObstacles = [getPaddedNodeBounds(sourceNode), getPaddedNodeBounds(targetNode), ...obstacles];
+            const stableRoute = applyRouteLabel(lockedRoute, lockedSourcePort, lockedTargetPort, labelObstacles, reservedLabelRects);
+            assignments.set(edge.id, { route: stableRoute });
+            if (stableRoute.labelRect) {
+                reservedLabelRects.push(stableRoute.labelRect);
+            }
+            if (!occupancy.has(edge.source)) occupancy.set(edge.source, new Set<string>());
+            if (!occupancy.has(edge.target)) occupancy.set(edge.target, new Set<string>());
+            occupancy.get(edge.source)?.add(stableRoute.sourcePortId);
+            occupancy.get(edge.target)?.add(stableRoute.targetPortId);
+            return;
+        }
+
+        const candidatePairs = getCandidateSidePairs(preferredPairs);
         candidatePairs.forEach(([sourceSide, targetSide], pairIndex) => {
-            sourceAbsoluteSlots[sourceSide].forEach((sourcePort) => {
-                targetAbsoluteSlots[targetSide].forEach((targetPort) => {
-                    const score = getPortPairScore(
+            const sourcePorts = selectCandidatePorts(
+                sourceAbsoluteSlots[sourceSide],
+                sourceNode,
+                targetCenter,
+                sourceOccupancy,
+                edge.sourceHandle,
+            );
+            const targetPorts = selectCandidatePorts(
+                targetAbsoluteSlots[targetSide],
+                targetNode,
+                sourceCenter,
+                targetOccupancy,
+                edge.targetHandle,
+            );
+
+            sourcePorts.forEach((sourcePort) => {
+                targetPorts.forEach((targetPort) => {
+                    const lockedHandlePenalty = lockedRouteIsBad &&
+                        sourcePort.id === edge.sourceHandle &&
+                        targetPort.id === edge.targetHandle
+                        ? ROUTE_STALE_HANDLE_PENALTY
+                        : 0;
+                    const sameSideCrowdingPenalty =
+                        (sourceOccupancy.has(sourcePort.id) ? ROUTE_REUSED_LANE_PENALTY : 0) +
+                        (targetOccupancy.has(targetPort.id) ? ROUTE_REUSED_LANE_PENALTY : 0);
+                    const baseScore = getPortPairScore(
                         sourcePort,
                         targetPort,
                         sourceNode,
@@ -656,30 +1320,37 @@ export const assignStrictGridPorts = (
                         targetAbsoluteSlots,
                         sourceOccupancy,
                         targetOccupancy,
-                    ) + pairIndex * BOARD_GRID_SIZE * 8;
+                    ) + pairIndex * BOARD_GRID_SIZE * 8 + lockedHandlePenalty + sameSideCrowdingPenalty;
+                    const candidate = buildScoredRouteCandidate(
+                        sourceNode,
+                        targetNode,
+                        sourcePort,
+                        targetPort,
+                        baseScore,
+                        obstacles,
+                        reservedLabelRects,
+                        pairIndex < 2,
+                    );
 
-                    if (!best || score < best.score) {
-                        best = { source: sourcePort, target: targetPort, score };
+                    if (!best || candidate.score < best.score) {
+                        best = candidate;
                     }
                 });
             });
         });
 
+        const resolvedBest = best as StrictGridRouteCandidate | null;
         let route: StrictGridRoute;
-        if (best) {
-            const resolvedBest = best as StrictGridPortPair;
-            route = {
-                sourcePortId: resolvedBest.source.id,
-                targetPortId: resolvedBest.target.id,
-                sourceSide: resolvedBest.source.side,
-                targetSide: resolvedBest.target.side,
-                points: buildOrthogonalPoints(resolvedBest.source, resolvedBest.target),
-            };
+        if (resolvedBest) {
+            route = resolvedBest.route;
         } else {
             route = buildStrictGridRoute(sourceNode, targetNode);
         }
 
         assignments.set(edge.id, { route });
+        if (route.labelRect) {
+            reservedLabelRects.push(route.labelRect);
+        }
         if (!occupancy.has(edge.source)) occupancy.set(edge.source, new Set<string>());
         if (!occupancy.has(edge.target)) occupancy.set(edge.target, new Set<string>());
         occupancy.get(edge.source)?.add(route.sourcePortId);
