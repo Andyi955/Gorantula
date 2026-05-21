@@ -441,6 +441,61 @@ describe('DetectiveBoard relationship legend', () => {
     expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
   })
 
+  it('lets the append-search field use spare toolbar width without collapsing controls', () => {
+    renderBoard()
+
+    expect(screen.getByTestId('board-action-bar')).toHaveClass('w-full', 'max-w-full')
+    expect(screen.getByTestId('board-action-bar')).toHaveClass('flex-wrap')
+    expect(screen.getByTestId('board-action-bar').className).not.toContain('overflow-x-auto')
+    expect(screen.getByTestId('board-search-cluster')).toHaveClass('min-w-[18rem]', 'max-w-[30rem]')
+    expect(screen.getByTestId('board-search-cluster').className).toContain('flex-[1_1_20rem]')
+    expect(screen.getByTestId('append-search-shell')).toHaveClass('min-w-0', 'w-full')
+    expect(screen.getByTestId('append-search-shell').className).not.toContain('flex-[1_1_22rem]')
+    expect(screen.getByTestId('append-search-shell').className).not.toContain('w-[clamp(24rem,34vw,42rem)]')
+    expect(screen.getByTestId('append-search-shell').className).not.toContain('md:max-w-[27rem]')
+  })
+
+  it('keeps board controls inside the board viewport with an internal scroll area', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+
+    const boardRoot = document.getElementById('detective-board-container')
+    const actionBar = screen.getByTestId('board-action-bar')
+    const boardControlsButton = screen.getByRole('button', { name: /board controls/i })
+    expect(boardRoot).not.toBeNull()
+
+    vi.spyOn(boardRoot!, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      width: 1280,
+      height: 720,
+      right: 1280,
+      bottom: 720,
+      toJSON: () => ({}),
+    })
+    vi.spyOn(actionBar, 'getBoundingClientRect').mockReturnValue({
+      x: 288,
+      top: 20,
+      y: 20,
+      left: 288,
+      width: 968,
+      height: 56,
+      right: 1256,
+      bottom: 76,
+      toJSON: () => ({}),
+    })
+
+    await user.click(boardControlsButton)
+
+    const overlay = screen.getByTestId('board-controls-overlay')
+    expect(overlay).toHaveStyle({ top: '88px', right: '0px', width: '416px', maxHeight: '616px' })
+    expect(screen.getByTestId('board-toolbar-shell')).toHaveClass('z-[70]')
+    expect(overlay).toHaveClass('z-[80]', 'flex', 'overflow-hidden')
+    expect(screen.getByTestId('board-controls-scroll')).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto')
+  })
+
   it('renders a clean custom navigator without React Flow minimap artifacts', async () => {
     seedExportableBoard()
     renderBoard()

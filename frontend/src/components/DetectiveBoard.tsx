@@ -1026,10 +1026,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         width: EXPORT_MENU_WIDTH,
     });
     const [showBoardControls, setShowBoardControls] = useState(false);
-    const [boardControlsPosition, setBoardControlsPosition] = useState<{ top: number; left: number; width: number }>({
+    const [boardControlsPosition, setBoardControlsPosition] = useState<{ top: number; width: number; maxHeight: number }>({
         top: 0,
-        left: 0,
         width: BOARD_CONTROLS_PANEL_MAX_WIDTH,
+        maxHeight: 520,
     });
     const [showRelationshipLegend, setShowRelationshipLegend] = useState<boolean>(() => {
         if (typeof window === 'undefined') {
@@ -1064,6 +1064,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const boardContainerRef = useRef<HTMLDivElement>(null);
     const exportButtonRef = useRef<HTMLButtonElement>(null);
     const exportMenuPanelRef = useRef<HTMLDivElement>(null);
+    const boardToolbarRef = useRef<HTMLDivElement>(null);
+    const boardActionBarRef = useRef<HTMLDivElement>(null);
     const boardControlsButtonRef = useRef<HTMLButtonElement>(null);
     const boardControlsPanelRef = useRef<HTMLDivElement>(null);
     const flowWrapperRef = useRef<HTMLDivElement>(null);
@@ -2501,23 +2503,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const updateBoardControlsPosition = useCallback(() => {
         const container = boardContainerRef.current;
-        const button = boardControlsButtonRef.current;
-        if (!container || !button) {
+        const actionBar = boardActionBarRef.current;
+        const positioningRoot = boardToolbarRef.current;
+        if (!container || !actionBar || !positioningRoot) {
             return;
         }
 
         const containerRect = container.getBoundingClientRect();
-        const buttonRect = button.getBoundingClientRect();
+        const actionBarRect = actionBar.getBoundingClientRect();
+        const positioningRootRect = positioningRoot.getBoundingClientRect();
         const availableWidth = Math.max(280, Math.min(BOARD_CONTROLS_PANEL_MAX_WIDTH, containerRect.width - (BOARD_CONTROLS_PANEL_MARGIN * 2)));
-        const unclampedLeft = buttonRect.right - containerRect.left - availableWidth;
-        const maxLeft = Math.max(BOARD_CONTROLS_PANEL_MARGIN, containerRect.width - availableWidth - BOARD_CONTROLS_PANEL_MARGIN);
-        const nextLeft = Math.min(Math.max(unclampedLeft - 85, BOARD_CONTROLS_PANEL_MARGIN), maxLeft);
-        const nextTop = buttonRect.bottom - containerRect.top + 12;
+        const nextTop = actionBarRect.bottom - positioningRootRect.top + 12;
+        const availableHeight = Math.max(0, containerRect.bottom - actionBarRect.bottom - 12 - BOARD_CONTROLS_PANEL_MARGIN);
 
         setBoardControlsPosition({
             top: nextTop,
-            left: nextLeft,
             width: availableWidth,
+            maxHeight: availableHeight,
         });
     }, []);
 
@@ -4341,7 +4343,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     return (
         <div ref={boardContainerRef} className={boardRootClassName} id="detective-board-container">
             <div
-                className="absolute top-4 z-20 flex flex-col items-stretch gap-3 px-0"
+                ref={boardToolbarRef}
+                data-testid="board-toolbar-shell"
+                className="absolute top-4 z-[70] flex flex-col items-stretch gap-3 px-0"
                 style={toolbarPosition}
             >
                 <div className="flex w-full justify-center">
@@ -4353,38 +4357,42 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 </div>
 
                 <div className="flex w-full justify-center">
-                    <div data-testid="board-action-bar" className="forensic-action-bar forensic-toolbar-shell flex w-full max-w-full items-center gap-3 overflow-x-auto rounded-[1.45rem] p-2.5 backdrop-blur-xl">
-                        <div className="forensic-toolbar-cluster flex min-w-0 flex-1 items-center gap-2 md:flex-none">
-                            <div className="forensic-search-shell flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2 md:min-w-[19rem] md:max-w-[27rem] md:flex-none">
-                            <Search size={15} className="text-[var(--forensic-accent-muted)]" />
-                            <input
-                                type="text"
-                                value={appendSearchPrompt}
-                                onChange={(event) => setAppendSearchPrompt(event.target.value)}
-                                onKeyDown={(event) => {
-                                    if (event.key === 'Enter') {
-                                        appendSearchToInvestigation();
-                                    }
-                                }}
-                                disabled={!investigationId || isBoardBusy}
-                                placeholder={investigationId ? 'Search more in this investigation...' : 'Select an investigation to append search'}
-                                className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[var(--forensic-accent)] outline-none placeholder:text-[var(--forensic-text-faint)] disabled:cursor-not-allowed disabled:text-[var(--forensic-text-faint)]"
-                            />
-                            <button
-                                type="button"
-                                onClick={appendSearchToInvestigation}
-                                disabled={!canAppendSearch}
-                                className={`shrink-0 rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-all ${canAppendSearch
-                                    ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)] hover:border-[rgba(129,227,255,0.55)] hover:bg-[rgba(129,227,255,0.18)] hover:text-white'
-                                    : 'cursor-not-allowed border-[rgba(129,227,255,0.12)] bg-[rgba(129,227,255,0.05)] text-[rgba(129,227,255,0.38)]'
-                                    }`}
-                            >
-                                Search More
-                            </button>
-                        </div>
+                    <div
+                        ref={boardActionBarRef}
+                        data-testid="board-action-bar"
+                        className="forensic-action-bar forensic-toolbar-shell flex w-full max-w-full flex-wrap items-center gap-3 overflow-visible rounded-[1.45rem] p-2.5 backdrop-blur-xl"
+                    >
+                        <div data-testid="board-search-cluster" className="forensic-toolbar-cluster flex min-w-[18rem] max-w-[30rem] flex-[1_1_20rem] items-center gap-2">
+                            <div data-testid="append-search-shell" className="forensic-search-shell flex min-h-11 min-w-0 w-full items-center gap-2 rounded-xl px-3 py-2">
+                                <Search size={15} className="text-[var(--forensic-accent-muted)]" />
+                                <input
+                                    type="text"
+                                    value={appendSearchPrompt}
+                                    onChange={(event) => setAppendSearchPrompt(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                            appendSearchToInvestigation();
+                                        }
+                                    }}
+                                    disabled={!investigationId || isBoardBusy}
+                                    placeholder={investigationId ? 'Search more in this investigation...' : 'Select an investigation to append search'}
+                                    className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[var(--forensic-accent)] outline-none placeholder:text-[var(--forensic-text-faint)] disabled:cursor-not-allowed disabled:text-[var(--forensic-text-faint)]"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={appendSearchToInvestigation}
+                                    disabled={!canAppendSearch}
+                                    className={`shrink-0 rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-all ${canAppendSearch
+                                        ? 'border-[rgba(129,227,255,0.4)] bg-[rgba(129,227,255,0.08)] text-[var(--forensic-accent)] hover:border-[rgba(129,227,255,0.55)] hover:bg-[rgba(129,227,255,0.18)] hover:text-white'
+                                        : 'cursor-not-allowed border-[rgba(129,227,255,0.12)] bg-[rgba(129,227,255,0.05)] text-[rgba(129,227,255,0.38)]'
+                                        }`}
+                                >
+                                    Search More
+                                </button>
+                            </div>
                         </div>
 
-                        <div className="forensic-toolbar-cluster flex items-center gap-2">
+                        <div className="forensic-toolbar-cluster flex shrink-0 items-center gap-2">
                             <button
                                 onClick={addManualNode}
                                 className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-emerald-100 transition-all hover:border-emerald-300/42 hover:bg-emerald-300/20 hover:text-white"
@@ -4414,14 +4422,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         {isMergedChild && returnVaultId && onReturnToParent && (
                             <button
                                 onClick={onReturnToParent}
-                                className="flex min-h-11 items-center gap-2 rounded-xl border border-fuchsia-300/32 bg-fuchsia-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-fuchsia-100 transition-all hover:border-fuchsia-200/48 hover:bg-fuchsia-300/20 hover:text-white"
+                                className="flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-fuchsia-300/32 bg-fuchsia-300/12 px-4 py-2 text-[11px] font-black tracking-[0.18em] text-fuchsia-100 transition-all hover:border-fuchsia-200/48 hover:bg-fuchsia-300/20 hover:text-white"
                             >
                                 <ArrowLeft size={15} />
                                 Return To Parent
                             </button>
                         )}
 
-                        <div className="forensic-toolbar-cluster flex items-center gap-2">
+                        <div className="forensic-toolbar-cluster flex shrink-0 items-center gap-2">
                             <div className="relative">
                                 <button
                                     ref={exportButtonRef}
@@ -4460,11 +4468,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     <div
                         ref={boardControlsPanelRef}
                         data-testid="board-controls-overlay"
-                        className="forensic-board-dialog absolute z-[60] rounded-[1.5rem] p-4 backdrop-blur-xl"
+                        className="forensic-board-dialog absolute z-[80] flex flex-col overflow-hidden rounded-[1.5rem] p-4 backdrop-blur-xl"
                         style={{
                             top: `${boardControlsPosition.top}px`,
-                            left: `${boardControlsPosition.left}px`,
+                            right: 0,
                             width: `${boardControlsPosition.width}px`,
+                            maxHeight: `${boardControlsPosition.maxHeight}px`,
                             maxWidth: `calc(100vw - ${BOARD_CONTROLS_PANEL_MARGIN * 2}px)`,
                         }}
                     >
@@ -4483,7 +4492,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             </button>
                         </div>
 
-                        <div className="custom-scrollbar max-h-[min(34rem,65vh)] overflow-y-auto pr-1">
+                        <div data-testid="board-controls-scroll" className="custom-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
                             <div className="space-y-4">
                                 <section className="forensic-board-section rounded-2xl p-3">
                                     <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--forensic-text-faint)]">
