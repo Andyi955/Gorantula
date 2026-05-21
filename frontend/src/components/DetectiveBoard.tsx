@@ -496,7 +496,7 @@ const BOARD_DEFAULT_VIEWPORT = { x: 0, y: 96, zoom: 1 };
 const BOARD_MIN_ZOOM = 0.5;
 const BOARD_FIT_VIEW_OPTIONS = { padding: 0.16, minZoom: 0.72, maxZoom: 1 };
 const BOARD_MINIMAP_GLIDE_DURATION_MS = 620;
-const BOARD_MINIMAP_DRAG_DURATION_MS = 120;
+const BOARD_MINIMAP_DRAG_DURATION_MS = 0;
 const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
 const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
@@ -505,11 +505,11 @@ const BOARD_NAVIGATOR_BOUNDS_PADDING = BOARD_GRID_SIZE * 3;
 const BOARD_NAVIGATOR_MIN_SPAN = BOARD_GRID_SIZE * 10;
 const MINIMAP_PANEL_LAYOUT = {
     compact: {
-        panel: { width: 244, height: 178 },
+        panel: { width: 244, height: 220 },
         map: { width: 212, height: 116 },
     },
     expanded: {
-        panel: { width: 320, height: 238 },
+        panel: { width: 320, height: 280 },
         map: { width: 288, height: 176 },
     },
 } as const;
@@ -4767,9 +4767,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 type="button"
                                 onClick={() => setIsMiniMapExpanded((current) => !current)}
                                 aria-label={isMiniMapExpanded ? 'Shrink minimap' : 'Enlarge minimap'}
-                                className="forensic-minimap-frame pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
+                                className="forensic-minimap-frame pointer-events-auto inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-visible rounded-md text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)]"
                             >
-                                {isMiniMapExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                                {isMiniMapExpanded ? <Minimize2 size={15} strokeWidth={2.2} /> : <Maximize2 size={15} strokeWidth={2.2} />}
                             </button>
                         </div>
                     </div>

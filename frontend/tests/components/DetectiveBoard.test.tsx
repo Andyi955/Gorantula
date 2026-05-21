@@ -497,15 +497,17 @@ describe('DetectiveBoard relationship legend', () => {
 
     const minimap = screen.getByTestId('board-navigator')
     const minimapPanel = screen.getByTestId('minimap-panel')
-    expect(minimapPanel).toHaveStyle({ width: '244px', height: '178px', left: '24px', top: '16px' })
+    expect(minimapPanel).toHaveStyle({ width: '244px', height: '220px', left: '24px', top: '16px' })
     expect(minimap).toHaveStyle({ width: '212px', height: '116px' })
+    expect(screen.getByRole('button', { name: /enlarge minimap/i })).toHaveClass('h-8', 'w-8', 'shrink-0', 'overflow-visible')
 
     await user.click(screen.getByRole('button', { name: /enlarge minimap/i }))
-    expect(minimapPanel).toHaveStyle({ width: '320px', height: '238px', left: '24px', top: '16px' })
+    expect(minimapPanel).toHaveStyle({ width: '320px', height: '280px', left: '24px', top: '16px' })
     expect(minimap).toHaveStyle({ width: '288px', height: '176px' })
+    expect(screen.getByRole('button', { name: /shrink minimap/i })).toHaveClass('h-8', 'w-8', 'shrink-0', 'overflow-visible')
 
     await user.click(screen.getByRole('button', { name: /shrink minimap/i }))
-    expect(minimapPanel).toHaveStyle({ width: '244px', height: '178px', left: '24px', top: '16px' })
+    expect(minimapPanel).toHaveStyle({ width: '244px', height: '220px', left: '24px', top: '16px' })
     expect(minimap).toHaveStyle({ width: '212px', height: '116px' })
   })
 
@@ -533,7 +535,7 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
-  it('pans from custom navigator drag without changing board zoom', () => {
+  it('pans from custom navigator drag without animated viewport transitions', () => {
     renderBoard()
 
     const navigator = screen.getByTestId('board-navigator')
@@ -555,7 +557,7 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(setCenterMock).toHaveBeenLastCalledWith(640, 360, {
       zoom: 0.82,
-      duration: 120,
+      duration: 0,
     })
   })
 
