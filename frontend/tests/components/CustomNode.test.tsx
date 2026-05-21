@@ -85,6 +85,42 @@ describe('CustomNode', () => {
     expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-expanded')
   })
 
+  it('scrolls expanded evidence detail when the wheel is used over the selected card shell', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <CustomNode
+        id="node-expanded-wheel"
+        type="custom"
+        selected
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-expanded-wheel',
+          title: 'Expanded Wheel Node',
+          summary: 'Short summary',
+          fullText: 'Long detail '.repeat(120),
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTitle('Expand'))
+
+    const shell = screen.getByTestId('custom-node-shell')
+    const detail = screen.getByTestId('node-detail-motion')
+    Object.defineProperty(detail, 'scrollHeight', { configurable: true, value: 1200 })
+    Object.defineProperty(detail, 'clientHeight', { configurable: true, value: 220 })
+    detail.scrollTop = 0
+
+    fireEvent.wheel(shell, { deltaY: 180 })
+
+    expect(detail.scrollTop).toBe(180)
+  })
+
   it('renders detail content without motion classes when reduced motion is preferred', () => {
     vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
       matches: query.includes('prefers-reduced-motion'),
