@@ -653,6 +653,28 @@ describe('App', () => {
     expect(crawlMessage.scrapeImages).toBe(true)
   })
 
+  it('keeps the spider crawl console focused on actionable controls', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    const controlStack = within(crawlConsole).getByTestId('spider-crawl-control-stack')
+
+    expect(within(controlStack).getByText(/scrape images/i)).toBeInTheDocument()
+    expect(within(controlStack).getByRole('switch', { name: /scrape images/i })).toBeInTheDocument()
+    expect(within(controlStack).getByText(/crawl console/i)).toBeInTheDocument()
+    expect(within(controlStack).getByRole('button', { name: /web/i })).toBeInTheDocument()
+    expect(within(controlStack).getByRole('button', { name: /local/i })).toBeInTheDocument()
+    expect(within(crawlConsole).getByRole('button', { name: /execute/i })).toBeInTheDocument()
+
+    expect(within(crawlConsole).queryByText(/crawl parameters/i)).not.toBeInTheDocument()
+    expect(within(crawlConsole).queryByText(/user agent/i)).not.toBeInTheDocument()
+    expect(within(crawlConsole).queryByText(/proxy pool/i)).not.toBeInTheDocument()
+    expect(within(crawlConsole).queryByText(/depth limit/i)).not.toBeInTheDocument()
+    expect(within(crawlConsole).queryByText(/rate limit/i)).not.toBeInTheDocument()
+    expect(within(crawlConsole).queryByText(/mode: web crawl/i)).not.toBeInTheDocument()
+  })
+
   it('shows global pipeline progress and keeps it visible across tabs', async () => {
     const user = userEvent.setup()
 

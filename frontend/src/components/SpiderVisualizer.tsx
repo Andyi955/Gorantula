@@ -608,7 +608,6 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     const localFileCount = localIngestionFiles.length;
     const localChunkCount = effectiveLocalProgress?.counters?.documentChunks || 0;
     const confidenceScore = Math.round((displayMetrics?.confidenceScore ?? 0) * 100);
-    const uptime = sharedSocket ? '02:34:18' : '00:00:00';
     const throughput = activeLegCount > 0
         ? (effectiveOperationMode === 'local' ? `${Math.max(2, activeLegCount * 3)} docs/min` : `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps`)
         : 'Standby';
@@ -647,7 +646,6 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                         </div>
                     </div>
                     <div className="forensic-spider-top-metrics">
-                        <MetricReadout label="Uptime" value={uptime} />
                         <MetricReadout label="Legs Active" value={`${activeLegCount} / 8`} />
                         <MetricReadout label="Evidence" value={evidenceCount} />
                         <MetricReadout label="Tokens" value={tokenReadout?.value || '0'} title={tokenReadout?.title} />

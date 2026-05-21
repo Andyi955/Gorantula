@@ -2600,39 +2600,11 @@ function App() {
               {/* Input Footer */}
               <div data-testid="spider-crawl-console" className="forensic-spider-crawl-console">
                 <div className="forensic-spider-console-grid">
-                  <section className="forensic-spider-console-panel forensic-spider-console-panel-mode">
-                    <div className="forensic-spider-console-label">Crawl Console</div>
-                    <div className="forensic-spider-mode-toggle" role="group" aria-label="Crawl mode">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCrawlMode('web')
-                          setQaLocalIngestionDemoRequest(null)
-                        }}
-                        className={crawlMode === 'web' ? 'forensic-spider-mode-active' : ''}
-                      >
-                        WEB
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCrawlMode('local')
-                          setQaLocalIngestionDemoRequest(null)
-                        }}
-                        className={crawlMode === 'local' ? 'forensic-spider-mode-active' : ''}
-                      >
-                        LOCAL
-                      </button>
-                    </div>
-                    <div className="forensic-spider-console-meta">
-                      <span>Mode: {crawlMode === 'web' ? 'Web Crawl' : 'Local Vault'}</span>
-                      <span>Depth Limit <strong>3</strong></span>
-                      <span>Rate Limit <strong>150</strong></span>
-                    </div>
-                  </section>
-
-                  <section className="forensic-spider-console-panel forensic-spider-console-panel-options">
-                    <div className="flex items-center justify-between gap-3">
+                  <section
+                    data-testid="spider-crawl-control-stack"
+                    className="forensic-spider-console-panel forensic-spider-console-panel-controls"
+                  >
+                    <div className="forensic-spider-console-control-row">
                       <div className="forensic-spider-console-label">Scrape Images</div>
                       {crawlMode === 'web' ? (
                         <button
@@ -2649,26 +2621,31 @@ function App() {
                         <span className="forensic-spider-console-chip">Local</span>
                       )}
                     </div>
-                    <div className="forensic-spider-console-select">
-                      <span>User Agent</span>
-                      <strong>Gorantula/2.0</strong>
+                    <div className="forensic-spider-console-mode-block">
+                      <div className="forensic-spider-console-label">Crawl Console</div>
+                      <div className="forensic-spider-mode-toggle" role="group" aria-label="Crawl mode">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCrawlMode('web')
+                            setQaLocalIngestionDemoRequest(null)
+                          }}
+                          className={crawlMode === 'web' ? 'forensic-spider-mode-active' : ''}
+                        >
+                          WEB
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCrawlMode('local')
+                            setQaLocalIngestionDemoRequest(null)
+                          }}
+                          className={crawlMode === 'local' ? 'forensic-spider-mode-active' : ''}
+                        >
+                          LOCAL
+                        </button>
+                      </div>
                     </div>
-                    <div className="forensic-spider-console-select">
-                      <span>Proxy Pool</span>
-                      <strong>Default Pool</strong>
-                    </div>
-                  </section>
-
-                  <section className="forensic-spider-console-panel forensic-spider-console-panel-params">
-                    <div className="forensic-spider-console-label">Crawl Parameters</div>
-                    <pre aria-hidden="true">{`{
-  "start_urls": [],
-  "allowed_domains": [],
-  "follow_external": true,
-  "respect_robots": true,
-  "max_pages": 10000,
-  "max_depth": 3
-}`}</pre>
                   </section>
 
                   <section className="forensic-spider-console-panel forensic-spider-console-panel-command">
