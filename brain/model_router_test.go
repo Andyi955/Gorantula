@@ -1,6 +1,9 @@
 package brain
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestNewModelRouter_UsesRecommendedDefaults(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "openai-key")
@@ -35,6 +38,9 @@ func TestNewModelRouter_UsesRecommendedDefaults(t *testing.T) {
 	deepseek := router["deepseek"].(*OpenAICompatibleProvider)
 	if deepseek.Model != DefaultDeepSeekModel {
 		t.Fatalf("expected deepseek model %q, got %q", DefaultDeepSeekModel, deepseek.Model)
+	}
+	if deepseek.HTTPClient.Timeout < 120*time.Second {
+		t.Fatalf("expected deepseek timeout to allow slow relationship synthesis, got %s", deepseek.HTTPClient.Timeout)
 	}
 
 	qwen := router["qwen"].(*OpenAICompatibleProvider)

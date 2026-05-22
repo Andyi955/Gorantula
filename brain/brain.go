@@ -159,7 +159,23 @@ func (b *Brain) firstAvailableProvider(excludedNames ...string) (ModelProvider, 
 type personaAnalysisResult struct {
 	personaName string
 	insight     PersonaInsight
+	diagnostic  models.PipelinePersonaDiagnostic
 	err         error
+}
+
+type personaExecutionDiagnostic struct {
+	preferredProvider      string
+	provider               string
+	fallbackProvider       string
+	status                 string
+	errorCategory          string
+	errorSummary           string
+	recoveredErrorCategory string
+	startedAt              string
+	completedAt            string
+	durationMs             int64
+	promptChars            int
+	attemptCount           int
 }
 
 func (b *Brain) fallbackProviderAfter(provider ModelProvider) (ModelProvider, bool) {
@@ -1081,14 +1097,16 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 	// Run each persona analysis in parallel
 	for _, persona := range personas {
 		go func(p Persona) {
+			prompt := BuildPersonaPrompt(p, findingsText)
 			personaCtx := withTokenUsageTracking(ctx, scopeID, tokenUsageOperationLabel("full_board_persona", p.Name))
-			insight, err := b.runPersonaAnalysis(personaCtx, p, findingsText)
+			insight, execution, err := b.runPersonaAnalysisWithPromptDiagnostic(personaCtx, p, prompt)
+			diagnostic := buildPersonaPipelineDiagnostic("full_board", p, execution, len(nodes), 0, insight)
 			if err != nil {
-				fmt.Printf("[Brain] Persona %s failed: %v\n", p.Name, err)
-				insightsChan <- personaAnalysisResult{personaName: p.Name, err: err}
+				logPersonaFailure("full_board", progressRunID(progress), investigationID, diagnostic)
+				insightsChan <- personaAnalysisResult{personaName: p.Name, diagnostic: diagnostic, err: err}
 				return
 			}
-			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight}
+			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight, diagnostic: diagnostic}
 		}(persona)
 	}
 
@@ -1103,13 +1121,20 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 		case result = <-insightsChan:
 		}
 		if result.err != nil {
+			recordPersonaDiagnostic(progress, result.diagnostic)
 			failedPersonas[result.personaName] = struct{}{}
 			continue
 		}
 		insight := result.insight
 		if insight.Confidence > 0 {
+			recordPersonaDiagnostic(progress, result.diagnostic)
 			insights = append(insights, insight)
 			fmt.Printf("[Brain] Persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
+		} else {
+			result.diagnostic.Status = "zero_confidence"
+			result.diagnostic.ErrorCategory = "zero_confidence"
+			result.diagnostic.ErrorSummary = "persona returned no positive confidence"
+			recordPersonaDiagnostic(progress, result.diagnostic)
 		}
 	}
 
@@ -1173,13 +1198,14 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 		go func(p Persona) {
 			prompt := BuildIncrementalPersonaPrompt(p, pendingFindings, contextFindings, validPendingNodeIDs)
 			personaCtx := withTokenUsageTracking(ctx, scopeID, tokenUsageOperationLabel("incremental_persona", p.Name))
-			insight, err := b.runPersonaAnalysisWithPrompt(personaCtx, p, prompt)
+			insight, execution, err := b.runPersonaAnalysisWithPromptDiagnostic(personaCtx, p, prompt)
+			diagnostic := buildPersonaPipelineDiagnostic("incremental", p, execution, len(nodes), len(validPendingNodeIDs), insight)
 			if err != nil {
-				fmt.Printf("[Brain] Incremental persona %s failed: %v\n", p.Name, err)
-				insightsChan <- personaAnalysisResult{personaName: p.Name, err: err}
+				logPersonaFailure("incremental", progressRunID(progress), investigationID, diagnostic)
+				insightsChan <- personaAnalysisResult{personaName: p.Name, diagnostic: diagnostic, err: err}
 				return
 			}
-			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight}
+			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight, diagnostic: diagnostic}
 		}(persona)
 	}
 
@@ -1193,13 +1219,20 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 		case result = <-insightsChan:
 		}
 		if result.err != nil {
+			recordPersonaDiagnostic(progress, result.diagnostic)
 			failedPersonas[result.personaName] = struct{}{}
 			continue
 		}
 		insight := result.insight
 		if insight.Confidence > 0 {
+			recordPersonaDiagnostic(progress, result.diagnostic)
 			insights = append(insights, insight)
 			fmt.Printf("[Brain] Incremental persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
+		} else {
+			result.diagnostic.Status = "zero_confidence"
+			result.diagnostic.ErrorCategory = "zero_confidence"
+			result.diagnostic.ErrorSummary = "persona returned no positive confidence"
+			recordPersonaDiagnostic(progress, result.diagnostic)
 		}
 	}
 
@@ -1218,39 +1251,129 @@ func (b *Brain) runPersonaAnalysis(ctx context.Context, persona Persona, finding
 }
 
 func (b *Brain) runPersonaAnalysisWithPrompt(ctx context.Context, persona Persona, prompt string) (PersonaInsight, error) {
+	insight, _, err := b.runPersonaAnalysisWithPromptDiagnostic(ctx, persona, prompt)
+	return insight, err
+}
+
+func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, persona Persona, prompt string) (PersonaInsight, personaExecutionDiagnostic, error) {
+	startedAt := time.Now()
+	execution := personaExecutionDiagnostic{
+		preferredProvider: strings.TrimSpace(persona.ModelPref),
+		status:            "failed",
+		startedAt:         startedAt.Format(time.RFC3339Nano),
+		promptChars:       len([]rune(prompt)),
+		attemptCount:      1,
+	}
+	completeExecution := func(status string, err error) personaExecutionDiagnostic {
+		completedAt := time.Now()
+		execution.status = status
+		execution.completedAt = completedAt.Format(time.RFC3339Nano)
+		execution.durationMs = completedAt.Sub(startedAt).Milliseconds()
+		if err != nil {
+			execution.errorCategory = categorizePersonaError(err)
+			if strings.TrimSpace(execution.errorSummary) == "" {
+				execution.errorSummary = models.SanitizePipelineDiagnosticText(err.Error())
+			}
+		}
+		return execution
+	}
+
 	// Get the appropriate model provider
 	provider, ok := b.GetRouter(persona.ModelPref)
 	if !ok {
 		var found bool
 		provider, found = b.firstAvailableProvider()
 		if !found {
-			return PersonaInsight{PersonaName: persona.Name, Confidence: 0}, fmt.Errorf("no model providers available to run persona analysis")
+			err := fmt.Errorf("no model providers available to run persona analysis")
+			return PersonaInsight{PersonaName: persona.Name, Confidence: 0}, completeExecution("failed", err), err
 		}
 		fmt.Printf("[Brain Warning] Preferred model '%s' unavailable. Using '%s' for Persona '%s'\n", persona.ModelPref, provider.Name(), persona.Name)
 	}
+	execution.provider = provider.Name()
 
 	fmt.Printf("[Brain] Running persona %s with model %s\n", persona.Name, provider.Name())
 
 	var response PersonaJSONResponse
 	err := provider.GenerateJSON(ctx, prompt, &response)
+	if err != nil && shouldRetryPersonaJSON(err) {
+		initialErr := err
+		execution.attemptCount = 2
+		fmt.Printf(
+			"[Brain Warning] Persona JSON retry persona=%q provider=%s promptChars=%d category=%s error=%s\n",
+			persona.Name,
+			provider.Name(),
+			execution.promptChars,
+			categorizePersonaError(initialErr),
+			models.SanitizePipelineDiagnosticText(initialErr.Error()),
+		)
+		response = PersonaJSONResponse{}
+		retryErr := provider.GenerateJSON(ctx, buildPersonaJSONRetryPrompt(prompt), &response)
+		if retryErr == nil {
+			execution.recoveredErrorCategory = categorizePersonaError(initialErr)
+			fmt.Printf(
+				"[Brain] Persona recovered after JSON retry persona=%q provider=%s promptChars=%d\n",
+				persona.Name,
+				provider.Name(),
+				execution.promptChars,
+			)
+			err = nil
+		} else {
+			execution.errorSummary = models.SanitizePipelineDiagnosticText(fmt.Sprintf("primary error: %v; retry error: %v", initialErr, retryErr))
+			err = fmt.Errorf("persona JSON retry failed after primary error: primary: %v; retry: %w", initialErr, retryErr)
+		}
+	}
 	if err != nil {
 		fallbackProvider, ok := b.fallbackProviderAfter(provider)
 		if !ok {
-			return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+			wrapped := fmt.Errorf("failed to generate persona analysis: %w", err)
+			return PersonaInsight{}, completeExecution("failed", wrapped), wrapped
 		}
 		if ctx.Err() != nil && !errors.Is(err, context.DeadlineExceeded) {
-			return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+			wrapped := fmt.Errorf("failed to generate persona analysis: %w", err)
+			return PersonaInsight{}, completeExecution("failed", wrapped), wrapped
 		}
-		fmt.Printf("[Brain Error] Persona %s provider %s failed: %v. Attempting generic provider fallback...\n", persona.Name, provider.Name(), err)
+		execution.fallbackProvider = fallbackProvider.Name()
+		fmt.Printf(
+			"[Brain Error] Persona fallback attempt persona=%q preferredProvider=%s provider=%s fallbackProvider=%s promptChars=%d category=%s error=%s\n",
+			persona.Name,
+			execution.preferredProvider,
+			provider.Name(),
+			fallbackProvider.Name(),
+			execution.promptChars,
+			categorizePersonaError(err),
+			models.SanitizePipelineDiagnosticText(err.Error()),
+		)
 		response = PersonaJSONResponse{}
 		if fallbackErr := fallbackProvider.GenerateJSON(ctx, prompt, &response); fallbackErr != nil {
-			fmt.Printf("[Brain Error] Persona %s fallback provider %s failed: %v\n", persona.Name, fallbackProvider.Name(), fallbackErr)
-			return PersonaInsight{}, fmt.Errorf("failed to generate persona analysis: %w", err)
+			wrapped := fmt.Errorf("failed to generate persona analysis: %w", err)
+			combinedSummary := models.SanitizePipelineDiagnosticText(fmt.Sprintf("primary error: %v; fallback error: %v", err, fallbackErr))
+			execution.errorSummary = combinedSummary
+			fmt.Printf(
+				"[Brain Error] Persona fallback failed persona=%q preferredProvider=%s provider=%s fallbackProvider=%s promptChars=%d primaryCategory=%s fallbackCategory=%s error=%s\n",
+				persona.Name,
+				execution.preferredProvider,
+				provider.Name(),
+				fallbackProvider.Name(),
+				execution.promptChars,
+				categorizePersonaError(err),
+				categorizePersonaError(fallbackErr),
+				execution.errorSummary,
+			)
+			diagnostic := completeExecution("failed", wrapped)
+			diagnostic.errorSummary = combinedSummary
+			return PersonaInsight{}, diagnostic, wrapped
 		}
-		fmt.Printf("[Brain] Persona %s recovered using fallback provider %s\n", persona.Name, fallbackProvider.Name())
+		execution.provider = fallbackProvider.Name()
+		fmt.Printf(
+			"[Brain] Persona recovered using fallback persona=%q preferredProvider=%s provider=%s promptChars=%d\n",
+			persona.Name,
+			execution.preferredProvider,
+			fallbackProvider.Name(),
+			execution.promptChars,
+		)
 	}
 
-	return PersonaInsight{
+	insight := PersonaInsight{
 		PersonaName:         persona.Name,
 		Perspective:         persona.Perspective,
 		KeyFindings:         response.KeyFindings,
@@ -1263,7 +1386,102 @@ func (b *Brain) runPersonaAnalysisWithPrompt(ctx context.Context, persona Person
 		NodeIDs:             response.NodeIDs,
 		TimelineEvents:      response.TimelineEvents,
 		ProposedConnections: response.ProposedConnections,
-	}, nil
+	}
+	return insight, completeExecution("success", nil), nil
+}
+
+func buildPersonaPipelineDiagnostic(mode string, persona Persona, execution personaExecutionDiagnostic, nodeCount, pendingNodeCount int, insight PersonaInsight) models.PipelinePersonaDiagnostic {
+	return models.PipelinePersonaDiagnostic{
+		Mode:              mode,
+		PersonaName:       persona.Name,
+		PreferredProvider: execution.preferredProvider,
+		Provider:          execution.provider,
+		FallbackProvider:  execution.fallbackProvider,
+		Status:            execution.status,
+		ErrorCategory:     execution.errorCategory,
+		ErrorSummary:      execution.errorSummary,
+		StartedAt:         execution.startedAt,
+		CompletedAt:       execution.completedAt,
+		DurationMs:        execution.durationMs,
+		PromptChars:       execution.promptChars,
+		NodeCount:         nodeCount,
+		PendingNodeCount:  pendingNodeCount,
+		Confidence:        insight.Confidence,
+		KeyFindingCount:   len(insight.KeyFindings),
+		AttemptCount:      execution.attemptCount,
+		RecoveredCategory: execution.recoveredErrorCategory,
+	}
+}
+
+func recordPersonaDiagnostic(progress *models.PipelineProgressTracker, diagnostic models.PipelinePersonaDiagnostic) {
+	if progress != nil {
+		progress.RecordPersonaDiagnostic(diagnostic)
+	}
+}
+
+func progressRunID(progress *models.PipelineProgressTracker) string {
+	if progress == nil {
+		return ""
+	}
+	return progress.RunID()
+}
+
+func logPersonaFailure(mode, runID, vaultID string, diagnostic models.PipelinePersonaDiagnostic) {
+	fmt.Printf(
+		"[Brain] Persona failed mode=%s run=%s vault=%s persona=%q preferredProvider=%s provider=%s fallbackProvider=%s promptChars=%d category=%s error=%s\n",
+		mode,
+		runID,
+		vaultID,
+		diagnostic.PersonaName,
+		diagnostic.PreferredProvider,
+		diagnostic.Provider,
+		diagnostic.FallbackProvider,
+		diagnostic.PromptChars,
+		diagnostic.ErrorCategory,
+		models.SanitizePipelineDiagnosticText(diagnostic.ErrorSummary),
+	)
+}
+
+func shouldRetryPersonaJSON(err error) bool {
+	return categorizePersonaError(err) == "json_parse"
+}
+
+func buildPersonaJSONRetryPrompt(prompt string) string {
+	return prompt + `
+
+RETRY INSTRUCTIONS:
+Your previous persona response could not be parsed as JSON. Try again once.
+Return exactly one JSON object matching the requested persona schema.
+Do not include markdown, comments, prose, trailing commas, or duplicate object keys.
+Use empty arrays for unknown list fields and a numeric confidence between 0 and 1.`
+}
+
+func categorizePersonaError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "rate limit") || strings.Contains(message, "status 429") || strings.Contains(message, "too many requests"):
+		return "rate_limit"
+	case strings.Contains(message, "failed to parse json") ||
+		strings.Contains(message, "unexpected end of json") ||
+		strings.Contains(message, "invalid character") ||
+		strings.Contains(message, "json response"):
+		return "json_parse"
+	case strings.Contains(message, "no model providers") || strings.Contains(message, "unavailable"):
+		return "provider_unavailable"
+	case strings.Contains(message, "api returned status") || strings.Contains(message, "failed to send request") || strings.Contains(message, "no choices returned"):
+		return "provider_error"
+	default:
+		return "unknown"
+	}
 }
 
 func (b *Brain) broadcastPartialPersonaAnalysisWarning(personas []Persona, failedPersonas map[string]struct{}, successCount int) {

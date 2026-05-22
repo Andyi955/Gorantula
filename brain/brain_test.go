@@ -341,6 +341,48 @@ func TestRunPersonaAnalysisFallsBackAfterMalformedJSONError(t *testing.T) {
 	}
 }
 
+func TestRunPersonaAnalysisRetriesMalformedJSONOnce(t *testing.T) {
+	attempts := 0
+	provider := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("failed to parse JSON response: invalid character ',' after object key, original content: RAW_SECRET_EVIDENCE")
+			}
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"retry recovered persona"}
+			response.Confidence = 0.88
+			response.NodeIDs = []string{"node-1"}
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"deepseek": provider},
+	}
+
+	insight, execution, err := brain.runPersonaAnalysisWithPromptDiagnostic(context.Background(), Persona{
+		Name:        "Context Provider",
+		ModelPref:   "deepseek",
+		Perspective: "Adds context",
+	}, "prompt")
+	if err != nil {
+		t.Fatalf("expected retry to recover malformed JSON, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected exactly one retry, got %d attempts", attempts)
+	}
+	if insight.KeyFindings[0] != "retry recovered persona" {
+		t.Fatalf("expected retry insight, got %#v", insight.KeyFindings)
+	}
+	if execution.attemptCount != 2 || execution.recoveredErrorCategory != "json_parse" {
+		t.Fatalf("expected retry metadata, got %#v", execution)
+	}
+	if strings.Contains(execution.errorSummary, "RAW_SECRET_EVIDENCE") {
+		t.Fatalf("retry metadata leaked raw provider content: %#v", execution)
+	}
+}
+
 func TestRunPersonaAnalysisFallsBackAfterDeadlineExceeded(t *testing.T) {
 	primary := &MockProvider{
 		NameFunc: func() string { return "deepseek" },
@@ -433,5 +475,137 @@ func TestAnalyzeWithPersonasBroadcastsPartialCompletionWarning(t *testing.T) {
 	}
 	if !foundWarning {
 		t.Fatalf("expected partial persona SYSTEM_LOG, got %#v", messages)
+	}
+}
+
+func TestAnalyzeWithPersonasRecordsPersonaDiagnostics(t *testing.T) {
+	t.Setenv("DEFAULT_PERSONA_MODEL", "deepseek")
+
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			if strings.Contains(prompt, "timeline specialist") {
+				return context.DeadlineExceeded
+			}
+			if strings.Contains(prompt, "strict entity extraction") {
+				return errors.New("failed to parse JSON response: unexpected end of JSON input, original content: RAW_SECRET_EVIDENCE")
+			}
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"persona ok"}
+			response.Confidence = 0.7
+			response.NodeIDs = []string{"node-1"}
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"deepseek": mock},
+		tokenUsage:  newTokenUsageTracker(),
+	}
+	tracker := models.NewPipelineProgressTracker(
+		"run-persona-diagnostics",
+		"inv-persona-diagnostics",
+		"web",
+		models.DefaultPipelineProgressSteps(),
+	)
+
+	insights, err := brain.AnalyzeWithPersonasWithProgress(context.Background(), "inv-persona-diagnostics", []models.MemoryNode{
+		{ID: "node-1", Title: "Node", Summary: "Summary with RAW_SECRET_EVIDENCE"},
+	}, tracker)
+	if err != nil {
+		t.Fatalf("expected partial persona analysis to continue, got %v", err)
+	}
+	if len(insights) != 5 {
+		t.Fatalf("expected 5 successful insights, got %d", len(insights))
+	}
+
+	profile := tracker.Profile()
+	if len(profile.PersonaDiagnostics) != len(GetDefaultPersonas()) {
+		t.Fatalf("expected one diagnostic per persona, got %#v", profile.PersonaDiagnostics)
+	}
+
+	var timelineFailure *models.PipelinePersonaDiagnostic
+	var entityFailure *models.PipelinePersonaDiagnostic
+	var connectorSuccess *models.PipelinePersonaDiagnostic
+	for index := range profile.PersonaDiagnostics {
+		diagnostic := &profile.PersonaDiagnostics[index]
+		switch diagnostic.PersonaName {
+		case "Timeline Analyst":
+			timelineFailure = diagnostic
+		case "Entity Hunter":
+			entityFailure = diagnostic
+		case "Connector":
+			connectorSuccess = diagnostic
+		}
+	}
+
+	if timelineFailure == nil || timelineFailure.Status != "failed" || timelineFailure.ErrorCategory != "timeout" {
+		t.Fatalf("expected timeout diagnostic for Timeline Analyst, got %#v", timelineFailure)
+	}
+	if timelineFailure.Mode != "full_board" || timelineFailure.Provider != "deepseek" || timelineFailure.PreferredProvider != "deepseek" {
+		t.Fatalf("unexpected Timeline Analyst provider metadata: %#v", timelineFailure)
+	}
+	if timelineFailure.PromptChars <= 0 || timelineFailure.NodeCount != 1 || timelineFailure.PendingNodeCount != 0 {
+		t.Fatalf("unexpected Timeline Analyst prompt/run metadata: %#v", timelineFailure)
+	}
+	if entityFailure == nil || entityFailure.Status != "failed" || entityFailure.ErrorCategory != "json_parse" {
+		t.Fatalf("expected JSON parse diagnostic for Entity Hunter, got %#v", entityFailure)
+	}
+	if entityFailure.AttemptCount != 2 {
+		t.Fatalf("expected Entity Hunter to record a JSON retry attempt, got %#v", entityFailure)
+	}
+	if strings.Contains(entityFailure.ErrorSummary, "RAW_SECRET_EVIDENCE") {
+		t.Fatalf("entity failure leaked raw provider content: %#v", entityFailure)
+	}
+	if connectorSuccess == nil || connectorSuccess.Status != "success" || connectorSuccess.Confidence != 0.7 || connectorSuccess.KeyFindingCount != 1 {
+		t.Fatalf("expected success diagnostic for Connector, got %#v", connectorSuccess)
+	}
+}
+
+func TestAnalyzeIncrementalWithPersonasRecordsPendingPersonaDiagnostics(t *testing.T) {
+	t.Setenv("DEFAULT_PERSONA_MODEL", "deepseek")
+
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"incremental persona ok"}
+			response.Confidence = 0.8
+			response.NodeIDs = []string{"node-pending"}
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"deepseek": mock},
+		tokenUsage:  newTokenUsageTracker(),
+	}
+	tracker := models.NewPipelineProgressTracker(
+		"run-incremental-persona-diagnostics",
+		"inv-incremental-persona-diagnostics",
+		"web",
+		models.DefaultPipelineProgressSteps(),
+	)
+
+	insights, err := brain.AnalyzeIncrementalWithPersonasWithProgress(context.Background(), "inv-incremental-persona-diagnostics", []models.MemoryNode{
+		{ID: "node-existing", Title: "Existing", Summary: "Context"},
+		{ID: "node-pending", Title: "Pending", Summary: "New evidence"},
+	}, []string{"node-pending"}, tracker)
+	if err != nil {
+		t.Fatalf("expected incremental persona analysis to succeed, got %v", err)
+	}
+	if len(insights) != len(GetDefaultPersonas()) {
+		t.Fatalf("expected all incremental personas to succeed, got %d", len(insights))
+	}
+
+	profile := tracker.Profile()
+	if len(profile.PersonaDiagnostics) != len(GetDefaultPersonas()) {
+		t.Fatalf("expected one incremental diagnostic per persona, got %#v", profile.PersonaDiagnostics)
+	}
+	for _, diagnostic := range profile.PersonaDiagnostics {
+		if diagnostic.Mode != "incremental" || diagnostic.Status != "success" {
+			t.Fatalf("unexpected incremental diagnostic status: %#v", diagnostic)
+		}
+		if diagnostic.NodeCount != 2 || diagnostic.PendingNodeCount != 1 || diagnostic.PromptChars <= 0 {
+			t.Fatalf("unexpected incremental diagnostic metadata: %#v", diagnostic)
+		}
 	}
 }
