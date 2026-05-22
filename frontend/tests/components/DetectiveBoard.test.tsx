@@ -111,6 +111,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       isPersonaScanActive?: boolean
       isLayoutChoreographyActive?: boolean
       isTimelineFocused?: boolean
+      evidenceCount?: number
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -130,6 +131,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.isPersonaScanActive ? React.createElement('span', null, 'persona scan') : null,
       data?.isLayoutChoreographyActive ? React.createElement('span', null, 'layout choreography') : null,
       data?.isTimelineFocused ? React.createElement('span', null, 'timeline focus') : null,
+      data?.evidenceCount && data.evidenceCount > 1 ? React.createElement('span', null, `merged evidence ${data.evidenceCount}`) : null,
       React.createElement(
         'button',
         {
@@ -815,6 +817,7 @@ describe('DetectiveBoard relationship legend', () => {
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay error\/empty demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay timeline demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay evidence expansion demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay duplicate evidence squash demo/i })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: /replay board animation demo/i }))
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2400)
@@ -866,6 +869,28 @@ describe('DetectiveBoard relationship legend', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('replays the duplicate evidence squash QA demo as one merged card without duplicate edges', () => {
+    renderBoard('investigation-1', new MockSocket() as unknown as WebSocket)
+
+    enableQaTools()
+    openQaReplayMenu()
+    fireEvent.click(screen.getByRole('button', { name: /replay duplicate evidence squash demo/i }))
+
+    const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+    expect(nodes).toHaveLength(3)
+    const mergedNode = nodes.find((node) => node.id === 'qa-duplicate-squashed-evidence')
+    expect(mergedNode?.data?.title).toBe('QA Squashed Duplicate Evidence')
+    expect(mergedNode?.data?.evidenceCount).toBe(3)
+    expect(mergedNode?.data?.duplicateNodeIds).toEqual(['qa-duplicate-source-a', 'qa-duplicate-source-b'])
+    expect(screen.getByText('merged evidence 3')).toBeInTheDocument()
+
+    const edges = (lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>
+    expect(edges.map((edge) => edge.data?.tag)).not.toEqual(expect.arrayContaining([
+      'DUPLICATE_CONTENT',
+      'IDENTICAL_EXCERPT',
+    ]))
   })
 
   it('replays the error and empty state demo from the QA utility rail without backend socket messages', async () => {

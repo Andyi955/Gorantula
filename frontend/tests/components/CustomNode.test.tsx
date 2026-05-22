@@ -50,6 +50,37 @@ describe('CustomNode', () => {
     expect(onReadFull).toHaveBeenCalled()
   })
 
+  it('shows merged evidence count for squashed duplicate cards', () => {
+    render(
+      <CustomNode
+        id="node-merged-evidence"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-merged-evidence',
+          title: 'Merged Evidence Node',
+          summary: 'This card represents several duplicate excerpts.',
+          evidenceCount: 3,
+          mergedSourceURLs: [
+            'https://example.com/report',
+            'https://mirror.example/report',
+            'https://wire.example/report',
+          ],
+          duplicateNodeIds: ['node-duplicate-a', 'node-duplicate-b'],
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(screen.getByText('MERGED EVIDENCE 3')).toBeInTheDocument()
+    expect(screen.getByTitle('Squashed 3 duplicate evidence items into this card')).toBeInTheDocument()
+  })
+
   it('animates evidence detail expansion without changing the expand callback contract', async () => {
     const user = userEvent.setup()
     const onExpand = vi.fn()

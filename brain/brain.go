@@ -504,6 +504,7 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		ImageReviewContext: imageCtx,
 		Progress:           progress,
 	})
+	processedNutrients = squashDuplicateProcessedNutrients(processedNutrients)
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err
 	}

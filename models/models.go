@@ -89,12 +89,15 @@ type ImageReviewResult struct {
 
 // MemoryNode represents a single piece of evidence on the board
 type MemoryNode struct {
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	Summary   string            `json:"summary"` // 2-sentence summary
-	FullText  string            `json:"fullText"`
-	SourceURL string            `json:"sourceURL"`
-	Images    []MemoryNodeImage `json:"images,omitempty"`
+	ID               string            `json:"id"`
+	Title            string            `json:"title"`
+	Summary          string            `json:"summary"` // 2-sentence summary
+	FullText         string            `json:"fullText"`
+	SourceURL        string            `json:"sourceURL"`
+	Images           []MemoryNodeImage `json:"images,omitempty"`
+	EvidenceCount    int               `json:"evidenceCount,omitempty"`
+	MergedSourceURLs []string          `json:"mergedSourceURLs,omitempty"`
+	DuplicateNodeIDs []string          `json:"duplicateNodeIds,omitempty"`
 }
 
 // BoardConnection represents an edge between two nodes with its reasoning

@@ -30,6 +30,9 @@ export interface NodeData {
     fullText?: string;
     sourceURL?: string;
     images?: NodeImageAsset[];
+    evidenceCount?: number;
+    mergedSourceURLs?: string[];
+    duplicateNodeIds?: string[];
     nodeKind?: 'discovery';
     discoveryClaim?: string;
     discoveryImpact?: string;
@@ -329,6 +332,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
+    const mergedEvidenceCount = Number.isFinite(data.evidenceCount || 0) ? Math.max(0, data.evidenceCount || 0) : 0;
+    const hasMergedEvidence = mergedEvidenceCount > 1;
     const recentImportShellClass = data.isRecentlyImported
         ? 'ring-2 ring-amber-300/90 shadow-[0_0_0_2px_rgba(251,191,36,0.25),0_0_34px_rgba(245,158,11,0.34)]'
         : '';
@@ -781,6 +786,15 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                     </button>
                 </div>
             </div>
+
+            {hasMergedEvidence && (
+                <div
+                    className="forensic-badge mb-1.5 flex w-fit shrink-0 items-center gap-1 rounded-md border-amber-200/28 bg-amber-200/10 px-2 py-1 text-[9px] font-black uppercase tracking-[0.14em] text-amber-100"
+                    title={`Squashed ${mergedEvidenceCount} duplicate evidence items into this card`}
+                >
+                    MERGED EVIDENCE {mergedEvidenceCount}
+                </div>
+            )}
 
             {isEditing && (
                 <div className="forensic-node-edit-panel shrink-0 rounded-xl p-2 nodrag nowheel">
