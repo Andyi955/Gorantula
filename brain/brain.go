@@ -1373,20 +1373,7 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 		)
 	}
 
-	insight := PersonaInsight{
-		PersonaName:         persona.Name,
-		Perspective:         persona.Perspective,
-		KeyFindings:         response.KeyFindings,
-		Observations:        response.Observations,
-		Hypotheses:          response.Hypotheses,
-		Connections:         response.Connections,
-		Questions:           response.Questions,
-		Confidence:          response.Confidence,
-		FullAnalysis:        response.FullAnalysis,
-		NodeIDs:             response.NodeIDs,
-		TimelineEvents:      response.TimelineEvents,
-		ProposedConnections: response.ProposedConnections,
-	}
+	insight := buildPersonaInsight(persona, prompt, response)
 	return insight, completeExecution("success", nil), nil
 }
 

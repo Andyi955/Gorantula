@@ -73,6 +73,62 @@ func TestValidateAndRankRelationshipCandidatesRejectsGenericAndUnsupported(t *te
 	}
 }
 
+func TestValidateAndRankRelationshipCandidatesRejectsCategoryOnlyBoardTags(t *testing.T) {
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "Samsung strike", Summary: "Samsung workers expand a strike affecting memory production.", FullText: "Samsung workers expanded a strike that analysts say could tighten DDR5 memory supply."},
+		{ID: "node-2", Title: "DDR5 shortage", Summary: "DDR5 supply is tightening as Samsung memory output faces disruption.", FullText: "DDR5 vendors warned that Samsung memory output disruption could worsen supply shortages."},
+	}
+
+	finalConnections, candidates, _ := validateAndRankRelationshipCandidates(nodes, []models.RelationshipCandidate{
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "COMMON_ENTITY",
+			Reasoning:          "Both nodes mention Samsung memory supply.",
+			Confidence:         0.98,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Connector", "Entity Mapper"},
+		},
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "CORROBORATES",
+			Reasoning:          "The second node corroborates the memory supply disruption in the first node.",
+			Confidence:         0.97,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Connector", "Skeptic"},
+		},
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "SAMSUNG_MEMORY_SHORTAGE",
+			Reasoning:          "Samsung strike disruption in the first node matches the DDR5 supply shortage described in the second node.",
+			Confidence:         0.91,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Connector", "Skeptic"},
+		},
+	})
+
+	if len(finalConnections) != 1 {
+		t.Fatalf("expected one specific accepted connection, got %d", len(finalConnections))
+	}
+	if finalConnections[0].Tag != "SAMSUNG_MEMORY_SHORTAGE" {
+		t.Fatalf("expected specific content tag to survive, got %q", finalConnections[0].Tag)
+	}
+
+	rejectedCategoryTags := map[string]bool{}
+	for _, candidate := range candidates {
+		if candidate.RejectionReason == "generic_relationship" {
+			rejectedCategoryTags[candidate.Tag] = true
+		}
+	}
+	for _, tag := range []string{"COMMON_ENTITY", "CORROBORATES"} {
+		if !rejectedCategoryTags[tag] {
+			t.Fatalf("expected %s to be rejected as category-only, candidates=%#v", tag, candidates)
+		}
+	}
+}
+
 func TestValidateAndRankRelationshipCandidatesRejectsOverlappingPairAndEntityOverlapTags(t *testing.T) {
 	nodes := []models.MemoryNode{
 		{ID: "node-1", Title: "Iran conflict", Summary: "South Pars attack threatens energy supplies.", FullText: "The South Pars gas field attack threatens global energy supplies and increases inflation pressure."},
@@ -354,6 +410,67 @@ func TestValidateAndRankRelationshipCandidatesRejectsSamePairFamilyDuplicates(t 
 	}
 	if !rejectedOverlap {
 		t.Fatalf("expected one same-pair family duplicate to be rejected")
+	}
+}
+
+func TestValidateAndRankRelationshipCandidatesCollapsesDuplicateContentTags(t *testing.T) {
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "AGI definition", Summary: "Defines AGI through long-horizon agents.", FullText: "The evidence defines AGI through autonomous long-horizon task completion."},
+		{ID: "node-2", Title: "AGI pillar", Summary: "Repeats the same AGI definition.", FullText: "The evidence defines AGI through autonomous long-horizon task completion."},
+	}
+
+	finalConnections, candidates, _ := validateAndRankRelationshipCandidates(nodes, []models.RelationshipCandidate{
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "AGI_DEFINITION_DUPLICATE",
+			Reasoning:          "Both nodes present the same functional definition of AGI based on autonomous long-horizon task completion.",
+			Confidence:         0.95,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Connector", "Skeptic"},
+		},
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "AGI_SOURCE_DUPLICATE",
+			Reasoning:          "Both nodes share identical evidence excerpts and appear to describe the same underlying source.",
+			Confidence:         0.95,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Skeptic"},
+		},
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "DUPLICATE_CONTENT",
+			Reasoning:          "Both nodes have identical full text excerpts, indicating duplicate content.",
+			Confidence:         0.95,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Skeptic"},
+		},
+	})
+
+	if len(finalConnections) != 1 {
+		t.Fatalf("expected duplicate/content same-pair tags to collapse to one edge, got %d", len(finalConnections))
+	}
+	if finalConnections[0].Tag != "AGI_DEFINITION_DUPLICATE" {
+		t.Fatalf("expected specific duplicate tag to survive, got %q", finalConnections[0].Tag)
+	}
+
+	rejectedOverlapCount := 0
+	rejectedGenericCount := 0
+	for _, candidate := range candidates {
+		if candidate.RejectionReason == "overlapping_pair_relationship" {
+			rejectedOverlapCount++
+		}
+		if candidate.RejectionReason == "generic_relationship" {
+			rejectedGenericCount++
+		}
+	}
+	if rejectedOverlapCount != 1 {
+		t.Fatalf("expected one overlapping duplicate/content candidate to be rejected, got %d in %#v", rejectedOverlapCount, candidates)
+	}
+	if rejectedGenericCount != 1 {
+		t.Fatalf("expected exact duplicate category tag to be rejected, got %d in %#v", rejectedGenericCount, candidates)
 	}
 }
 

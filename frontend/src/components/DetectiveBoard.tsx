@@ -75,6 +75,131 @@ const normalizeRelationshipTag = (tag?: string | null) => {
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
 };
 
+type RelationshipDisplayRule = {
+    label: string;
+    all?: string[];
+    any?: string[];
+};
+
+const RELATIONSHIP_DISPLAY_RULES: RelationshipDisplayRule[] = [
+    { label: 'Duplicate Evidence', any: ['DUPLICATE', 'DUPL', 'COPYCAT', 'MIRROR', 'REPEAT'] },
+    { label: 'Contradiction', any: ['CONTRADICT', 'CONFLICT', 'INCONSIST', 'DISCREP', 'DISPUTED', 'MISMATCH'] },
+    { label: 'Timeline Lead', any: ['PRECEDES', 'FOLLOWS', 'TIMELINE', 'MILESTONE', 'WINDOW', 'SEQUENCE', 'DELAY', 'PROGRESSION', 'SHIFT'] },
+    { label: 'Evidence Match', any: ['REFERENCE', 'REFERS', 'CITES'] },
+    { label: 'Trigger Event', any: ['IGNITION', 'TRIGGER', 'CATALYST', 'CAUSE'] },
+    { label: 'Grid Threat', all: ['POWER', 'SWING'] },
+    { label: 'Grid Threat', all: ['GRID', 'RISK'] },
+    { label: 'Grid Threat', any: ['BROWNOUT', 'BLACKOUT'] },
+    { label: 'Power Pressure', all: ['ELECTRICITY', 'PRICE'] },
+    { label: 'Power Pressure', any: ['PRICE_HIKE', 'RATEPAYER', 'UTILITY_BILL'] },
+    { label: 'Policy Trigger', any: ['POLICY', 'DIRECTIVE', 'REGULATION', 'REGULATORY', 'GOVERNANCE', 'DPA', 'NERC', 'WHITE_HOUSE', 'WH', 'TRUMP', 'SEC', 'LAW', 'ORDER', 'MANDATE'] },
+    { label: 'Money Trail', any: ['PRICE', 'COST', 'FUNDING', 'INVESTMENT', 'MARKET', 'STOCK', 'BILL', 'BUDGET', 'REVENUE', 'MERGER', 'IPO', 'FINANCIAL'] },
+    { label: 'Operator Response', any: ['DEMAND_RESPONSE', 'RESPONSE', 'CURTAILMENT', 'DISPATCH'] },
+    { label: 'Operational Constraint', any: ['CONSTRAINT', 'BOTTLENECK', 'SHORTAGE'] },
+    { label: 'Pressure Point', any: ['DEMAND', 'STRAIN', 'STRESS', 'CAPACITY', 'LOAD', 'PRESSURE'] },
+    { label: 'Competing Interests', any: ['COMPETING', 'RIVAL', 'ALTERNATIVE', 'SOLUTION', 'VS', 'VERSUS'] },
+    { label: 'Evidence Match', any: ['CORROBORAT', 'ALIGNMENT', 'MATCH', 'SHARED', 'SHARE', 'COMMON', 'SAME', 'EXEMPLIFIES'] },
+    { label: 'Threat Level', any: ['RISK', 'THREAT', 'ALERT', 'WARNING', 'CRISIS', 'ESCALATION'] },
+    { label: 'Breakthrough Lead', any: ['BREAKTHROUGH', 'MILESTONE', 'UNVEILED', 'LAUNCH', 'RELEASE', 'PROTOTYPE'] },
+    { label: 'Hidden Connection', any: ['RELATED', 'CONNECTION', 'LINK', 'ASSOCIATION'] },
+];
+
+const RELATIONSHIP_DISPLAY_FILLER_TOKENS = new Set([
+    'A',
+    'AN',
+    'AND',
+    'THE',
+    'TO',
+    'OF',
+    'FOR',
+    'WITH',
+    'BY',
+    'FROM',
+    'NODE',
+    'NODES',
+    'EDGE',
+    'EVENT',
+    'EVENTS',
+]);
+
+const RELATIONSHIP_DISPLAY_ACRONYMS = new Set([
+    'AI',
+    'US',
+    'EU',
+    'UK',
+    'SEC',
+    'DPA',
+    'NERC',
+    'IBM',
+    'WH',
+    'GPU',
+    'CPU',
+    'DDR5',
+    'DDR6',
+]);
+
+const titleRelationshipToken = (token: string) => {
+    if (RELATIONSHIP_DISPLAY_ACRONYMS.has(token) || /^[0-9]+$/.test(token)) {
+        return token;
+    }
+
+    return token.charAt(0) + token.slice(1).toLowerCase();
+};
+
+const getRelationshipDisplayLabel = (tag?: string | null) => {
+    const normalizedTag = normalizeRelationshipTag(tag);
+
+    const matchingRule = RELATIONSHIP_DISPLAY_RULES.find((rule) => {
+        const allMatch = !rule.all || rule.all.every((term) => normalizedTag.includes(term));
+        const anyMatch = !rule.any || rule.any.some((term) => normalizedTag.includes(term));
+        return allMatch && anyMatch;
+    });
+
+    if (matchingRule) {
+        return matchingRule.label;
+    }
+
+    const tokens = normalizedTag
+        .split(/[^A-Z0-9]+/)
+        .filter((token) => token && !RELATIONSHIP_DISPLAY_FILLER_TOKENS.has(token))
+        .slice(0, 3);
+
+    if (tokens.length === 0) {
+        return 'Hidden Connection';
+    }
+
+    return tokens.map(titleRelationshipToken).join(' ');
+};
+
+const getEdgeRawRelationshipTag = (edge: Edge) => normalizeRelationshipTag(
+    typeof edge.data?.tag === 'string'
+        ? edge.data.tag
+        : typeof edge.label === 'string'
+            ? edge.label
+            : null
+);
+
+const getEdgeRelationshipDisplayLabel = (edge: Edge) => {
+    const rawTag = getEdgeRawRelationshipTag(edge);
+
+    if (typeof edge.data?.displayLabel === 'string' && edge.data.displayLabel.trim()) {
+        return edge.data.displayLabel.trim();
+    }
+
+    if (edge.data?.generatedBy === 'connectTheDots') {
+        return getRelationshipDisplayLabel(rawTag);
+    }
+
+    return typeof edge.label === 'string' && edge.label.trim() ? edge.label : rawTag;
+};
+
+type VisibleLegendStyle = {
+    displayLabel: string;
+    tag: string;
+    tags: string[];
+    style: TagStyle;
+};
+
 const shouldPreserveExistingFullText = (summary?: string, fullText?: string) =>
     Boolean(summary && fullText && summary !== fullText);
 
@@ -1076,7 +1201,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [edges, setEdges] = useState<Edge[]>([]);
 
     const [selectedContent, setSelectedContent] = useState<string | null>(null);
-    const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
+    const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, rawTag?: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
     const [isReorganizing, setIsReorganizing] = useState(false);
@@ -1111,6 +1236,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(null);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
+    const [autoConnectRequest, setAutoConnectRequest] = useState<{ vaultId: string; runId: string; requestedAt: number } | null>(null);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
@@ -2792,7 +2918,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     useEffect(() => {
         const edgeTags = edges
-            .map((edge) => normalizeRelationshipTag(edge.label as string))
+            .map((edge) => getEdgeRawRelationshipTag(edge))
             .filter(Boolean);
 
         if (edgeTags.length > 0) {
@@ -2803,14 +2929,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     // Effect to update edge styles dynamically when tagStyles change
     useEffect(() => {
         setEdges(eds => eds.map(e => {
-            const tag = normalizeRelationshipTag(typeof e.label === 'string' ? e.label : e.data?.tag);
+            const tag = getEdgeRawRelationshipTag(e);
             const styleDef = tagStyles[tag];
             if (!styleDef) return e;
             const edgeVisuals = getRelationshipEdgeVisuals(styleDef.pattern, styleDef.shape);
+            const isGeneratedRelationship = e.data?.generatedBy === 'connectTheDots';
+            const displayLabel = isGeneratedRelationship ? getRelationshipDisplayLabel(tag) : e.label;
 
             return {
                 ...e,
                 type: 'customEdge',
+                label: displayLabel,
                 style: {
                     ...e.style,
                     stroke: styleDef.color,
@@ -2819,7 +2948,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     strokeWidth: edgeVisuals.strokeWidth ?? e.style?.strokeWidth,
                 },
                 animated: edgeVisuals.animated,
-                data: { ...e.data, color: styleDef.color, pattern: styleDef.pattern, shape: styleDef.shape },
+                data: {
+                    ...e.data,
+                    tag,
+                    displayLabel: isGeneratedRelationship ? displayLabel : e.data?.displayLabel,
+                    color: styleDef.color,
+                    pattern: styleDef.pattern,
+                    shape: styleDef.shape,
+                },
                 labelStyle: { ...e.labelStyle, fill: styleDef.color },
                 labelBgStyle: { ...e.labelBgStyle, stroke: styleDef.color },
             };
@@ -3156,6 +3292,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 interactionWidth: 20,
                 animated: visuals.animated,
                 data: {
+                    tag: visuals.tag,
                     reasoning: 'Manual connection',
                     color: visuals.color,
                     pattern: visuals.pattern,
@@ -3191,6 +3328,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     animated: visuals.animated,
                     data: {
                         ...edge.data,
+                        tag: visuals.tag,
+                        displayLabel: undefined,
                         color: visuals.color,
                         pattern: visuals.pattern,
                         shape: visuals.shape,
@@ -3421,18 +3560,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         const newEdges: Edge[] = validConnections.map((c: any) => {
             const visuals = buildEdgeVisuals(c.tag, nextStyles);
+            const displayLabel = getRelationshipDisplayLabel(visuals.tag);
 
             return {
-                id: `e-${c.source}-${c.target}-${c.tag}`,
+                id: `e-${c.source}-${c.target}-${visuals.tag}`,
                 source: c.source,
                 target: c.target,
                 type: 'customEdge',
-                label: visuals.tag,
+                label: displayLabel,
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 updatable: true,
                 interactionWidth: 20,
                 animated: visuals.animated,
                 data: {
+                    tag: visuals.tag,
+                    displayLabel,
                     reasoning: c.reasoning,
                     color: visuals.color,
                     pattern: visuals.pattern,
@@ -4112,11 +4254,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 if (isAppendResult) {
                     return;
                 }
-                // Trigger auto connect dots for full new-investigation crawls
-                setTimeout(() => {
-                    const btn = document.getElementById('connect-dots-btn');
-                    if (btn) btn.click();
-                }, 500);
+                // Queue auto connect dots for full new-investigation crawls once the board has render-ready nodes.
+                setAutoConnectRequest({
+                    vaultId,
+                    runId: completedRunId || latestPipelineRunIdRef.current || '',
+                    requestedAt: Date.now(),
+                });
             } else if (msg.type === 'ERROR') {
                 console.error('[Board] System Error:', msg.payload);
                 clearLayoutChoreographyState();
@@ -4232,17 +4375,21 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
 
 
-    const connectTheDots = () => {
+    const dispatchConnectTheDots = useCallback((options: { silent?: boolean } = {}) => {
         const evidenceNodes = nodes.filter((node) => node.data?.nodeKind !== 'discovery');
         const incrementalNodeIds = pendingIntegrationNodeIds.filter((nodeId) => evidenceNodes.some((node) => node.id === nodeId));
 
         if (evidenceNodes.length < 2) {
-            alert("Need at least 2 nodes!");
-            return;
+            if (!options.silent) {
+                alert("Need at least 2 nodes!");
+            }
+            return false;
         }
         if (!sharedSocket || sharedSocket.readyState !== WebSocket.OPEN) {
-            alert("Connection lost. Please wait for reconnect.");
-            return;
+            if (!options.silent) {
+                alert("Connection lost. Please wait for reconnect.");
+            }
+            return false;
         }
 
         console.debug('[Board] Dispatching CONNECT_DOTS...');
@@ -4283,7 +4430,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 vaultId: investigationId,
                 runId: latestPipelineRunIdRef.current || undefined,
             }));
-            return;
+            return true;
         }
 
         sharedSocket.send(JSON.stringify({
@@ -4292,7 +4439,41 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             vaultId: investigationId,
             runId: latestPipelineRunIdRef.current || undefined,
         }));
-    };
+        return true;
+    }, [edges, investigationId, nodes, pendingIntegrationNodeIds, sharedSocket, startConnectLayoutChoreography]);
+
+    const connectTheDots = useCallback(() => {
+        dispatchConnectTheDots({ silent: false });
+    }, [dispatchConnectTheDots]);
+
+    useEffect(() => {
+        if (!autoConnectRequest) {
+            return;
+        }
+
+        if (!investigationId || autoConnectRequest.vaultId !== investigationId) {
+            setAutoConnectRequest(null);
+            return;
+        }
+
+        if (autoConnectRequest.runId && stoppedPipelineRunIdsRef.current.has(autoConnectRequest.runId)) {
+            setAutoConnectRequest(null);
+            return;
+        }
+
+        const evidenceNodeCount = nodes.filter((node) => node.data?.nodeKind !== 'discovery').length;
+        if (evidenceNodeCount < 2 || isReorganizing || !sharedSocket || sharedSocket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            if (dispatchConnectTheDots({ silent: true })) {
+                setAutoConnectRequest(null);
+            }
+        }, 50);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [autoConnectRequest, dispatchConnectTheDots, investigationId, isReorganizing, nodes, sharedSocket]);
 
     const clearBoard = () => {
         if (window.confirm("Clear board?")) {
@@ -4300,6 +4481,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             clearLayoutChoreographyState();
             setBoardMode('strict-grid');
             setPendingIntegrationNodeIds([]);
+            setAutoConnectRequest(null);
             setAnalysisMode(null);
             setNodes([]);
             setEdges([]);
@@ -4370,8 +4552,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
         if (edge.data?.reasoning) {
+            const rawTag = getEdgeRawRelationshipTag(edge);
+            const displayLabel = getEdgeRelationshipDisplayLabel(edge);
+
             setEdgeReasoning({
-                tag: edge.label as string,
+                tag: displayLabel,
+                rawTag: rawTag !== displayLabel ? rawTag : undefined,
                 text: edge.data.reasoning,
                 color: edge.data.color || '#bc13fe',
                 personas: edge.data.supportingPersonas || [],
@@ -4381,8 +4567,25 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
     };
 
-    const activeTags = new Set(edges.map(e => (e.label as string)?.toUpperCase() || 'UNKNOWN'));
+    const activeTags = new Set(edges.map(e => getEdgeRawRelationshipTag(e)));
     const visibleStyles = Object.entries(tagStyles).filter(([tag]) => activeTags.has(tag));
+    const visibleLegendStyles = visibleStyles.reduce<VisibleLegendStyle[]>((legendStyles, [tag, style]) => {
+        const displayLabel = getRelationshipDisplayLabel(tag);
+        const existing = legendStyles.find((entry) => entry.displayLabel === displayLabel);
+
+        if (existing) {
+            existing.tags.push(tag);
+            return legendStyles;
+        }
+
+        legendStyles.push({
+            displayLabel,
+            tag,
+            tags: [tag],
+            style,
+        });
+        return legendStyles;
+    }, []);
 
     const handleExport = async (type: 'png' | 'svg' | 'pdf') => {
         setShowExportMenu(false);
@@ -5061,6 +5264,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         <div className="flex items-center gap-2 text-[10px] font-black tracking-tighter uppercase" style={{ color: edgeReasoning.color }}><Info size={12} /> Connection logic: {edgeReasoning.tag}</div>
                         <button onClick={() => setEdgeReasoning(null)} className="text-gray-500 hover:text-white text-xs">×</button>
                     </div>
+                    {edgeReasoning.rawTag && (
+                        <div className="mb-2 text-[9px] font-black uppercase tracking-[0.16em] text-[var(--forensic-text-faint)]">
+                            Evidence tag: {edgeReasoning.rawTag}
+                        </div>
+                    )}
                     <div className="text-white text-[11px] leading-relaxed italic">{edgeReasoning.text}</div>
                     {typeof edgeReasoning.qualityScore === 'number' && (
                         <div className="mt-3 text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: edgeReasoning.color }}>
@@ -5265,20 +5473,24 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         </button>
                     </div>
                     <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1 custom-scrollbar">
-                        {visibleStyles.length === 0 && (
+                        {visibleLegendStyles.length === 0 && (
                             <div className="text-[10px] italic text-[var(--forensic-text-faint)]">No connections yet. Dynamic tags will appear here.</div>
                         )}
-                        {visibleStyles.map(([tag, style]) => (
-                            <div
-                                key={tag}
-                                onClick={() => setEditingTag(editingTag === tag ? null : tag)}
-                                className={`group -ml-1 flex cursor-pointer items-center gap-2 rounded p-1 transition-colors ${editingTag === tag ? 'border border-[rgba(129,227,255,0.5)] bg-[rgba(129,227,255,0.16)]' : 'border border-transparent hover:bg-white/5'}`}
-                            >
-                                <div className="w-3 h-3 rounded-full border border-black shadow-sm shrink-0" style={{ backgroundColor: style.color }}></div>
-                                <span className="truncate text-[10px] font-bold tracking-wider text-[var(--forensic-text-muted)]" title={tag}>{tag}</span>
-                                <Edit2 size={10} className="ml-auto text-[var(--forensic-text-faint)] opacity-0 group-hover:opacity-100" />
-                            </div>
-                        ))}
+                        {visibleLegendStyles.map(({ displayLabel, tag, tags, style }) => {
+                            const isEditingVisibleLabel = tags.includes(editingTag || '');
+
+                            return (
+                                <div
+                                    key={tag}
+                                    onClick={() => setEditingTag(isEditingVisibleLabel ? null : tag)}
+                                    className={`group -ml-1 flex cursor-pointer items-center gap-2 rounded p-1 transition-colors ${isEditingVisibleLabel ? 'border border-[rgba(129,227,255,0.5)] bg-[rgba(129,227,255,0.16)]' : 'border border-transparent hover:bg-white/5'}`}
+                                >
+                                    <div className="w-3 h-3 rounded-full border border-black shadow-sm shrink-0" style={{ backgroundColor: style.color }}></div>
+                                    <span className="truncate text-[10px] font-bold tracking-wider text-[var(--forensic-text-muted)]" title={tags.join(', ')}>{displayLabel}</span>
+                                    <Edit2 size={10} className="ml-auto text-[var(--forensic-text-faint)] opacity-0 group-hover:opacity-100" />
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             ) : (
