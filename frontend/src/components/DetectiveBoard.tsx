@@ -2751,8 +2751,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     useEffect(() => {
         setAppendSearchPrompt('');
         setPendingIntegrationNodeIds([]);
+        setIsGathering(false);
+        setIsAnalyzing(false);
         setAnalysisMode(null);
+        setDeepDiveTopic(null);
         setImageLightbox(null);
+        relationshipRecoveryStartedAtRef.current = 0;
         nodeEntrySequenceRef.current = 0;
         clearBoardCameraMovement();
         clearLayoutChoreographyState();

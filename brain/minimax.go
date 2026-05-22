@@ -14,6 +14,8 @@ import (
 	"github.com/google/generative-ai-go/genai"
 )
 
+const defaultOpenAICompatibleTimeout = 120 * time.Second
+
 // MiniMaxClient handles communication with the MiniMax API
 type MiniMaxClient struct {
 	APIKey     string
@@ -436,7 +438,7 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 		}
 	}
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
+	httpClient := &http.Client{Timeout: defaultOpenAICompatibleTimeout}
 
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" && providerEnabled("OPENAI_ENABLED") {
 		router["openai"] = &OpenAICompatibleProvider{

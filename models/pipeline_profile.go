@@ -33,6 +33,27 @@ type PipelineProfileTokenUsage struct {
 	TotalTokens        int    `json:"totalTokens"`
 }
 
+type PipelinePersonaDiagnostic struct {
+	Mode              string  `json:"mode,omitempty"`
+	PersonaName       string  `json:"personaName"`
+	PreferredProvider string  `json:"preferredProvider,omitempty"`
+	Provider          string  `json:"provider,omitempty"`
+	FallbackProvider  string  `json:"fallbackProvider,omitempty"`
+	Status            string  `json:"status"`
+	ErrorCategory     string  `json:"errorCategory,omitempty"`
+	ErrorSummary      string  `json:"errorSummary,omitempty"`
+	AttemptCount      int     `json:"attemptCount,omitempty"`
+	RecoveredCategory string  `json:"recoveredCategory,omitempty"`
+	StartedAt         string  `json:"startedAt,omitempty"`
+	CompletedAt       string  `json:"completedAt,omitempty"`
+	DurationMs        int64   `json:"durationMs,omitempty"`
+	PromptChars       int     `json:"promptChars,omitempty"`
+	NodeCount         int     `json:"nodeCount,omitempty"`
+	PendingNodeCount  int     `json:"pendingNodeCount,omitempty"`
+	Confidence        float32 `json:"confidence,omitempty"`
+	KeyFindingCount   int     `json:"keyFindingCount,omitempty"`
+}
+
 type PipelineProfileBottleneck struct {
 	Kind           string  `json:"kind"`
 	ID             string  `json:"id"`
@@ -43,18 +64,19 @@ type PipelineProfileBottleneck struct {
 }
 
 type PipelinePerformanceProfile struct {
-	RunID          string                      `json:"runId"`
-	VaultID        string                      `json:"vaultId,omitempty"`
-	Mode           string                      `json:"mode"`
-	Status         string                      `json:"status"`
-	StartedAt      string                      `json:"startedAt"`
-	CompletedAt    string                      `json:"completedAt,omitempty"`
-	TotalElapsedMs int64                       `json:"totalElapsedMs"`
-	Steps          []PipelineProgressStepState `json:"steps,omitempty"`
-	Spans          []PipelineProfileSpan       `json:"spans,omitempty"`
-	Counters       map[string]int              `json:"counters,omitempty"`
-	TokenUsage     []PipelineProfileTokenUsage `json:"tokenUsage,omitempty"`
-	Bottlenecks    []PipelineProfileBottleneck `json:"bottlenecks,omitempty"`
+	RunID              string                      `json:"runId"`
+	VaultID            string                      `json:"vaultId,omitempty"`
+	Mode               string                      `json:"mode"`
+	Status             string                      `json:"status"`
+	StartedAt          string                      `json:"startedAt"`
+	CompletedAt        string                      `json:"completedAt,omitempty"`
+	TotalElapsedMs     int64                       `json:"totalElapsedMs"`
+	Steps              []PipelineProgressStepState `json:"steps,omitempty"`
+	Spans              []PipelineProfileSpan       `json:"spans,omitempty"`
+	Counters           map[string]int              `json:"counters,omitempty"`
+	TokenUsage         []PipelineProfileTokenUsage `json:"tokenUsage,omitempty"`
+	PersonaDiagnostics []PipelinePersonaDiagnostic `json:"personaDiagnostics,omitempty"`
+	Bottlenecks        []PipelineProfileBottleneck `json:"bottlenecks,omitempty"`
 }
 
 type PipelineProfileStore struct {
@@ -166,6 +188,49 @@ func (t *PipelineProgressTracker) RecordTokenUsage(usages ...PipelineProfileToke
 	}
 }
 
+func (t *PipelineProgressTracker) RecordPersonaDiagnostic(diagnostic PipelinePersonaDiagnostic) {
+	if t == nil || strings.TrimSpace(diagnostic.PersonaName) == "" {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	diagnostic.Mode = strings.TrimSpace(diagnostic.Mode)
+	diagnostic.PersonaName = strings.TrimSpace(diagnostic.PersonaName)
+	diagnostic.PreferredProvider = strings.TrimSpace(diagnostic.PreferredProvider)
+	diagnostic.Provider = strings.TrimSpace(diagnostic.Provider)
+	diagnostic.FallbackProvider = strings.TrimSpace(diagnostic.FallbackProvider)
+	diagnostic.Status = strings.TrimSpace(diagnostic.Status)
+	if diagnostic.Status == "" {
+		diagnostic.Status = "unknown"
+	}
+	diagnostic.ErrorCategory = strings.TrimSpace(diagnostic.ErrorCategory)
+	diagnostic.ErrorSummary = SanitizePipelineDiagnosticText(diagnostic.ErrorSummary)
+	diagnostic.RecoveredCategory = strings.TrimSpace(diagnostic.RecoveredCategory)
+	diagnostic.StartedAt = strings.TrimSpace(diagnostic.StartedAt)
+	diagnostic.CompletedAt = strings.TrimSpace(diagnostic.CompletedAt)
+	if diagnostic.AttemptCount < 0 {
+		diagnostic.AttemptCount = 0
+	}
+	if diagnostic.DurationMs < 0 {
+		diagnostic.DurationMs = 0
+	}
+	if diagnostic.PromptChars < 0 {
+		diagnostic.PromptChars = 0
+	}
+	if diagnostic.NodeCount < 0 {
+		diagnostic.NodeCount = 0
+	}
+	if diagnostic.PendingNodeCount < 0 {
+		diagnostic.PendingNodeCount = 0
+	}
+	if diagnostic.KeyFindingCount < 0 {
+		diagnostic.KeyFindingCount = 0
+	}
+	t.personaDiagnostics = append(t.personaDiagnostics, diagnostic)
+}
+
 func (t *PipelineProgressTracker) Profile() PipelinePerformanceProfile {
 	if t == nil {
 		return PipelinePerformanceProfile{}
@@ -188,6 +253,7 @@ func (t *PipelineProgressTracker) Profile() PipelinePerformanceProfile {
 	for _, usage := range t.tokenUsage {
 		tokenUsage = append(tokenUsage, usage)
 	}
+	personaDiagnostics := append([]PipelinePersonaDiagnostic(nil), t.personaDiagnostics...)
 	sort.SliceStable(tokenUsage, func(i, j int) bool {
 		if tokenUsage[i].TotalTokens == tokenUsage[j].TotalTokens {
 			return tokenUsage[i].Operation < tokenUsage[j].Operation
@@ -207,17 +273,18 @@ func (t *PipelineProgressTracker) Profile() PipelinePerformanceProfile {
 	}
 
 	profile := PipelinePerformanceProfile{
-		RunID:          t.runID,
-		VaultID:        t.vaultID,
-		Mode:           t.mode,
-		Status:         status,
-		StartedAt:      formatPipelineTime(t.startedAt),
-		CompletedAt:    completedAt,
-		TotalElapsedMs: totalElapsedMs,
-		Steps:          steps,
-		Spans:          spans,
-		Counters:       counters,
-		TokenUsage:     tokenUsage,
+		RunID:              t.runID,
+		VaultID:            t.vaultID,
+		Mode:               t.mode,
+		Status:             status,
+		StartedAt:          formatPipelineTime(t.startedAt),
+		CompletedAt:        completedAt,
+		TotalElapsedMs:     totalElapsedMs,
+		Steps:              steps,
+		Spans:              spans,
+		Counters:           counters,
+		TokenUsage:         tokenUsage,
+		PersonaDiagnostics: personaDiagnostics,
 	}
 	profile.Bottlenecks = BuildPipelineBottlenecks(profile)
 	return profile
@@ -445,4 +512,19 @@ func sanitizeProfileText(value string) string {
 		return value
 	}
 	return string([]rune(value)[:180]) + "..."
+}
+
+func SanitizePipelineDiagnosticText(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	for _, marker := range []string{"original content:", "response:"} {
+		if index := strings.Index(lower, marker); index >= 0 {
+			value = strings.TrimSpace(value[:index+len(marker)]) + " [redacted]"
+			break
+		}
+	}
+	return sanitizeProfileText(value)
 }

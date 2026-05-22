@@ -2421,6 +2421,100 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('auto reconnects a matching completed crawl even while a previous board analysis is still active', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      const { rerender } = renderBoard('previous-investigation', socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'previous-investigation',
+          node: {
+            id: 'old-node-a',
+            title: 'A',
+            summary: 'A',
+            fullText: 'A',
+            sourceURL: 'https://example.com/a',
+          },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'previous-investigation',
+          node: {
+            id: 'old-node-b',
+            title: 'B',
+            summary: 'B',
+            fullText: 'B',
+            sourceURL: 'https://example.com/b',
+          },
+        })
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /connect the dots/i }))
+      expect(socket.sentMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+        type: 'CONNECT_DOTS',
+        vaultId: 'previous-investigation',
+      }))
+      socket.sentMessages = []
+
+      rerender(
+        <DetectiveBoard
+          investigationId="investigation-1"
+          sharedSocket={socket as unknown as WebSocket}
+          onDeepDiveNode={vi.fn()}
+          onNavigateToChild={vi.fn()}
+        />,
+      )
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'node-a',
+            title: 'A',
+            summary: 'A',
+            fullText: 'A',
+            sourceURL: 'https://example.com/a',
+          },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: 'investigation-1',
+          node: {
+            id: 'node-b',
+            title: 'B',
+            summary: 'B',
+            fullText: 'B',
+            sourceURL: 'https://example.com/b',
+          },
+        })
+        socket.emit('SYNTHESIS_COMPLETE', {
+          result: 'Unified report',
+          vaultPath: 'abdomen_vault/investigation-1/report.md',
+          vaultId: 'investigation-1',
+          append: false,
+          runId: 'run-flow-2',
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+
+      expect(socket.sentMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+        type: 'CONNECT_DOTS',
+        vaultId: 'investigation-1',
+        runId: 'run-flow-2',
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not auto reconnect a board when another investigation completes synthesis', async () => {
     vi.useFakeTimers()
     const socket = new MockSocket()

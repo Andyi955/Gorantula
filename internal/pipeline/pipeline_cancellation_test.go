@@ -48,3 +48,13 @@ func TestPipelineCancellationRegistryRejectsWrongVault(t *testing.T) {
 		t.Fatal("expected run id alone to cancel when vault id is omitted")
 	}
 }
+
+func TestPipelineCancellationErrorDoesNotTreatTimeoutAsOperatorStop(t *testing.T) {
+	if !IsCancellationError(context.Canceled) {
+		t.Fatal("expected context cancellation to be treated as operator cancellation")
+	}
+
+	if IsCancellationError(context.DeadlineExceeded) {
+		t.Fatal("expected deadline exceeded to remain a timeout, not operator cancellation")
+	}
+}

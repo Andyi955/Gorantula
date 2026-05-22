@@ -154,3 +154,73 @@ func TestPipelineProfileStoreOverwritesPartialRunAndGroupsTokens(t *testing.T) {
 		t.Fatalf("unexpected grouped token usage: %#v", loaded.TokenUsage[0])
 	}
 }
+
+func TestPipelineProfilePersistsSanitizedPersonaDiagnostics(t *testing.T) {
+	tracker := NewPipelineProgressTracker(
+		"run-persona-diagnostics",
+		"inv-persona-diagnostics",
+		"web",
+		[]PipelineProgressStep{{ID: "persona_analysis", Label: "Persona analysis"}},
+	)
+	tracker.RecordPersonaDiagnostic(PipelinePersonaDiagnostic{
+		Mode:              "full_board",
+		PersonaName:       "Timeline Analyst",
+		PreferredProvider: "deepseek",
+		Provider:          "deepseek",
+		FallbackProvider:  "openai",
+		Status:            "failed",
+		ErrorCategory:     "json_parse",
+		ErrorSummary:      "failed to parse JSON response: unexpected end of JSON input, original content: RAW_SECRET_EVIDENCE_SHOULD_NOT_LEAK",
+		AttemptCount:      2,
+		RecoveredCategory: "json_parse",
+		DurationMs:        42,
+		PromptChars:       9000,
+		NodeCount:         3,
+		PendingNodeCount:  0,
+	})
+	tracker.RecordPersonaDiagnostic(PipelinePersonaDiagnostic{
+		Mode:            "full_board",
+		PersonaName:     "Connector",
+		Provider:        "deepseek",
+		Status:          "success",
+		DurationMs:      21,
+		PromptChars:     9000,
+		NodeCount:       3,
+		Confidence:      0.82,
+		KeyFindingCount: 2,
+	})
+
+	profile := tracker.Profile()
+	if len(profile.PersonaDiagnostics) != 2 {
+		t.Fatalf("expected two persona diagnostics, got %#v", profile.PersonaDiagnostics)
+	}
+	if strings.Contains(profile.PersonaDiagnostics[0].ErrorSummary, "RAW_SECRET_EVIDENCE") {
+		t.Fatalf("persona diagnostic leaked raw provider content: %#v", profile.PersonaDiagnostics[0])
+	}
+
+	rawProfile, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatalf("marshal profile: %v", err)
+	}
+	if strings.Contains(string(rawProfile), "RAW_SECRET_EVIDENCE") {
+		t.Fatalf("profile JSON leaked raw provider content: %s", rawProfile)
+	}
+
+	store := NewPipelineProfileStore(filepath.Join(t.TempDir(), "pipeline_runs"), 10)
+	if err := store.Save(profile); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+	loaded, err := store.Load("run-persona-diagnostics")
+	if err != nil {
+		t.Fatalf("load profile: %v", err)
+	}
+	if len(loaded.PersonaDiagnostics) != 2 {
+		t.Fatalf("loaded profile lost persona diagnostics: %#v", loaded.PersonaDiagnostics)
+	}
+	if loaded.PersonaDiagnostics[0].PersonaName != "Timeline Analyst" || loaded.PersonaDiagnostics[0].ErrorCategory != "json_parse" || loaded.PersonaDiagnostics[0].AttemptCount != 2 {
+		t.Fatalf("unexpected loaded failed diagnostic: %#v", loaded.PersonaDiagnostics[0])
+	}
+	if loaded.PersonaDiagnostics[1].PersonaName != "Connector" || loaded.PersonaDiagnostics[1].Confidence != 0.82 {
+		t.Fatalf("unexpected loaded success diagnostic: %#v", loaded.PersonaDiagnostics[1])
+	}
+}
