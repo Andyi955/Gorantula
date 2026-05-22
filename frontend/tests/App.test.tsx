@@ -834,6 +834,80 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /stop current investigation/i })).not.toBeInTheDocument()
   })
 
+  it('continues relationship synthesis for an off-screen investigation after crawl synthesis completes', async () => {
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-old', topic: 'Old Investigation' },
+        { id: 'inv-running', topic: 'Running Investigation' },
+      ]),
+    )
+    localStorage.setItem(
+      'inv_data_inv-running',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-a',
+            data: {
+              id: 'node-a',
+              title: 'A',
+              summary: 'A',
+              fullText: 'A',
+              sourceURL: 'https://example.com/a',
+            },
+          },
+          {
+            id: 'node-b',
+            data: {
+              id: 'node-b',
+              title: 'B',
+              summary: 'B',
+              fullText: 'B',
+              sourceURL: 'https://example.com/b',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('SYNTHESIS_COMPLETE', {
+        result: 'Off-screen report',
+        vaultId: 'inv-running',
+        append: false,
+        runId: 'run-offscreen-1',
+      })
+    })
+
+    await waitFor(() => {
+      const sentMessages = WebSocketMock.instances[0]?.send.mock.calls.map((call) => JSON.parse(call[0] as string)) || []
+      expect(sentMessages).toContainEqual(expect.objectContaining({
+        type: 'CONNECT_DOTS',
+        vaultId: 'inv-running',
+        runId: 'run-offscreen-1',
+      }))
+    })
+
+    const connectMessage = WebSocketMock.instances[0]?.send.mock.calls
+      .map((call) => JSON.parse(call[0] as string))
+      .find((message) => message.type === 'CONNECT_DOTS')
+    expect(connectMessage.payload).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'node-a' }),
+      expect.objectContaining({ id: 'node-b' }),
+    ]))
+    const visibleBoardId = screen.queryByTestId('mock-board-investigation-id')
+    expect(visibleBoardId?.textContent || '').not.toBe('inv-running')
+  })
+
   it('renders saved pipeline performance profiles in the monitor drawer with an animated token readout', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn((input: RequestInfo | URL) => {

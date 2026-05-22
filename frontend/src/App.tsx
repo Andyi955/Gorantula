@@ -191,6 +191,11 @@ interface DiscoveryEvidenceRecord {
   sourceURL?: string
 }
 
+interface PersistedRelationshipNode {
+  id?: unknown
+  data?: unknown
+}
+
 const BACKEND_STATUS_ENDPOINT = '/__gorantula_backend_status'
 const BACKEND_WS_URL = 'ws://localhost:8080/ws'
 const PIPELINE_RUNS_ENDPOINT = 'http://localhost:8080/api/pipeline-runs'
@@ -524,6 +529,39 @@ const getInvestigationTimestamp = (investigationId: string): number | null => {
 
   const timestamp = Number.parseInt(match[1], 10)
   return Number.isFinite(timestamp) ? timestamp : null
+}
+
+const getRelationshipSynthesisPayloadNodes = (boardState: { nodes?: unknown[] } | null | undefined) => {
+  if (!boardState || !Array.isArray(boardState.nodes)) {
+    return []
+  }
+
+  return boardState.nodes
+    .map((node): Record<string, unknown> | null => {
+      if (!node || typeof node !== 'object') {
+        return null
+      }
+
+      const persistedNode = node as PersistedRelationshipNode
+      const data = persistedNode.data && typeof persistedNode.data === 'object'
+        ? { ...(persistedNode.data as Record<string, unknown>) }
+        : { ...(node as Record<string, unknown>) }
+      const nodeId = typeof data.id === 'string' && data.id.trim()
+        ? data.id.trim()
+        : typeof persistedNode.id === 'string'
+          ? persistedNode.id.trim()
+          : ''
+
+      if (!nodeId || data.nodeKind === 'discovery') {
+        return null
+      }
+
+      return {
+        ...data,
+        id: nodeId,
+      }
+    })
+    .filter((node): node is Record<string, unknown> => Boolean(node))
 }
 
 const formatSidebarActivity = (investigationId: string) => {
@@ -1132,6 +1170,28 @@ function App() {
     void refreshPipelineProfiles()
   }, [refreshPipelineProfiles])
 
+  const requestOffscreenRelationshipSynthesis = useCallback(async (vaultId: string, runId?: string) => {
+    const socket = socketConfig.socket
+    if (!socket || !socketConfig.ready) {
+      return
+    }
+
+    const savedBoardState = getCachedBoardStateForInvestigation(vaultId)
+      || await loadBoardStateForInvestigation(vaultId)
+    const evidenceNodes = getRelationshipSynthesisPayloadNodes(savedBoardState)
+
+    if (evidenceNodes.length < 2) {
+      return
+    }
+
+    socket.send(JSON.stringify({
+      type: 'CONNECT_DOTS',
+      payload: evidenceNodes,
+      vaultId,
+      runId: runId || undefined,
+    }))
+  }, [socketConfig.ready, socketConfig.socket])
+
   useEffect(() => {
     if (!socketConfig.socket) {
       return
@@ -1211,6 +1271,10 @@ function App() {
               [vaultId]: true,
             }))
           }
+          if (explicitVaultId && explicitVaultId !== currentInvestigationId && !payload.append) {
+            const runId = typeof payload.runId === 'string' ? payload.runId.trim() : ''
+            void requestOffscreenRelationshipSynthesis(vaultId, runId)
+          }
           void saveVaultResultForInvestigation(vaultId, payload).catch((error) => {
             console.warn('[App] Failed to persist vault result; keeping it in memory for this session.', error)
             setAutosaveWarning({
@@ -1271,7 +1335,7 @@ function App() {
 
     socketConfig.socket.addEventListener('message', handleMessage)
     return () => socketConfig.socket?.removeEventListener('message', handleMessage)
-  }, [applyPipelineProgress, currentInvestigationId, refreshPipelineProfiles, socketConfig.socket])
+  }, [applyPipelineProgress, currentInvestigationId, refreshPipelineProfiles, requestOffscreenRelationshipSynthesis, socketConfig.socket])
 
   const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
   const sessionTokenSummary = `Session: ${formatCompactTokens(sessionTokenUsage.totalTokens)} total, ${formatCompactTokens(sessionTokenUsage.promptTokens)} in, ${formatCompactTokens(sessionTokenUsage.completionTokens)} out, ${sessionTokenUsage.callCount} calls | ${formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}`
