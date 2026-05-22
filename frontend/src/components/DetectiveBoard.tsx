@@ -779,6 +779,58 @@ const QA_ANIMATION_DEMO_NODE_COMPLETE_MS = (QA_ANIMATION_DEMO_NODES.length - 1) 
 const QA_EVIDENCE_EXPANSION_NODE_ID = 'qa-evidence-expansion-node';
 const QA_EVIDENCE_EXPANSION_IMAGE_SRC = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22071118%22/%3E%3Crect x=%2238%22 y=%2244%22 width=%22564%22 height=%22272%22 fill=%220c1a22%22 stroke=%2281e3ff%22 stroke-width=%222%22 opacity=%220.78%22/%3E%3Cpath d=%22M70 112h260M70 150h430M70 188h380M70 226h300%22 stroke=%22%2381e3ff%22 stroke-width=%229%22 opacity=%220.28%22/%3E%3Ccircle cx=%22522%22 cy=%22128%22 r=%2248%22 fill=%22%23f6c879%22 opacity=%220.22%22/%3E%3Ctext x=%2270%22 y=%2286%22 fill=%22%2381e3ff%22 font-size=%2224%22 font-family=%22monospace%22 font-weight=%22700%22%3EQA VISUAL EVIDENCE%3C/text%3E%3C/svg%3E';
 
+const QA_DUPLICATE_SQUASH_DEMO_NODES = [
+    {
+        id: 'qa-duplicate-squashed-evidence',
+        title: 'QA Squashed Duplicate Evidence',
+        summary: 'Three duplicate excerpts from mirrored reports have been squashed into this single visible evidence card.',
+        fullText: 'Three duplicate excerpts from mirrored reports have been squashed into this single visible evidence card. The merged card keeps source provenance while avoiding duplicate board clutter.',
+        sourceURL: 'https://example.com/qa-duplicate-primary',
+        evidenceCount: 3,
+        mergedSourceURLs: [
+            'https://example.com/qa-duplicate-primary',
+            'https://mirror.example/qa-duplicate-primary',
+            'https://wire.example/qa-duplicate-primary',
+        ],
+        duplicateNodeIds: ['qa-duplicate-source-a', 'qa-duplicate-source-b'],
+    },
+    {
+        id: 'qa-duplicate-policy-response',
+        title: 'Policy Response Lead',
+        summary: 'A regulator memo responds to the same evidence cluster with proposed reporting requirements.',
+        fullText: 'A regulator memo responds to the same evidence cluster with proposed reporting requirements.',
+        sourceURL: 'https://example.com/qa-duplicate-policy',
+    },
+    {
+        id: 'qa-duplicate-money-trail',
+        title: 'Funding Pressure Note',
+        summary: 'A market note links the evidence cluster to higher compliance and infrastructure costs.',
+        fullText: 'A market note links the evidence cluster to higher compliance and infrastructure costs.',
+        sourceURL: 'https://example.com/qa-duplicate-money',
+    },
+] as const;
+
+const QA_DUPLICATE_SQUASH_DEMO_POSITIONS = [
+    { x: 160, y: 160 },
+    { x: 640, y: 112 },
+    { x: 640, y: 416 },
+] as const;
+
+const QA_DUPLICATE_SQUASH_DEMO_CONNECTIONS = [
+    {
+        source: 'qa-duplicate-squashed-evidence',
+        target: 'qa-duplicate-policy-response',
+        tag: 'POLICY_TRIGGER',
+        reasoning: 'The policy memo responds to the squashed evidence cluster.',
+    },
+    {
+        source: 'qa-duplicate-money-trail',
+        target: 'qa-duplicate-squashed-evidence',
+        tag: 'MONEY_TRAIL',
+        reasoning: 'The cost note adds financial pressure context to the squashed evidence cluster.',
+    },
+] as const;
+
 const QA_ANIMATION_DEMO_INSIGHTS = [
     {
         personaName: 'Discovery',
@@ -3878,6 +3930,104 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }));
     }, [investigationId]);
 
+    const playBrowserQaDuplicateEvidenceDemo = useCallback(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId) {
+            return;
+        }
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
+        clearLayoutChoreographyState();
+        qaAnimationDemoActiveRef.current = false;
+        qaEvidenceExpansionDemoActiveRef.current = false;
+        nodeEntrySequenceRef.current = 0;
+        setBoardMode('strict-grid');
+        setPendingIntegrationNodeIds([]);
+        setHasConnectedDots(true);
+        setIsGathering(false);
+        setIsAnalyzing(false);
+        setAnalysisMode(null);
+        setDeepDiveTopic(null);
+        setEditingNodeId(null);
+
+        const demoNodes: Node[] = QA_DUPLICATE_SQUASH_DEMO_NODES.map((demoNode, index) => {
+            const frame = calculateNodeFrame(demoNode.summary, demoNode.fullText, false, false);
+
+            return {
+                id: demoNode.id,
+                type: 'custom',
+                zIndex: STRICT_GRID_NODE_Z_INDEX,
+                position: QA_DUPLICATE_SQUASH_DEMO_POSITIONS[index] || { x: 160 + index * 360, y: 160 },
+                style: frame,
+                sourcePosition: Position.Right,
+                targetPosition: Position.Left,
+                data: {
+                    ...demoNode,
+                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                    onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                    onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                    onDelete: (id: string) => handleDeleteNode(id),
+                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                    onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                    onSetEditing: (id: string | null) => handleSetEditing(id),
+                    onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                    onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                    onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                    boardMode: 'strict-grid' as BoardMode,
+                    expanded: false,
+                },
+            };
+        });
+
+        const demoEdges: Edge[] = QA_DUPLICATE_SQUASH_DEMO_CONNECTIONS.map((connection) => {
+            const visuals = buildEdgeVisuals(connection.tag, tagStyles);
+            const displayLabel = getRelationshipDisplayLabel(visuals.tag);
+
+            return {
+                id: `qa-duplicate-edge-${connection.source}-${connection.target}-${visuals.tag}`,
+                source: connection.source,
+                target: connection.target,
+                type: 'customEdge',
+                label: displayLabel,
+                zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                updatable: true,
+                interactionWidth: 20,
+                animated: visuals.animated,
+                data: {
+                    tag: visuals.tag,
+                    displayLabel,
+                    reasoning: connection.reasoning,
+                    color: visuals.color,
+                    pattern: visuals.pattern,
+                    shape: visuals.shape,
+                    generatedBy: 'qaDuplicateEvidenceSquash',
+                    snapEnabled: snapConnectionLabels,
+                    boardMode: 'strict-grid',
+                    onConnectionHover: handleConnectionHover,
+                },
+                style: {
+                    stroke: visuals.color,
+                    strokeWidth: visuals.strokeWidth ?? 2,
+                    strokeDasharray: visuals.strokeDasharray,
+                    strokeLinecap: visuals.strokeLinecap,
+                },
+                labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
+                labelBgPadding: [8, 4] as [number, number],
+                labelBgBorderRadius: 2,
+            };
+        });
+
+        setNodes(demoNodes);
+        setEdges(demoEdges);
+    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, tagStyles]);
+
     const playBrowserQaEvidenceExpansionDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
             return;
@@ -5229,6 +5379,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
                                     >
                                         <FileSearch size={14} /> Evidence expansion
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaDuplicateEvidenceDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay duplicate evidence squash demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileSearch size={14} /> Duplicate squash
                                     </button>
                                 </div>
                             )}
