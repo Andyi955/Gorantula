@@ -419,6 +419,166 @@ func TestRunPersonaAnalysisFallsBackAfterDeadlineExceeded(t *testing.T) {
 	}
 }
 
+func TestGetDefaultPersonasUsesStrictJobBoundaries(t *testing.T) {
+	personas := GetDefaultPersonas()
+	names := make([]string, 0, len(personas))
+	policies := make(map[string]PersonaConnectionPolicy)
+	for _, persona := range personas {
+		names = append(names, persona.Name)
+		policies[persona.Name] = persona.ConnectionPolicy
+	}
+
+	expectedNames := []string{
+		"Skeptic",
+		"Connector",
+		"Timeline Analyst",
+		"Entity Mapper",
+		"Context Brief",
+		"Implications Mapper",
+		"Evidence Triage",
+	}
+	if strings.Join(names, "|") != strings.Join(expectedNames, "|") {
+		t.Fatalf("unexpected default persona names: %v", names)
+	}
+
+	for _, supportOnly := range []string{"Evidence Triage", "Entity Mapper", "Context Brief", "Implications Mapper"} {
+		if policies[supportOnly] != PersonaConnectionPolicySupportOnly {
+			t.Fatalf("expected %s to be support-only, got %q", supportOnly, policies[supportOnly])
+		}
+	}
+	if policies["Connector"] != PersonaConnectionPolicyConnector {
+		t.Fatalf("expected Connector policy, got %q", policies["Connector"])
+	}
+	if policies["Timeline Analyst"] != PersonaConnectionPolicyTemporal {
+		t.Fatalf("expected Timeline Analyst temporal policy, got %q", policies["Timeline Analyst"])
+	}
+	if policies["Skeptic"] != PersonaConnectionPolicySkeptic {
+		t.Fatalf("expected Skeptic policy, got %q", policies["Skeptic"])
+	}
+
+	prompt := BuildPersonaPrompt(personas[3], "[NodeID: node-1]\nSummary: test")
+	if !strings.Contains(prompt, `"connections": []`) || !strings.Contains(prompt, `"proposedConnections": []`) {
+		t.Fatalf("support-only prompt should instruct empty relationship fields, got:\n%s", prompt)
+	}
+}
+
+func TestRunPersonaAnalysisEnforcesSupportOnlyPolicyAndCaps(t *testing.T) {
+	keyFindings := make([]string, 0, 30)
+	for idx := 0; idx < 30; idx++ {
+		keyFindings = append(keyFindings, "Entity Name")
+	}
+	questions := make([]string, 0, 10)
+	for idx := 0; idx < 10; idx++ {
+		questions = append(questions, "Question?")
+	}
+
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = keyFindings
+			response.Connections = []string{"node-1 links to node-2"}
+			response.ProposedConnections = []PersonaConnectionProposal{
+				{Source: "node-1", Target: "node-2", Tag: "SHARED_ENTITY", Reasoning: "Both mention the same company.", EvidenceNodeIDs: []string{"node-1", "node-2"}, Confidence: 0.9},
+			}
+			response.Questions = questions
+			response.Confidence = 0.85
+			response.NodeIDs = []string{"node-1", "node-2"}
+			return nil
+		},
+	}
+	brain := &Brain{ModelRouter: map[string]ModelProvider{"deepseek": mock}}
+
+	insight, err := brain.runPersonaAnalysisWithPrompt(context.Background(), Persona{
+		Name:             "Entity Mapper",
+		ModelPref:        "deepseek",
+		Perspective:      "Extracts entities",
+		ConnectionPolicy: PersonaConnectionPolicySupportOnly,
+	}, "[NodeID: node-1]\nSummary: A\n\n[NodeID: node-2]\nSummary: B")
+	if err != nil {
+		t.Fatalf("runPersonaAnalysisWithPrompt failed: %v", err)
+	}
+	if len(insight.Connections) != 0 || len(insight.ProposedConnections) != 0 {
+		t.Fatalf("expected support-only persona relationship fields to be cleared, got connections=%v proposals=%v", insight.Connections, insight.ProposedConnections)
+	}
+	if len(insight.KeyFindings) > 20 {
+		t.Fatalf("expected Entity Mapper key findings to be capped, got %d", len(insight.KeyFindings))
+	}
+	if len(insight.Questions) > 5 {
+		t.Fatalf("expected questions to be capped, got %d", len(insight.Questions))
+	}
+}
+
+func TestRunPersonaAnalysisFiltersProposalsByPersonaPolicyAndNodeIDs(t *testing.T) {
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"persona ok"}
+			response.Confidence = 0.9
+			response.NodeIDs = []string{"node-1", "node-2"}
+			response.ProposedConnections = []PersonaConnectionProposal{
+				{Source: "node-1", Target: "node-2", Tag: "CONTRACT_PRECEDES_LAUNCH", Reasoning: "The first event precedes the second event.", EvidenceNodeIDs: []string{"node-1", "node-2"}, Confidence: 0.8},
+				{Source: "node-1", Target: "node-2", Tag: "CAUSES", Reasoning: "This causal edge is outside the timeline role.", EvidenceNodeIDs: []string{"node-1", "node-2"}, Confidence: 0.8},
+				{Source: "node-10", Target: "node-2", Tag: "PRECEDES", Reasoning: "Uses a short made-up ID.", EvidenceNodeIDs: []string{"node-10", "node-2"}, Confidence: 0.8},
+			}
+			return nil
+		},
+	}
+	brain := &Brain{ModelRouter: map[string]ModelProvider{"deepseek": mock}}
+
+	insight, err := brain.runPersonaAnalysisWithPrompt(context.Background(), Persona{
+		Name:             "Timeline Analyst",
+		ModelPref:        "deepseek",
+		Perspective:      "Orders events",
+		ConnectionPolicy: PersonaConnectionPolicyTemporal,
+	}, "[NodeID: node-1]\nSummary: First\n\n[NodeID: node-2]\nSummary: Second")
+	if err != nil {
+		t.Fatalf("runPersonaAnalysisWithPrompt failed: %v", err)
+	}
+	if len(insight.ProposedConnections) != 1 {
+		t.Fatalf("expected only the valid temporal proposal to remain, got %#v", insight.ProposedConnections)
+	}
+	if insight.ProposedConnections[0].Tag != "CONTRACT_PRECEDES_LAUNCH" {
+		t.Fatalf("unexpected surviving proposal: %#v", insight.ProposedConnections[0])
+	}
+}
+
+func TestRunPersonaAnalysisDropsCategoryOnlyProposalTags(t *testing.T) {
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			response := target.(*PersonaJSONResponse)
+			response.KeyFindings = []string{"persona ok"}
+			response.Confidence = 0.9
+			response.NodeIDs = []string{"node-1", "node-2"}
+			response.ProposedConnections = []PersonaConnectionProposal{
+				{Source: "node-1", Target: "node-2", Tag: "COMMON_ENTITY", Reasoning: "Both nodes mention Samsung.", EvidenceNodeIDs: []string{"node-1", "node-2"}, Confidence: 0.9},
+				{Source: "node-1", Target: "node-2", Tag: "SAME_EVENT", Reasoning: "Both nodes discuss the same launch.", EvidenceNodeIDs: []string{"node-1", "node-2"}, Confidence: 0.9},
+				{Source: "node-1", Target: "node-2", Tag: "SAMSUNG_MEMORY_SHORTAGE", Reasoning: "The Samsung disruption maps to the DDR5 shortage.", EvidenceNodeIDs: []string{"node-1", "node-2"}, Confidence: 0.88},
+			}
+			return nil
+		},
+	}
+	brain := &Brain{ModelRouter: map[string]ModelProvider{"deepseek": mock}}
+
+	insight, err := brain.runPersonaAnalysisWithPrompt(context.Background(), Persona{
+		Name:             "Connector",
+		ModelPref:        "deepseek",
+		Perspective:      "Finds direct links",
+		ConnectionPolicy: PersonaConnectionPolicyConnector,
+	}, "[NodeID: node-1]\nSummary: Samsung strike\n\n[NodeID: node-2]\nSummary: DDR5 shortage")
+	if err != nil {
+		t.Fatalf("runPersonaAnalysisWithPrompt failed: %v", err)
+	}
+	if len(insight.ProposedConnections) != 1 {
+		t.Fatalf("expected only the specific proposal to remain, got %#v", insight.ProposedConnections)
+	}
+	if insight.ProposedConnections[0].Tag != "SAMSUNG_MEMORY_SHORTAGE" {
+		t.Fatalf("unexpected surviving proposal: %#v", insight.ProposedConnections[0])
+	}
+}
+
 func TestAnalyzeWithPersonasBroadcastsPartialCompletionWarning(t *testing.T) {
 	t.Setenv("DEFAULT_PERSONA_MODEL", "deepseek")
 
@@ -430,7 +590,7 @@ func TestAnalyzeWithPersonasBroadcastsPartialCompletionWarning(t *testing.T) {
 			if strings.Contains(prompt, "timeline specialist") {
 				return context.DeadlineExceeded
 			}
-			if strings.Contains(prompt, "strict entity extraction") {
+			if strings.Contains(prompt, "strict entity mapping") {
 				return errors.New("invalid character ',' after object key")
 			}
 			response := target.(*PersonaJSONResponse)
@@ -467,7 +627,7 @@ func TestAnalyzeWithPersonasBroadcastsPartialCompletionWarning(t *testing.T) {
 		payload, _ := msg.Payload.(string)
 		if msg.Type == "SYSTEM_LOG" &&
 			strings.Contains(payload, "Partial persona analysis completed: 5/7 personas succeeded") &&
-			strings.Contains(payload, "Entity Hunter") &&
+			strings.Contains(payload, "Entity Mapper") &&
 			strings.Contains(payload, "Timeline Analyst") {
 			foundWarning = true
 			break
@@ -487,7 +647,7 @@ func TestAnalyzeWithPersonasRecordsPersonaDiagnostics(t *testing.T) {
 			if strings.Contains(prompt, "timeline specialist") {
 				return context.DeadlineExceeded
 			}
-			if strings.Contains(prompt, "strict entity extraction") {
+			if strings.Contains(prompt, "strict entity mapping") {
 				return errors.New("failed to parse JSON response: unexpected end of JSON input, original content: RAW_SECRET_EVIDENCE")
 			}
 			response := target.(*PersonaJSONResponse)
@@ -531,7 +691,7 @@ func TestAnalyzeWithPersonasRecordsPersonaDiagnostics(t *testing.T) {
 		switch diagnostic.PersonaName {
 		case "Timeline Analyst":
 			timelineFailure = diagnostic
-		case "Entity Hunter":
+		case "Entity Mapper":
 			entityFailure = diagnostic
 		case "Connector":
 			connectorSuccess = diagnostic
@@ -548,10 +708,10 @@ func TestAnalyzeWithPersonasRecordsPersonaDiagnostics(t *testing.T) {
 		t.Fatalf("unexpected Timeline Analyst prompt/run metadata: %#v", timelineFailure)
 	}
 	if entityFailure == nil || entityFailure.Status != "failed" || entityFailure.ErrorCategory != "json_parse" {
-		t.Fatalf("expected JSON parse diagnostic for Entity Hunter, got %#v", entityFailure)
+		t.Fatalf("expected JSON parse diagnostic for Entity Mapper, got %#v", entityFailure)
 	}
 	if entityFailure.AttemptCount != 2 {
-		t.Fatalf("expected Entity Hunter to record a JSON retry attempt, got %#v", entityFailure)
+		t.Fatalf("expected Entity Mapper to record a JSON retry attempt, got %#v", entityFailure)
 	}
 	if strings.Contains(entityFailure.ErrorSummary, "RAW_SECRET_EVIDENCE") {
 		t.Fatalf("entity failure leaked raw provider content: %#v", entityFailure)

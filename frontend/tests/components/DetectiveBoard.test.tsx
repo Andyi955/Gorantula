@@ -338,7 +338,7 @@ describe('DetectiveBoard relationship legend', () => {
 
     renderBoard()
 
-    const tag = await screen.findByText('RELATED')
+    const tag = await screen.findByText('Hidden Connection')
     await user.click(tag)
 
     expect(screen.getByText('EDIT: RELATED')).toBeInTheDocument()
@@ -354,6 +354,40 @@ describe('DetectiveBoard relationship legend', () => {
       expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     })
     expect(screen.queryByText('EDIT: RELATED')).not.toBeInTheDocument()
+  })
+
+  it('collapses duplicate detective legend labels and keeps raw-looking tags out of view', async () => {
+    localStorage.setItem(
+      'board_tag_styles',
+      JSON.stringify({
+        WH_PLEDGE_PRECEDES_DPA: { color: '#bc13fe', pattern: 'solid', shape: 'none' },
+        DPA_PRECEDES_NERC_ALERT: { color: '#89f7fe', pattern: 'dashed', shape: 'none' },
+        LIN1_IGNITION_2022: { color: '#f6c879', pattern: 'solid', shape: 'none' },
+        LIN1_IGNITION_REFERENCE: { color: '#8de0a6', pattern: 'solid', shape: 'none' },
+      }),
+    )
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [],
+        edges: [
+          { id: 'edge-1', source: 'a', target: 'b', label: 'WH_PLEDGE_PRECEDES_DPA', data: { generatedBy: 'connectTheDots', tag: 'WH_PLEDGE_PRECEDES_DPA' } },
+          { id: 'edge-2', source: 'b', target: 'c', label: 'DPA_PRECEDES_NERC_ALERT', data: { generatedBy: 'connectTheDots', tag: 'DPA_PRECEDES_NERC_ALERT' } },
+          { id: 'edge-3', source: 'c', target: 'd', label: 'LIN1_IGNITION_2022', data: { generatedBy: 'connectTheDots', tag: 'LIN1_IGNITION_2022' } },
+          { id: 'edge-4', source: 'd', target: 'e', label: 'LIN1_IGNITION_REFERENCE', data: { generatedBy: 'connectTheDots', tag: 'LIN1_IGNITION_REFERENCE' } },
+        ],
+      }),
+    )
+
+    renderBoard()
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Timeline Lead')).toHaveLength(1)
+    })
+    expect(screen.getByText('Trigger Event')).toBeInTheDocument()
+    expect(screen.getByText('Evidence Match')).toBeInTheDocument()
+    expect(screen.queryByText(/Lin1 Ignition/i)).not.toBeInTheDocument()
   })
 
   it('persists expanded line pattern selections from the legend editor', async () => {
@@ -375,7 +409,7 @@ describe('DetectiveBoard relationship legend', () => {
 
     renderBoard()
 
-    await user.click(await screen.findByText('RELATED'))
+    await user.click(await screen.findByText('Hidden Connection'))
     await user.click(screen.getByRole('button', { name: 'dash-dot' }))
 
     expect(JSON.parse(localStorage.getItem('board_tag_styles') || '{}')).toEqual({
@@ -402,7 +436,7 @@ describe('DetectiveBoard relationship legend', () => {
 
     renderBoard()
 
-    await user.click(await screen.findByText('RELATED'))
+    await user.click(await screen.findByText('Hidden Connection'))
     await user.click(screen.getByRole('button', { name: 'staggered' }))
 
     expect(JSON.parse(localStorage.getItem('board_tag_styles') || '{}')).toEqual({
@@ -807,6 +841,16 @@ describe('DetectiveBoard relationship legend', () => {
 
       const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
       expect(edges.map((edge) => edge.label)).toEqual(expect.arrayContaining([
+        'Pressure Point',
+        'Policy Trigger',
+        'Money Trail',
+        'Operator Response',
+        'Resilience Gap',
+        'Timeline Lead',
+        'Supply Chain',
+        'Operational Constraint',
+      ]))
+      expect(edges.map((edge) => edge.data?.tag)).toEqual(expect.arrayContaining([
         'INFRASTRUCTURE_STRESS',
         'REGULATORY_SIGNAL',
         'MARKET_PRESSURE',
@@ -2328,6 +2372,16 @@ describe('DetectiveBoard relationship legend', () => {
 
       const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
       expect(edges.map((edge) => edge.label)).toEqual(expect.arrayContaining([
+        'Pressure Point',
+        'Policy Trigger',
+        'Money Trail',
+        'Operator Response',
+        'Resilience Gap',
+        'Timeline Lead',
+        'Supply Chain',
+        'Operational Constraint',
+      ]))
+      expect(edges.map((edge) => edge.data?.tag)).toEqual(expect.arrayContaining([
         'INFRASTRUCTURE_STRESS',
         'REGULATORY_SIGNAL',
         'MARKET_PRESSURE',
@@ -2421,6 +2475,68 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('shows detective display labels while preserving generated relationship tags', async () => {
+    const socket = new MockSocket()
+    renderBoard('investigation-display-tags', socket as unknown as WebSocket)
+
+    act(() => {
+      socket.emit('MEMORY_NODE_GATHERED', {
+        append: false,
+        vaultId: 'investigation-display-tags',
+        node: {
+          id: 'node-power',
+          title: 'Power demand spike',
+          summary: 'AI data centers are changing regional power loads.',
+          fullText: 'AI data centers are changing regional power loads.',
+          sourceURL: 'https://example.com/power',
+        },
+      })
+      socket.emit('MEMORY_NODE_GATHERED', {
+        append: false,
+        vaultId: 'investigation-display-tags',
+        node: {
+          id: 'node-grid',
+          title: 'Grid instability alert',
+          summary: 'Utilities warn that load swings can stress grid operations.',
+          fullText: 'Utilities warn that load swings can stress grid operations.',
+          sourceURL: 'https://example.com/grid',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string }>
+      expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining(['node-power', 'node-grid']))
+    })
+
+    act(() => {
+      socket.emit('CONNECTIONS_FOUND', [
+        {
+          source: 'node-power',
+          target: 'node-grid',
+          tag: 'DATA_CENTER_POWER_SWING_RISK',
+          reasoning: 'Both nodes describe power-load swings creating operational grid risk.',
+        },
+      ])
+    })
+
+    await waitFor(() => {
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
+      expect(edges).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          label: 'Grid Threat',
+          data: expect.objectContaining({
+            tag: 'DATA_CENTER_POWER_SWING_RISK',
+            displayLabel: 'Grid Threat',
+          }),
+        }),
+      ]))
+    })
+
+    expect(screen.getByText('Grid Threat')).toBeInTheDocument()
+    expect(screen.queryByText('DATA_CENTER_POWER_SWING_RISK')).not.toBeInTheDocument()
+  })
+
   it('auto reconnects a matching completed crawl even while a previous board analysis is still active', async () => {
     vi.useFakeTimers()
     const socket = new MockSocket()
@@ -2509,6 +2625,69 @@ describe('DetectiveBoard relationship legend', () => {
         type: 'CONNECT_DOTS',
         vaultId: 'investigation-1',
         runId: 'run-flow-2',
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('queues auto reconnect when synthesis completes before gathered nodes are render-ready', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    const investigationId = 'investigation-delayed-auto'
+
+    try {
+      renderBoard(investigationId, socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('SYNTHESIS_COMPLETE', {
+          result: 'Unified report',
+          vaultPath: `abdomen_vault/${investigationId}/report.md`,
+          vaultId: investigationId,
+          append: false,
+          runId: 'run-flow-delayed-nodes',
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700)
+      })
+
+      expect(socket.sentMessages.map((message) => JSON.parse(message).type)).not.toContain('CONNECT_DOTS')
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: investigationId,
+          node: {
+            id: 'node-a',
+            title: 'A',
+            summary: 'A',
+            fullText: 'A',
+            sourceURL: 'https://example.com/a',
+          },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: investigationId,
+          node: {
+            id: 'node-b',
+            title: 'B',
+            summary: 'B',
+            fullText: 'B',
+            sourceURL: 'https://example.com/b',
+          },
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+
+      expect(socket.sentMessages.map((message) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+        type: 'CONNECT_DOTS',
+        vaultId: investigationId,
+        runId: 'run-flow-delayed-nodes',
       }))
     } finally {
       vi.useRealTimers()

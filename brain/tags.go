@@ -5,6 +5,8 @@ import (
 	"unicode"
 )
 
+const relationshipTagMaxLength = 32
+
 // SanitizeTag enforces length limits, casing, and character restrictions
 // for AI generated relationship tags.
 func SanitizeTag(rawTag string) string {
@@ -35,9 +37,10 @@ func SanitizeTag(rawTag string) string {
 		return "RELATED"
 	}
 
-	// truncate to 25 chars max to prevent UI blowout
-	if len(tag) > 25 {
-		tag = tag[:25]
+	// truncate to a bounded length so labels stay readable without losing
+	// the subject of content-specific forensic tags.
+	if len(tag) > relationshipTagMaxLength {
+		tag = tag[:relationshipTagMaxLength]
 	}
 
 	return tag

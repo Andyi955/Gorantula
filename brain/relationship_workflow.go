@@ -16,6 +16,7 @@ import (
 const (
 	relationshipCandidateConfidenceFloor = 0.50
 	relationshipQualityThreshold         = 0.66
+	relationshipSpecificTagInstruction   = "Use content-specific uppercase tags up to 32 characters that name the actual subject or tension, such as SAMSUNG_MEMORY_SHORTAGE, COST_CLAIM_CONFLICT, GBT_MILESTONE_DUPLICATE, or CONTRACT_PRECEDES_LAUNCH. Do not use category-only final labels: RELATED, SAME_ENTITY, COMMON_ENTITY, SAME_TOPIC, SAME_EVENT, SAME_EVENT_WINDOW, SAME_PROGRAM, PRECEDES, FOLLOWS, CORROBORATES, CONTRADICTS, INCONSISTENCY, DUPLICATE_CONTENT, DUPLICATES, EXEMPLIFIES."
 )
 
 var (
@@ -23,6 +24,44 @@ var (
 	relationshipYearPattern   = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
 	relationshipWordPattern   = regexp.MustCompile(`[a-z0-9]+`)
 )
+
+var categoryOnlyRelationshipTags = map[string]struct{}{
+	"RELATED":                  {},
+	"CONNECTED":                {},
+	"LINKED":                   {},
+	"ASSOCIATED":               {},
+	"SAME_ORG":                 {},
+	"SAME_RESEARCH":            {},
+	"SAME_ENTITY":              {},
+	"SAME_TOPIC":               {},
+	"SAME_SOURCE":              {},
+	"SAME_EVENT":               {},
+	"SAME_EVENT_WINDOW":        {},
+	"SAME_PROGRAM":             {},
+	"COMMON_ENTITY":            {},
+	"COMMON_ORG":               {},
+	"COMMON_SOURCE":            {},
+	"COMMON_TOPIC":             {},
+	"SHARED_ENTITY":            {},
+	"MARKET_SENTIMENT":         {},
+	"CONSUMER_IMPACT":          {},
+	"AI_METHODOLOGY_EVOLUTION": {},
+	"PRECEDES":                 {},
+	"FOLLOWS":                  {},
+	"TIMELINE_SEQUENCE":        {},
+	"TIMELINE_DISCREPANCY":     {},
+	"CORROBORATES":             {},
+	"CONTRADICTS":              {},
+	"INCONSISTENCY":            {},
+	"DISCREPANCY":              {},
+	"CONFLICTS_WITH":           {},
+	"TEMPORAL_INCONSISTENCY":   {},
+	"DUPLICATE":                {},
+	"DUPLICATES":               {},
+	"DUPLICATE_CONTENT":        {},
+	"DEFINITION_ALIGNMENT":     {},
+	"EXEMPLIFIES":              {},
+}
 
 type relationshipCandidateJSONResponse struct {
 	Connections []models.RelationshipCandidate `json:"connections"`
@@ -327,7 +366,7 @@ Rules:
 1. Only propose relationships grounded in exact node IDs.
 2. Prefer direct evidence from the node text over broad narrative framing.
 3. Use concise uppercase tags of 1-3 words.
-4. Avoid generic connections like RELATED unless no better grounded tag exists.
+4. %s
 5. Do not force a fixed count; return only meaningful candidates.
 6. Do not mention facts, dates, or entities that are not explicitly present in the cited evidence nodes.
 7. Avoid interpretive leap language such as "drives", "catalyst", "underpins", "leads to", "signals", "explains", "reflects", or "high-stakes" unless the evidence text explicitly supports that causal claim.
@@ -357,7 +396,7 @@ Evidence:
 %s
 
 Persona outputs:
-%s`, buildNodeMapping(nodes), nodeBuilder.String(), insightBuilder.String())
+%s`, relationshipSpecificTagInstruction, buildNodeMapping(nodes), nodeBuilder.String(), insightBuilder.String())
 
 	var response relationshipCandidateJSONResponse
 	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
@@ -411,7 +450,7 @@ Rules:
 3. Pending nodes are shown in full detail; existing board context nodes are compact summaries only.
 4. Prefer direct evidence from the node text over broad narrative framing.
 5. Use concise uppercase tags of 1-3 words.
-6. Avoid generic connections like RELATED unless no better grounded tag exists.
+6. %s
 7. Do not force a fixed count; return only meaningful candidates.
 8. Do not mention facts, dates, or entities that are not explicitly present in the cited evidence nodes.
 
@@ -444,7 +483,7 @@ Existing board context:
 %s
 
 Persona outputs:
-%s`, strings.Join(pendingNodeIDs, ", "), buildNodeMapping(nodes), pendingBuilder.String(), contextBuilder.String(), insightBuilder.String())
+%s`, relationshipSpecificTagInstruction, strings.Join(pendingNodeIDs, ", "), buildNodeMapping(nodes), pendingBuilder.String(), contextBuilder.String(), insightBuilder.String())
 
 	var response relationshipCandidateJSONResponse
 	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
@@ -996,21 +1035,7 @@ func looksGenericRelationshipTag(tag string, reasoning string) bool {
 	if normalizedTag == "" {
 		return true
 	}
-	genericTags := map[string]bool{
-		"RELATED":                  true,
-		"CONNECTED":                true,
-		"LINKED":                   true,
-		"ASSOCIATED":               true,
-		"SAME_ORG":                 true,
-		"SAME_RESEARCH":            true,
-		"SAME_ENTITY":              true,
-		"SAME_TOPIC":               true,
-		"SAME_SOURCE":              true,
-		"MARKET_SENTIMENT":         true,
-		"CONSUMER_IMPACT":          true,
-		"AI_METHODOLOGY_EVOLUTION": true,
-	}
-	if genericTags[normalizedTag] {
+	if isCategoryOnlyRelationshipTag(normalizedTag) {
 		return true
 	}
 	loweredReasoning := strings.ToLower(reasoning)
@@ -1022,6 +1047,12 @@ func looksGenericRelationshipTag(tag string, reasoning string) bool {
 		strings.Contains(loweredReasoning, "suggesting") ||
 		strings.Contains(loweredReasoning, "aligns with") ||
 		strings.Contains(loweredReasoning, "represents the")
+}
+
+func isCategoryOnlyRelationshipTag(tag string) bool {
+	normalizedTag := strings.ToUpper(strings.TrimSpace(tag))
+	_, ok := categoryOnlyRelationshipTags[normalizedTag]
+	return ok
 }
 
 func containsUnsupportedRelationshipReferences(candidate models.RelationshipCandidate, nodeLookup map[string]models.MemoryNode) bool {
@@ -1284,6 +1315,17 @@ func relationshipConceptFamily(candidate models.RelationshipCandidate) string {
 	reasoning := strings.ToLower(candidate.Reasoning)
 
 	switch {
+	case strings.Contains(tag, "DUPLICATE") ||
+		strings.Contains(tag, "DUPLICATES") ||
+		strings.Contains(tag, "SAME_SOURCE") ||
+		strings.Contains(tag, "SAME_CONTENT") ||
+		strings.Contains(tag, "DEFINITION_ALIGNMENT") ||
+		(strings.Contains(tag, "ALIGNMENT") && (strings.Contains(reasoning, "same") || strings.Contains(reasoning, "identical"))) ||
+		strings.Contains(reasoning, "identical full text") ||
+		strings.Contains(reasoning, "identical evidence") ||
+		strings.Contains(reasoning, "same functional definition") ||
+		strings.Contains(reasoning, "same underlying source"):
+		return "duplicate-content"
 	case strings.Contains(tag, "INFRASTRUCTURE") || strings.Contains(tag, "DEPLOYMENT") || strings.Contains(tag, "FOUNDATION"):
 		return "infrastructure"
 	case strings.Contains(tag, "IMPLEMENT") || strings.Contains(tag, "DEPENDENCY") || strings.Contains(reasoning, "transformer") || strings.Contains(reasoning, "attention weights") || strings.Contains(reasoning, "dense layers"):
