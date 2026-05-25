@@ -722,6 +722,20 @@ describe('DetectiveBoard relationship legend', () => {
     expect(document.getElementById('detective-board-container')).not.toHaveClass('forensic-board-empty-idle')
   })
 
+  it('keeps the gathering status out of the toolbar flow', () => {
+    const socket = new MockSocket()
+    renderBoard('investigation-1', socket as unknown as WebSocket)
+
+    act(() => {
+      socket.emit('BRAIN_STATE', 'Gathering Intel...')
+    })
+
+    const busyPill = screen.getByText(/Gathering Intel/i).closest('.forensic-busy-pill')
+
+    expect(busyPill?.parentElement).toHaveClass('absolute', 'top-full', 'pointer-events-none')
+    expect(screen.getByTestId('board-toolbar-shell')).toContainElement(screen.getByTestId('board-action-bar'))
+  })
+
   it('uses static board navigation when reduced motion is preferred', () => {
     vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
       matches: query.includes('prefers-reduced-motion'),
@@ -818,6 +832,7 @@ describe('DetectiveBoard relationship legend', () => {
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay timeline demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay evidence expansion demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay duplicate evidence squash demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay gathering status demo/i })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: /replay board animation demo/i }))
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2400)
@@ -866,6 +881,33 @@ describe('DetectiveBoard relationship legend', () => {
       ]))
       expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
       expect(socket.sentMessages).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('replays the gathering status QA demo without moving the toolbar flow or calling the backend', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      enableQaTools()
+      openQaReplayMenu()
+      fireEvent.click(screen.getByRole('button', { name: /replay gathering status demo/i }))
+
+      const busyPill = screen.getByText(/Gathering Intel/i).closest('.forensic-busy-pill')
+
+      expect(busyPill?.parentElement).toHaveClass('absolute', 'top-full', 'pointer-events-none')
+      expect(screen.queryByTestId('board-qa-menu')).not.toBeInTheDocument()
+      expect(socket.sentMessages).toEqual([])
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5200)
+      })
+
+      expect(screen.queryByText(/Gathering Intel/i)).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
