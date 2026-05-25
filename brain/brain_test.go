@@ -245,6 +245,82 @@ func TestProcessPromptWithNonGeminiProviderDoesNotRequireLegacyGeminiModel(t *te
 	}
 }
 
+func TestProcessLocalFilesForVaultBroadcastsVaultScopedMessages(t *testing.T) {
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock-local")
+	t.Setenv("GORANTULA_NODE_SUMMARY_CONCURRENCY", "1")
+
+	filePath := filepath.Join(t.TempDir(), "alpha.txt")
+	if err := os.WriteFile(filePath, []byte("Alpha case file mentions [ORG:OpenAI] and a second corroborating local note."), 0o600); err != nil {
+		t.Fatalf("failed to write local test file: %v", err)
+	}
+
+	var messagesMu sync.Mutex
+	var messages []models.WSMessage
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock-local" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			setNodeSummaryResponse(target, "Alpha Local File", "[ORG:OpenAI] appears in the local case file. A second local note corroborates the signal.")
+			return nil
+		},
+	}
+	brain := &Brain{
+		NS: nervous_system.NewNervousSystem(func(msg models.WSMessage) {
+			messagesMu.Lock()
+			defer messagesMu.Unlock()
+			messages = append(messages, msg)
+		}),
+		Abdomen:       &models.Abdomen{},
+		ModelRouter:   map[string]ModelProvider{"mock-local": mock},
+		tokenUsage:    newTokenUsageTracker(),
+		AnalysisCache: NewAnalysisCache(t.TempDir()),
+	}
+	tracker := models.NewPipelineProgressTracker(
+		"run-local-vault",
+		"inv-local-vault",
+		"local",
+		models.LocalPipelineProgressSteps(),
+	)
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join("abdomen_vault", "inv-local-vault"))
+	})
+
+	if _, err := brain.ProcessLocalFilesForVaultWithProgress(context.Background(), []string{filePath}, "inv-local-vault", tracker); err != nil {
+		t.Fatalf("ProcessLocalFilesForVaultWithProgress failed: %v", err)
+	}
+
+	messagesMu.Lock()
+	defer messagesMu.Unlock()
+
+	foundNode := false
+	foundSynthesis := false
+	for _, msg := range messages {
+		payload, _ := msg.Payload.(map[string]interface{})
+		switch msg.Type {
+		case "MEMORY_NODE_GATHERED":
+			foundNode = true
+			if payload["vaultId"] != "inv-local-vault" {
+				t.Fatalf("expected local node payload vaultId, got %#v", payload)
+			}
+		case "SYNTHESIS_COMPLETE":
+			foundSynthesis = true
+			if payload["vaultId"] != "inv-local-vault" || payload["runId"] != "run-local-vault" {
+				t.Fatalf("expected local synthesis payload to include vault/run metadata, got %#v", payload)
+			}
+		case models.PipelineProgressMessageType:
+			progress, _ := msg.Payload.(models.PipelineProgressPayload)
+			if progress.StepID == "complete" && progress.Status == models.PipelineStatusComplete {
+				t.Fatalf("vault-scoped local ingestion should not complete the pipeline before relationship, theory, and discovery analysis")
+			}
+		}
+	}
+	if !foundNode {
+		t.Fatal("expected local ingestion to broadcast a vault-scoped memory node")
+	}
+	if !foundSynthesis {
+		t.Fatal("expected local ingestion to broadcast a vault-scoped synthesis completion")
+	}
+}
+
 func TestGenerateJSONWithFallbackUsesAvailableNonGeminiProvider(t *testing.T) {
 	primary := &MockProvider{
 		NameFunc: func() string { return "deepseek" },

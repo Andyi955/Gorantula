@@ -60,7 +60,7 @@ func triggerLocalCrawl(br *brain.Brain, filePaths []string, meta pipeline.RunMet
 
 	go func() {
 		defer pipeline.ForgetCancellation(meta.RunID)
-		_, err := br.ProcessLocalFilesWithProgress(ctx, filePaths, tracker)
+		_, err := br.ProcessLocalFilesForVaultWithProgress(ctx, filePaths, meta.VaultID, tracker)
 		if err != nil {
 			if pipeline.IsCancellationError(err) {
 				broadcastPipelineCancelled(tracker, "Stopped by operator")
