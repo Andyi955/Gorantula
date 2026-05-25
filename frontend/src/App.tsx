@@ -851,6 +851,7 @@ function App() {
         discoveryRecords: [],
         evidenceByNodeId: {},
         hasTheoryReport: false,
+        relationshipLabels: [],
       }
     }
 
@@ -877,6 +878,10 @@ function App() {
       return lookup
     }, {})
     const edges = savedBoardState?.edges || []
+    const relationshipLabels = Array.from(new Set(edges
+      .map((edge) => String(edge.label || edge.data?.displayLabel || edge.data?.tag || '').trim())
+      .filter(Boolean)))
+      .slice(0, 8)
     const importCount = nodes.filter((node) => String(node.data?.title || '').includes('[IMPORTED]') || String(node.id || '').startsWith('imported-')).length
     const imageCount = nodes.reduce((total, node) => {
       const images = Array.isArray(node.data?.images) ? node.data.images.length : 0
@@ -942,8 +947,36 @@ function App() {
       discoveryRecords: savedDiscoveries,
       evidenceByNodeId,
       hasTheoryReport,
+      relationshipLabels,
     }
   }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation, vaultResultsByInvestigation])
+
+  const vaultChatInvestigationContext = useMemo(() => {
+    if (!currentInvestigationId || !currentInvestigation) {
+      return null
+    }
+
+    return {
+      investigationId: currentInvestigationId,
+      title: currentInvestigation.displayTopic || currentInvestigation.topic,
+      summary: currentBoardSnapshot.summary,
+      fullReport: currentBoardSnapshot.fullReport,
+      evidenceCount: currentBoardSnapshot.evidenceCount,
+      relationshipCount: currentBoardSnapshot.edgeCount,
+      importCount: currentBoardSnapshot.importCount,
+      confidenceScore: currentBoardSnapshot.confidenceScore,
+      hasTheoryReport: currentBoardSnapshot.hasTheoryReport,
+      relationshipLabels: currentBoardSnapshot.relationshipLabels,
+      evidence: Object.values(currentBoardSnapshot.evidenceByNodeId),
+      discoveries: currentBoardSnapshot.discoveryRecords.map((discovery) => ({
+        title: discovery.title,
+        claim: discovery.claim,
+        impact: discovery.impact,
+        confidence: discovery.confidence,
+        sourceNodeIDs: discovery.sourceNodeIDs,
+      })),
+    }
+  }, [currentBoardSnapshot, currentInvestigation, currentInvestigationId])
 
   const focusSpiderInput = useCallback(() => {
     crawlInputRef.current?.focus()
@@ -2822,7 +2855,10 @@ function App() {
           <div className={`absolute inset-0 transition-opacity duration-500 flex flex-col ${activeTab === 'chat' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
             {activeTab === 'chat' && (
               <Suspense fallback={tabFallback('Vault Chat')}>
-                <VaultChatbot sharedSocket={socketConfig.socket} />
+                <VaultChatbot
+                  sharedSocket={socketConfig.socket}
+                  investigationContext={vaultChatInvestigationContext}
+                />
               </Suspense>
             )}
           </div>

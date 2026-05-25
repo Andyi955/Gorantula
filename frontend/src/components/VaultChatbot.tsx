@@ -19,6 +19,7 @@ import remarkGfm from 'remark-gfm';
 
 interface VaultChatbotProps {
     sharedSocket: WebSocket | null;
+    investigationContext?: VaultReadyQuestionContext | null;
 }
 
 type QueryMode = 'strict' | 'compare' | 'summarize';
@@ -38,6 +39,36 @@ interface VaultFile {
     modTime: string;
 }
 
+export interface VaultReadyQuestionEvidence {
+    id: string;
+    title: string;
+    summary: string;
+    sourceURL?: string;
+}
+
+export interface VaultReadyQuestionDiscovery {
+    title: string;
+    claim: string;
+    impact: string;
+    confidence?: number;
+    sourceNodeIDs?: string[];
+}
+
+export interface VaultReadyQuestionContext {
+    investigationId?: string | null;
+    title?: string | null;
+    summary?: string | null;
+    fullReport?: string | null;
+    evidenceCount?: number;
+    relationshipCount?: number;
+    importCount?: number;
+    confidenceScore?: number;
+    hasTheoryReport?: boolean;
+    relationshipLabels?: string[];
+    evidence?: VaultReadyQuestionEvidence[];
+    discoveries?: VaultReadyQuestionDiscovery[];
+}
+
 const QUERY_MODES: Array<{ id: QueryMode; label: string; hint: string }> = [
     { id: 'strict', label: 'Strict', hint: 'Answer only from selected evidence files.' },
     { id: 'compare', label: 'Compare', hint: 'Compare selected cases before answering.' },
@@ -49,6 +80,121 @@ const SUGGESTED_QUESTIONS = [
     'Which sources disagree or leave gaps?',
     'Summarize the operational risk picture.',
 ];
+
+export const VAULT_READY_QUESTIONS_QA_INVESTIGATION_ID = 'qa-ready-questions';
+
+const QA_READY_QUESTION_CONTEXT: VaultReadyQuestionContext = {
+    investigationId: VAULT_READY_QUESTIONS_QA_INVESTIGATION_ID,
+    title: 'QA Rivergate Cooling Case',
+    summary: 'Briarline Cooling Cooperative and Northgate Substation A-17 recur across contract, permit, and operator-note evidence.',
+    hasTheoryReport: true,
+    evidenceCount: 3,
+    relationshipCount: 2,
+    importCount: 1,
+    relationshipLabels: ['Pressure Point', 'Timeline Lead'],
+    evidence: [
+        {
+            id: 'qa-briarline-contract',
+            title: 'Briarline cooling contract',
+            summary: 'Briarline Cooling Cooperative names Northgate Substation A-17 as the load constraint for Rivergate expansion.',
+        },
+        {
+            id: 'qa-northgate-note',
+            title: 'Northgate operator note',
+            summary: 'Northgate Substation A-17 logs a transformer warning after the Briarline dispatch window.',
+        },
+    ],
+    discoveries: [
+        {
+            title: 'Cooling cooperative overlap',
+            claim: 'Briarline Cooling Cooperative and Northgate Substation A-17 appear in multiple evidence cards.',
+            impact: 'The overlap turns a contract detail into a concrete infrastructure pressure point.',
+        },
+    ],
+};
+
+const READY_ENTITY_PATTERN = /\b(?:[A-Z][A-Za-z0-9&'.-]+|[A-Z]{2,}|[A-Z]-\d+)(?:\s+(?:[A-Z][A-Za-z0-9&'.-]+|[A-Z]{2,}|[A-Z]-\d+)){1,5}\b/g;
+const READY_ENTITY_STOP_WORDS = new Set([
+    'Question',
+    'Summary',
+    'Evidence',
+    'Investigation',
+    'Historical Evidence',
+    'Vault Chat Interface',
+]);
+
+const cleanQuestionFragment = (value?: string | null) => (value || '')
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const addUniqueFragment = (items: string[], value?: string | null) => {
+    const cleaned = cleanQuestionFragment(value);
+    if (!cleaned || cleaned.length < 3 || READY_ENTITY_STOP_WORDS.has(cleaned)) {
+        return;
+    }
+
+    if (!items.some((item) => item.toLowerCase() === cleaned.toLowerCase())) {
+        items.push(cleaned);
+    }
+};
+
+const extractReadyQuestionEntities = (context?: VaultReadyQuestionContext | null, selectedEntities: string[] = []) => {
+    const entities: string[] = [];
+    const textBlocks = [
+        context?.summary,
+        ...(context?.evidence || []).map((item) => item.summary),
+        ...(context?.discoveries || []).flatMap((item) => [item.title, item.claim, item.impact]),
+        context?.fullReport,
+    ];
+
+    textBlocks.forEach((text) => {
+        cleanQuestionFragment(text).match(READY_ENTITY_PATTERN)?.forEach((match) => addUniqueFragment(entities, match));
+    });
+    (context?.evidence || []).forEach((item) => addUniqueFragment(entities, item.title));
+    selectedEntities.forEach((entity) => addUniqueFragment(entities, entity));
+
+    return entities.slice(0, 8);
+};
+
+const buildReadyQuestions = (
+    context?: VaultReadyQuestionContext | null,
+    selectedEntities: string[] = [],
+) => {
+    const entities = extractReadyQuestionEntities(context, selectedEntities);
+    const caseTitle = cleanQuestionFragment(context?.title) || 'this investigation';
+    const relationshipLabel = cleanQuestionFragment(context?.relationshipLabels?.[0]);
+    const discovery = (context?.discoveries || [])[0];
+    const evidence = (context?.evidence || [])[0];
+    const questions: string[] = [];
+
+    if (entities.length >= 2) {
+        questions.push(`Why do ${entities[0]} and ${entities[1]} matter in ${caseTitle}, and which evidence supports that link?`);
+    }
+    if (relationshipLabel && entities[0]) {
+        questions.push(`What evidence supports the "${relationshipLabel}" relationship around ${entities[0]}, and what weakens it?`);
+    }
+    if (discovery?.title) {
+        questions.push(`What does "${cleanQuestionFragment(discovery.title)}" actually prove, and which source nodes should I verify?`);
+    }
+    if (context?.hasTheoryReport) {
+        questions.push(`Challenge the current unified theory for ${caseTitle}: where is it strongest, and where could it be overfitting?`);
+    }
+    if (evidence?.title) {
+        questions.push(`Which claims in "${cleanQuestionFragment(evidence.title)}" are corroborated elsewhere in this vault?`);
+    }
+    if (selectedEntities.length >= 2) {
+        questions.push(`Across the selected vault files, where do ${selectedEntities[0]} and ${selectedEntities[1]} agree or conflict?`);
+    } else if (entities[0]) {
+        questions.push(`What should I investigate next about ${entities[0]} before trusting this case?`);
+    }
+
+    const uniqueQuestions = questions.filter((question, index) =>
+        questions.findIndex((candidate) => candidate.toLowerCase() === question.toLowerCase()) === index
+    );
+
+    return uniqueQuestions.length > 0 ? uniqueQuestions.slice(0, 6) : SUGGESTED_QUESTIONS;
+};
 
 const formatDateTime = (value: string) => {
     const date = new Date(value);
@@ -130,7 +276,7 @@ const buildQueryForMode = (mode: QueryMode, query: string) => {
     return query;
 };
 
-export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
+export default function VaultChatbot({ sharedSocket, investigationContext }: VaultChatbotProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [availableFiles, setAvailableFiles] = useState<VaultFile[]>([]);
@@ -140,9 +286,12 @@ export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
     const [isWaiting, setIsWaiting] = useState(false);
     const [isLoadingFiles, setIsLoadingFiles] = useState(false);
     const [lastAnswerAt, setLastAnswerAt] = useState<string | null>(null);
+    const [qaReadyQuestionContext, setQaReadyQuestionContext] = useState<VaultReadyQuestionContext | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const pendingContextRef = useRef<{ files: VaultFile[]; mode: QueryMode } | null>(null);
     const socketReady = Boolean(sharedSocket) && (typeof sharedSocket?.readyState !== 'number' || sharedSocket.readyState === WebSocket.OPEN);
+    const isQaReadyQuestionInvestigation = investigationContext?.investigationId === VAULT_READY_QUESTIONS_QA_INVESTIGATION_ID;
+    const showVaultQaTools = (import.meta.env.DEV || import.meta.env.MODE === 'test') && isQaReadyQuestionInvestigation;
 
     const loadVaultFiles = () => {
         setIsLoadingFiles(true);
@@ -223,8 +372,17 @@ export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
     ), [availableFiles, selectedFiles]);
 
     const selectedEntities = useMemo(() => getEntityChips(selectedFileRecords), [selectedFileRecords]);
+    const effectiveInvestigationContext = qaReadyQuestionContext || investigationContext || null;
+    const readyQuestions = useMemo(
+        () => buildReadyQuestions(effectiveInvestigationContext, selectedEntities),
+        [effectiveInvestigationContext, selectedEntities],
+    );
     const selectedCoverage = availableFiles.length > 0 ? Math.round((selectedFiles.size / availableFiles.length) * 100) : 0;
     const modeDefinition = QUERY_MODES.find((mode) => mode.id === queryMode) || QUERY_MODES[0];
+
+    useEffect(() => {
+        setQaReadyQuestionContext(null);
+    }, [investigationContext?.investigationId]);
 
     const toggleFileSelection = (filePath: string) => {
         setSelectedFiles((current) => {
@@ -244,6 +402,15 @@ export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
 
     const selectNone = () => {
         setSelectedFiles(new Set());
+    };
+
+    const applyReadyQuestion = (question: string) => {
+        setInput(question);
+    };
+
+    const loadQaReadyQuestions = () => {
+        setQaReadyQuestionContext(QA_READY_QUESTION_CONTEXT);
+        setInput('');
     };
 
     const clearTranscript = () => {
@@ -409,12 +576,21 @@ export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
                                 <span>Vault Chat Interface</span>
                                 <p>Select vault evidence files, then interrogate only the gathered intelligence inside those files.</p>
                                 <div className="forensic-vault-suggestion-grid">
-                                    {SUGGESTED_QUESTIONS.map((question) => (
-                                        <button type="button" key={question} onClick={() => setInput(question)}>
+                                    {readyQuestions.map((question) => (
+                                        <button type="button" key={question} onClick={() => applyReadyQuestion(question)}>
                                             {question}
                                         </button>
                                     ))}
                                 </div>
+                                {showVaultQaTools ? (
+                                    <button
+                                        type="button"
+                                        className="forensic-vault-qa-button"
+                                        onClick={loadQaReadyQuestions}
+                                    >
+                                        Load QA Ready Questions
+                                    </button>
+                                ) : null}
                             </div>
                         ) : messages.map((msg) => (
                             <article key={msg.id} className={`forensic-vault-message forensic-vault-message-${msg.role}`}>
@@ -488,6 +664,31 @@ export default function VaultChatbot({ sharedSocket }: VaultChatbotProps) {
                             {selectedEntities.length === 0 ? <p>Choose files to extract entity hints.</p> : selectedEntities.map((entity) => <span key={entity}>{entity}</span>)}
                         </div>
                     </section>
+
+                    {messages.length > 0 ? (
+                        <section>
+                            <div className="forensic-vault-side-heading">
+                                <span>Ready Questions</span>
+                                <strong>{readyQuestions.length}</strong>
+                            </div>
+                            <div className="forensic-vault-ready-question-list">
+                                {readyQuestions.map((question) => (
+                                    <button type="button" key={question} onClick={() => applyReadyQuestion(question)}>
+                                        {question}
+                                    </button>
+                                ))}
+                            </div>
+                            {showVaultQaTools ? (
+                                <button
+                                    type="button"
+                                    className="forensic-vault-qa-button forensic-vault-qa-button-compact"
+                                    onClick={loadQaReadyQuestions}
+                                >
+                                    Load QA Ready Questions
+                                </button>
+                            ) : null}
+                        </section>
+                    ) : null}
 
                     <section>
                         <div className="forensic-vault-side-heading">
