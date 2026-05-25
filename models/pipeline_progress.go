@@ -92,6 +92,10 @@ func LocalPipelineProgressSteps() []PipelineProgressStep {
 		{ID: "gather_evidence", Label: "Gathering evidence"},
 		{ID: "final_report", Label: "Local report synthesis"},
 		{ID: "vault_persistence", Label: "Vault persistence"},
+		{ID: "persona_analysis", Label: "Persona analysis"},
+		{ID: "overlap_scan", Label: "Unified theory scan"},
+		{ID: "relationship_synthesis", Label: "Relationship synthesis"},
+		{ID: "discovery_review", Label: "Discovery review"},
 		{ID: "complete", Label: "Pipeline complete"},
 	}
 }

@@ -689,6 +689,14 @@ func (b *Brain) ProcessLocalFiles(ctx context.Context, filePaths []string) (stri
 }
 
 func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []string, progress *models.PipelineProgressTracker) (string, error) {
+	return b.processLocalFiles(ctx, filePaths, "", progress)
+}
+
+func (b *Brain) ProcessLocalFilesForVaultWithProgress(ctx context.Context, filePaths []string, vaultID string, progress *models.PipelineProgressTracker) (string, error) {
+	return b.processLocalFiles(ctx, filePaths, strings.TrimSpace(vaultID), progress)
+}
+
+func (b *Brain) processLocalFiles(ctx context.Context, filePaths []string, vaultID string, progress *models.PipelineProgressTracker) (string, error) {
 	fmt.Printf("[Brain] Processing %d local files\n", len(filePaths))
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err
@@ -790,7 +798,7 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 	if progress != nil {
 		progress.StartSpan("node_summary", "gather_evidence", fmt.Sprintf("Local node summary (%d workers)", nodeSummaryConcurrency()), fmt.Sprintf("summarizing %d chunks", len(nutrients)))
 	}
-	processedNutrients := b.processNutrients(summaryCtx, nutrients, nutrientProcessingOptions{Progress: progress})
+	processedNutrients := b.processNutrients(summaryCtx, nutrients, nutrientProcessingOptions{VaultID: vaultID, Progress: progress})
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err
 	}
@@ -809,8 +817,10 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 			b.NS.Broadcast(models.WSMessage{
 				Type: "MEMORY_NODE_GATHERED",
 				Payload: map[string]interface{}{
-					"node":  result.node,
-					"total": totalMemories,
+					"node":    result.node,
+					"total":   totalMemories,
+					"vaultId": vaultID,
+					"append":  false,
 				},
 			})
 		}
@@ -882,12 +892,14 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 	} else {
 		vaultPrefix = "local_files_multiple"
 	}
-	vaultPath, err := saveVaultMemory(vaultPrefix, contextText, finalSynthesis, "", false)
+	vaultPath, err := saveVaultMemory(vaultPrefix, contextText, finalSynthesis, vaultID, false)
 	if err != nil {
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
 	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "complete", "Local vault memory saved"))
-	b.broadcastPipelineProgress(progress, progressMessage(progress, "complete", "complete", "Local pipeline complete"))
+	if vaultID == "" {
+		b.broadcastPipelineProgress(progress, progressMessage(progress, "complete", "complete", "Local pipeline complete"))
+	}
 
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
@@ -899,6 +911,8 @@ func (b *Brain) ProcessLocalFilesWithProgress(ctx context.Context, filePaths []s
 			Payload: map[string]interface{}{
 				"result":    finalSynthesis,
 				"vaultPath": vaultPath,
+				"vaultId":   vaultID,
+				"append":    false,
 				"runId":     pipelineRunID(progress),
 			},
 		})

@@ -78,6 +78,25 @@ func TestPipelineProgressTrackerReportsErrors(t *testing.T) {
 	}
 }
 
+func TestLocalPipelineProgressStepsIncludePostIngestionAnalysis(t *testing.T) {
+	steps := LocalPipelineProgressSteps()
+	stepIDs := make(map[string]bool, len(steps))
+	for _, step := range steps {
+		stepIDs[step.ID] = true
+	}
+
+	for _, required := range []string{
+		"persona_analysis",
+		"overlap_scan",
+		"relationship_synthesis",
+		"discovery_review",
+	} {
+		if !stepIDs[required] {
+			t.Fatalf("expected local pipeline steps to include %q, got %#v", required, steps)
+		}
+	}
+}
+
 func TestPipelineProgressTrackerCancelMarksTerminalProfile(t *testing.T) {
 	now := time.Date(2026, 5, 18, 9, 30, 0, 0, time.UTC)
 	tracker := NewPipelineProgressTrackerWithClock(
