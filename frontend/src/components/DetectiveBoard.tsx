@@ -832,6 +832,39 @@ const QA_DUPLICATE_SQUASH_DEMO_CONNECTIONS = [
     },
 ] as const;
 
+const QA_TEXT_FIT_DEMO_NODES = [
+    {
+        id: 'qa-text-fit-sentiment',
+        title: 'QA Global AI Sentiment Stress Text',
+        legacyWidth: 336,
+        summary: 'Recent surveys from [ORG:PEW RESEARCH CENTER] show respondents in [LOC:MALAYSIA], [LOC:THAILAND], [LOC:INDONESIA], and [LOC:SINGAPORE] splitting sharply on AI benefits while telecom filings, school guidance, labor concerns, newsroom policies, and public-trust notes all stack into line seven and line eight pressure that should still remain readable instead of disappearing under the collapsed card mask.',
+        fullText: 'Recent surveys from PEW RESEARCH CENTER show respondents in Malaysia, Thailand, Indonesia, and Singapore splitting sharply on AI benefits. This QA node is intentionally wordy so the collapsed card must grow horizontally when the rendered preview reaches the seventh and eighth visual lines.',
+        sourceURL: 'https://example.com/qa-text-fit-sentiment',
+    },
+    {
+        id: 'qa-text-fit-milestones',
+        title: 'QA AI Acceleration Milestones',
+        legacyWidth: 336,
+        summary: 'Over the past year, [ORG:AI SAFETY INSTITUTE], [ORG:IBM], [ORG:OpenAI], and [ORG:DeepMind] milestones crowded the same paragraph with long organization names, policy notes, benchmark caveats, procurement delays, safety memos, chip-capacity constraints, and line seven and line eight pressure that should trigger intelligent width growth before clipped text hides the final words.',
+        fullText: 'Over the past year, AI SAFETY INSTITUTE, IBM, OpenAI, and DeepMind milestones crowded the same paragraph with long organization names and policy notes. The collapsed preview should widen by a grid block or two when the browser measures hidden overflow.',
+        sourceURL: 'https://example.com/qa-text-fit-milestones',
+    },
+    {
+        id: 'qa-text-fit-chip-density',
+        title: 'QA Chip Density Preview',
+        legacyWidth: 336,
+        summary: 'A dense preview with [DATE:2026-05-25], [PERSON:Sam Altman], [PERSON:Jensen Huang], [ORG:NVIDIA], [ORG:Microsoft], [ORG:Google], supplier exceptions, export paperwork, inference-demand forecasts, cloud-region constraints, and multiple procurement clauses creates line seven and line eight pressure for visual QA without requiring a backend crawl.',
+        fullText: 'A dense preview with dates, people, organizations, and procurement clauses creates visual pressure for collapsed text QA without requiring a backend crawl. It should be wide enough that the final visible line is not horizontally or vertically clipped.',
+        sourceURL: 'https://example.com/qa-text-fit-chip-density',
+    },
+] as const;
+
+const QA_TEXT_FIT_DEMO_POSITIONS = [
+    { x: 120, y: 128 },
+    { x: 760, y: 128 },
+    { x: 1400, y: 128 },
+] as const;
+
 const QA_ANIMATION_DEMO_INSIGHTS = [
     {
         personaName: 'Discovery',
@@ -3071,6 +3104,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                             onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                             onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                            onResizeCommit: handleNodeResizeCommit,
                             isDeepDiveSource: !!stableNode.data?.isDeepDiveSource,
                             isRecentlyImported: false,
                             boardMode: savedMode,
@@ -3123,7 +3157,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
+    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, syncStrictGridEdgesToNodes]); // Only run when investigationId changes
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -3749,6 +3783,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                         onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                         onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                        onResizeCommit: handleNodeResizeCommit,
                         isDeepDiveSource: false,
                         isRecentlyImported: isImported,
                         ...entryMetadata,
@@ -3830,6 +3865,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         handleAttachImage,
         handleDeleteNode,
         handleNodeExpand,
+        handleNodeResizeCommit,
         handleNewConnections,
         handleRemoveImage,
         handleSaveNode,
@@ -4003,6 +4039,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                     onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                     onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                    onResizeCommit: handleNodeResizeCommit,
                     boardMode: 'strict-grid' as BoardMode,
                     expanded: false,
                 },
@@ -4050,7 +4087,67 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(demoNodes);
         setEdges(demoEdges);
-    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, tagStyles]);
+    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, tagStyles]);
+
+    const playBrowserQaTextFitDemo = useCallback(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId) {
+            return;
+        }
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
+        clearLayoutChoreographyState();
+        qaAnimationDemoActiveRef.current = false;
+        qaEvidenceExpansionDemoActiveRef.current = false;
+        nodeEntrySequenceRef.current = 0;
+        setBoardMode('strict-grid');
+        setPendingIntegrationNodeIds([]);
+        setHasConnectedDots(false);
+        setIsGathering(false);
+        setIsAnalyzing(false);
+        setAnalysisMode(null);
+        setDeepDiveTopic(null);
+        setEditingNodeId(null);
+        setEdges([]);
+
+        const demoNodes: Node[] = QA_TEXT_FIT_DEMO_NODES.map((demoNode, index) => {
+            const frame = calculateNodeFrame(demoNode.summary, demoNode.fullText, false, false);
+
+            return {
+                id: demoNode.id,
+                type: 'custom',
+                zIndex: STRICT_GRID_NODE_Z_INDEX,
+                position: QA_TEXT_FIT_DEMO_POSITIONS[index] || { x: 120 + index * 560, y: 128 },
+                style: frame,
+                sourcePosition: Position.Right,
+                targetPosition: Position.Left,
+                data: {
+                    ...demoNode,
+                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                    onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                    onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                    onDelete: (id: string) => handleDeleteNode(id),
+                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                    onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                    onSetEditing: (id: string | null) => handleSetEditing(id),
+                    onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                    onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                    onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                    onResizeCommit: handleNodeResizeCommit,
+                    boardMode: 'strict-grid' as BoardMode,
+                    expanded: false,
+                },
+            };
+        });
+
+        setNodes(demoNodes);
+    }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox]);
 
     const playBrowserQaEvidenceExpansionDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
@@ -4148,6 +4245,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                 onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                 onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                onResizeCommit: handleNodeResizeCommit,
                 isDeepDiveSource: false,
                 expanded: true,
                 boardMode: 'strict-grid' as BoardMode,
@@ -4165,6 +4263,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         handleAttachImage,
         handleDeleteNode,
         handleNodeExpand,
+        handleNodeResizeCommit,
         handleRemoveImage,
         handleSaveNode,
         handleSetEditing,
@@ -4293,6 +4392,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                         onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                         onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                        onResizeCommit: handleNodeResizeCommit,
                         isDeepDiveSource: false,
                         isRecentlyImported: isImported,
                         ...entryMetadata,
@@ -4481,7 +4581,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
+    }, [applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -4508,6 +4608,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                 onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
                 onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                onResizeCommit: handleNodeResizeCommit,
                 onSetEditing: (id: string | null) => handleSetEditing(id),
                 isEditing: true,
                 isDeepDiveSource: false,
@@ -4519,7 +4620,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
+    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
 
     // Enhanced node data that includes all necessary context and stable handlers
     // We update nodes whenever stable props like sharedSocket or returnVaultId change
@@ -5425,6 +5526,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
                                     >
                                         <FileSearch size={14} /> Duplicate squash
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaTextFitDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay text fit demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileText size={14} /> Text fit
                                     </button>
                                 </div>
                             )}

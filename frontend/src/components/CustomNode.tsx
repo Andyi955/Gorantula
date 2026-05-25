@@ -5,7 +5,7 @@ import type { NodeProps } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
 import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save, Image as ImageIcon } from 'lucide-react';
-import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, NODE_IMAGE_PREVIEW_HEIGHT, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
+import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, NODE_AUTO_MAX_WIDTH, NODE_FRAME_GRID_SIZE, NODE_IMAGE_PREVIEW_HEIGHT, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
@@ -167,7 +167,7 @@ const logNodeResizeDebug = (nodeId: string | undefined, stage: string, payload: 
     });
 };
 
-const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(6 * 1.65em + 0.75rem)';
+const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(8 * 1.65em + 0.75rem)';
 const isBackendServedImage = (path?: string) =>
     Boolean(path && /^https?:\/\/localhost:8080\/vault-assets\//i.test(path));
 const BACKEND_IMAGE_MAX_RETRIES = 3;
@@ -228,6 +228,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const chatContentRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const previewImageRef = useRef<HTMLImageElement>(null);
+    const autoFitRequestRef = useRef<string | null>(null);
     const imageRetryTimeoutRef = useRef<number | null>(null);
     const [imageLoadState, setImageLoadState] = useState<NodeImageLoadState>('idle');
     const [imageRetryAttempt, setImageRetryAttempt] = useState(0);
@@ -289,6 +290,51 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const frameWidth = typeof props.width === 'number' ? props.width : fallbackFrame.width;
     const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
     const isStrictGrid = data.boardMode === 'strict-grid';
+
+    useEffect(() => {
+        if (!data.id || !onResizeCommit || isEditing || showDeleteConfirm) {
+            return;
+        }
+
+        const shellRect = shellRef.current?.getBoundingClientRect();
+        const renderedWidth = typeof props.width === 'number' && props.width > 0
+            ? props.width
+            : shellRect && shellRect.width > 0
+                ? shellRect.width
+                : frameWidth;
+        const renderedHeight = typeof props.height === 'number' && props.height > 0
+            ? props.height
+            : shellRect && shellRect.height > 0
+                ? shellRect.height
+                : frameHeight;
+        const detail = detailTextRef.current;
+        const hasCollapsedTextOverflow = Boolean(
+            detail &&
+            !isExpanded &&
+            (
+                (detail.clientHeight > 0 && detail.scrollHeight > detail.clientHeight + 2) ||
+                (detail.clientWidth > 0 && detail.scrollWidth > detail.clientWidth + 2)
+            )
+        );
+        const renderedWidthGridStep = Math.ceil(renderedWidth / NODE_FRAME_GRID_SIZE) * NODE_FRAME_GRID_SIZE;
+        const overflowWidth = hasCollapsedTextOverflow && renderedWidth < NODE_AUTO_MAX_WIDTH
+            ? Math.min(NODE_AUTO_MAX_WIDTH, renderedWidthGridStep + NODE_FRAME_GRID_SIZE)
+            : renderedWidth;
+        const nextWidth = Math.max(renderedWidth, fallbackFrame.width, overflowWidth);
+        const nextHeight = Math.max(renderedHeight, fallbackFrame.height);
+
+        if (nextWidth > renderedWidth + 1 || nextHeight > renderedHeight + 1) {
+            const requestKey = `${data.id}:${Math.round(nextWidth)}:${Math.round(nextHeight)}`;
+            if (autoFitRequestRef.current === requestKey) {
+                return;
+            }
+            autoFitRequestRef.current = requestKey;
+            onResizeCommit(data.id, nextWidth, nextHeight);
+        } else {
+            autoFitRequestRef.current = null;
+        }
+    });
+
     const strictPortSlots = getPortSlotsForDimensions(frameWidth, frameHeight);
     const visibleStrictTopSlots = getVisibleStrictPortSlots(strictPortSlots.top, data.activePortIds);
     const visibleStrictBottomSlots = getVisibleStrictPortSlots(strictPortSlots.bottom, data.activePortIds);

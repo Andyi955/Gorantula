@@ -210,6 +210,16 @@ describe('boardGeometry', () => {
     expect(withTaggedEntities.width).toBeGreaterThanOrEqual(collapsed.width)
   })
 
+  it('widens dense collapsed summaries before entity-heavy text clips', () => {
+    const compact = calculateNodeFrame(
+      'Recent surveys from [ORG:PEW RESEARCH CENTER] show global sentiment split across [LOC:MALAYSIA], [LOC:THAILAND], [LOC:INDONESIA], and [LOC:SINGAPORE] while experts forecast adoption by [DATE:2030].',
+      '',
+      false,
+    )
+
+    expect(compact.width).toBeGreaterThanOrEqual(432)
+  })
+
   it('creates stable strict-grid port slots for a given frame', () => {
     const slots = getPortSlotsForDimensions(384, 288)
 

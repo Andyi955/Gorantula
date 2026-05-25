@@ -52,6 +52,12 @@ export const MIN_NODE_WIDTH = 288;
 export const MIN_NODE_HEIGHT = 192;
 export const NODE_IMAGE_PREVIEW_HEIGHT = 96;
 const PORT_MARGIN = BOARD_GRID_SIZE;
+const NODE_TEXT_HORIZONTAL_CHROME = 72;
+const NODE_TEXT_AVERAGE_CHAR_WIDTH = 6.8;
+const NODE_COLLAPSED_TARGET_LINES = 5.6;
+const NODE_COLLAPSED_FIT_MAX_WIDTH = 480;
+export const NODE_AUTO_MAX_WIDTH = 576;
+const HIGHLIGHT_TOKEN_PATTERN = /\[(?:PERSON|ORG|LOC|DATE|TIME):(.*?)\]/gi;
 const ROUTE_OBSTACLE_PADDING = BOARD_GRID_SIZE;
 const ROUTE_SEARCH_MARGIN = BOARD_GRID_SIZE * 6;
 const ROUTE_TURN_PENALTY = BOARD_GRID_SIZE * 2;
@@ -87,30 +93,53 @@ export const normalizeNodeFrame = (width: number, height: number) => ({
     height: snapNodeFrameSize(height, MIN_NODE_HEIGHT),
 });
 
+const estimateNodeTextUnits = (content: string, highlightTokenCount: number) => {
+    const readableContent = content.replace(HIGHLIGHT_TOKEN_PATTERN, '$1');
+    const longestWordLength = readableContent
+        .split(/\s+/)
+        .reduce((longest, word) => Math.max(longest, word.length), 0);
+    const longWordPressure = Math.max(0, longestWordLength - 18) * 0.7;
+
+    return readableContent.length + (highlightTokenCount * 14) + longWordPressure;
+};
+
 export const calculateNodeFrame = (summary: string, fullText: string, isExpanded: boolean, hasImages = false) => {
     const content = isExpanded ? (fullText || summary) : summary;
     const charCount = content.length;
     const estimatedLineHeight = 20;
     const highlightTokenCount = (content.match(/\[(?:PERSON|ORG|LOC|DATE|TIME):.*?\]/g) || []).length;
+    const estimatedTextUnits = estimateNodeTextUnits(content, highlightTokenCount);
 
     let width = 320;
     let height = 180;
 
-    const lines = Math.ceil(charCount / 40);
+    if (charCount > 300) {
+        width = Math.min(500, 320 + Math.min(charCount - 300, 180));
+    }
+
+    if (!isExpanded && estimatedTextUnits > 0) {
+        const widthToReduceCollapsedWraps =
+            NODE_TEXT_HORIZONTAL_CHROME +
+            ((estimatedTextUnits / NODE_COLLAPSED_TARGET_LINES) * NODE_TEXT_AVERAGE_CHAR_WIDTH);
+        width = Math.max(width, Math.min(NODE_COLLAPSED_FIT_MAX_WIDTH, widthToReduceCollapsedWraps));
+    }
+
+    if (highlightTokenCount > 0) {
+        width += Math.min(48, highlightTokenCount * 8);
+    }
+
+    width = Math.min(width, NODE_AUTO_MAX_WIDTH);
+
+    const estimatedLineCapacity = Math.max(32, Math.floor((width - NODE_TEXT_HORIZONTAL_CHROME) / NODE_TEXT_AVERAGE_CHAR_WIDTH));
+    const lines = isExpanded
+        ? Math.ceil(charCount / 40)
+        : Math.ceil(estimatedTextUnits / estimatedLineCapacity);
     const estimatedLines = Math.min(lines, isExpanded ? 30 : 8);
 
     height = Math.max(180, 104 + estimatedLines * estimatedLineHeight);
 
     if (hasImages) {
         height += NODE_IMAGE_PREVIEW_HEIGHT;
-    }
-
-    if (charCount > 300) {
-        width = Math.min(500, 320 + Math.min(charCount - 300, 180));
-    }
-
-    if (highlightTokenCount > 0) {
-        width += Math.min(48, highlightTokenCount * 8);
     }
 
     return normalizeNodeFrame(width, height);
