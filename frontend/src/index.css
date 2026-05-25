@@ -5784,6 +5784,50 @@ body {
   color: var(--forensic-text);
 }
 
+.forensic-vault-qa-button {
+  border: 1px solid rgba(246, 200, 121, 0.26);
+  background: rgba(246, 200, 121, 0.08);
+  color: rgba(255, 230, 174, 0.92);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  padding: 0.55rem 0.72rem;
+  text-transform: uppercase;
+}
+
+.forensic-vault-qa-button:hover {
+  border-color: rgba(246, 200, 121, 0.46);
+  background: rgba(246, 200, 121, 0.14);
+  color: #fff3c7;
+}
+
+.forensic-vault-qa-button-compact {
+  margin-top: 0.55rem;
+  width: 100%;
+}
+
+.forensic-vault-ready-question-list {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.62rem;
+}
+
+.forensic-vault-ready-question-list button {
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  background: rgba(129, 227, 255, 0.035);
+  color: var(--forensic-text-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.45;
+  padding: 0.55rem;
+  text-align: left;
+}
+
+.forensic-vault-ready-question-list button:hover {
+  border-color: rgba(129, 227, 255, 0.34);
+  color: var(--forensic-text);
+}
+
 .forensic-vault-message {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
