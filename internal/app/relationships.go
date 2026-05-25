@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"spider-agent/brain"
@@ -13,6 +14,43 @@ import (
 	"spider-agent/internal/synthesis"
 	"spider-agent/models"
 )
+
+var activeConnectDotsClaims sync.Map
+
+func connectDotsClaimKey(meta pipeline.RunMetadata) string {
+	runID := strings.TrimSpace(meta.RunID)
+	if runID == "" {
+		return ""
+	}
+
+	vaultID := strings.TrimSpace(meta.VaultID)
+	return vaultID + "::" + runID
+}
+
+func claimConnectDotsRun(meta pipeline.RunMetadata) (func(), bool) {
+	key := connectDotsClaimKey(meta)
+	if key == "" {
+		return func() {}, true
+	}
+
+	if _, loaded := activeConnectDotsClaims.LoadOrStore(key, struct{}{}); loaded {
+		return func() {}, false
+	}
+
+	var releaseOnce sync.Once
+	return func() {
+		releaseOnce.Do(func() {
+			activeConnectDotsClaims.Delete(key)
+		})
+	}, true
+}
+
+func resetActiveConnectDotsClaimsForTest() {
+	activeConnectDotsClaims.Range(func(key, value interface{}) bool {
+		activeConnectDotsClaims.Delete(key)
+		return true
+	})
+}
 
 func filterConnectionsByPendingNodeIDs(connections []models.BoardConnection, pendingNodeIDs []string) []models.BoardConnection {
 	if len(pendingNodeIDs) == 0 {
@@ -94,6 +132,12 @@ func buildRelationshipResult(vaultID string, runID string, incremental bool, pen
 }
 
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipeline.RunMetadata) {
+	releaseConnectDotsClaim, claimed := claimConnectDotsRun(meta)
+	if !claimed {
+		log.Printf("[WS] Ignoring duplicate CONNECT_DOTS request for active workflow vault=%s run=%s", meta.VaultID, meta.RunID)
+		return
+	}
+
 	tracker := pipeline.GetTracker(meta, models.DefaultPipelineProgressSteps())
 	ctx, cancel := context.WithCancel(context.Background())
 	pipeline.RegisterCancellation(meta, cancel)
@@ -103,6 +147,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		defer func() {
 			if shouldForgetCancellation {
 				pipeline.ForgetCancellation(meta.RunID)
+				releaseConnectDotsClaim()
 			}
 		}()
 		isIncremental := len(pendingNodeIDs) > 0
@@ -242,6 +287,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		shouldForgetCancellation = false
 		go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
 			defer pipeline.ForgetCancellation(meta.RunID)
+			defer releaseConnectDotsClaim()
 			broadcast(tracker.Start("discovery_review", "Reviewing breakthrough candidates"))
 			discoveryCtx, discoveryScopeID := br.StartPipelineTokenScope(ctx, "pipeline-discovery", "discovery_synthesis")
 			tracker.StartSpan("discovery_synthesis", "discovery_review", "Discovery candidate synthesis", fmt.Sprintf("reviewing %d nodes", len(nodes)))
