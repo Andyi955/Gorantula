@@ -116,6 +116,198 @@ describe('CustomNode', () => {
     expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-expanded')
   })
 
+  it('lets collapsed previews show the seventh and eighth fitted lines', () => {
+    render(
+      <CustomNode
+        id="node-eight-line-preview"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        width={576}
+        height={288}
+        data={{
+          id: 'node-eight-line-preview',
+          title: 'Eight Line Preview',
+          summary: 'Line one pressure line two pressure line three pressure line four pressure line five pressure line six pressure line seven pressure line eight pressure.',
+          onReadFull: vi.fn(),
+          onResizeCommit: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('node-detail-motion')).toHaveStyle({
+      maxHeight: 'calc(8 * 1.65em + 0.75rem)',
+    })
+  })
+
+  it('asks the board to widen mounted cards when dense text needs more room', async () => {
+    const onResizeCommit = vi.fn()
+
+    render(
+      <CustomNode
+        id="node-dense-text"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        width={384}
+        height={240}
+        data={{
+          id: 'node-dense-text',
+          title: 'Global AI Sentiment Shifts',
+          summary: 'Recent surveys from [ORG:PEW RESEARCH CENTER] show global sentiment split across [LOC:MALAYSIA], [LOC:THAILAND], [LOC:INDONESIA], and [LOC:SINGAPORE] while experts forecast adoption by [DATE:2030].',
+          onReadFull: vi.fn(),
+          onResizeCommit,
+        }}
+      />,
+    )
+
+    await vi.waitFor(() => {
+      expect(onResizeCommit).toHaveBeenCalledWith('node-dense-text', expect.any(Number), expect.any(Number))
+    })
+    expect(onResizeCommit.mock.calls[0][1]).toBeGreaterThan(384)
+  })
+
+  it('keeps widening collapsed cards when rendered text still overflows into hidden lines', async () => {
+    const onResizeCommit = vi.fn()
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return this.getAttribute('data-testid') === 'node-detail-motion' ? 190 : 0
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return this.getAttribute('data-testid') === 'node-detail-motion' ? 130 : 0
+      },
+    })
+
+    try {
+      render(
+        <CustomNode
+          id="node-render-overflow"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={1}
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          width={432}
+          height={240}
+          data={{
+            id: 'node-render-overflow',
+            title: 'Wordy Collapsed Node',
+            summary: 'This mounted card already has a reasonable calculated width but the rendered seventh and eighth lines still fall under the collapsed mask.',
+            onReadFull: vi.fn(),
+            onResizeCommit,
+          }}
+        />,
+      )
+
+      await vi.waitFor(() => {
+        expect(onResizeCommit).toHaveBeenCalledWith('node-render-overflow', 480, 240)
+      })
+    } finally {
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight)
+      } else {
+        delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'clientHeight', originalClientHeight)
+      } else {
+        delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight
+      }
+    }
+  })
+
+  it('uses the rendered shell width when older restored nodes do not receive a width prop', async () => {
+    const onResizeCommit = vi.fn()
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return this.getAttribute('data-testid') === 'node-detail-motion' ? 190 : 0
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return this.getAttribute('data-testid') === 'node-detail-motion' ? 130 : 0
+      },
+    })
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.getAttribute('data-testid') === 'custom-node-shell') {
+        return {
+          x: 0,
+          y: 0,
+          width: 384,
+          height: 240,
+          top: 0,
+          right: 384,
+          bottom: 240,
+          left: 0,
+          toJSON: () => ({}),
+        } as DOMRect
+      }
+
+      return originalGetBoundingClientRect.call(this)
+    }
+
+    try {
+      render(
+        <CustomNode
+          id="node-old-restored"
+          type="custom"
+          selected={false}
+          dragging={false}
+          zIndex={1}
+          isConnectable
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          data={{
+            id: 'node-old-restored',
+            title: 'Older Restored Node',
+            summary: 'Short restored node text can still clip because the old persisted React Flow wrapper is narrower than the new calculated frame path expects.',
+            onReadFull: vi.fn(),
+            onResizeCommit,
+          }}
+        />,
+      )
+
+      await vi.waitFor(() => {
+        expect(onResizeCommit).toHaveBeenCalledWith('node-old-restored', 432, 240)
+      })
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight)
+      } else {
+        delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, 'clientHeight', originalClientHeight)
+      } else {
+        delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight
+      }
+    }
+  })
+
   it('scrolls expanded evidence detail when the wheel is used over the selected card shell', async () => {
     const user = userEvent.setup()
 

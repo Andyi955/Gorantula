@@ -832,6 +832,7 @@ describe('DetectiveBoard relationship legend', () => {
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay timeline demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay evidence expansion demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay duplicate evidence squash demo/i })).toBeInTheDocument()
+      expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay text fit demo/i })).toBeInTheDocument()
       expect(within(screen.getByTestId('board-qa-menu')).getByRole('button', { name: /replay gathering status demo/i })).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: /replay board animation demo/i }))
       await act(async () => {
@@ -933,6 +934,33 @@ describe('DetectiveBoard relationship legend', () => {
       'DUPLICATE_CONTENT',
       'IDENTICAL_EXCERPT',
     ]))
+  })
+
+  it('replays the text fit QA demo with already fitted eight-line collapsed cards', () => {
+    renderBoard('investigation-1', new MockSocket() as unknown as WebSocket)
+
+    enableQaTools()
+    openQaReplayMenu()
+    fireEvent.click(screen.getByRole('button', { name: /replay text fit demo/i }))
+
+    const nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown>; style?: Record<string, unknown> }>
+    const textFitNodes = nodes.filter((node) => String(node.id || '').startsWith('qa-text-fit-'))
+    const legacyLineCounts = textFitNodes.map((node) => {
+        const width = Number(node.data?.legacyWidth || 336)
+        const usableCharsPerLine = Math.max(28, Math.floor((width - 72) / 6.8))
+        return Math.ceil(String(node.data?.summary || '').length / usableCharsPerLine)
+      })
+
+    expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+      'qa-text-fit-sentiment',
+      'qa-text-fit-milestones',
+      'qa-text-fit-chip-density',
+    ]))
+    expect(textFitNodes.every((node) => Number(node.data?.legacyWidth || 0) <= 384)).toBe(true)
+    expect(textFitNodes.every((node) => Number(node.style?.width || 0) > Number(node.data?.legacyWidth || 0))).toBe(true)
+    expect(textFitNodes.every((node) => typeof node.data?.onResizeCommit === 'function')).toBe(true)
+    expect(legacyLineCounts.every((lineCount) => lineCount >= 8)).toBe(true)
+    expect(screen.getAllByText(/line seven and line eight pressure/i)).toHaveLength(3)
   })
 
   it('replays the error and empty state demo from the QA utility rail without backend socket messages', async () => {
@@ -2335,6 +2363,7 @@ describe('DetectiveBoard relationship legend', () => {
         nodeEntryAnimation: expect.anything(),
         isPersonaScanActive: expect.anything(),
       }))
+      expect(typeof restored?.data?.onResizeCommit).toBe('function')
     })
   })
 
