@@ -775,6 +775,7 @@ const getQaAnimationDemoStagingPosition = (index: number) =>
 
 const QA_ANIMATION_DEMO_NODE_STEP_MS = 220;
 const QA_ANIMATION_DEMO_NODE_COMPLETE_MS = (QA_ANIMATION_DEMO_NODES.length - 1) * QA_ANIMATION_DEMO_NODE_STEP_MS;
+const QA_GATHERING_STATUS_DEMO_MS = 5000;
 
 const QA_EVIDENCE_EXPANSION_NODE_ID = 'qa-evidence-expansion-node';
 const QA_EVIDENCE_EXPANSION_IMAGE_SRC = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22071118%22/%3E%3Crect x=%2238%22 y=%2244%22 width=%22564%22 height=%22272%22 fill=%220c1a22%22 stroke=%2281e3ff%22 stroke-width=%222%22 opacity=%220.78%22/%3E%3Cpath d=%22M70 112h260M70 150h430M70 188h380M70 226h300%22 stroke=%22%2381e3ff%22 stroke-width=%229%22 opacity=%220.28%22/%3E%3Ccircle cx=%22522%22 cy=%22128%22 r=%2248%22 fill=%22%23f6c879%22 opacity=%220.22%22/%3E%3Ctext x=%2270%22 y=%2286%22 fill=%22%2381e3ff%22 font-size=%2224%22 font-family=%22monospace%22 font-weight=%22700%22%3EQA VISUAL EVIDENCE%3C/text%3E%3C/svg%3E';
@@ -1336,6 +1337,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const connectChoreographyBaseNodesRef = useRef<Node[]>([]);
     const connectChoreographyBaseEdgesRef = useRef<Edge[]>([]);
     const qaAnimationTimeoutsRef = useRef<number[]>([]);
+    const qaGatheringStatusTimeoutRef = useRef<number | null>(null);
     const qaAnimationDemoActiveRef = useRef(false);
     const qaEvidenceExpansionDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
@@ -2936,6 +2938,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setImageLightbox(null);
         relationshipRecoveryStartedAtRef.current = 0;
         nodeEntrySequenceRef.current = 0;
+        if (qaGatheringStatusTimeoutRef.current !== null) {
+            window.clearTimeout(qaGatheringStatusTimeoutRef.current);
+            qaGatheringStatusTimeoutRef.current = null;
+        }
         clearBoardCameraMovement();
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
@@ -3180,6 +3186,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         layoutChoreographyTimeoutsRef.current = [];
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
+        if (qaGatheringStatusTimeoutRef.current !== null) {
+            window.clearTimeout(qaGatheringStatusTimeoutRef.current);
+            qaGatheringStatusTimeoutRef.current = null;
+        }
         if (timelineFocusTimeoutRef.current !== null) {
             window.clearTimeout(timelineFocusTimeoutRef.current);
             timelineFocusTimeoutRef.current = null;
@@ -3910,6 +3920,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             },
         }));
     }, [investigationId]);
+
+    const playBrowserQaGatheringStatusDemo = useCallback(() => {
+        if (qaGatheringStatusTimeoutRef.current !== null) {
+            window.clearTimeout(qaGatheringStatusTimeoutRef.current);
+            qaGatheringStatusTimeoutRef.current = null;
+        }
+
+        setDeepDiveTopic(null);
+        setIsGathering(true);
+        qaGatheringStatusTimeoutRef.current = window.setTimeout(() => {
+            setIsGathering(false);
+            qaGatheringStatusTimeoutRef.current = null;
+        }, QA_GATHERING_STATUS_DEMO_MS);
+    }, []);
 
     const playBrowserQaErrorEmptyDemo = useCallback(() => {
         const requestId = `qa-error-empty-${Date.now()}`;
@@ -4785,7 +4809,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 className="absolute top-4 z-[70] flex flex-col items-stretch gap-3 px-0"
                 style={toolbarPosition}
             >
-                <div className="flex w-full justify-center">
+                <div className="pointer-events-none absolute left-0 right-0 top-full mt-3 flex w-full justify-center">
                     {(isGathering || isReorganizing) && (
                         <div className="forensic-busy-pill flex items-center gap-2 rounded-full px-5 py-2 text-[11px] font-black uppercase tracking-[0.24em] backdrop-blur-md animate-pulse">
                             {isReorganizing ? 'Reorganizing Neural Pathways...' : (deepDiveTopic ? `Deep Diving: ${deepDiveTopic}` : 'Gathering Intel...')} {isReorganizing ? '' : `${nodes.length}/8`}
@@ -5346,6 +5370,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
                                     >
                                         <FileText size={14} /> Local ingestion
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaGatheringStatusDemo();
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay gathering status demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <Activity size={14} /> Gathering status
                                     </button>
                                     <button
                                         type="button"
