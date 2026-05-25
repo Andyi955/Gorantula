@@ -96,6 +96,71 @@ const pointIsOnRoute = (point: { x: number; y: number }, route: any, sourceNode:
   })
 }
 
+const longestVerticalLaneX = (route: any, sourceNode: any, targetNode: any) => {
+  const points = routePathPoints(route, sourceNode, targetNode)
+  const verticalSegments = points.slice(1)
+    .map((point, index) => ({ start: points[index], end: point }))
+    .filter(({ start, end }) => start.x === end.x)
+    .map(({ start, end }) => ({
+      x: start.x,
+      length: Math.abs(end.y - start.y),
+    }))
+    .sort((left, right) => right.length - left.length)
+
+  return verticalSegments[0]?.x
+}
+
+const routeSegments = (route: any, sourceNode: any, targetNode: any) => {
+  const points = routePathPoints(route, sourceNode, targetNode)
+
+  return points.slice(1).flatMap((point, index) => {
+    const start = points[index]
+    if (start.x === point.x) {
+      return [{
+        axis: 'vertical' as const,
+        lane: start.x,
+        start: Math.min(start.y, point.y),
+        end: Math.max(start.y, point.y),
+      }]
+    }
+
+    if (start.y === point.y) {
+      return [{
+        axis: 'horizontal' as const,
+        lane: start.y,
+        start: Math.min(start.x, point.x),
+        end: Math.max(start.x, point.x),
+      }]
+    }
+
+    return []
+  }).filter((segment) => segment.end - segment.start >= BOARD_GRID_SIZE * 2)
+}
+
+const overlappingRouteSegmentCount = (
+  routes: Array<{ route: any; sourceNode: any; targetNode: any }>,
+) => {
+  const segments = routes.flatMap(({ route, sourceNode, targetNode }) =>
+    routeSegments(route, sourceNode, targetNode)
+  )
+  let overlapCount = 0
+
+  segments.forEach((segment, index) => {
+    segments.slice(index + 1).forEach((otherSegment) => {
+      if (segment.axis !== otherSegment.axis || segment.lane !== otherSegment.lane) {
+        return
+      }
+
+      const overlap = Math.min(segment.end, otherSegment.end) - Math.max(segment.start, otherSegment.start)
+      if (overlap >= BOARD_GRID_SIZE * 2) {
+        overlapCount += 1
+      }
+    })
+  })
+
+  return overlapCount
+}
+
 const expectPointOutsideRects = (
   point: { x: number; y: number },
   rects: Array<{ left: number; top: number; right: number; bottom: number }>,
@@ -247,6 +312,75 @@ describe('boardGeometry', () => {
         rect(-72 - BOARD_GRID_SIZE, 288 - BOARD_GRID_SIZE, 216 + BOARD_GRID_SIZE, 480 + BOARD_GRID_SIZE),
       ])
     })
+  })
+
+  it('repels repeated relationship lanes between the same cards', () => {
+    const sourceNode = node('source', 0, 0)
+    const targetNode = node('target', 720, 0)
+    const assignments = assignStrictGridPorts([
+      edge('edge-1', 'source', 'target'),
+      edge('edge-2', 'source', 'target'),
+      edge('edge-3', 'source', 'target'),
+      edge('edge-4', 'source', 'target'),
+    ], [sourceNode, targetNode])
+
+    const laneXs = Array.from(assignments.values())
+      .map(({ route }) => longestVerticalLaneX(route, sourceNode, targetNode))
+      .filter((x): x is number => typeof x === 'number')
+    const closestLaneDistance = laneXs.reduce((closest, laneX, index) => {
+      const nearest = laneXs.slice(index + 1).reduce((innerClosest, otherLaneX) =>
+        Math.min(innerClosest, Math.abs(laneX - otherLaneX)), Number.POSITIVE_INFINITY)
+
+      return Math.min(closest, nearest)
+    }, Number.POSITIVE_INFINITY)
+
+    expect(laneXs.length).toBeGreaterThanOrEqual(3)
+    expect(closestLaneDistance).toBeGreaterThanOrEqual(BOARD_GRID_SIZE)
+    expect(overlappingRouteSegmentCount(Array.from(assignments.values()).map(({ route }) => ({
+      route,
+      sourceNode,
+      targetNode,
+    })))).toBe(0)
+  })
+
+  it('keeps repelled lanes stable when strict-grid edges are decorated again', () => {
+    const sourceNode = node('source', 0, 0)
+    const targetNode = node('target', 720, 0)
+    const baseEdges = [
+      edge('edge-1', 'source', 'target'),
+      edge('edge-2', 'source', 'target'),
+      edge('edge-3', 'source', 'target'),
+      edge('edge-4', 'source', 'target'),
+    ]
+    const firstAssignments = assignStrictGridPorts(baseEdges, [sourceNode, targetNode])
+    const decoratedEdges = baseEdges.map((baseEdge) => {
+      const route = firstAssignments.get(baseEdge.id)?.route
+      if (!route) return baseEdge
+
+      return edge(baseEdge.id, baseEdge.source, baseEdge.target, {
+        sourceHandle: route.sourcePortId,
+        targetHandle: route.targetPortId,
+        data: {
+          routePoints: route.points,
+          routeStrategy: route.strategy,
+          routeSourcePoint: getPortById(sourceNode, route.sourcePortId),
+          routeTargetPoint: getPortById(targetNode, route.targetPortId),
+        },
+      })
+    })
+    const secondAssignments = assignStrictGridPorts(decoratedEdges, [sourceNode, targetNode])
+    const laneXs = Array.from(secondAssignments.values())
+      .map(({ route }) => longestVerticalLaneX(route, sourceNode, targetNode))
+      .filter((x): x is number => typeof x === 'number')
+    const closestLaneDistance = laneXs.reduce((closest, laneX, index) => {
+      const nearest = laneXs.slice(index + 1).reduce((innerClosest, otherLaneX) =>
+        Math.min(innerClosest, Math.abs(laneX - otherLaneX)), Number.POSITIVE_INFINITY)
+
+      return Math.min(closest, nearest)
+    }, Number.POSITIVE_INFINITY)
+
+    expect(laneXs.length).toBeGreaterThanOrEqual(3)
+    expect(closestLaneDistance).toBeGreaterThanOrEqual(BOARD_GRID_SIZE)
   })
 
   it('keeps automatic label points anchored on the routed line', () => {
