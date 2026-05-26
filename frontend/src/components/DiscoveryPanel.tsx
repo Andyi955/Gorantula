@@ -54,6 +54,7 @@ export default function DiscoveryPanel({
   const knownDiscoveryIdsRef = useRef<Set<string>>(new Set(discoveries.map((discovery) => discovery.id)))
   const confidenceTimersRef = useRef<Map<string, number>>(new Map())
   const revealTimersRef = useRef<Map<string, number>>(new Map())
+  const lastResetInvestigationIdRef = useRef(currentInvestigationId)
 
   const orderedDiscoveries = useMemo(
     () => [...discoveries].sort((left, right) => right.confidence - left.confidence),
@@ -61,6 +62,10 @@ export default function DiscoveryPanel({
   )
 
   useEffect(() => {
+    if (lastResetInvestigationIdRef.current === currentInvestigationId) {
+      return
+    }
+    lastResetInvestigationIdRef.current = currentInvestigationId
     knownDiscoveryIdsRef.current = new Set(discoveries.map((discovery) => discovery.id))
     setRevealingDiscoveryIds(new Set())
     setDisplayConfidenceByDiscoveryId({})
@@ -68,7 +73,7 @@ export default function DiscoveryPanel({
     confidenceTimersRef.current.clear()
     revealTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
     revealTimersRef.current.clear()
-  }, [currentInvestigationId])
+  }, [currentInvestigationId, discoveries])
 
   useEffect(() => {
     const knownDiscoveryIds = knownDiscoveryIdsRef.current

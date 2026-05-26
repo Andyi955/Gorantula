@@ -1,6 +1,6 @@
 import type { Edge, Node } from 'reactflow'
 import { detectiveBoardLayoutTestUtils } from '../../src/components/detectiveBoardLayout'
-import { detectiveBoardTestUtils } from '../../src/components/DetectiveBoard'
+import { getStrictGridLayoutedNodes } from '../../src/components/detectiveBoardStrictGridLayout'
 
 const createNode = (id: string): Node => ({
   id,
@@ -67,7 +67,7 @@ describe('detective board layout', () => {
     const nodes = [createNode('a'), createNode('b'), createNode('c'), createNode('d')]
     const edges = [createEdge('a', 'b'), createEdge('b', 'c')]
 
-    const layoutedNodes = detectiveBoardTestUtils.getStrictGridLayoutedNodes(nodes, edges)
+    const layoutedNodes = getStrictGridLayoutedNodes(nodes, edges)
     const disconnectedNode = layoutedNodes.find((node) => node.id === 'd')
     const connectedNodes = layoutedNodes.filter((node) => node.id !== 'd')
 
