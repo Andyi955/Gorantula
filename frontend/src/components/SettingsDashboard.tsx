@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useState, useEffect } from 'react';
 import {
     AlertTriangle,
     ChevronRight,
@@ -192,7 +192,7 @@ const SettingsDashboard = () => {
         setKeys(prev => ({ ...prev, [id]: value }));
     };
 
-    const isProviderEnabled = (providerId: string) => {
+    const isProviderEnabled = useCallback((providerId: string) => {
         const enabledKey = PROVIDER_ACTIVATION_KEYS[providerId];
         const rawValue = enabledKey ? keys[enabledKey] : '';
         if (rawValue === 'true') return true;
@@ -200,12 +200,12 @@ const SettingsDashboard = () => {
 
         const requirementKey = ROUTING_REQUIREMENTS[providerId];
         return requirementKey ? Boolean(keys[requirementKey]) : true;
-    };
+    }, [keys]);
 
-    const hasProviderSetup = (providerId: string) => {
+    const hasProviderSetup = useCallback((providerId: string) => {
         const requirementKey = ROUTING_REQUIREMENTS[providerId];
         return requirementKey ? Boolean(keys[requirementKey]) : true;
-    };
+    }, [keys]);
 
     const isProviderExplicitlyDisabled = (providerId: string) => {
         const enabledKey = PROVIDER_ACTIVATION_KEYS[providerId];
@@ -221,7 +221,7 @@ const SettingsDashboard = () => {
         const missingProviders = activeProviders.filter(provider => !hasProviderSetup(provider.id));
         const localProviders = activeProviders.filter(provider => provider.id === 'ollama' || provider.id === 'lmstudio');
         return { activeProviders, missingProviders, localProviders };
-    }, [keys]);
+    }, [hasProviderSetup, isProviderEnabled]);
 
     const selectedSearchProvider = keys.DEFAULT_SEARCH_MODEL || 'deepseek';
     const selectedPersonaProvider = keys.DEFAULT_PERSONA_MODEL || 'deepseek';

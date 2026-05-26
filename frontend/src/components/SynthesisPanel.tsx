@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
 import { type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
 import { BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT } from '../utils/boardWorkspaceEvents';
@@ -300,7 +300,7 @@ export default function SynthesisPanel({
         ? Boolean(unreadByInvestigation[currentInvestigationId]) || Boolean(hasUnreadTheory)
         : false;
 
-    const markCurrentTheoryRead = () => {
+    const markCurrentTheoryRead = useCallback(() => {
         if (!currentInvestigationId) {
             return;
         }
@@ -314,7 +314,7 @@ export default function SynthesisPanel({
             return updated;
         });
         onMarkTheoryRead?.();
-    };
+    }, [currentInvestigationId, onMarkTheoryRead]);
 
     const markAlertForReveal = (alertKey?: string) => {
         if (!alertKey || prefersReducedMotion()) {
@@ -342,7 +342,7 @@ export default function SynthesisPanel({
     };
 
     useEffect(() => {
-        console.debug('[SynthesisPanel] Mounted with current investigation:', currentInvestigationId);
+        console.debug('[SynthesisPanel] Mounted.');
         setAlertsByInvestigation(migrateLegacyAlerts());
     }, []);
 
@@ -568,7 +568,7 @@ export default function SynthesisPanel({
 
         window.addEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, handlePanelToggle);
         return () => window.removeEventListener(BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT, handlePanelToggle);
-    }, [currentInvestigationId, onMarkTheoryRead]);
+    }, [currentInvestigationId, markCurrentTheoryRead]);
 
     const clearAlerts = () => {
         if (!currentInvestigationId) {

@@ -781,7 +781,9 @@ function App() {
 
   const reconnectTimeoutRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const connectRef = useRef<() => Promise<void>>(async () => {});
   const isUnmounted = useRef(false);
+  const investigationsRef = useRef(investigations);
   const investigationHydrationRequestRef = useRef(0);
   const backendOfflineNoticeShownRef = useRef(false);
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
@@ -792,6 +794,7 @@ function App() {
   const pipelineStepTransitionTimeoutsRef = useRef<Record<string, number>>({})
   const qaPipelineDemoTimeoutsRef = useRef<number[]>([])
   const animatedPipelineTokenRef = useRef(animatedPipelineToken)
+  investigationsRef.current = investigations
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
   const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'chat' || activeTab === 'settings'
@@ -822,6 +825,8 @@ function App() {
   }, [sidebarRows, sidebarSearchQuery])
 
   const sidebarRowMetrics = useMemo(() => {
+    // Board state is cached outside React; this revision keeps sidebar counts fresh after board saves.
+    void boardWorkspaceRevision
     return sidebarRows.reduce<Record<string, SidebarRowMetrics>>((metrics, { investigation }) => {
       if (metrics[investigation.id]) {
         return metrics
@@ -837,6 +842,8 @@ function App() {
   }, [boardWorkspaceRevision, sidebarRows])
 
   const currentBoardSnapshot = useMemo(() => {
+    // Board state is cached outside React; this revision keeps the summary in sync after board saves.
+    void boardWorkspaceRevision
     if (!currentInvestigationId) {
       return {
         summary: 'Select an investigation to inspect its working summary, evidence counts, and board health.',
@@ -1097,7 +1104,7 @@ function App() {
     qaPipelineDemoTimeoutsRef.current = []
   }, [])
 
-  const scheduleReconnect = (delay = WEBSOCKET_RETRY_DELAY_MS) => {
+  const scheduleReconnect = useCallback((delay = WEBSOCKET_RETRY_DELAY_MS) => {
     if (isUnmounted.current) {
       return
     }
@@ -1108,11 +1115,11 @@ function App() {
 
     reconnectTimeoutRef.current = window.setTimeout(() => {
       reconnectTimeoutRef.current = null
-      void connect()
+      void connectRef.current()
     }, delay)
-  }
+  }, [])
 
-  const connect = async () => {
+  const connect = useCallback(async () => {
     if (isUnmounted.current) {
       return
     }
@@ -1142,7 +1149,7 @@ function App() {
       console.debug('[App] WebSocket Connected');
       setSocketConfig({ socket: s, ready: true });
       
-      const ids = investigations.map((inv) => inv.id);
+      const ids = investigationsRef.current.map((inv) => inv.id);
       if (ids.length > 0) {
         s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
       }
@@ -1159,7 +1166,9 @@ function App() {
         s.close();
       }
     };
-  };
+  }, [scheduleReconnect]);
+
+  connectRef.current = connect;
 
   useEffect(() => {
     isUnmounted.current = false;
@@ -1197,7 +1206,7 @@ function App() {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (socketRef.current && socketRef.current.readyState === 1) socketRef.current.close();
     }
-  }, [])
+  }, [connect])
 
   useEffect(() => {
     void refreshPipelineProfiles()
@@ -1447,13 +1456,15 @@ function App() {
     : activePipelineRun?.mode === 'local'
       ? 'local'
       : crawlMode
-  const visibleLocalIngestionPaths = qaLocalIngestionDemoRequest
-    ? qaLocalIngestionFilePaths
-    : promptLocalFilePaths.length > 0
-      ? promptLocalFilePaths
-      : spiderOperationMode === 'local'
-        ? activeLocalIngestionFilePaths
-        : []
+  const visibleLocalIngestionPaths = useMemo(() => {
+    if (qaLocalIngestionDemoRequest) {
+      return qaLocalIngestionFilePaths
+    }
+    if (promptLocalFilePaths.length > 0) {
+      return promptLocalFilePaths
+    }
+    return spiderOperationMode === 'local' ? activeLocalIngestionFilePaths : []
+  }, [activeLocalIngestionFilePaths, promptLocalFilePaths, qaLocalIngestionDemoRequest, qaLocalIngestionFilePaths, spiderOperationMode])
   const localIngestionFiles = useMemo(
     () => createLocalIngestionFiles(visibleLocalIngestionPaths),
     [visibleLocalIngestionPaths],
@@ -1476,15 +1487,17 @@ function App() {
     ? Boolean(dismissedPipelineChipRuns[activePipelineRun.runId])
     : false
   const isActivePipelineRunning = activePipelineRailStatus === 'running'
+  const activePipelineRunIdForToken = activePipelineRun?.runId || null
+  const activePipelineRunStatusForToken = activePipelineRun?.status || null
 
   useEffect(() => {
     animatedPipelineTokenRef.current = animatedPipelineToken
   }, [animatedPipelineToken])
 
   useEffect(() => {
-    if (!activePipelineRun || activePipelineTokenTotal <= 0) {
+    if (!activePipelineRunIdForToken || activePipelineTokenTotal <= 0) {
       setAnimatedPipelineToken({
-        runId: activePipelineRun?.runId || null,
+        runId: activePipelineRunIdForToken,
         target: activePipelineTokenTotal,
         display: activePipelineTokenTotal,
         isAnimating: false,
@@ -1492,12 +1505,12 @@ function App() {
       return
     }
 
-    const runId = activePipelineRun.runId
+    const runId = activePipelineRunIdForToken
     const previous = animatedPipelineTokenRef.current
     const from = previous.runId === runId ? previous.display : 0
     const shouldShowFinalValue = prefersReducedMotion() ||
-      activePipelineRun.status === 'cancelled' ||
-      activePipelineRun.status === 'error' ||
+      activePipelineRunStatusForToken === 'cancelled' ||
+      activePipelineRunStatusForToken === 'error' ||
       from === activePipelineTokenTotal
     if (shouldShowFinalValue) {
       setAnimatedPipelineToken({
@@ -1533,7 +1546,7 @@ function App() {
     }, 40)
 
     return () => window.clearInterval(intervalId)
-  }, [activePipelineRun?.runId, activePipelineRun?.status, activePipelineTokenTotal])
+  }, [activePipelineRunIdForToken, activePipelineRunStatusForToken, activePipelineTokenTotal])
 
   useEffect(() => {
     clearPipelineStepTransitions()
@@ -2028,7 +2041,7 @@ function App() {
     return () => window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
   }, [])
 
-  const runSpider = (customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
+  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
     const textToRun = customPrompt || prompt;
     const labelToUse = customLabel || textToRun;
     const modeToUse = overrideMode || crawlMode;
@@ -2066,7 +2079,7 @@ function App() {
       alert("System not ready. Please check backend connection.");
       return null;
     }
-  }
+  }, [crawlMode, imageScrapingEnabled, investigations, persistInvestigations, prompt, socketConfig.ready, socketConfig.socket])
 
   const handleDeepDiveNode = useCallback((promptStr: string, titleStr: string, sourceNodeId: string) => {
     const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`, 'web');

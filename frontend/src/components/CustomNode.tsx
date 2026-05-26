@@ -498,9 +498,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 imageRetryTimeoutRef.current = null;
             }
         };
-    }, [data.id, isBackendImage, primaryImage?.id, primaryImage?.path]);
+    }, [data.id, isBackendImage, primaryImage]);
 
-    const handlePreviewImageLoad = () => {
+    const handlePreviewImageLoad = useCallback(() => {
         if (!primaryImage) {
             return;
         }
@@ -515,7 +515,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             path: primaryImage.path,
             attempt: imageRetryAttempt,
         });
-    };
+    }, [data.id, imageRetryAttempt, primaryImage]);
 
     useEffect(() => {
         const image = previewImageRef.current;
@@ -525,7 +525,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         if (image.complete && image.naturalWidth > 0) {
             handlePreviewImageLoad();
         }
-    }, [previewImageSrc, primaryImage?.id]);
+    }, [handlePreviewImageLoad, previewImageSrc, primaryImage]);
 
     const handlePreviewImageError = () => {
         if (!primaryImage) {
