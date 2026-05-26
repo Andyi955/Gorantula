@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import TimelineView from '../../src/components/TimelineView'
 
@@ -147,6 +147,88 @@ describe('TimelineView', () => {
     await user.click(screen.getByRole('button', { name: /apply filters/i }))
 
     expect(await screen.findByText(/no matching timeline events/i)).toBeInTheDocument()
+  })
+
+  it('jumps to the beginning and end of the visible dated timeline', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'inv_data_inv-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [],
+        edges: [],
+        timelineSnapshot: {
+          generatedAt: '2026-05-14T12:00:00.000Z',
+          sourceFingerprint: 'tl-jump',
+          events: [
+            {
+              id: 'event-first',
+              timestamp: '2024-01-15',
+              event: 'First dated event.',
+              sourceNodeId: 'node-1',
+              sourceTitle: 'First Node',
+              provenance: 'persona',
+              parsedDate: 1705276800000,
+              datePrecision: 'day',
+            },
+            {
+              id: 'event-last',
+              timestamp: '2026-05-13',
+              event: 'Last dated event.',
+              sourceNodeId: 'node-2',
+              sourceTitle: 'Last Node',
+              provenance: 'date-tag',
+              parsedDate: 1778630400000,
+              datePrecision: 'day',
+            },
+            {
+              id: 'event-unknown',
+              timestamp: 'Later',
+              event: 'Undated context stays in the side tray.',
+              sourceNodeId: 'node-3',
+              sourceTitle: 'Unknown Node',
+              provenance: 'text-date',
+              parsedDate: null,
+              datePrecision: 'unknown',
+            },
+          ],
+        },
+      }),
+    )
+
+    render(<TimelineView investigationId="inv-1" investigationTitle="Case Alpha" />)
+
+    expect(await screen.findByText('First dated event.')).toBeInTheDocument()
+    const jumpToEnd = screen.getByRole('button', { name: /jump to end/i })
+    const jumpToBeginning = screen.getByRole('button', { name: /jump to beginning/i })
+    const canvas = screen.getByTestId('timeline-canvas')
+    const track = screen.getByTestId('timeline-track')
+    Object.defineProperty(canvas, 'clientWidth', { configurable: true, value: 600 })
+    Object.defineProperty(track, 'scrollWidth', { configurable: true, value: 1800 })
+
+    await user.click(jumpToEnd)
+
+    await waitFor(() => {
+      expect(track).toHaveStyle({ transform: 'translateX(-1200px) scale(1)' })
+    })
+
+    await user.click(jumpToBeginning)
+
+    await waitFor(() => {
+      expect(track).toHaveStyle({ transform: 'translateX(0px) scale(1)' })
+    })
+
+    fireEvent.keyDown(canvas, { key: 'End' })
+
+    await waitFor(() => {
+      expect(track).toHaveStyle({ transform: 'translateX(-1200px) scale(1)' })
+    })
+
+    fireEvent.keyDown(canvas, { key: 'Home' })
+
+    await waitFor(() => {
+      expect(track).toHaveStyle({ transform: 'translateX(0px) scale(1)' })
+    })
   })
 
   it('switches investigations without leaking timeline events', async () => {

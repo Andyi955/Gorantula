@@ -13,6 +13,8 @@ import {
     ZoomIn,
     ZoomOut,
     RotateCcw,
+    SkipBack,
+    SkipForward,
 } from 'lucide-react';
 import {
     loadBoardStateForInvestigation,
@@ -250,14 +252,18 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         }, TIMELINE_EVENT_MOTION_DURATION_MS);
     }, [clearEventMotion]);
 
-    const resetViewport = useCallback(() => {
+    const cancelViewportAnimation = useCallback(() => {
         if (animationFrameRef.current) {
             cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = null;
         }
+    }, []);
+
+    const resetViewport = useCallback(() => {
+        cancelViewportAnimation();
         setZoomLevel(1);
         setTranslateX(0);
-    }, []);
+    }, [cancelViewportAnimation]);
 
     const clampTranslate = useCallback((value: number, zoom = zoomLevelRef.current) => {
         const container = containerRef.current;
@@ -384,6 +390,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
     const knownEvents = filteredEvents.filter((event) => event.parsedDate !== null);
     const unknownEvents = filteredEvents.filter((event) => event.parsedDate === null);
     const hasUnknownEvents = unknownEvents.length > 0;
+    const canJumpTimeline = Boolean(snapshot && knownEvents.length > 0);
     const dateRange = formatDateRange(filteredEvents);
     const sourceCount = getSourceCount(filteredEvents);
     const title = investigationTitle || 'Current Investigation';
@@ -456,6 +463,11 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         markTimelineEventsForMotion(events, 'reordering');
         resetViewport();
     };
+
+    const jumpToTimelineBoundary = useCallback((boundary: 'start' | 'end') => {
+        cancelViewportAnimation();
+        setTranslateX(clampTranslate(boundary === 'start' ? 0 : Number.NEGATIVE_INFINITY));
+    }, [cancelViewportAnimation, clampTranslate]);
 
     const handleGenerateTimeline = useCallback(async () => {
         if (!investigationId) {
@@ -562,6 +574,14 @@ const TimelineView: React.FC<TimelineViewProps> = ({
             event.preventDefault();
             setTranslateX((current) => clampTranslate(current - panAmount));
         }
+        if (event.key === 'Home' && knownEvents.length > 0) {
+            event.preventDefault();
+            jumpToTimelineBoundary('start');
+        }
+        if (event.key === 'End' && knownEvents.length > 0) {
+            event.preventDefault();
+            jumpToTimelineBoundary('end');
+        }
     };
 
     if (!investigationId) {
@@ -619,6 +639,26 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                         >
                             <RotateCcw size={15} />
                             {isGenerating ? 'Generating...' : actionLabel}
+                        </button>
+                        <button
+                            type="button"
+                            className="forensic-timeline-icon-button"
+                            onClick={() => jumpToTimelineBoundary('start')}
+                            title="Jump to beginning"
+                            aria-label="Jump to beginning"
+                            disabled={!canJumpTimeline}
+                        >
+                            <SkipBack size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="forensic-timeline-icon-button"
+                            onClick={() => jumpToTimelineBoundary('end')}
+                            title="Jump to end"
+                            aria-label="Jump to end"
+                            disabled={!canJumpTimeline}
+                        >
+                            <SkipForward size={15} />
                         </button>
                         <button
                             type="button"
@@ -685,6 +725,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                             <>
                                 <div
                                     ref={containerRef}
+                                    data-testid="timeline-canvas"
                                     tabIndex={0}
                                     className={`forensic-timeline-canvas ${isDragging ? 'forensic-timeline-canvas-dragging' : ''}`}
                                     onKeyDown={handleKeyDown}
@@ -696,6 +737,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
                                 >
                                     <div
                                         ref={trackRef}
+                                        data-testid="timeline-track"
                                         className="forensic-timeline-track"
                                         style={{ transform: `translateX(${translateX}px) scale(${zoomLevel})` }}
                                     >
