@@ -1,5 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow } from 'reactflow';
+import type { EdgeProps, Node } from 'reactflow';
 import { Pencil, Unlink2 } from 'lucide-react';
 import { BOARD_GRID_SIZE, getNodeDimensions, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode, PortSide, StrictGridPoint } from './boardGeometry';
@@ -16,6 +18,38 @@ const LABEL_CLEARANCE = 12;
 type RouteMode = 'free' | 'vertical-lock' | 'horizontal-lock' | 'midpoint-offset';
 type LabelPoint = { x: number; y: number };
 type LabelRect = { left: number; right: number; top: number; bottom: number };
+type RelationshipEdgeData = {
+    boardMode?: BoardMode;
+    isConnectionRevealing?: boolean;
+    customX?: number;
+    customY?: number;
+    routeMode?: RouteMode;
+    routeOffsetX?: number;
+    routeOffsetY?: number;
+    routeAnchorX?: number;
+    routeAnchorY?: number;
+    routeSourcePoint?: StrictGridPoint;
+    routeTargetPoint?: StrictGridPoint;
+    routeLabelPoint?: StrictGridPoint;
+    routePoints?: StrictGridPoint[];
+    sourcePortSide?: PortSide;
+    targetPortSide?: PortSide;
+    labelX?: number;
+    labelY?: number;
+    color?: string;
+    pattern?: unknown;
+    shape?: unknown;
+    snapEnabled?: boolean;
+    onRename?: (edgeId: string) => void;
+    onDelete?: (edgeId: string) => void;
+    onConnectionHover?: (payload: {
+        edgeId: string;
+        source: string;
+        target: string;
+        color: string;
+        active: boolean;
+    }) => void;
+};
 
 interface BoardNodeRect {
     id: string;
@@ -45,7 +79,7 @@ const getMidpoint = (sourceX: number, sourceY: number, targetX: number, targetY:
     y: (sourceY + targetY) / 2,
 });
 
-const estimateLabelSize = (label: unknown, labelStyle: any) => {
+const estimateLabelSize = (label: unknown, labelStyle?: CSSProperties) => {
     const labelText = typeof label === 'string' ? label : '';
     const fontSize = typeof labelStyle?.fontSize === 'number'
         ? labelStyle.fontSize
@@ -75,7 +109,7 @@ const rectsOverlap = (left: LabelRect, right: LabelRect) =>
     left.top < right.bottom &&
     left.bottom > right.top;
 
-const getBoardNodeRect = (node: any): BoardNodeRect | null => {
+const getBoardNodeRect = (node: Node): BoardNodeRect | null => {
     if (!node?.position || typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
         return null;
     }
@@ -91,7 +125,7 @@ const getBoardNodeRect = (node: any): BoardNodeRect | null => {
     };
 };
 
-const getNodeRects = (nodes: any[], excludedNodeIds: Set<string>) =>
+const getNodeRects = (nodes: Node[], excludedNodeIds: Set<string>) =>
     nodes
         .map((node) => {
             if (excludedNodeIds.has(node.id)) {
@@ -157,7 +191,7 @@ const getVisibleLabelPoint = (
     basePoint: LabelPoint,
     routePoints: StrictGridPoint[],
     label: unknown,
-    labelStyle: any,
+    labelStyle: CSSProperties | undefined,
     nodeRects: BoardNodeRect[],
 ) => {
     if (nodeRects.length === 0) {
@@ -419,13 +453,15 @@ const alignRouteEndpoint = (
     return { x: anchor.x, y: routePoint.y };
 };
 
-const getStrictRouteData = (data: any, sourceX: number, sourceY: number, targetX: number, targetY: number) => {
-    const hasRouteAnchor = typeof data?.routeAnchorX === 'number' && typeof data?.routeAnchorY === 'number';
+const getStrictRouteData = (data: RelationshipEdgeData | undefined, sourceX: number, sourceY: number, targetX: number, targetY: number) => {
+    const routeAnchorX = typeof data?.routeAnchorX === 'number' ? data.routeAnchorX : undefined;
+    const routeAnchorY = typeof data?.routeAnchorY === 'number' ? data.routeAnchorY : undefined;
+    const hasRouteAnchor = routeAnchorX !== undefined && routeAnchorY !== undefined;
     const sourcePoint = coerceRoutePoint(data?.routeSourcePoint) || { x: sourceX, y: sourceY };
     const targetPoint = coerceRoutePoint(data?.routeTargetPoint) || { x: targetX, y: targetY };
     const routeLabelPoint = coerceRoutePoint(data?.routeLabelPoint);
     const rawPathPoints: StrictGridPoint[] = hasRouteAnchor
-        ? buildStrictRoutePointsFromAnchor(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y, data.routeAnchorX, data.routeAnchorY)
+        ? buildStrictRoutePointsFromAnchor(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y, routeAnchorX, routeAnchorY)
         : [
             sourcePoint,
             ...(Array.isArray(data?.routePoints) ? data.routePoints : []),
@@ -471,7 +507,7 @@ export default function CustomEdge({
     labelStyle,
     labelBgStyle,
     interactionWidth,
-}: any) {
+}: EdgeProps<RelationshipEdgeData>) {
     const { setEdges, getViewport, getNodes } = useReactFlow();
     const [isHovered, setIsHovered] = useState(false);
     const boardMode = data?.boardMode as BoardMode | undefined;
@@ -493,7 +529,9 @@ export default function CustomEdge({
         [data, sourceX, sourceY, targetX, targetY]
     );
 
-    const hasCustomPosition = data?.customX !== undefined && data?.customY !== undefined;
+    const customX = typeof data?.customX === 'number' ? data.customX : undefined;
+    const customY = typeof data?.customY === 'number' ? data.customY : undefined;
+    const hasCustomPosition = customX !== undefined && customY !== undefined;
     const routeMode = data?.routeMode as RouteMode | undefined;
     const routeOffsetX = typeof data?.routeOffsetX === 'number' ? data.routeOffsetX : 0;
     const routeOffsetY = typeof data?.routeOffsetY === 'number' ? data.routeOffsetY : 0;
@@ -514,19 +552,22 @@ export default function CustomEdge({
         sourceY,
         targetX,
         targetY,
-        hasCustomPosition ? data.customX : smoothLabelX,
-        hasCustomPosition ? data.customY : smoothLabelY,
+        hasCustomPosition ? customX : smoothLabelX,
+        hasCustomPosition ? customY : smoothLabelY,
     );
 
     const edgePath = isStrictGrid ? strictRoute.edgePath : (buildLegacyRoutePath(routeMode, legacyLabelPoint.x, legacyLabelPoint.y, sourceX, sourceY, targetX, targetY) || smoothPath);
     const defaultLabelPoint = isStrictGrid ? strictRoute.labelPoint : legacyLabelPoint;
-    const routePoints = isStrictGrid
-        ? strictRoute.pathPoints
-        : [
-            { x: sourceX, y: sourceY },
-            defaultLabelPoint,
-            { x: targetX, y: targetY },
-        ];
+    const routePoints = useMemo(
+        () => isStrictGrid
+            ? strictRoute.pathPoints
+            : [
+                { x: sourceX, y: sourceY },
+                defaultLabelPoint,
+                { x: targetX, y: targetY },
+            ],
+        [defaultLabelPoint, isStrictGrid, sourceX, sourceY, strictRoute.pathPoints, targetX, targetY]
+    );
     const currentLabelPoint = useMemo(() => {
         if (hasManualLabelPlacement || (isStrictGrid && strictRoute.hasAutoLabelPoint)) {
             return defaultLabelPoint;
@@ -669,7 +710,7 @@ export default function CustomEdge({
         data?.onDelete?.(id);
     };
 
-    const edgeColor = data?.color || resolvedEdgeStyle.stroke || style?.stroke || '#bc13fe';
+    const edgeColor = String(data?.color || resolvedEdgeStyle.stroke || style?.stroke || '#bc13fe');
 
     const setConnectionHover = useCallback((active: boolean) => {
         setIsHovered(active);
@@ -684,6 +725,12 @@ export default function CustomEdge({
 
     const overlayStrokeWidth = Number(resolvedEdgeStyle.strokeWidth || style?.strokeWidth || 2) + 1.5;
     const hoverStrokeWidth = interactionWidth || 20;
+    const overlayStrokeLinecap = (
+        resolvedEdgeStyle.strokeLinecap === 'butt' ||
+        resolvedEdgeStyle.strokeLinecap === 'round' ||
+        resolvedEdgeStyle.strokeLinecap === 'square' ||
+        resolvedEdgeStyle.strokeLinecap === 'inherit'
+    ) ? resolvedEdgeStyle.strokeLinecap : 'round';
 
     return (
         <>
@@ -703,7 +750,7 @@ export default function CustomEdge({
                     fill="none"
                     stroke={edgeColor}
                     strokeWidth={overlayStrokeWidth}
-                    strokeLinecap={resolvedEdgeStyle.strokeLinecap || 'round'}
+                    strokeLinecap={overlayStrokeLinecap}
                     strokeLinejoin="round"
                     pathLength={1}
                     pointerEvents="none"

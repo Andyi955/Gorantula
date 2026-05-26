@@ -21,6 +21,16 @@ export default defineConfig([
     },
     rules: {
       'no-unnecessary-escape': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+      }],
+      // The board intentionally bridges external browser/WebSocket events into React state.
+      // Keep this rule out until those flows can be refactored without behavior churn.
+      'react-hooks/set-state-in-effect': 'off',
+      'react-refresh/only-export-components': 'warn',
     },
   },
 ])

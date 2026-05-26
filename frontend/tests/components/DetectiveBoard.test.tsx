@@ -16,6 +16,7 @@ const setCenterMock = vi.fn()
 const getZoomMock = vi.fn(() => 0.82)
 let viewportMock = { x: -160, y: -90, zoom: 1 }
 let lastReactFlowProps: Record<string, unknown> | null = null
+type MockNodeComponent = React.ComponentType<Record<string, unknown>>
 
 vi.mock('reactflow', () => {
   return {
@@ -23,7 +24,7 @@ vi.mock('reactflow', () => {
     default: (props: {
       children?: React.ReactNode
       nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
-      nodeTypes?: Record<string, React.ComponentType<any>>
+      nodeTypes?: Record<string, MockNodeComponent>
       proOptions?: Record<string, unknown>
     }) => {
       lastReactFlowProps = props as Record<string, unknown>
