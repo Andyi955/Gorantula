@@ -576,6 +576,26 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('keeps React Flow snap disabled so resize gestures use raw pointer movement', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-a')).toBe(true)
+    })
+    expect(lastReactFlowProps?.snapToGrid).toBe(false)
+  })
+
   it('keeps React Flow node and edge type objects stable across board renders', () => {
     const socket = new MockSocket()
     renderBoard('investigation-1', socket as unknown as WebSocket)
