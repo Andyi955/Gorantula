@@ -23,7 +23,7 @@ import type {
     Viewport,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import CustomNode, { type NodeSaveMode } from './CustomNode';
+import CustomNode, { type NodeData, type NodeSaveMode, type PersonaInsight } from './CustomNode';
 import CustomEdge from './CustomEdge';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
@@ -68,6 +68,7 @@ import {
     type BrowserQaAnimationDemoDetail,
     type BrowserQaEvidenceExpansionDemoDetail,
 } from '../utils/browserQaSeed';
+import type { InvestigationRecord } from '../utils/investigations';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -370,20 +371,32 @@ const mergeIncrementalEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge
 
 type AnalysisMode = 'full' | 'incremental' | null;
 
+type RelationshipConnection = {
+    source: string;
+    target: string;
+    label?: string;
+    tag?: string;
+    confidence?: number;
+    reasoning?: string;
+    vaultId?: string;
+    type?: string;
+    [key: string]: unknown;
+};
+
 type ConnectionsFoundPayload = {
-    connections: any[];
+    connections: RelationshipConnection[];
     vaultId?: string;
 };
 
 const coerceConnectionsFoundPayload = (payload: unknown): ConnectionsFoundPayload => {
     if (Array.isArray(payload)) {
-        return { connections: payload };
+        return { connections: payload as RelationshipConnection[] };
     }
 
     if (payload && typeof payload === 'object') {
         const candidate = payload as { connections?: unknown; vaultId?: unknown };
         return {
-            connections: Array.isArray(candidate.connections) ? candidate.connections : [],
+            connections: Array.isArray(candidate.connections) ? candidate.connections as RelationshipConnection[] : [],
             vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId.trim() : undefined,
         };
     }
@@ -391,7 +404,7 @@ const coerceConnectionsFoundPayload = (payload: unknown): ConnectionsFoundPayloa
     return { connections: [] };
 };
 
-const connectionVaultId = (connection: any) =>
+const connectionVaultId = (connection: RelationshipConnection) =>
     typeof connection?.vaultId === 'string' ? connection.vaultId.trim() : '';
 
 const hasConnectTheDotsEdges = (edges: Edge[]) =>
@@ -969,7 +982,7 @@ const stripTransientNodeData = (node: Node): Node => {
             ...stableNodeData,
             isRecentlyImported: false,
             personaInsights: Array.isArray(node.data?.personaInsights)
-                ? node.data.personaInsights.map((insight: any) => ({
+                ? node.data.personaInsights.map((insight: PersonaInsight) => ({
                     personaName: insight?.personaName,
                     perspective: insight?.perspective,
                     confidence: insight?.confidence,
@@ -2432,7 +2445,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
     }, [boardMode, syncStrictGridSubset]);
 
-    const handleUpdateNode = useCallback((id: string, data: any) => {
+    const handleUpdateNode = useCallback((id: string, data: Partial<NodeData>) => {
         console.debug(`[DetectiveBoard] Updating node ${id}`, data);
         setNodes(nds => nds.map(n => {
             if (n.id === id) {
@@ -3099,7 +3112,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                             onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                             onDelete: (id: string) => handleDeleteNode(id),
-                            onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                            onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
                             onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                             onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                             onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
@@ -3651,8 +3664,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             persistTagStyles(nextStyles);
         }
 
-        const newEdges: Edge[] = validConnections.map((c: any) => {
-            const visuals = buildEdgeVisuals(c.tag, nextStyles);
+        const newEdges: Edge[] = validConnections.map((c: RelationshipConnection) => {
+            const visuals = buildEdgeVisuals(c.tag || c.label || c.type || 'RELATED', nextStyles);
             const displayLabel = getRelationshipDisplayLabel(visuals.tag);
 
             return {
@@ -3774,7 +3787,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                         onDelete: (id: string) => handleDeleteNode(id),
-                        onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                        onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
                         onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                         onSetEditing: (id: string | null) => handleSetEditing(id),
                         onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
@@ -4030,7 +4043,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
-                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                    onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
                     onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                     onSetEditing: (id: string | null) => handleSetEditing(id),
                     onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
@@ -4130,7 +4143,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                     onDelete: (id: string) => handleDeleteNode(id),
-                    onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                    onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
                     onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                     onSetEditing: (id: string | null) => handleSetEditing(id),
                     onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
@@ -4236,7 +4249,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                 onDelete: (id: string) => handleDeleteNode(id),
-                onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
                 onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                 onSetEditing: (id: string | null) => handleSetEditing(id),
                 onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
@@ -4383,7 +4396,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
                         onDelete: (id: string) => handleDeleteNode(id),
-                        onUpdate: (id: string, data: any) => handleUpdateNode(id, data),
+                        onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
                         onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                         onSetEditing: (id: string | null) => handleSetEditing(id),
                         onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
@@ -4405,9 +4418,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 if (vaultId && vaultId !== investigationId) {
                     console.debug(`[Board] Routing node ${node.id} to target vault: ${vaultId}`);
                     const savedState = getCachedBoardStateForInvestigation(vaultId);
-                    let vaultData: PersistedBoardState = savedState || { mode: targetBoardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
+                    const vaultData: PersistedBoardState = savedState || { mode: targetBoardMode, nodes: [], edges: [], pendingIntegrationNodeIds: [] };
 
-                    const nodeExists = (vaultData.nodes || []).some((n: any) => n.id === node.id);
+                    const nodeExists = (vaultData.nodes || []).some((n: Node) => n.id === node.id);
                     if (!nodeExists) {
                         vaultData.nodes = [...(vaultData.nodes || []), stripTransientNodeData(newNode)];
                         vaultData.mode = vaultData.mode || targetBoardMode;
@@ -4600,7 +4613,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
                 onDelete: (id: string) => handleDeleteNode(id),
-                onUpdate: (id: string, d: any) => handleUpdateNode(id, d),
+                onUpdate: (id: string, d: Partial<NodeData>) => handleUpdateNode(id, d),
                 onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
                 onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
                 onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
@@ -4870,13 +4883,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             await exportUtils.exportAsSvg(boardElementId);
         } else if (type === 'pdf') {
             const currentInv = getCachedInvestigations()
-                .find((i: any) => i.id === investigationId);
+                .find((i: InvestigationRecord) => i.id === investigationId);
 
             const saved = investigationId ? getCachedBoardStateForInvestigation(investigationId) : null;
             let nodesData: Array<{ title: string; summary: string; sourceURL: string }> = [];
             if (saved) {
                 const { nodes: savedNodes } = saved;
-                nodesData = savedNodes.map((n: any) => ({
+                nodesData = savedNodes.map((n: Node<NodeData>) => ({
                     title: String(n.data?.title || ''),
                     summary: String(n.data?.summary || ''),
                     sourceURL: String(n.data?.sourceURL || '')

@@ -9,7 +9,7 @@ import {
   removeInvestigationRecord,
   type InvestigationRecord,
 } from './utils/investigations'
-import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, type PersistedTimelineSnapshot } from './utils/hierarchicalCanvas'
+import { BOARD_PERSIST_FAILED_EVENT, createMergedChildBoard, type PersistedBoardState, type PersistedTimelineSnapshot } from './utils/hierarchicalCanvas'
 import {
   BROWSER_QA_CLEARED_EVENT,
   BROWSER_QA_DISCOVERY_DEMO_EVENT,
@@ -1995,7 +1995,7 @@ function App() {
       loadBoardStateForInvestigation(currentInvestigationId),
       loadVaultResultForInvestigation(currentInvestigationId),
       loadDiscoveriesForInvestigations(investigations.filter((investigation) => investigation.id === currentInvestigationId)),
-    ]).then(([_, vaultResult, discoveries]) => {
+    ]).then(([, vaultResult, discoveries]) => {
       if (investigationHydrationRequestRef.current !== requestId) {
         return
       }
@@ -2078,7 +2078,7 @@ function App() {
           return;
         }
         const { nodes, edges, mode } = savedState;
-        const updatedNodes = nodes.map((n: any) =>
+        const updatedNodes = nodes.map((n: PersistedBoardState['nodes'][number]) =>
           n.id === sourceNodeId ? { ...n, data: { ...n.data, linkedInvestigationId: newInvId, isDeepDiveSource: false } } : n
         );
         void saveBoardStateForInvestigation(currentInvestigationId, {

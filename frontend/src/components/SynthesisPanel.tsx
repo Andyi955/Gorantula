@@ -509,7 +509,9 @@ export default function SynthesisPanel({
                         });
                     }
                 }
-            } catch (err) { }
+            } catch (error) {
+                console.warn('[SynthesisPanel] Failed to process synthesis alert message.', error);
+            }
         };
 
         sharedSocket.addEventListener('message', handleMessage);

@@ -5,7 +5,7 @@ import {
   loadDiscoveriesForInvestigation,
   saveBoardStateForInvestigation,
 } from '../src/utils/investigationPersistence'
-import { BOARD_PERSIST_FAILED_EVENT, parsePersistedBoardState, type PersistedBoardState } from '../src/utils/hierarchicalCanvas'
+import { BOARD_PERSIST_FAILED_EVENT, type PersistedBoardState } from '../src/utils/hierarchicalCanvas'
 
 const backendFlag = globalThis as typeof globalThis & {
   __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean

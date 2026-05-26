@@ -15,8 +15,11 @@ export interface PersonaInsight {
     personaName: string;
     perspective: string;
     keyFindings: string[];
+    observations?: string[];
+    hypotheses?: string[];
     connections: string[];
     questions: string[];
+    proposedConnections?: string[];
     confidence: number;
     fullAnalysis: string;
     nodeIDs?: string[];
@@ -58,7 +61,7 @@ export interface NodeData {
     onNavigateToChild?: (id: string, parentId?: string) => void;
     onExpand?: (nodeId: string, expanded: boolean) => void;
     onDelete?: (nodeId: string) => void;
-    onUpdate?: (nodeId: string, data: any) => void;
+    onUpdate?: (nodeId: string, data: Partial<NodeData>) => void;
     onSave?: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => void;
     onResizeCommit?: (nodeId: string, width: number, height: number) => void;
     onViewImages?: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => void;
@@ -99,7 +102,7 @@ const escapeHTML = (text: string) => {
 
 const parseHighlightedText = (text: string) => {
     if (!text) return 'Awaiting further analysis...';
-    let safeText = escapeHTML(text);
+    const safeText = escapeHTML(text);
     // Favor crisp emphasis over heavy glow so highlights stay readable at board zoom levels.
     let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold">$1</span>');
     
@@ -205,6 +208,13 @@ const logNodeImageDebug = (stage: string, payload: Record<string, unknown>) => {
         return;
     }
     console.debug(`[CustomNode][Image:${stage}]`, payload);
+};
+
+const logNodeInteractionDebug = (stage: string, payload: Record<string, unknown> = {}) => {
+    if (!import.meta.env.DEV || import.meta.env.MODE === 'test') {
+        return;
+    }
+    console.debug(`[CustomNode][Interaction:${stage}]`, payload);
 };
 
 const prefersReducedMotion = () =>
@@ -556,7 +566,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const handleSave = (mode: NodeSaveMode) => (e: React.MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
-        console.log(`[CustomNode] Saving node ${data.id}`, { editTitle, editText, mode });
+        logNodeInteractionDebug('save', { nodeId: data.id, titleLength: editTitle.length, textLength: editText.length, mode });
         if (onSaveNode && data.id) {
             onSaveNode(data.id, editTitle, editText, mode);
         }
@@ -566,7 +576,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const onCancel = (e: React.MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
-        console.log("[CustomNode] Editor cancel clicked");
+        logNodeInteractionDebug('cancel-edit', { nodeId: data.id });
         setEditText(data.summary || data.fullText || '');
         setEditTitle(data.title || '');
         if (onSetEditing) onSetEditing(null);
@@ -678,7 +688,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                         <button 
                             type="button"
                             onClick={(e) => { 
-                                console.log("[CustomNode] Cancel delete clicked");
+                                logNodeInteractionDebug('cancel-delete', { nodeId: data.id });
                                 e.stopPropagation(); 
                                 e.preventDefault();
                                 setShowDeleteConfirm(false); 
@@ -690,7 +700,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                         <button 
                             type="button"
                             onClick={(e) => { 
-                                console.log("[CustomNode] Confirm delete clicked");
+                                logNodeInteractionDebug('confirm-delete', { nodeId: data.id });
                                 e.stopPropagation();
                                 e.preventDefault(); 
                                 if(onDeleteNode && data.id) {
@@ -817,7 +827,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         e.preventDefault();
-                                        console.log("[CustomNode] Edit clicked", data.id);
+                                        logNodeInteractionDebug('edit', { nodeId: data.id });
                                         if (onSetEditing) onSetEditing(data.id || null);
                                     }}
                                     className={iconControlClass}
@@ -829,7 +839,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         e.preventDefault();
-                                        console.log("[CustomNode] Delete clicked", data.id);
+                                        logNodeInteractionDebug('delete', { nodeId: data.id });
                                         setShowDeleteConfirm(true);
                                     }}
                                     className={`${iconControlClass} hover:border-red-300/30 hover:bg-red-400/10 hover:text-red-200`}

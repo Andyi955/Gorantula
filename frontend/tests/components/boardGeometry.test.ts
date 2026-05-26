@@ -9,7 +9,21 @@ import {
   getPortSlotsForDimensions,
   normalizeNodeFrame,
   snapCoordinateToGrid,
+  type StrictGridPoint,
+  type StrictGridRoute,
 } from '../../src/components/boardGeometry'
+import type { Edge, Node } from 'reactflow'
+
+type BoardTestNode = Node<Record<string, never>>
+type BoardTestEdge = Edge<Record<string, unknown>>
+type TestRect = { left: number; top: number; right: number; bottom: number }
+type RouteBundle = { route: StrictGridRoute; sourceNode: BoardTestNode; targetNode: BoardTestNode }
+type RouteSegment = {
+  axis: 'horizontal' | 'vertical'
+  lane: number
+  start: number
+  end: number
+}
 
 const expectOrthogonalPoints = (points: Array<{ x: number; y: number }>) => {
   for (let index = 1; index < points.length; index += 1) {
@@ -19,25 +33,26 @@ const expectOrthogonalPoints = (points: Array<{ x: number; y: number }>) => {
   }
 }
 
-const node = (id: string, x: number, y: number, width = 288, height = 192) => ({
+const node = (id: string, x: number, y: number, width = 288, height = 192): BoardTestNode => ({
   id,
+  data: {},
   position: { x, y },
   style: { width, height },
-}) as any
+})
 
-const edge = (id: string, source: string, target: string, extra: Record<string, unknown> = {}) => ({
+const edge = (id: string, source: string, target: string, extra: Record<string, unknown> = {}): BoardTestEdge => ({
   id,
   source,
   target,
   ...extra,
-}) as any
+}) as BoardTestEdge
 
-const rect = (left: number, top: number, right: number, bottom: number) => ({ left, top, right, bottom })
+const rect = (left: number, top: number, right: number, bottom: number): TestRect => ({ left, top, right, bottom })
 
 const segmentIntersectsRect = (
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-  obstacle: { left: number; top: number; right: number; bottom: number },
+  start: StrictGridPoint,
+  end: StrictGridPoint,
+  obstacle: TestRect,
 ) => {
   if (start.x === end.x) {
     const minY = Math.min(start.y, end.y)
@@ -54,7 +69,12 @@ const segmentIntersectsRect = (
   throw new Error('Expected orthogonal route segment')
 }
 
-const routePathPoints = (route: any, sourceNode: any, targetNode: any) => {
+const expectRoute = (route: StrictGridRoute | undefined): StrictGridRoute => {
+  expect(route).toBeDefined()
+  return route as StrictGridRoute
+}
+
+const routePathPoints = (route: StrictGridRoute, sourceNode: BoardTestNode, targetNode: BoardTestNode) => {
   const sourcePort = getPortById(sourceNode, route.sourcePortId)
   const targetPort = getPortById(targetNode, route.targetPortId)
   if (!sourcePort || !targetPort) {
@@ -65,18 +85,23 @@ const routePathPoints = (route: any, sourceNode: any, targetNode: any) => {
 }
 
 const routeIntersectsRect = (
-  route: any,
-  sourceNode: any,
-  targetNode: any,
-  obstacle: { left: number; top: number; right: number; bottom: number },
+  route: StrictGridRoute | undefined,
+  sourceNode: BoardTestNode,
+  targetNode: BoardTestNode,
+  obstacle: TestRect,
 ) => {
-  const points = routePathPoints(route, sourceNode, targetNode)
+  const points = routePathPoints(expectRoute(route), sourceNode, targetNode)
 
   return points.slice(1).some((point, index) => segmentIntersectsRect(points[index], point, obstacle))
 }
 
-const pointIsOnRoute = (point: { x: number; y: number }, route: any, sourceNode: any, targetNode: any) => {
-  const points = routePathPoints(route, sourceNode, targetNode)
+const pointIsOnRoute = (
+  point: StrictGridPoint,
+  route: StrictGridRoute | undefined,
+  sourceNode: BoardTestNode,
+  targetNode: BoardTestNode,
+) => {
+  const points = routePathPoints(expectRoute(route), sourceNode, targetNode)
 
   return points.slice(1).some((nextPoint, index) => {
     const previousPoint = points[index]
@@ -96,7 +121,7 @@ const pointIsOnRoute = (point: { x: number; y: number }, route: any, sourceNode:
   })
 }
 
-const longestVerticalLaneX = (route: any, sourceNode: any, targetNode: any) => {
+const longestVerticalLaneX = (route: StrictGridRoute, sourceNode: BoardTestNode, targetNode: BoardTestNode) => {
   const points = routePathPoints(route, sourceNode, targetNode)
   const verticalSegments = points.slice(1)
     .map((point, index) => ({ start: points[index], end: point }))
@@ -110,7 +135,7 @@ const longestVerticalLaneX = (route: any, sourceNode: any, targetNode: any) => {
   return verticalSegments[0]?.x
 }
 
-const routeSegments = (route: any, sourceNode: any, targetNode: any) => {
+const routeSegments = (route: StrictGridRoute, sourceNode: BoardTestNode, targetNode: BoardTestNode): RouteSegment[] => {
   const points = routePathPoints(route, sourceNode, targetNode)
 
   return points.slice(1).flatMap((point, index) => {
@@ -138,7 +163,7 @@ const routeSegments = (route: any, sourceNode: any, targetNode: any) => {
 }
 
 const overlappingRouteSegmentCount = (
-  routes: Array<{ route: any; sourceNode: any; targetNode: any }>,
+  routes: RouteBundle[],
 ) => {
   const segments = routes.flatMap(({ route, sourceNode, targetNode }) =>
     routeSegments(route, sourceNode, targetNode)
@@ -162,8 +187,8 @@ const overlappingRouteSegmentCount = (
 }
 
 const expectPointOutsideRects = (
-  point: { x: number; y: number },
-  rects: Array<{ left: number; top: number; right: number; bottom: number }>,
+  point: StrictGridPoint,
+  rects: TestRect[],
 ) => {
   rects.forEach((bounds) => {
     expect(
@@ -232,16 +257,8 @@ describe('boardGeometry', () => {
   })
 
   it('builds orthogonal right-to-left routes for horizontally separated nodes', () => {
-    const sourceNode = {
-      id: 'source',
-      position: { x: 0, y: 0 },
-      style: { width: 384, height: 288 },
-    } as any
-    const targetNode = {
-      id: 'target',
-      position: { x: 720, y: 0 },
-      style: { width: 384, height: 288 },
-    } as any
+    const sourceNode = node('source', 0, 0, 384, 288)
+    const targetNode = node('target', 720, 0, 384, 288)
 
     const route = buildStrictGridRoute(sourceNode, targetNode)
 
@@ -252,16 +269,8 @@ describe('boardGeometry', () => {
   })
 
   it('builds orthogonal bottom-to-top routes for vertically separated nodes', () => {
-    const sourceNode = {
-      id: 'source',
-      position: { x: 0, y: 0 },
-      style: { width: 384, height: 288 },
-    } as any
-    const targetNode = {
-      id: 'target',
-      position: { x: 0, y: 720 },
-      style: { width: 384, height: 288 },
-    } as any
+    const sourceNode = node('source', 0, 0, 384, 288)
+    const targetNode = node('target', 0, 720, 384, 288)
 
     const route = buildStrictGridRoute(sourceNode, targetNode)
 

@@ -166,6 +166,7 @@ const timelineFiltersAreActive = (filters: TimelineFilters) =>
 type TimelineMotionKind = 'entering' | 'reordering';
 
 const TIMELINE_EVENT_MOTION_DURATION_MS = 1800;
+const EMPTY_TIMELINE_EVENTS: PersistedTimelineEvent[] = [];
 
 const prefersReducedMotion = () => (
     typeof window !== 'undefined' &&
@@ -381,7 +382,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         boardState ? computeTimelineSourceFingerprint(boardState.nodes) : null
     ), [boardState]);
 
-    const events = snapshot?.events || [];
+    const events = snapshot?.events || EMPTY_TIMELINE_EVENTS;
     const isQaTimelineDemoActive = Boolean(qaTimelineDemoSnapshot && snapshot?.sourceFingerprint === qaTimelineDemoSnapshot.sourceFingerprint);
     const isStale = Boolean(!isQaTimelineDemoActive && snapshot && sourceFingerprint && snapshot.sourceFingerprint !== sourceFingerprint);
     const filteredEvents = useMemo(() => (
