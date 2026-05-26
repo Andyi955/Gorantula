@@ -8,13 +8,27 @@ vi.mock('reactflow', () => ({
   Position: { Left: 'Left', Right: 'Right', Top: 'Top', Bottom: 'Bottom' },
 }))
 
+const { nodeResizerMock, nodeResizeControlMock } = vi.hoisted(() => ({
+  nodeResizerMock: vi.fn(),
+  nodeResizeControlMock: vi.fn(),
+}))
+
 vi.mock('@reactflow/node-resizer', () => ({
-  NodeResizer: () => null,
+  NodeResizer: (props: Record<string, unknown>) => {
+    nodeResizerMock(props)
+    return null
+  },
+  NodeResizeControl: (props: Record<string, unknown>) => {
+    nodeResizeControlMock(props)
+    return null
+  },
+  ResizeControlVariant: { Line: 'line', Handle: 'handle' },
 }))
 
 describe('CustomNode', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.clearAllMocks()
     vi.restoreAllMocks()
   })
 
@@ -142,6 +156,46 @@ describe('CustomNode', () => {
     expect(screen.getByTestId('node-detail-motion')).toHaveStyle({
       maxHeight: 'calc(8 * 1.65em + 0.75rem)',
     })
+  })
+
+  it('only exposes resize controls that keep the node origin anchored', () => {
+    render(
+      <CustomNode
+        id="node-anchored-resize"
+        type="custom"
+        selected
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        width={384}
+        height={240}
+        data={{
+          id: 'node-anchored-resize',
+          title: 'Anchored Resize',
+          summary: 'Resizing should grow or shrink the card from the right and bottom without moving its grid origin.',
+          onReadFull: vi.fn(),
+          onResizeCommit: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(nodeResizerMock).not.toHaveBeenCalled()
+
+    const positions = nodeResizeControlMock.mock.calls.map(([props]) => props.position)
+    expect(positions).toEqual(['right', 'bottom', 'bottom-right'])
+    expect(positions).not.toEqual(expect.arrayContaining(['top', 'left', 'top-left', 'top-right', 'bottom-left']))
+
+    const variants = nodeResizeControlMock.mock.calls.map(([props]) => props.variant)
+    expect(variants).toEqual(['line', 'line', undefined])
+
+    const classNames = nodeResizeControlMock.mock.calls.map(([props]) => props.className)
+    expect(classNames).toEqual([
+      'forensic-node-resize-line-zone',
+      'forensic-node-resize-line-zone',
+      'forensic-node-resize-corner-zone',
+    ])
   })
 
   it('asks the board to widen mounted cards when dense text needs more room', async () => {

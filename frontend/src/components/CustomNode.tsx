@@ -1,8 +1,8 @@
-import { Fragment, memo, useState, useEffect, useRef } from 'react';
+import { Fragment, memo, useCallback, useState, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
-import { NodeResizer } from '@reactflow/node-resizer';
+import { NodeResizeControl, ResizeControlVariant } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
 import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save, Image as ImageIcon } from 'lucide-react';
 import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, NODE_AUTO_MAX_WIDTH, NODE_FRAME_GRID_SIZE, NODE_IMAGE_PREVIEW_HEIGHT, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
@@ -165,6 +165,23 @@ const logNodeResizeDebug = (nodeId: string | undefined, stage: string, payload: 
         nodeId,
         ...payload,
     });
+};
+
+type NodeResizeTelemetry = {
+    width: number;
+    height: number;
+    direction?: number[];
+};
+
+const RESIZE_LINE_CLASS = 'forensic-node-resize-line-zone';
+const RESIZE_HANDLE_CLASS = 'forensic-node-resize-corner-zone';
+const RESIZE_LINE_STYLE: CSSProperties = { borderWidth: 0 };
+const RESIZE_HANDLE_STYLE: CSSProperties = {
+    width: 34,
+    height: 34,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+    border: '0',
 };
 
 const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(8 * 1.65em + 0.75rem)';
@@ -425,6 +442,28 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const personaCardMotionClassName = reducedMotion
         ? 'forensic-persona-card-reduced-motion'
         : 'forensic-persona-card-reveal';
+    const handleResizeStart = useCallback((_: unknown, params: NodeResizeTelemetry) => {
+        logNodeResizeDebug(data.id, 'start', {
+            selected,
+            width: params.width,
+            height: params.height,
+            direction: params.direction,
+        });
+    }, [data.id, selected]);
+    const handleResize = useCallback(() => {
+        // Skip high-frequency move logging so devtools do not make resizing feel laggy.
+    }, []);
+    const handleResizeEnd = useCallback((_: unknown, params: NodeResizeTelemetry) => {
+        logNodeResizeDebug(data.id, 'end', {
+            selected,
+            width: params.width,
+            height: params.height,
+            direction: params.direction,
+        });
+        if (data.id && onResizeCommit) {
+            onResizeCommit(data.id, params.width, params.height);
+        }
+    }, [data.id, onResizeCommit, selected]);
 
     useEffect(() => {
         if (imageRetryTimeoutRef.current) {
@@ -566,38 +605,45 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                 '--node-entry-delay': `${nodeEntryDelay}ms`,
             } as CSSProperties}
         >
-            <NodeResizer
-                minWidth={MIN_NODE_WIDTH}
-                minHeight={MIN_NODE_HEIGHT}
-                isVisible={selected}
-                color="#00f3ff"
-                handleStyle={{ width: 16, height: 16, borderRadius: 0, backgroundColor: '#00f3ff', border: '2px solid black' }}
-                lineStyle={{ borderWidth: 2 }}
-                onResizeStart={(_, params) => {
-                    logNodeResizeDebug(data.id, 'start', {
-                        selected,
-                        width: params.width,
-                        height: params.height,
-                        direction: 'direction' in params ? params.direction : undefined,
-                    });
-                }}
-                onResize={() => {
-                    // Skip high-frequency move logging so devtools do not make resizing feel laggy.
-                }}
-                onResizeEnd={(_, params) => {
-                    logNodeResizeDebug(data.id, 'end', {
-                        selected,
-                        width: params.width,
-                        height: params.height,
-                        direction: 'direction' in params ? params.direction : undefined,
-                        renderedWidth: props.width,
-                        renderedHeight: props.height,
-                    });
-                    if (data.id && onResizeCommit) {
-                        onResizeCommit(data.id, params.width, params.height);
-                    }
-                }}
-            />
+            {selected && (
+                <>
+                    <NodeResizeControl
+                        position="right"
+                        variant={ResizeControlVariant.Line}
+                        className={RESIZE_LINE_CLASS}
+                        minWidth={MIN_NODE_WIDTH}
+                        minHeight={MIN_NODE_HEIGHT}
+                        color="#00f3ff"
+                        style={RESIZE_LINE_STYLE}
+                        onResizeStart={handleResizeStart}
+                        onResize={handleResize}
+                        onResizeEnd={handleResizeEnd}
+                    />
+                    <NodeResizeControl
+                        position="bottom"
+                        variant={ResizeControlVariant.Line}
+                        className={RESIZE_LINE_CLASS}
+                        minWidth={MIN_NODE_WIDTH}
+                        minHeight={MIN_NODE_HEIGHT}
+                        color="#00f3ff"
+                        style={RESIZE_LINE_STYLE}
+                        onResizeStart={handleResizeStart}
+                        onResize={handleResize}
+                        onResizeEnd={handleResizeEnd}
+                    />
+                    <NodeResizeControl
+                        position="bottom-right"
+                        className={RESIZE_HANDLE_CLASS}
+                        minWidth={MIN_NODE_WIDTH}
+                        minHeight={MIN_NODE_HEIGHT}
+                        color="#00f3ff"
+                        style={RESIZE_HANDLE_STYLE}
+                        onResizeStart={handleResizeStart}
+                        onResize={handleResize}
+                        onResizeEnd={handleResizeEnd}
+                    />
+                </>
+            )}
             {isImported && (
                 <div className={`absolute -top-2.5 -left-2 z-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] ${nodeBadgeClass}`}>
                     IMPORTED

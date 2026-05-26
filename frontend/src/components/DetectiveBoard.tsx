@@ -3318,11 +3318,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 !(isDraggingNodeRef.current && hasDragPositionChange)
             ) {
                 if (dimensionChanges.some((change) => change.resizing)) {
-                    window.requestAnimationFrame(() => {
-                        updateStrictGridDragRoutes(
-                            dimensionChanges.map((change) => change.id),
-                            nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current
-                        );
+                    logResizePipelineDebug('onNodesChange:resize-preview', {
+                        resizedNodeIds: dimensionChanges.map((change) => change.id),
                     });
                 } else if (dimensionChanges.length > 0) {
                     logResizePipelineDebug('onNodesChange:awaiting-commit', {
@@ -5272,7 +5269,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     nodeTypes={NODE_TYPES}
                     edgeTypes={EDGE_TYPES}
                     connectionMode={ConnectionMode.Loose}
-                    snapToGrid={boardMode === 'strict-grid' || snapNodes}
+                    snapToGrid={boardMode !== 'strict-grid' && snapNodes}
                     snapGrid={[BOARD_GRID_SIZE, BOARD_GRID_SIZE]}
                     fitView
                     fitViewOptions={BOARD_FIT_VIEW_OPTIONS}
