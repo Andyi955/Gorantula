@@ -36,6 +36,11 @@ export interface NodeData {
     evidenceCount?: number;
     mergedSourceURLs?: string[];
     duplicateNodeIds?: string[];
+    origin?: 'rabbit-hole' | string;
+    rabbitState?: 'provisional' | 'promoted' | 'stale' | string;
+    rabbitTool?: string;
+    rabbitPass?: number;
+    confidence?: number;
     nodeKind?: 'discovery';
     discoveryClaim?: string;
     discoveryImpact?: string;
@@ -405,6 +410,18 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
+    const isRabbitHoleNode = data.origin === 'rabbit-hole';
+    const isRabbitHoleProvisional = isRabbitHoleNode && data.rabbitState === 'provisional';
+    const rabbitStatusLabel = data.rabbitState === 'provisional'
+        ? 'ACTIVE'
+        : data.rabbitState === 'stale'
+            ? 'STALE'
+            : data.rabbitState === 'promoted'
+                ? 'PROMOTED'
+                : '';
+    const rabbitToolTitle = data.rabbitTool
+        ? `Rabbit Hole tool: ${data.rabbitTool}${data.rabbitPass ? `, pass ${data.rabbitPass}` : ''}`
+        : 'Rabbit Hole evidence';
     const mergedEvidenceCount = Number.isFinite(data.evidenceCount || 0) ? Math.max(0, data.evidenceCount || 0) : 0;
     const hasMergedEvidence = mergedEvidenceCount > 1;
     const recentImportShellClass = data.isRecentlyImported
@@ -433,6 +450,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             ? 'forensic-node-discovery'
             : isImported
                 ? 'forensic-node-imported'
+                : isRabbitHoleProvisional
+                    ? 'forensic-node-rabbit-provisional'
                 : '';
     const nodeBadgeClass = isPortalNode
         ? 'forensic-badge border-fuchsia-300/40 bg-fuchsia-400/14 text-fuchsia-100'
@@ -667,6 +686,19 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             {isDiscoveryNode && (
                 <div className={`absolute -top-2.5 -left-2 z-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] ${nodeBadgeClass}`}>
                     DISCOVERY
+                </div>
+            )}
+            {isRabbitHoleNode && !isImported && !isPortalNode && !isDiscoveryNode && (
+                <div
+                    className="forensic-badge forensic-badge-rabbit-hole absolute -top-2.5 -left-2 z-50 flex items-center gap-1.5 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em]"
+                    title={rabbitToolTitle}
+                >
+                    {isRabbitHoleProvisional ? 'RABBIT TRAIL' : 'RABBIT HOLE'}
+                    {rabbitStatusLabel && (
+                        <span className="forensic-rabbit-state-pill">
+                            {rabbitStatusLabel}
+                        </span>
+                    )}
                 </div>
             )}
             {data.isDeepDiveSource && (

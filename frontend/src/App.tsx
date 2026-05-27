@@ -160,6 +160,19 @@ interface AnimatedPipelineTokenState {
   isAnimating: boolean
 }
 
+interface RabbitHoleGatekeeperPanelState {
+  runId?: string
+  vaultId?: string
+  pass: number
+  descentMode: 'guided' | 'max'
+  continueRecommended: boolean
+  reason: string
+  noveltyScore?: number
+  suggestedQueries: string[]
+  result?: string
+  prompt?: string
+}
+
 interface AutosaveWarning {
   investigationId?: string
   errorName?: string
@@ -350,6 +363,36 @@ const coercePipelineProgressPayload = (payload: unknown): PipelineProgressPayloa
     detail: typeof candidate.detail === 'string' ? candidate.detail : undefined,
     error: typeof candidate.error === 'string' ? candidate.error : undefined,
     steps,
+  }
+}
+
+const coerceRabbitHoleGatekeeperPayload = (payload: unknown): RabbitHoleGatekeeperPanelState | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+  const candidate = payload as Record<string, unknown>
+  const decision = candidate.decision && typeof candidate.decision === 'object' && !Array.isArray(candidate.decision)
+    ? candidate.decision as Record<string, unknown>
+    : {}
+  const suggestedQueries = (Array.isArray(decision.suggestedQueries) ? decision.suggestedQueries : [])
+    .filter((query): query is string => typeof query === 'string' && query.trim() !== '')
+    .map((query) => query.trim())
+
+  return {
+    runId: typeof candidate.runId === 'string' ? candidate.runId.trim() : undefined,
+    vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId.trim() : undefined,
+    pass: Math.max(1, parseTokenCount(candidate.pass)),
+    descentMode: candidate.descentMode === 'max' ? 'max' : 'guided',
+    continueRecommended: decision.continue === true,
+    reason: typeof decision.reason === 'string' && decision.reason.trim()
+      ? decision.reason.trim()
+      : (typeof decision.stopReason === 'string' ? decision.stopReason.trim() : 'Gatekeeper review complete.'),
+    noveltyScore: typeof decision.noveltyScore === 'number' && Number.isFinite(decision.noveltyScore)
+      ? decision.noveltyScore
+      : undefined,
+    suggestedQueries,
+    result: typeof candidate.result === 'string' ? candidate.result : undefined,
+    prompt: typeof candidate.prompt === 'string' ? candidate.prompt : undefined,
   }
 }
 
@@ -734,7 +777,8 @@ function App() {
 
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
-  const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
+  const [crawlMode, setCrawlMode] = useState<SpiderOperationMode>('web')
+  const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
   const [imageScrapingEnabled, setImageScrapingEnabled] = useState(() => readImageScrapingPreference())
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
@@ -769,6 +813,7 @@ function App() {
   const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
   const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
   const [pipelineStepTransitions, setPipelineStepTransitions] = useState<Record<string, PipelineProgressStepState['status']>>({})
+  const [rabbitHoleGatekeeper, setRabbitHoleGatekeeper] = useState<RabbitHoleGatekeeperPanelState | null>(null)
   const [animatedPipelineToken, setAnimatedPipelineToken] = useState<AnimatedPipelineTokenState>({
     runId: null,
     target: 0,
@@ -1291,6 +1336,14 @@ function App() {
           return
         }
 
+        if (msg.type === 'RABBIT_HOLE_GATEKEEPER') {
+          const gatekeeper = coerceRabbitHoleGatekeeperPayload(msg.payload)
+          if (gatekeeper) {
+            setRabbitHoleGatekeeper(gatekeeper)
+          }
+          return
+        }
+
         if (msg.type === 'SYNTHESIS_COMPLETE' && msg.payload && typeof msg.payload === 'object') {
           const payload = msg.payload as VaultResultPayload
           const explicitVaultId = typeof payload.vaultId === 'string' ? payload.vaultId.trim() : ''
@@ -1455,6 +1508,8 @@ function App() {
     ? 'local'
     : activePipelineRun?.mode === 'local'
       ? 'local'
+      : activePipelineRun?.mode === 'rabbit-hole'
+        ? 'rabbit-hole'
       : crawlMode
   const visibleLocalIngestionPaths = useMemo(() => {
     if (qaLocalIngestionDemoRequest) {
@@ -2041,11 +2096,11 @@ function App() {
     return () => window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
   }, [])
 
-  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
+  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: SpiderOperationMode) => {
     const textToRun = customPrompt || prompt;
     const labelToUse = customLabel || textToRun;
     const modeToUse = overrideMode || crawlMode;
-    const shouldScrapeImages = modeToUse === 'web' && imageScrapingEnabled
+    const shouldScrapeImages = modeToUse !== 'local' && imageScrapingEnabled
     if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
       const runId = createPipelineRunId()
@@ -2056,18 +2111,22 @@ function App() {
       if (modeToUse === 'local') {
         const primaryLocalLabel = localPaths[0] || labelToUse
         displayTopic = `Local: ${getLocalFileName(primaryLocalLabel)}`;
+      } else if (modeToUse === 'rabbit-hole') {
+        displayTopic = `Rabbit Hole: ${labelToUse}`;
       }
 
       const newInv = createRootInvestigation(id, displayTopic)
       const updated = [newInv, ...investigations]
       persistInvestigations(updated)
       setCurrentInvestigationId(id)
+      setRabbitHoleGatekeeper(null)
 
-      socketConfig.socket.send(JSON.stringify(
-        modeToUse === 'local'
-          ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
+      const crawlMessage = modeToUse === 'local'
+        ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
+        : modeToUse === 'rabbit-hole'
+          ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: rabbitHoleDescentMode }
           : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
-      ))
+      socketConfig.socket.send(JSON.stringify(crawlMessage))
       if (modeToUse === 'local') {
         setActiveLocalIngestionFilePaths(localPaths)
         setQaLocalIngestionDemoRequest(null)
@@ -2079,7 +2138,56 @@ function App() {
       alert("System not ready. Please check backend connection.");
       return null;
     }
-  }, [crawlMode, imageScrapingEnabled, investigations, persistInvestigations, prompt, socketConfig.ready, socketConfig.socket])
+  }, [crawlMode, imageScrapingEnabled, investigations, persistInvestigations, prompt, rabbitHoleDescentMode, socketConfig.ready, socketConfig.socket])
+
+  const continueRabbitHoleDescent = useCallback(() => {
+    if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
+      return
+    }
+    const vaultId = rabbitHoleGatekeeper.vaultId || currentInvestigationId
+    if (!vaultId) {
+      return
+    }
+    const runId = createPipelineRunId()
+    const baseTopic = rabbitHoleGatekeeper.prompt || currentInvestigation?.topic || prompt || 'current investigation'
+    const continuationPass = rabbitHoleGatekeeper.pass + 1
+    const priorFindings = rabbitHoleGatekeeper.result
+      ? [`Pass ${rabbitHoleGatekeeper.pass} summary:\n${rabbitHoleGatekeeper.result}`]
+      : []
+
+    socketConfig.socket.send(JSON.stringify({
+      type: 'CRAWL_RABBIT_HOLE',
+      payload: baseTopic,
+      vaultId,
+      runId,
+      scrapeImages: imageScrapingEnabled,
+      descentMode: 'guided',
+      append: true,
+      continuationPass,
+      priorFindings,
+      suggestedQueries: rabbitHoleGatekeeper.suggestedQueries,
+    }))
+    setRabbitHoleGatekeeper(null)
+    setActiveTab('spider')
+  }, [currentInvestigation?.topic, currentInvestigationId, imageScrapingEnabled, prompt, rabbitHoleGatekeeper, socketConfig.ready, socketConfig.socket])
+
+  const finishRabbitHoleDescent = useCallback(() => {
+    if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
+      return
+    }
+    const vaultId = rabbitHoleGatekeeper.vaultId || currentInvestigationId
+    if (!vaultId || !rabbitHoleGatekeeper.result) {
+      return
+    }
+    socketConfig.socket.send(JSON.stringify({
+      type: 'FINISH_RABBIT_HOLE',
+      vaultId,
+      runId: rabbitHoleGatekeeper.runId,
+      result: rabbitHoleGatekeeper.result,
+      prompt: rabbitHoleGatekeeper.prompt || currentInvestigation?.topic || prompt,
+    }))
+    setRabbitHoleGatekeeper(null)
+  }, [currentInvestigation?.topic, currentInvestigationId, prompt, rabbitHoleGatekeeper, socketConfig.ready, socketConfig.socket])
 
   const handleDeepDiveNode = useCallback((promptStr: string, titleStr: string, sourceNodeId: string) => {
     const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`, 'web');
@@ -2716,7 +2824,7 @@ function App() {
                   >
                     <div className="forensic-spider-console-control-row">
                       <div className="forensic-spider-console-label">Scrape Images</div>
-                      {crawlMode === 'web' ? (
+                      {crawlMode !== 'local' ? (
                         <button
                           type="button"
                           role="switch"
@@ -2747,6 +2855,16 @@ function App() {
                         <button
                           type="button"
                           onClick={() => {
+                            setCrawlMode('rabbit-hole')
+                            setQaLocalIngestionDemoRequest(null)
+                          }}
+                          className={crawlMode === 'rabbit-hole' ? 'forensic-spider-mode-active' : ''}
+                        >
+                          RABBIT HOLE
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
                             setCrawlMode('local')
                             setQaLocalIngestionDemoRequest(null)
                           }}
@@ -2755,6 +2873,24 @@ function App() {
                           LOCAL
                         </button>
                       </div>
+                      {crawlMode === 'rabbit-hole' && (
+                        <div className="forensic-spider-mode-toggle forensic-spider-rabbit-descent-toggle" role="group" aria-label="Rabbit Hole descent">
+                          <button
+                            type="button"
+                            onClick={() => setRabbitHoleDescentMode('guided')}
+                            className={rabbitHoleDescentMode === 'guided' ? 'forensic-spider-mode-active' : ''}
+                          >
+                            GUIDED
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRabbitHoleDescentMode('max')}
+                            className={rabbitHoleDescentMode === 'max' ? 'forensic-spider-mode-active' : ''}
+                          >
+                            MAX DESCENT
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </section>
 
@@ -2772,7 +2908,13 @@ function App() {
                           }
                         }}
                         onKeyDown={(e) => e.key === 'Enter' && runSpider()}
-                        placeholder={crawlMode === 'web' ? "ENTER A TOPIC OR URL TO CRAWL THE WEB..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
+                        placeholder={
+                          crawlMode === 'local'
+                            ? "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."
+                            : crawlMode === 'rabbit-hole'
+                              ? "ENTER A TOPIC FOR RABBIT HOLE MODE..."
+                              : "ENTER A TOPIC OR URL TO CRAWL THE WEB..."
+                        }
                         className="forensic-spider-command-input"
                       />
 
@@ -2824,6 +2966,42 @@ function App() {
                         </button>
                       )}
                     </div>
+                    {rabbitHoleGatekeeper && (
+                      <div data-testid="rabbit-hole-gatekeeper-panel" className="forensic-rabbit-gatekeeper-panel">
+                        <div>
+                          <span>Gatekeeper</span>
+                          <strong>Pass {rabbitHoleGatekeeper.pass}</strong>
+                        </div>
+                        <p>{rabbitHoleGatekeeper.reason}</p>
+                        <div>
+                          <span>
+                            {rabbitHoleGatekeeper.continueRecommended ? 'Continue recommended' : 'Trail exhausted'}
+                          </span>
+                          {typeof rabbitHoleGatekeeper.noveltyScore === 'number' && (
+                            <strong>{Math.round(rabbitHoleGatekeeper.noveltyScore * 100)}% novelty</strong>
+                          )}
+                        </div>
+                        {rabbitHoleGatekeeper.continueRecommended && (
+                          <div className="forensic-rabbit-gatekeeper-actions">
+                            <button
+                              type="button"
+                              onClick={continueRabbitHoleDescent}
+                              className="forensic-rabbit-gatekeeper-action"
+                            >
+                              Continue Rabbit Hole Descent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={finishRabbitHoleDescent}
+                              disabled={!rabbitHoleGatekeeper.result}
+                              className="forensic-rabbit-gatekeeper-action forensic-rabbit-gatekeeper-action-secondary"
+                            >
+                              Finish Rabbit Hole
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </section>
                 </div>
               </div>

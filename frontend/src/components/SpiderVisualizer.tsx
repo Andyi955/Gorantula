@@ -6,7 +6,7 @@ import { SpiderScene } from './SpiderScene';
 
 type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
 export type SpiderLegVisualStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
-export type SpiderOperationMode = 'web' | 'local';
+export type SpiderOperationMode = 'web' | 'local' | 'rabbit-hole';
 export type LocalIngestionFileState = 'queued' | 'parsing' | 'chunking' | 'summarizing' | 'imported' | 'failed';
 
 export interface SpiderEvidencePacket {
@@ -63,9 +63,11 @@ interface SpiderVisualizerProps {
 
 const webLegRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
 const localLegRoles = ['Parser', 'Chunker', 'Summarizer', 'Classifier', 'Indexer', 'Verifier', 'Dossier', 'Archiver'];
+const rabbitHoleLegRoles = ['Descent', 'Trace', 'Source Drill', 'Contradiction', 'Entity Echo', 'Timeline Rift', 'Gatekeeper', 'Archive'];
 
 const getSignalColor = (state: string) => {
     if (state.includes('Error')) return '#ff8c86';
+    if (state.includes('Rabbit') || state.includes('Gatekeeper')) return '#ff2f54';
     if (state.includes('Synthesizing') || state.includes('Deep Dive')) return '#f6c879';
     if (state.includes('Reading') || state.includes('Processing')) return '#bc13fe';
     if (state.includes('Scraping')) return '#59e4ff';
@@ -616,17 +618,35 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
         ? `Pipeline: ${pipelineLabel} (${normalizedPipelinePercent}%)`
         : `Pipeline: ${pipelineLabel}`;
     const brainVisualStatus = getBrainVisualStatus(brainState, activeLegCount, effectivePipelineStatus);
-    const legRoles = effectiveOperationMode === 'local' ? localLegRoles : webLegRoles;
-    const stageTopLabel = effectiveOperationMode === 'local' ? 'Document Intake' : 'Neural Mesh';
+    const isRabbitHoleMode = effectiveOperationMode === 'rabbit-hole';
+    const reducedMotion = prefersReducedMotion();
+    const legRoles = effectiveOperationMode === 'local'
+        ? localLegRoles
+        : isRabbitHoleMode
+            ? rabbitHoleLegRoles
+            : webLegRoles;
+    const stageTopLabel = effectiveOperationMode === 'local'
+        ? 'Document Intake'
+        : isRabbitHoleMode
+            ? 'Rabbit Hole'
+            : 'Neural Mesh';
     const stageTopValue = effectiveOperationMode === 'local'
         ? (localFileCount > 0 ? `${localFileCount} file${localFileCount === 1 ? '' : 's'}` : 'Local Files')
-        : (brainState === 'Offline' ? 'Local Preview' : 'Connected');
-    const stageBottomLabel = effectiveOperationMode === 'local' ? 'Case File Index' : 'Scan Radius';
+        : isRabbitHoleMode
+            ? (brainState === 'Offline' ? 'Descent Preview' : 'Descent Active')
+            : (brainState === 'Offline' ? 'Local Preview' : 'Connected');
+    const stageBottomLabel = effectiveOperationMode === 'local'
+        ? 'Case File Index'
+        : isRabbitHoleMode
+            ? 'Descent Depth'
+            : 'Scan Radius';
     const stageBottomValue = effectiveOperationMode === 'local'
         ? `${displayMetrics?.nodeCount ?? 0} evidence / ${localChunkCount || 'queued'} chunks`
-        : `${displayMetrics?.nodeCount ?? 0} nodes / ${displayMetrics?.edgeCount ?? 0} links`;
-    const intakeHeading = effectiveOperationMode === 'local' ? 'Document Intake' : 'Evidence Intake';
-    const healthHeading = effectiveOperationMode === 'local' ? 'Import Health' : 'Crawl Health';
+        : isRabbitHoleMode
+            ? `${displayMetrics?.nodeCount ?? 0} nodes / gatekeeper armed`
+            : `${displayMetrics?.nodeCount ?? 0} nodes / ${displayMetrics?.edgeCount ?? 0} links`;
+    const intakeHeading = effectiveOperationMode === 'local' ? 'Document Intake' : isRabbitHoleMode ? 'Rabbit Evidence' : 'Evidence Intake';
+    const healthHeading = effectiveOperationMode === 'local' ? 'Import Health' : isRabbitHoleMode ? 'Descent Health' : 'Crawl Health';
 
     return (
         <section data-testid="spider-view-root" className={`forensic-board-root forensic-spider-root forensic-spider-root-${brainVisualStatus} forensic-spider-root-${effectiveOperationMode} h-full overflow-hidden text-[var(--forensic-text)]`}>
@@ -673,6 +693,20 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                             <span>{stageTopLabel}</span>
                             <strong>{stageTopValue}</strong>
                         </div>
+                        {isRabbitHoleMode && (
+                            <div
+                                data-testid="rabbit-hole-entrance"
+                                className={`forensic-rabbit-hole-entrance ${reducedMotion ? 'forensic-rabbit-hole-entrance-reduced-motion' : ''}`}
+                                aria-hidden="true"
+                            >
+                                <div className="forensic-rabbit-hole-tunnel" />
+                                <img
+                                    src="/assets/rabbit-hole/rabbit-hole-emblem.png"
+                                    alt="Rabbit Hole cyber rabbit emblem"
+                                    className="forensic-rabbit-hole-emblem"
+                                />
+                            </div>
+                        )}
                         <Canvas
                             camera={{ position: [0, -0.4, 13], fov: 45 }}
                             dpr={[1, 1.5]}

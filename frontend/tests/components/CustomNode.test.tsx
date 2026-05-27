@@ -95,6 +95,34 @@ describe('CustomNode', () => {
     expect(screen.getByTitle('Squashed 3 duplicate evidence items into this card')).toBeInTheDocument()
   })
 
+  it('labels provisional Rabbit Hole nodes as active trails', () => {
+    render(
+      <CustomNode
+        id="rabbit-node"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-node',
+          title: 'Rabbit Lead',
+          summary: 'A live Rabbit Hole trail is still under investigation.',
+          origin: 'rabbit-hole',
+          rabbitState: 'provisional',
+          rabbitTool: 'vault_search',
+          rabbitPass: 2,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('RABBIT TRAIL')).toBeInTheDocument()
+    expect(screen.getByText('ACTIVE')).toBeInTheDocument()
+    expect(screen.getByTitle('Rabbit Hole tool: vault_search, pass 2')).toBeInTheDocument()
+  })
+
   it('animates evidence detail expansion without changing the expand callback contract', async () => {
     const user = userEvent.setup()
     const onExpand = vi.fn()

@@ -349,7 +349,17 @@ func pipelineRunID(progress *models.PipelineProgressTracker) string {
 	return progress.RunID()
 }
 
+type processPromptRunOptions struct {
+	SuppressSynthesisComplete bool
+	SuppressTerminalComplete  bool
+	NodeOrigin                string
+}
+
 func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool, progress *models.PipelineProgressTracker) (string, error) {
+	return b.processPromptWithRunOptions(ctx, prompt, vaultID, isAppend, scrapeImages, progress, processPromptRunOptions{})
+}
+
+func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool, progress *models.PipelineProgressTracker, options processPromptRunOptions) (string, error) {
 	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
 		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
 	} else {
@@ -520,6 +530,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 	reviewedImages := 0
 	for _, result := range processedNutrients {
 		reviewedImages += result.reviewedImages
+		if strings.TrimSpace(options.NodeOrigin) != "" {
+			result.node.Origin = strings.TrimSpace(options.NodeOrigin)
+		}
 		b.Abdomen.Mutex.Lock()
 		b.Abdomen.MemoryContext = append(b.Abdomen.MemoryContext, result.memory)
 		totalMemories := len(b.Abdomen.MemoryContext)
@@ -624,11 +637,11 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
 	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "complete", "Vault memory saved"))
-	if vaultID == "" || isAppend {
+	if !options.SuppressTerminalComplete && (vaultID == "" || isAppend) {
 		b.broadcastPipelineProgress(progress, progressMessage(progress, "complete", "complete", "Crawl pipeline complete"))
 	}
 
-	if b.NS.Broadcast != nil {
+	if b.NS.Broadcast != nil && !options.SuppressSynthesisComplete {
 		b.NS.Broadcast(models.WSMessage{
 			Type:    "BRAIN_STATE",
 			Payload: "Done",

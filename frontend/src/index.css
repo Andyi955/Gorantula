@@ -2360,6 +2360,43 @@ body {
   color: var(--forensic-danger);
 }
 
+.forensic-badge-rabbit-hole {
+  border-color: rgba(255, 55, 88, 0.42);
+  background:
+    linear-gradient(180deg, rgba(68, 8, 18, 0.92), rgba(22, 5, 10, 0.94));
+  color: #ffd6dc;
+  box-shadow:
+    0 10px 22px rgba(255, 47, 84, 0.16),
+    0 0 0 1px rgba(255, 215, 220, 0.08);
+}
+
+.forensic-rabbit-state-pill {
+  border-left: 1px solid rgba(255, 216, 222, 0.22);
+  padding-left: 0.36rem;
+  color: #ff9fb0;
+  font-size: 0.44rem;
+  letter-spacing: 0.16em;
+}
+
+.forensic-node-rabbit-provisional {
+  border-color: rgba(255, 47, 84, 0.42);
+  box-shadow:
+    0 0 0 1px rgba(255, 47, 84, 0.16),
+    0 0 28px rgba(255, 47, 84, 0.1),
+    inset 0 0 20px rgba(255, 47, 84, 0.045);
+}
+
+.forensic-node-rabbit-provisional::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(180deg, rgba(255, 47, 84, 0.07) 0 1px, transparent 1px 8px);
+  opacity: 0.28;
+}
+
 .forensic-selection-ring {
   box-shadow:
     0 0 0 1px rgba(236, 253, 255, 0.05),
@@ -2804,9 +2841,67 @@ body {
   z-index: 1;
 }
 
+.forensic-spider-root-rabbit-hole .forensic-spider-status-strip,
+.forensic-spider-root-rabbit-hole .forensic-spider-leg-card,
+.forensic-spider-root-rabbit-hole .forensic-spider-intake-panel,
+.forensic-spider-root-rabbit-hole .forensic-spider-console-panel,
+.forensic-spider-root-rabbit-hole .forensic-spider-lab-stage {
+  border-color: rgba(255, 47, 84, 0.2);
+  background:
+    linear-gradient(180deg, rgba(20, 11, 17, 0.88), rgba(7, 9, 14, 0.9)),
+    radial-gradient(circle at top left, rgba(255, 47, 84, 0.08), transparent 42%),
+    radial-gradient(circle at bottom right, rgba(89, 228, 255, 0.035), transparent 38%);
+}
+
+.forensic-rabbit-hole-entrance {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.forensic-rabbit-hole-tunnel {
+  position: absolute;
+  width: min(52vw, 34rem);
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 47, 84, 0.18);
+  border-radius: 999px;
+  background:
+    repeating-radial-gradient(circle, rgba(255, 47, 84, 0.22) 0 1px, transparent 1px 20px),
+    conic-gradient(from 12deg, transparent 0 12%, rgba(255, 47, 84, 0.14) 13% 16%, transparent 17% 38%, rgba(89, 228, 255, 0.08) 39% 40%, transparent 41% 100%);
+  filter: drop-shadow(0 0 34px rgba(255, 47, 84, 0.18));
+  opacity: 0.55;
+  animation: forensicRabbitTunnelSpin 6.8s linear infinite;
+}
+
+.forensic-rabbit-hole-emblem {
+  position: relative;
+  width: clamp(8rem, 26vw, 18rem);
+  max-height: 72%;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0 9px rgba(255, 47, 84, 0.7))
+    drop-shadow(0 18px 28px rgba(0, 0, 0, 0.46));
+  transform-origin: center;
+  animation: forensicRabbitDropSpin 1250ms cubic-bezier(0.2, 0.92, 0.18, 1) both, forensicRabbitGlitch 2.4s steps(2, end) 1200ms infinite;
+}
+
+.forensic-rabbit-hole-entrance-reduced-motion .forensic-rabbit-hole-tunnel,
+.forensic-rabbit-hole-entrance-reduced-motion .forensic-rabbit-hole-emblem {
+  animation: none;
+}
+
+.forensic-rabbit-hole-entrance-reduced-motion .forensic-rabbit-hole-emblem {
+  opacity: 0.94;
+  transform: translateY(0) rotateY(0deg) scale(1);
+}
+
 .forensic-spider-stage-overlay {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3363,6 +3458,49 @@ body {
   }
 }
 
+@keyframes forensicRabbitDropSpin {
+  0% {
+    opacity: 0;
+    transform: translateY(-58vh) rotateY(-540deg) scale(1.48);
+    filter:
+      drop-shadow(10px 0 0 rgba(89, 228, 255, 0.5))
+      drop-shadow(-10px 0 0 rgba(255, 47, 84, 0.55))
+      drop-shadow(0 18px 28px rgba(0, 0, 0, 0.5));
+  }
+  52% {
+    opacity: 1;
+    transform: translateY(1.4rem) rotateY(24deg) scale(1.04);
+  }
+  72% {
+    transform: translateY(-0.5rem) rotateY(-11deg) scale(0.98);
+  }
+  100% {
+    opacity: 0.98;
+    transform: translateY(0) rotateY(0deg) scale(1);
+  }
+}
+
+@keyframes forensicRabbitGlitch {
+  0%, 88%, 100% {
+    transform: translate(0, 0) rotateY(0deg) scale(1);
+  }
+  90% {
+    transform: translate(-5px, 2px) rotateY(-4deg) scale(1.012);
+  }
+  92% {
+    transform: translate(4px, -1px) rotateY(5deg) scale(0.994);
+  }
+  94% {
+    transform: translate(0, 0) rotateY(0deg) scale(1);
+  }
+}
+
+@keyframes forensicRabbitTunnelSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .forensic-spider-brain-signal,
   .forensic-spider-brain-signal-track,
@@ -3374,6 +3512,8 @@ body {
   .forensic-spider-leg-card-recovering,
   .forensic-spider-pipeline-rail-button,
   .forensic-spider-pipeline-rail-button::before,
+  .forensic-rabbit-hole-tunnel,
+  .forensic-rabbit-hole-emblem,
   .forensic-local-ingestion-stack,
   .forensic-local-ingestion-stack::before,
   .forensic-local-ingestion-file,
@@ -3435,6 +3575,14 @@ body {
   overflow: hidden;
   border: 1px solid rgba(129, 227, 255, 0.16);
   background: rgba(3, 8, 12, 0.72);
+}
+
+.forensic-spider-mode-toggle:has(button:nth-child(3)) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.forensic-spider-rabbit-descent-toggle {
+  border-color: rgba(255, 47, 84, 0.24);
 }
 
 .forensic-spider-mode-toggle button {
@@ -3543,6 +3691,79 @@ body {
   grid-template-columns: minmax(7.5rem, auto) 2.65rem;
   gap: 0.55rem;
   margin-top: 0.55rem;
+}
+
+.forensic-rabbit-gatekeeper-panel {
+  margin-top: 0.6rem;
+  border: 1px solid rgba(255, 47, 84, 0.24);
+  background:
+    linear-gradient(180deg, rgba(45, 7, 16, 0.52), rgba(8, 10, 15, 0.72));
+  padding: 0.62rem 0.7rem;
+  color: var(--forensic-text-muted);
+}
+
+.forensic-rabbit-gatekeeper-panel div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.forensic-rabbit-gatekeeper-panel span {
+  color: #ff9bab;
+  font-size: 0.58rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.forensic-rabbit-gatekeeper-panel strong {
+  color: #ffe4e8;
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.forensic-rabbit-gatekeeper-panel p {
+  margin: 0.42rem 0;
+  color: var(--forensic-text);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.forensic-rabbit-gatekeeper-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.forensic-rabbit-gatekeeper-action {
+  width: 100%;
+  min-height: 2rem;
+  border: 1px solid rgba(255, 155, 171, 0.34);
+  background: rgba(255, 47, 84, 0.14);
+  color: #ffe4e8;
+  font-size: 0.62rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.forensic-rabbit-gatekeeper-action:hover {
+  border-color: rgba(255, 205, 213, 0.54);
+  background: rgba(255, 47, 84, 0.22);
+  transform: translateY(-1px);
+}
+
+.forensic-rabbit-gatekeeper-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
+}
+
+.forensic-rabbit-gatekeeper-action-secondary {
+  background: rgba(5, 10, 15, 0.72);
+  color: #ffb8c4;
 }
 
 .forensic-spider-execute-button {

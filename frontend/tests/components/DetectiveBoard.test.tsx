@@ -7,7 +7,7 @@ import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -113,6 +113,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       isLayoutChoreographyActive?: boolean
       isTimelineFocused?: boolean
       evidenceCount?: number
+      rabbitState?: string
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -133,6 +134,7 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.isLayoutChoreographyActive ? React.createElement('span', null, 'layout choreography') : null,
       data?.isTimelineFocused ? React.createElement('span', null, 'timeline focus') : null,
       data?.evidenceCount && data.evidenceCount > 1 ? React.createElement('span', null, `merged evidence ${data.evidenceCount}`) : null,
+      data?.rabbitState ? React.createElement('span', null, `rabbit ${data.rabbitState}`) : null,
       React.createElement(
         'button',
         {
@@ -295,6 +297,43 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY)).toBe('true')
+  })
+
+  it('promotes live Rabbit Hole provisional nodes from websocket updates', async () => {
+    const socket = new MockSocket()
+    renderBoard('inv-rabbit', socket as unknown as WebSocket)
+
+    act(() => {
+      socket.emit('MEMORY_NODE_GATHERED', {
+        vaultId: 'inv-rabbit',
+        append: false,
+        node: {
+          id: 'rabbit-node-1',
+          title: 'Rabbit Lead',
+          summary: 'A provisional lead from Rabbit Hole.',
+          fullText: 'A provisional lead from Rabbit Hole.',
+          sourceURL: 'rabbit://timeline-context',
+          origin: 'rabbit-hole',
+          rabbitState: 'provisional',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 1,
+        },
+      })
+    })
+
+    expect(await screen.findByTestId('mock-node-rabbit-node-1')).toHaveTextContent('rabbit provisional')
+
+    act(() => {
+      socket.emit('RABBIT_HOLE_NODE_UPDATE', {
+        vaultId: 'inv-rabbit',
+        nodeIds: ['rabbit-node-1'],
+        rabbitState: 'promoted',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-node-rabbit-node-1')).toHaveTextContent('rabbit promoted')
+    })
   })
 
   it('restores the minimized legend when the saved preference is hidden', () => {
@@ -2510,6 +2549,53 @@ describe('DetectiveBoard relationship legend', () => {
         'PUBLIC_PRESSURE',
       ]))
       expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('plays the Rabbit Hole trail QA demo with live promotion and no backend messages', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, {
+          detail: { investigationId: 'investigation-1', requestId: 'qa-rabbit-test' },
+        }))
+      })
+
+      let nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+        'qa-rabbit-web-descent',
+        'qa-rabbit-vault-echo',
+        'qa-rabbit-timeline-rift',
+      ]))
+      expect(nodes.every((node) => node.data?.origin === 'rabbit-hole')).toBe(true)
+      expect(nodes.every((node) => node.data?.rabbitState === 'provisional')).toBe(true)
+      expect(nodes.map((node) => node.data?.rabbitTool)).toEqual(expect.arrayContaining([
+        'web_search',
+        'vault_search',
+        'timeline_context',
+      ]))
+      expect(screen.getAllByText('rabbit provisional')).toHaveLength(3)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+
+      nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.every((node) => node.data?.rabbitState === 'promoted')).toBe(true)
+      expect(screen.getAllByText('rabbit promoted')).toHaveLength(3)
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
+      expect(edges.map((edge) => edge.label)).toEqual(expect.arrayContaining([
+        'Hidden Connection',
+        'Timeline Lead',
+      ]))
+      expect(edges.every((edge) => edge.data?.generatedBy === 'qaRabbitHole')).toBe(true)
       expect(socket.sentMessages).toEqual([])
     } finally {
       vi.useRealTimers()

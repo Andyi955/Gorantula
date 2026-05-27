@@ -110,6 +110,36 @@ describe('SpiderVisualizer', () => {
     expect(screen.getByTestId('mock-scene-operation-mode')).toHaveTextContent('local')
   })
 
+  it('renders Rabbit Hole visual lock-in with the cyber rabbit emblem', () => {
+    render(<SpiderVisualizer sharedSocket={null} operationMode="rabbit-hole" pipelineStatus="running" />)
+
+    expect(screen.getByTestId('spider-view-root')).toHaveClass('forensic-spider-root-rabbit-hole')
+    expect(screen.getByTestId('spider-lab-stage')).toHaveTextContent('Rabbit Hole')
+    expect(screen.getByTestId('rabbit-hole-entrance')).toBeInTheDocument()
+    expect(screen.getByAltText('Rabbit Hole cyber rabbit emblem')).toHaveAttribute(
+      'src',
+      '/assets/rabbit-hole/rabbit-hole-emblem.png',
+    )
+    expect(screen.getByTestId('mock-scene-operation-mode')).toHaveTextContent('rabbit-hole')
+  })
+
+  it('uses a static Rabbit Hole entrance when reduced motion is preferred', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    render(<SpiderVisualizer sharedSocket={null} operationMode="rabbit-hole" pipelineStatus="running" />)
+
+    expect(screen.getByTestId('rabbit-hole-entrance')).toHaveClass('forensic-rabbit-hole-entrance-reduced-motion')
+  })
+
   it('renders and advances a local file stack from pipeline progress', () => {
     const { rerender } = render(
       <SpiderVisualizer

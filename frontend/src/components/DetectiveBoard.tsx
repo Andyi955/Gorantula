@@ -68,11 +68,13 @@ import {
     BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
     BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
     BROWSER_QA_PIPELINE_DEMO_EVENT,
+    BROWSER_QA_RABBIT_HOLE_DEMO_EVENT,
     BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
     BROWSER_QA_TIMELINE_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
     type BrowserQaEvidenceExpansionDemoDetail,
+    type BrowserQaRabbitHoleDemoDetail,
 } from '../utils/browserQaSeed';
 import type { InvestigationRecord } from '../utils/investigations';
 
@@ -773,6 +775,59 @@ const QA_TEXT_FIT_DEMO_POSITIONS = [
     { x: 1400, y: 128 },
 ] as const;
 
+const QA_RABBIT_HOLE_DEMO_PROMOTION_MS = 1450;
+
+const QA_RABBIT_HOLE_DEMO_NODES = [
+    {
+        id: 'qa-rabbit-web-descent',
+        title: 'QA Rabbit Web Descent',
+        summary: 'Rabbit Hole web_search follows data center grid pressure, cooling water filings, and operator reliability warnings into a live provisional evidence trail.',
+        fullText: 'Rabbit Hole web_search follows data center grid pressure, cooling water filings, and operator reliability warnings into a live provisional evidence trail. This browser-only QA node should appear as RABBIT TRAIL / ACTIVE before promotion.',
+        sourceURL: 'https://example.com/qa-rabbit-web-descent',
+        rabbitTool: 'web_search',
+        confidence: 0.82,
+    },
+    {
+        id: 'qa-rabbit-vault-echo',
+        title: 'QA Rabbit Vault Echo',
+        summary: 'Rabbit Hole vault_search finds an older investigation that mentions the same substation corridor, water constraint, and procurement delay pattern.',
+        fullText: 'Rabbit Hole vault_search finds an older investigation that mentions the same substation corridor, water constraint, and procurement delay pattern. It is intentionally clickable while still provisional.',
+        sourceURL: 'vault://qa-browser-prior-near-miss',
+        rabbitTool: 'vault_search',
+        confidence: 0.76,
+    },
+    {
+        id: 'qa-rabbit-timeline-rift',
+        title: 'QA Rabbit Timeline Rift',
+        summary: 'Rabbit Hole timeline_context extracts May 2026 filings, hearing dates, and operator notes into a chronological pressure trail for the Gatekeeper.',
+        fullText: 'Rabbit Hole timeline_context extracts May 2026 filings, hearing dates, and operator notes into a chronological pressure trail for the Gatekeeper.',
+        sourceURL: 'timeline://qa-rabbit-hole',
+        rabbitTool: 'timeline_context',
+        confidence: 0.79,
+    },
+] as const;
+
+const QA_RABBIT_HOLE_DEMO_POSITIONS = [
+    { x: 128, y: 136 },
+    { x: 640, y: 136 },
+    { x: 1152, y: 136 },
+] as const;
+
+const QA_RABBIT_HOLE_DEMO_CONNECTIONS = [
+    {
+        source: 'qa-rabbit-web-descent',
+        target: 'qa-rabbit-vault-echo',
+        tag: 'HIDDEN_CONNECTION',
+        reasoning: 'The live web trail and older vault memory share the same infrastructure stress pattern.',
+    },
+    {
+        source: 'qa-rabbit-vault-echo',
+        target: 'qa-rabbit-timeline-rift',
+        tag: 'TIMELINE_LEAD',
+        reasoning: 'The older memory gives the timeline context a prior event window to compare against the current descent.',
+    },
+] as const;
+
 const QA_ANIMATION_DEMO_INSIGHTS = [
     {
         personaName: 'Discovery',
@@ -1282,6 +1337,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const qaGatheringStatusTimeoutRef = useRef<number | null>(null);
     const qaAnimationDemoActiveRef = useRef(false);
     const qaEvidenceExpansionDemoActiveRef = useRef(false);
+    const qaRabbitHoleDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
     const timelineFocusTimeoutRef = useRef<number | null>(null);
     const boardCameraMovementTimeoutRef = useRef<number | null>(null);
@@ -2888,6 +2944,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = false;
     }, [clearBoardCameraMovement, clearLayoutChoreographyState, investigationId]);
 
     useEffect(() => {
@@ -3056,7 +3113,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         applyBoardState(immediateState);
 
         void loadBoardStateForInvestigation(investigationId).then((backendState) => {
-            if (qaAnimationDemoActiveRef.current || qaEvidenceExpansionDemoActiveRef.current) {
+            if (qaAnimationDemoActiveRef.current || qaEvidenceExpansionDemoActiveRef.current || qaRabbitHoleDemoActiveRef.current) {
                 return;
             }
             if (backendState && backendState !== immediateState) {
@@ -3072,7 +3129,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
         if (nodes.length === 0 && edges.length === 0) return;
-        if (qaEvidenceExpansionDemoActiveRef.current || nodes.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID)) return;
+        if (
+            qaEvidenceExpansionDemoActiveRef.current ||
+            qaRabbitHoleDemoActiveRef.current ||
+            nodes.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID || node.id.startsWith('qa-rabbit-'))
+        ) return;
         if (isDraggingNodeRef.current) return;
 
         if (persistTimerRef.current) {
@@ -3664,6 +3725,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setAnalysisMode(null);
         setDeepDiveTopic(null);
         qaAnimationDemoActiveRef.current = true;
+        qaRabbitHoleDemoActiveRef.current = false;
         setEdges([]);
         setNodes([]);
 
@@ -3912,6 +3974,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = false;
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -4011,6 +4074,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = false;
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -4056,6 +4120,146 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setNodes(demoNodes);
     }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox]);
 
+    const playBrowserQaRabbitHoleDemo = useCallback((detail?: BrowserQaRabbitHoleDemoDetail | null) => {
+        const requestedInvestigationId = typeof detail?.investigationId === 'string'
+            ? detail.investigationId.trim()
+            : '';
+        if (!investigationId || loadedInvestigationId !== investigationId) {
+            return;
+        }
+        if (requestedInvestigationId && requestedInvestigationId !== investigationId) {
+            return;
+        }
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
+        clearLayoutChoreographyState();
+        qaAnimationDemoActiveRef.current = false;
+        qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = true;
+        nodeEntrySequenceRef.current = 0;
+        setBoardMode('strict-grid');
+        setPendingIntegrationNodeIds(QA_RABBIT_HOLE_DEMO_NODES.map((demoNode) => demoNode.id));
+        setHasConnectedDots(false);
+        setIsGathering(true);
+        setIsAnalyzing(false);
+        setAnalysisMode(null);
+        setDeepDiveTopic('Rabbit Hole QA');
+        setEditingNodeId(null);
+        setEdges([]);
+
+        const demoNodes: Node[] = QA_RABBIT_HOLE_DEMO_NODES.map((demoNode, index) => {
+            const frame = calculateNodeFrame(demoNode.summary, demoNode.fullText, false, false);
+
+            return {
+                id: demoNode.id,
+                type: 'custom',
+                zIndex: STRICT_GRID_NODE_Z_INDEX,
+                position: QA_RABBIT_HOLE_DEMO_POSITIONS[index] || { x: 128 + index * 512, y: 136 },
+                style: frame,
+                sourcePosition: Position.Right,
+                targetPosition: Position.Left,
+                data: {
+                    ...demoNode,
+                    origin: 'rabbit-hole',
+                    rabbitState: 'provisional',
+                    rabbitPass: 1,
+                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                    onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                    onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                    onDelete: (id: string) => handleDeleteNode(id),
+                    onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
+                    onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                    onSetEditing: (id: string | null) => handleSetEditing(id),
+                    onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                    onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                    onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                    onResizeCommit: handleNodeResizeCommit,
+                    boardMode: 'strict-grid' as BoardMode,
+                    expanded: false,
+                },
+            };
+        });
+
+        setNodes(demoNodes);
+
+        const promotionTimeout = window.setTimeout(() => {
+            setIsGathering(false);
+            setDeepDiveTopic(null);
+            setPendingIntegrationNodeIds([]);
+            setHasConnectedDots(true);
+            setNodes((currentNodes) => currentNodes.map((node) => (
+                QA_RABBIT_HOLE_DEMO_NODES.some((demoNode) => demoNode.id === node.id)
+                    ? { ...node, data: { ...node.data, rabbitState: 'promoted' } }
+                    : node
+            )));
+            setEdges(QA_RABBIT_HOLE_DEMO_CONNECTIONS.map((connection) => {
+                const visuals = buildEdgeVisuals(connection.tag, tagStyles);
+                const displayLabel = getRelationshipDisplayLabel(visuals.tag);
+
+                return {
+                    id: `qa-rabbit-edge-${connection.source}-${connection.target}-${visuals.tag}`,
+                    source: connection.source,
+                    target: connection.target,
+                    type: 'customEdge',
+                    label: displayLabel,
+                    zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                    updatable: true,
+                    interactionWidth: 20,
+                    animated: visuals.animated,
+                    data: {
+                        tag: visuals.tag,
+                        displayLabel,
+                        reasoning: connection.reasoning,
+                        color: visuals.color,
+                        pattern: visuals.pattern,
+                        shape: visuals.shape,
+                        generatedBy: 'qaRabbitHole',
+                        snapEnabled: snapConnectionLabels,
+                        boardMode: 'strict-grid',
+                        onConnectionHover: handleConnectionHover,
+                    },
+                    style: {
+                        stroke: visuals.color,
+                        strokeWidth: visuals.strokeWidth ?? 2,
+                        strokeDasharray: visuals.strokeDasharray,
+                        strokeLinecap: visuals.strokeLinecap,
+                    },
+                    labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                    labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
+                    labelBgPadding: [8, 4] as [number, number],
+                    labelBgBorderRadius: 2,
+                };
+            }));
+        }, QA_RABBIT_HOLE_DEMO_PROMOTION_MS);
+        qaAnimationTimeoutsRef.current.push(promotionTimeout);
+    }, [
+        buildEdgeVisuals,
+        clearLayoutChoreographyState,
+        handleAttachImage,
+        handleConnectionHover,
+        handleDeleteNode,
+        handleNodeExpand,
+        handleNodeResizeCommit,
+        handleRemoveImage,
+        handleSaveNode,
+        handleSetEditing,
+        handleUpdateNode,
+        investigationId,
+        loadedInvestigationId,
+        onDeepDiveNode,
+        onNavigateToChild,
+        openImageLightbox,
+        snapConnectionLabels,
+        tagStyles,
+    ]);
+
     const playBrowserQaEvidenceExpansionDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
             return;
@@ -4071,6 +4275,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = true;
+        qaRabbitHoleDemoActiveRef.current = false;
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -4211,6 +4416,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, [tryPlayBrowserQaAnimationDemo]);
 
     useEffect(() => {
+        const handleBrowserQaRabbitHoleDemo = (event: Event) => {
+            const detail = (event as CustomEvent<BrowserQaRabbitHoleDemoDetail>).detail;
+            playBrowserQaRabbitHoleDemo(detail);
+        };
+
+        window.addEventListener(BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, handleBrowserQaRabbitHoleDemo as EventListener);
+
+        return () => {
+            window.removeEventListener(BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, handleBrowserQaRabbitHoleDemo as EventListener);
+        };
+    }, [playBrowserQaRabbitHoleDemo]);
+
+    useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId || nodes.length < 2) {
             return;
         }
@@ -4346,6 +4564,33 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 if (append && vaultId === investigationId) {
                     addPendingIntegrationNodeId(node.id);
                 }
+            } else if (msg.type === 'RABBIT_HOLE_NODE_UPDATE') {
+                const payload = msg.payload || {};
+                const vaultId = typeof payload.vaultId === 'string' ? payload.vaultId.trim() : '';
+                const nodeIds = Array.isArray(payload.nodeIds)
+                    ? payload.nodeIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim() !== '').map((id: string) => id.trim())
+                    : [];
+                const rabbitState = typeof payload.rabbitState === 'string' ? payload.rabbitState.trim() : '';
+                if (!vaultId || nodeIds.length === 0 || !rabbitState) {
+                    return;
+                }
+                const nodeIdSet = new Set(nodeIds);
+                const applyRabbitState = (node: Node) => nodeIdSet.has(node.id)
+                    ? { ...node, data: { ...node.data, rabbitState } }
+                    : node;
+
+                if (vaultId && vaultId !== investigationId) {
+                    const savedState = getCachedBoardStateForInvestigation(vaultId);
+                    if (savedState) {
+                        void saveBoardStateForInvestigation(vaultId, {
+                            ...savedState,
+                            nodes: (savedState.nodes || []).map(applyRabbitState),
+                        });
+                    }
+                    return;
+                }
+
+                setNodes((nds) => nds.map(applyRabbitState));
             } else if (msg.type === 'PERSONA_INSIGHTS') {
                 // Handle full persona insights with chat data
                 const insights = msg.payload as Array<{
@@ -5367,6 +5612,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-white/8 hover:text-white"
                                     >
                                         <Activity size={14} /> Pipeline
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            playBrowserQaRabbitHoleDemo({ investigationId: investigationId || undefined, requestId: `qa-rabbit-hole-${Date.now()}` });
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay Rabbit Hole trail demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-rose-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileSearch size={14} /> Rabbit Hole trails
                                     </button>
                                     <button
                                         type="button"

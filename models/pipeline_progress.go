@@ -100,6 +100,24 @@ func LocalPipelineProgressSteps() []PipelineProgressStep {
 	}
 }
 
+func RabbitHolePipelineProgressSteps() []PipelineProgressStep {
+	return []PipelineProgressStep{
+		{ID: "start", Label: "Opening Rabbit Hole"},
+		{ID: "plan_queries", Label: "Planning search queries"},
+		{ID: "dispatch_legs", Label: "Dispatching legs"},
+		{ID: "gather_evidence", Label: "Gathering evidence"},
+		{ID: "image_review", Label: "Image review"},
+		{ID: "final_report", Label: "Pass report synthesis"},
+		{ID: "vault_persistence", Label: "Vault persistence"},
+		{ID: "rabbit_gatekeeper", Label: "Rabbit Hole gatekeeper"},
+		{ID: "persona_analysis", Label: "Persona analysis"},
+		{ID: "overlap_scan", Label: "Unified theory scan"},
+		{ID: "relationship_synthesis", Label: "Relationship synthesis"},
+		{ID: "discovery_review", Label: "Discovery review"},
+		{ID: "complete", Label: "Pipeline complete"},
+	}
+}
+
 func NewPipelineProgressTracker(runID, vaultID, mode string, steps []PipelineProgressStep) *PipelineProgressTracker {
 	return NewPipelineProgressTrackerWithClock(runID, vaultID, mode, steps, time.Now)
 }

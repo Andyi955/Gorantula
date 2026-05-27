@@ -34,7 +34,7 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     pipelineLabel?: string
     pipelineProgressPercent?: number
     onOpenPipelineMonitor?: () => void
-    operationMode?: 'web' | 'local'
+    operationMode?: 'web' | 'local' | 'rabbit-hole'
     localIngestionFiles?: Array<{ path: string; name: string; state: string }>
     localIngestionProgress?: { stepId?: string; status?: string; detail?: string } | null
     qaLocalIngestionDemoRequest?: { requestId: string } | null
@@ -653,6 +653,143 @@ describe('App', () => {
     expect(crawlMessage.scrapeImages).toBe(true)
   })
 
+  it('launches Rabbit Hole crawls with descent controls and optional image scraping', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('rabbit-hole')
+    expect(within(crawlConsole).getByRole('group', { name: /rabbit hole descent/i })).toBeInTheDocument()
+    expect(within(crawlConsole).getByRole('button', { name: /guided/i })).toHaveClass('forensic-spider-mode-active')
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /max descent/i }))
+    await user.click(screen.getByRole('switch', { name: /scrape images/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'AI regulatory capture')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL_RABBIT_HOLE',
+      payload: 'AI regulatory capture',
+      descentMode: 'max',
+      scrapeImages: true,
+    }))
+    expect(crawlMessage.runId).toMatch(/^run-/)
+    expect(crawlMessage.vaultId).toMatch(/^inv-/)
+  })
+
+  it('renders Rabbit Hole gatekeeper recommendations for guided runs', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'AI regulatory capture')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_GATEKEEPER', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        pass: 1,
+        descentMode: 'guided',
+        decision: {
+          continue: true,
+          reason: 'Two credible open angles remain.',
+          noveltyScore: 0.82,
+          suggestedQueries: ['follow procurement exception trail'],
+        },
+        result: 'Rabbit Hole pass one synthesis.',
+        prompt: 'AI regulatory capture',
+      })
+    })
+
+    const gatekeeper = await screen.findByTestId('rabbit-hole-gatekeeper-panel')
+    expect(gatekeeper).toHaveTextContent('Gatekeeper')
+    expect(gatekeeper).toHaveTextContent('Pass 1')
+    expect(gatekeeper).toHaveTextContent('Two credible open angles remain.')
+    expect(gatekeeper).toHaveTextContent('Continue recommended')
+    expect(within(gatekeeper).getByRole('button', { name: /finish rabbit hole/i })).toBeInTheDocument()
+
+    await user.click(within(gatekeeper).getByRole('button', { name: /continue rabbit hole descent/i }))
+
+    const continueMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(continueMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL_RABBIT_HOLE',
+      vaultId: crawlMessage.vaultId,
+      scrapeImages: false,
+      descentMode: 'guided',
+      append: true,
+      continuationPass: 2,
+      priorFindings: ['Pass 1 summary:\nRabbit Hole pass one synthesis.'],
+      suggestedQueries: ['follow procurement exception trail'],
+    }))
+    expect(continueMessage.payload).toBe('AI regulatory capture')
+  })
+
+  it('finishes a guided Rabbit Hole run from the gatekeeper panel', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'AI regulatory capture')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_GATEKEEPER', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        pass: 1,
+        descentMode: 'guided',
+        decision: {
+          continue: true,
+          reason: 'Two credible open angles remain.',
+          noveltyScore: 0.82,
+          suggestedQueries: ['follow procurement exception trail'],
+        },
+        result: 'Rabbit Hole pass one synthesis.',
+        prompt: 'AI regulatory capture',
+      })
+    })
+
+    const gatekeeper = await screen.findByTestId('rabbit-hole-gatekeeper-panel')
+    await user.click(within(gatekeeper).getByRole('button', { name: /finish rabbit hole/i }))
+
+    const finishMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(finishMessage).toEqual(expect.objectContaining({
+      type: 'FINISH_RABBIT_HOLE',
+      vaultId: crawlMessage.vaultId,
+      runId: crawlMessage.runId,
+      result: 'Rabbit Hole pass one synthesis.',
+      prompt: 'AI regulatory capture',
+    }))
+  })
+
   it('keeps the spider crawl console focused on actionable controls', async () => {
     render(<App />)
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
@@ -665,6 +802,7 @@ describe('App', () => {
     expect(within(controlStack).getByText(/crawl console/i)).toBeInTheDocument()
     expect(within(controlStack).getByRole('button', { name: /web/i })).toBeInTheDocument()
     expect(within(controlStack).getByRole('button', { name: /local/i })).toBeInTheDocument()
+    expect(within(controlStack).getByRole('button', { name: /rabbit hole/i })).toBeInTheDocument()
     expect(within(crawlConsole).getByRole('button', { name: /execute/i })).toBeInTheDocument()
 
     expect(within(crawlConsole).queryByText(/crawl parameters/i)).not.toBeInTheDocument()
