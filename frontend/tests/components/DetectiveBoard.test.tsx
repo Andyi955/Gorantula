@@ -2,6 +2,7 @@ import * as React from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
+import { getMiniMapNodeColor } from '../../src/components/detectiveBoardMinimap'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
 import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
@@ -114,6 +115,13 @@ vi.mock('../../src/components/CustomNode', () => ({
       isTimelineFocused?: boolean
       evidenceCount?: number
       rabbitState?: string
+      evidenceRole?: string
+      supportCluster?: string
+      isSupportEvidenceCompact?: boolean
+      isSupportTetherSource?: boolean
+      isSupportTetherTarget?: boolean
+      onSupportHover?: (nodeId: string, active: boolean) => void
+      onExpand?: (nodeId: string, expanded: boolean) => void
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -123,7 +131,11 @@ vi.mock('../../src/components/CustomNode', () => ({
   }) =>
     React.createElement(
       'div',
-      { 'data-testid': `mock-node-${id}` },
+      {
+        'data-testid': `mock-node-${id}`,
+        onMouseEnter: () => id && data?.onSupportHover?.(id, true),
+        onMouseLeave: () => id && data?.onSupportHover?.(id, false),
+      },
       data?.title ? React.createElement('span', null, data.title) : null,
       data?.summary ? React.createElement('span', null, data.summary) : null,
       data?.isRecentlyImported ? React.createElement('span', null, 'recent import') : null,
@@ -135,6 +147,12 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.isTimelineFocused ? React.createElement('span', null, 'timeline focus') : null,
       data?.evidenceCount && data.evidenceCount > 1 ? React.createElement('span', null, `merged evidence ${data.evidenceCount}`) : null,
       data?.rabbitState ? React.createElement('span', null, `rabbit ${data.rabbitState}`) : null,
+      data?.evidenceRole ? React.createElement('span', null, `evidence role ${data.evidenceRole}`) : null,
+      data?.supportCluster ? React.createElement('span', null, `support cluster ${data.supportCluster}`) : null,
+      data?.isSupportEvidenceCompact ? React.createElement('span', null, 'compact support') : null,
+      data?.isSupportTetherSource ? React.createElement('span', null, 'support tether source') : null,
+      data?.isSupportTetherTarget ? React.createElement('span', null, 'support tether target') : null,
+      data?.expanded ? React.createElement('span', null, 'expanded node') : null,
       React.createElement(
         'button',
         {
@@ -336,6 +354,197 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('places unconnected Rabbit Hole nodes into a supporting evidence band with visual tethers', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-support',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-primary-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-a',
+              title: 'Google Kairos Deal',
+              summary: 'Google and Kairos sign a nuclear power agreement.',
+              fullText: 'Google and Kairos sign a nuclear power agreement.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-primary-b',
+            type: 'custom',
+            position: { x: 528, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-b',
+              title: 'Microsoft Helion PPA',
+              summary: 'Microsoft and Helion announce a fusion power purchase agreement.',
+              fullText: 'Microsoft and Helion announce a fusion power purchase agreement.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-support-web',
+            type: 'custom',
+            position: { x: 960, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-support-web',
+              title: 'Google PPA Detail',
+              summary: 'Google Kairos agreement adds 500 MW for data centers.',
+              fullText: 'Google Kairos agreement adds 500 MW for data centers.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 2,
+            },
+          },
+          {
+            id: 'rabbit-support-timeline',
+            type: 'custom',
+            position: { x: 1296, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-support-timeline',
+              title: 'NRC Timeline Context',
+              summary: 'Timeline helper extracts nuclear permitting dates.',
+              fullText: 'Timeline helper extracts nuclear permitting dates.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'timeline_context',
+              rabbitPass: 2,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-primary-a-rabbit-primary-b',
+            source: 'rabbit-primary-a',
+            target: 'rabbit-primary-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'NUCLEAR_PPA' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-support')
+
+    expect(await screen.findByText('Supporting Evidence')).toBeInTheDocument()
+    expect(screen.getByText('Web 1')).toBeInTheDocument()
+    expect(screen.getByText('Timeline 1')).toBeInTheDocument()
+    expect(screen.getAllByText('evidence role primary')).toHaveLength(2)
+    expect(screen.getAllByText('evidence role supporting')).toHaveLength(2)
+    expect(screen.getAllByText('compact support')).toHaveLength(2)
+
+    fireEvent.mouseEnter(screen.getByTestId('mock-node-rabbit-support-web'))
+
+    expect(await screen.findByTestId('support-evidence-tether-overlay')).toBeInTheDocument()
+    expect(screen.getAllByTestId('support-evidence-tether-line').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('mock-node-rabbit-support-web')).toHaveTextContent('support tether source')
+    expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('support tether target')
+    expect(screen.getByTestId('board-navigator-support-tethers')).toBeInTheDocument()
+    expect(screen.getAllByTestId('board-navigator-support-tether').length).toBeGreaterThan(0)
+    expect(document.querySelector('[data-node-id="rabbit-support-web"]')).toHaveClass('forensic-board-navigator-node-support-source')
+    expect(document.querySelector('[data-node-id="rabbit-primary-a"]')).toHaveClass('forensic-board-navigator-node-support-target')
+
+    const renderedNodes = () => (lastReactFlowProps?.nodes || []) as Array<{ id: string; style?: { width?: number; height?: number } }>
+    expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.style).toEqual(expect.objectContaining({ width: 288, height: 192 }))
+
+    act(() => {
+      const onNodesChange = lastReactFlowProps?.onNodesChange as ((changes: Array<Record<string, unknown>>) => void) | undefined
+      onNodesChange?.([
+        {
+          id: 'rabbit-support-web',
+          type: 'dimensions',
+          dimensions: { width: 528, height: 288 },
+          resizing: false,
+        },
+      ])
+    })
+
+    await waitFor(() => {
+      expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.style).toEqual(expect.objectContaining({ width: 288, height: 192 }))
+    })
+  })
+
+  it('promotes expanded nodes above neighboring cards and restores normal stacking on collapse', async () => {
+    localStorage.setItem(
+      'inv_data_inv-expand-z',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-front-test-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'node-front-test-a',
+              title: 'Expanded Front Test',
+              summary: 'Short visible text',
+              fullText: 'Long expanded text '.repeat(80),
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'node-front-test-b',
+            type: 'custom',
+            position: { x: 360, y: 168 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'node-front-test-b',
+              title: 'Neighbor Card',
+              summary: 'A nearby card that should sit behind the expanded node.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-expand-z')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-front-test-a')).toBe(true)
+    })
+
+    const getNode = (id: string) =>
+      ((lastReactFlowProps?.nodes || []) as Array<{ id: string; zIndex?: number; data?: { onExpand?: (nodeId: string, expanded: boolean) => void; expanded?: boolean } }>).find((node) => node.id === id)
+
+    const baseZ = getNode('node-front-test-b')?.zIndex || 0
+
+    act(() => {
+      getNode('node-front-test-a')?.data?.onExpand?.('node-front-test-a', true)
+    })
+
+    await waitFor(() => {
+      expect(getNode('node-front-test-a')?.data?.expanded).toBe(true)
+      expect(getNode('node-front-test-a')?.zIndex || 0).toBeGreaterThan(baseZ)
+    })
+
+    act(() => {
+      getNode('node-front-test-a')?.data?.onExpand?.('node-front-test-a', false)
+    })
+
+    await waitFor(() => {
+      expect(getNode('node-front-test-a')?.data?.expanded).toBe(false)
+      expect(getNode('node-front-test-a')?.zIndex).toBe(baseZ)
+    })
+  })
+
   it('restores the minimized legend when the saved preference is hidden', () => {
     localStorage.setItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY, 'false')
 
@@ -524,6 +733,28 @@ describe('DetectiveBoard relationship legend', () => {
     expect(screen.getByTestId('board-utility-rail')).toBeInTheDocument()
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
+  })
+
+  it('colors Rabbit Hole supporting evidence differently in the minimap', () => {
+    const normalColor = getMiniMapNodeColor({
+      id: 'normal-node',
+      position: { x: 0, y: 0 },
+      data: { title: 'Normal', summary: 'Normal evidence' },
+    })
+    const supportColor = getMiniMapNodeColor({
+      id: 'rabbit-support',
+      position: { x: 0, y: 0 },
+      data: {
+        title: 'Support',
+        origin: 'rabbit-hole',
+        evidenceRole: 'supporting',
+        supportCluster: 'web',
+      },
+    })
+
+    expect(normalColor).toBe('#00f3ff')
+    expect(supportColor).toBe('#ff5b78')
+    expect(supportColor).not.toBe(normalColor)
   })
 
   it('lets the append-search field use spare toolbar width without collapsing controls', () => {

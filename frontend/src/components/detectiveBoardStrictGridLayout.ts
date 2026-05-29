@@ -11,6 +11,7 @@ import type { BoardMode } from './boardGeometry';
 
 export const STRICT_GRID_EDGE_Z_INDEX = 0;
 export const STRICT_GRID_NODE_Z_INDEX = 100;
+export const STRICT_GRID_EXPANDED_NODE_Z_INDEX = STRICT_GRID_NODE_Z_INDEX + 500;
 
 const STRICT_GRID_ROW_GAP = BOARD_GRID_SIZE * 6;
 const STRICT_GRID_COLUMN_GAP = BOARD_GRID_SIZE * 8;
@@ -20,7 +21,7 @@ export const normalizeStrictGridNodes = (nodes: Node[]) => nodes.map((node) => {
 
     return {
         ...node,
-        zIndex: STRICT_GRID_NODE_Z_INDEX,
+        zIndex: node.data?.expanded ? STRICT_GRID_EXPANDED_NODE_Z_INDEX : STRICT_GRID_NODE_Z_INDEX,
         position: {
             x: snapCoordinateToGrid(node.position.x),
             y: snapCoordinateToGrid(node.position.y),

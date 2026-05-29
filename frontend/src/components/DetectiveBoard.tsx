@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import ReactFlow, {
     Background,
     BackgroundVariant,
@@ -34,6 +34,7 @@ import {
     getStrictGridLayoutedNodes,
     normalizeStrictGridNodes,
     STRICT_GRID_EDGE_Z_INDEX,
+    STRICT_GRID_EXPANDED_NODE_Z_INDEX,
     STRICT_GRID_NODE_Z_INDEX,
 } from './detectiveBoardStrictGridLayout';
 import { type PersistedBoardState } from '../utils/hierarchicalCanvas';
@@ -77,6 +78,14 @@ import {
     type BrowserQaRabbitHoleDemoDetail,
 } from '../utils/browserQaSeed';
 import type { InvestigationRecord } from '../utils/investigations';
+import {
+    buildSupportTethers,
+    layoutSupportingEvidenceNodes,
+    SUPPORT_NODE_FRAME,
+    type SupportTether,
+    type SupportingEvidenceBand,
+} from './supportingEvidenceLayer';
+import { getMiniMapNodeColor } from './detectiveBoardMinimap';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -477,7 +486,7 @@ const logResizePipelineDebug = (stage: string, payload: Record<string, unknown>)
 };
 
 const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNodesChange>[0]) => {
-    const resizedDimensions = new Map<string, { width: number; height: number }>();
+    const resizedDimensions = new Map<string, { width: number; height: number; isLiveResize: boolean }>();
 
     changes.forEach((change) => {
         if (change.type !== 'dimensions' || !('dimensions' in change) || !change.dimensions) {
@@ -494,7 +503,7 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
         const isLiveResize = 'resizing' in change && change.resizing;
         resizedDimensions.set(
             change.id,
-            isLiveResize ? { width, height } : normalizeNodeFrame(width, height)
+            { ...(isLiveResize ? { width, height } : normalizeNodeFrame(width, height)), isLiveResize: Boolean(isLiveResize) }
         );
     });
 
@@ -516,12 +525,16 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
         if (!nextDimensions) {
             return node;
         }
+        if (node.data?.evidenceRole === 'supporting' && !node.data?.expanded && !nextDimensions.isLiveResize) {
+            return node;
+        }
+        const { isLiveResize: _isLiveResize, ...styleDimensions } = nextDimensions;
 
         return {
             ...node,
             style: {
                 ...node.style,
-                ...nextDimensions,
+                ...styleDimensions,
             }
         };
     });
@@ -923,6 +936,8 @@ const stripTransientNodeData = (node: Node): Node => {
         layoutChoreographyStartedAt: _layoutChoreographyStartedAt,
         isTimelineFocused: _isTimelineFocused,
         timelineFocusStartedAt: _timelineFocusStartedAt,
+        isSupportTetherSource: _isSupportTetherSource,
+        isSupportTetherTarget: _isSupportTetherTarget,
         ...stableNodeData
     } = node.data || {};
     const stableClassName = removeClassName((node as Node & { className?: string }).className, LAYOUT_CHOREOGRAPHY_NODE_CLASS);
@@ -975,22 +990,6 @@ const stripTransientEdgeData = (edge: Edge): Edge => {
 
 const sanitizeEdgesForPersistence = (edges: Edge[]) => edges.map(stripTransientEdgeData);
 
-const getMiniMapNodeColor = (node: Node) => {
-    if (node.data?.portalKind === 'merged-child') {
-        return '#d946ef';
-    }
-
-    if (node.data?.isDeepDiveSource) {
-        return '#10b981';
-    }
-
-    if (typeof node.data?.title === 'string' && (node.data.title.includes('[IMPORTED]') || node.id.startsWith('imported-'))) {
-        return '#f59e0b';
-    }
-
-    return '#00f3ff';
-};
-
 type BoardNavigatorInteraction = 'click' | 'drag';
 
 interface BoardNavigatorSize {
@@ -1014,6 +1013,7 @@ interface BoardNavigatorProps {
     width: number;
     height: number;
     isCameraMoving: boolean;
+    activeSupportTethers?: SupportTether[];
     getNodeColor: (node: Node) => string;
     onNavigate: (position: XYPosition, interaction: BoardNavigatorInteraction) => void;
 }
@@ -1082,6 +1082,15 @@ const projectNavigatorRect = (
     height: Math.max(2, rect.height * projection.scale),
 });
 
+const projectNavigatorPoint = (
+    point: XYPosition,
+    bounds: BoardNavigatorRect,
+    projection: ReturnType<typeof getNavigatorProjection>
+): XYPosition => ({
+    x: projection.offsetX + (point.x - bounds.x) * projection.scale,
+    y: projection.offsetY + (point.y - bounds.y) * projection.scale,
+});
+
 const BoardNavigator: React.FC<BoardNavigatorProps> = ({
     nodes,
     viewport,
@@ -1089,6 +1098,7 @@ const BoardNavigator: React.FC<BoardNavigatorProps> = ({
     width,
     height,
     isCameraMoving,
+    activeSupportTethers = [],
     getNodeColor,
     onNavigate,
 }) => {
@@ -1112,6 +1122,8 @@ const BoardNavigator: React.FC<BoardNavigatorProps> = ({
     const bounds = getBoardNavigatorBounds([...nodeRects, visibleRect]);
     const projection = getNavigatorProjection(bounds, width, height);
     const viewportRect = projectNavigatorRect(visibleRect, bounds, projection);
+    const activeSupportSourceIds = new Set(activeSupportTethers.map((tether) => tether.sourceId));
+    const activeSupportTargetIds = new Set(activeSupportTethers.map((tether) => tether.targetId));
     const getFlowPositionFromEvent = (
         event: React.MouseEvent<SVGSVGElement> | React.PointerEvent<SVGSVGElement>
     ): XYPosition => {
@@ -1199,14 +1211,42 @@ const BoardNavigator: React.FC<BoardNavigatorProps> = ({
                 rx={14}
             />
             <g aria-hidden="true">
+                {activeSupportTethers.length > 0 && (
+                    <g data-testid="board-navigator-support-tethers" className="forensic-board-navigator-support-tethers">
+                        {activeSupportTethers.map((tether) => {
+                            const source = projectNavigatorPoint(tether.source, bounds, projection);
+                            const target = projectNavigatorPoint(tether.target, bounds, projection);
+
+                            return (
+                                <line
+                                    key={`${tether.sourceId}-${tether.targetId}`}
+                                    data-testid="board-navigator-support-tether"
+                                    className={`forensic-board-navigator-support-tether forensic-board-navigator-support-tether-${tether.strength}`}
+                                    x1={source.x}
+                                    y1={source.y}
+                                    x2={target.x}
+                                    y2={target.y}
+                                />
+                            );
+                        })}
+                    </g>
+                )}
                 {nodeRects.map((nodeRect) => {
                     const projectedNode = projectNavigatorRect(nodeRect, bounds, projection);
+                    const isSupportSource = activeSupportSourceIds.has(nodeRect.node.id);
+                    const isSupportTarget = activeSupportTargetIds.has(nodeRect.node.id);
+                    const supportStateClass = isSupportSource
+                        ? 'forensic-board-navigator-node-support-source'
+                        : isSupportTarget
+                            ? 'forensic-board-navigator-node-support-target'
+                            : '';
 
                     return (
                         <rect
                             key={nodeRect.node.id}
                             data-testid="board-navigator-node"
-                            className="forensic-board-navigator-node"
+                            data-node-id={nodeRect.node.id}
+                            className={`forensic-board-navigator-node ${supportStateClass}`}
                             x={projectedNode.x}
                             y={projectedNode.y}
                             width={projectedNode.width}
@@ -1295,6 +1335,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
     const [isBoardCameraMoving, setIsBoardCameraMoving] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
+    const [supportHoverNodeId, setSupportHoverNodeId] = useState<string | null>(null);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
     const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
     const [showQaReplayMenu, setShowQaReplayMenu] = useState(false);
@@ -1346,6 +1387,51 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     edgesRef.current = edges;
     pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds;
     analysisModeRef.current = analysisMode;
+
+    const supportingEvidenceLayer = useMemo(
+        () => layoutSupportingEvidenceNodes(nodes, edges).band,
+        [nodes, edges]
+    );
+    const supportTethers = useMemo(
+        () => supportHoverNodeId ? buildSupportTethers(nodes, supportHoverNodeId) : [],
+        [nodes, supportHoverNodeId]
+    );
+    const supportTetherTargetIds = useMemo(
+        () => new Set(supportTethers.map((tether) => tether.targetId)),
+        [supportTethers]
+    );
+    const handleSupportHover = useCallback((nodeId: string, active: boolean) => {
+        setSupportHoverNodeId((currentNodeId) => {
+            if (active) {
+                return nodeId;
+            }
+            return currentNodeId === nodeId ? null : currentNodeId;
+        });
+    }, []);
+    const nodesForRender = useMemo(() => nodes.map((node) => ({
+        ...node,
+        data: {
+            ...node.data,
+            onSupportHover: handleSupportHover,
+            isSupportTetherSource: supportHoverNodeId === node.id && node.data?.evidenceRole === 'supporting',
+            isSupportTetherTarget: supportTetherTargetIds.has(node.id),
+        },
+    })), [handleSupportHover, nodes, supportHoverNodeId, supportTetherTargetIds]);
+    const supportBandScreenStyle = useCallback((band: SupportingEvidenceBand) => ({
+        width: `${band.width}px`,
+        height: `${band.height}px`,
+        transform: `translate(${(band.x * boardViewport.zoom) + boardViewport.x}px, ${(band.y * boardViewport.zoom) + boardViewport.y}px) scale(${boardViewport.zoom})`,
+    }), [boardViewport.x, boardViewport.y, boardViewport.zoom]);
+    const supportTetherScreenPoint = useCallback((point: XYPosition) => ({
+        x: (point.x * boardViewport.zoom) + boardViewport.x,
+        y: (point.y * boardViewport.zoom) + boardViewport.y,
+    }), [boardViewport.x, boardViewport.y, boardViewport.zoom]);
+
+    useEffect(() => {
+        if (supportHoverNodeId && !nodes.some((node) => node.id === supportHoverNodeId)) {
+            setSupportHoverNodeId(null);
+        }
+    }, [nodes, supportHoverNodeId]);
 
     useEffect(() => {
         const updateViewportSize = () => {
@@ -2067,9 +2153,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             nodeCount: finalizedNodes.length,
             edgeCount: finalizedStrictEdges.length,
         });
+        const supportLayerState = layoutSupportingEvidenceNodes(finalizedNodes, finalizedStrictEdges);
 
         return {
-            nodes: finalizedNodes,
+            nodes: supportLayerState.nodes,
             edges: finalizedStrictEdges,
         };
     }, [decorateStrictGridEdges]);
@@ -2155,6 +2242,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }
             };
         });
+        const supportLayerState = layoutSupportingEvidenceNodes(finalizedNodes, updatedEdges);
 
         logResizePipelineDebug('strict-sync-subset', {
             changedNodeIds,
@@ -2162,7 +2250,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
 
         setBoardMode('strict-grid');
-        setNodes(finalizedNodes);
+        setNodes(supportLayerState.nodes);
         setEdges(updatedEdges);
     }, [snapConnectionLabels]);
 
@@ -2273,7 +2361,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
-        setNodes(handledNodes);
+        const supportLayerState = layoutSupportingEvidenceNodes(handledNodes, finalEdges);
+        setNodes(supportLayerState.nodes);
         setEdges(finalEdges);
     }, [boardMode, syncStrictGridEdgesToNodes]);
 
@@ -2285,9 +2374,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
         const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+        const supportLayerState = layoutSupportingEvidenceNodes(layoutedNodes, finalEdges);
 
         return {
-            nodes: layoutedNodes,
+            nodes: supportLayerState.nodes,
             edges: finalEdges,
         };
     }, [boardMode, buildStrictGridState]);
@@ -2298,7 +2388,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         return {
-            nodes: layoutedNodes,
+            nodes: layoutSupportingEvidenceNodes(layoutedNodes, nextEdges).nodes,
             edges: nextEdges,
         };
     }, [boardMode, buildStrictGridState]);
@@ -2370,15 +2460,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 return node;
             }
 
-            const nextFrame = calculateNodeFrame(
-                node.data.summary || '',
-                node.data.fullText || '',
-                expanded,
-                nodeHasImages(node.data.images)
-            );
+            const nextFrame = node.data?.evidenceRole === 'supporting' && !expanded
+                ? SUPPORT_NODE_FRAME
+                : calculateNodeFrame(
+                    node.data.summary || '',
+                    node.data.fullText || '',
+                    expanded,
+                    nodeHasImages(node.data.images)
+                );
 
             return {
                 ...node,
+                zIndex: expanded ? STRICT_GRID_EXPANDED_NODE_Z_INDEX : STRICT_GRID_NODE_Z_INDEX,
                 data: {
                     ...node.data,
                     expanded,
@@ -3093,7 +3186,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
                 } else {
                     const { edges: finalEdges, handledNodes } = distributeEdges(restoredEdges, restoredNodes);
-                    setNodes(handledNodes);
+                    const supportLayerState = layoutSupportingEvidenceNodes(handledNodes, finalEdges);
+                    setNodes(supportLayerState.nodes);
                     setEdges(finalEdges);
                 }
                 setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
@@ -4951,11 +5045,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 // Compute new layout positions
                 console.debug('[TidyUp] Running Dagre layout...');
                 const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+                const supportLayerState = layoutSupportingEvidenceNodes(layoutedNodes, finalEdges);
 
                 console.debug('[TidyUp] Setting state with layouted nodes...');
 
                 // Set both at once. The CSS transition in index.css will handle the motion.
-                setNodes(layoutedNodes);
+                setNodes(supportLayerState.nodes);
                 setEdges(finalEdges);
 
                 // Wait for the SLIDE transition to complete (0.8s) before fitting view
@@ -5412,7 +5507,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onPointerUp={onPanePointerUp}
             >
                 <ReactFlow
-                    nodes={nodes}
+                    nodes={nodesForRender}
                     edges={edges}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
@@ -5442,6 +5537,51 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         />
                     )}
                 </ReactFlow>
+                {supportingEvidenceLayer && (
+                    <div
+                        data-testid="supporting-evidence-layer"
+                        className="forensic-supporting-evidence-layer"
+                        style={supportBandScreenStyle(supportingEvidenceLayer)}
+                        aria-hidden="true"
+                    >
+                        <div className="forensic-supporting-evidence-label">
+                            <span>Supporting Evidence</span>
+                            <span className="forensic-supporting-evidence-count">{supportingEvidenceLayer.total}</span>
+                        </div>
+                        <div className="forensic-supporting-evidence-counters">
+                            <span className="forensic-supporting-evidence-chip">Web {supportingEvidenceLayer.counts.web}</span>
+                            <span className="forensic-supporting-evidence-chip">Vault {supportingEvidenceLayer.counts.vault}</span>
+                            <span className="forensic-supporting-evidence-chip">Timeline {supportingEvidenceLayer.counts.timeline}</span>
+                        </div>
+                    </div>
+                )}
+                {supportTethers.length > 0 && (
+                    <svg
+                        data-testid="support-evidence-tether-overlay"
+                        className="forensic-support-tether-overlay"
+                        width={boardViewportSize.width}
+                        height={boardViewportSize.height}
+                        viewBox={`0 0 ${boardViewportSize.width} ${boardViewportSize.height}`}
+                        aria-hidden="true"
+                    >
+                        {supportTethers.map((tether: SupportTether) => {
+                            const source = supportTetherScreenPoint(tether.source);
+                            const target = supportTetherScreenPoint(tether.target);
+
+                            return (
+                                <line
+                                    key={`${tether.sourceId}-${tether.targetId}`}
+                                    data-testid="support-evidence-tether-line"
+                                    className={`forensic-support-tether-line forensic-support-tether-line-${tether.strength}`}
+                                    x1={source.x}
+                                    y1={source.y}
+                                    x2={target.x}
+                                    y2={target.y}
+                                />
+                            );
+                        })}
+                    </svg>
+                )}
                 <div
                     data-testid="minimap-panel"
                     className="pointer-events-none absolute z-20"
@@ -5472,6 +5612,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 width={minimapLayout.map.width}
                                 height={minimapLayout.map.height}
                                 isCameraMoving={isBoardCameraMoving}
+                                activeSupportTethers={supportTethers}
                                 getNodeColor={getMiniMapNodeColor}
                                 onNavigate={handleMiniMapNavigate}
                             />

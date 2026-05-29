@@ -40,6 +40,11 @@ export interface NodeData {
     rabbitState?: 'provisional' | 'promoted' | 'stale' | string;
     rabbitTool?: string;
     rabbitPass?: number;
+    evidenceRole?: 'primary' | 'supporting' | string;
+    supportCluster?: 'web' | 'vault' | 'timeline' | string;
+    isSupportEvidenceCompact?: boolean;
+    isSupportTetherSource?: boolean;
+    isSupportTetherTarget?: boolean;
     confidence?: number;
     nodeKind?: 'discovery';
     discoveryClaim?: string;
@@ -72,6 +77,7 @@ export interface NodeData {
     onViewImages?: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => void;
     onAttachImage?: (nodeId: string, file: File) => Promise<void>;
     onRemoveImage?: (nodeId: string, imageId: string) => void;
+    onSupportHover?: (nodeId: string, active: boolean) => void;
     expanded?: boolean;
     isRecentlyImported?: boolean;
     isConnectionHighlighted?: boolean;
@@ -193,6 +199,10 @@ const RESIZE_HANDLE_STYLE: CSSProperties = {
 };
 
 const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(8 * 1.65em + 0.75rem)';
+const SUPPORTING_EVIDENCE_COMPACT_FRAME = {
+    width: MIN_NODE_WIDTH,
+    height: MIN_NODE_HEIGHT,
+};
 const isBackendServedImage = (path?: string) =>
     Boolean(path && /^https?:\/\/localhost:8080\/vault-assets\//i.test(path));
 const BACKEND_IMAGE_MAX_RETRIES = 3;
@@ -313,12 +323,16 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         }
     }, [isEditing, data.fullText, data.summary, data.title]);
 
-    const fallbackFrame = calculateNodeFrame(
-        data.summary || '',
-        data.fullText || '',
-        isExpanded,
-        nodeHasImages(data.images)
-    );
+    const isSupportingEvidence = data.evidenceRole === 'supporting';
+    const isCollapsedSupportingEvidence = isSupportingEvidence && !isExpanded;
+    const fallbackFrame = isCollapsedSupportingEvidence
+        ? SUPPORTING_EVIDENCE_COMPACT_FRAME
+        : calculateNodeFrame(
+            data.summary || '',
+            data.fullText || '',
+            isExpanded,
+            nodeHasImages(data.images)
+        );
     const frameWidth = typeof props.width === 'number' ? props.width : fallbackFrame.width;
     const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
     const isStrictGrid = data.boardMode === 'strict-grid';
@@ -442,6 +456,21 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const timelineFocusShellClass = data.isTimelineFocused
         ? 'forensic-node-timeline-focus'
         : '';
+    const supportEvidenceShellClass = isSupportingEvidence
+        ? 'forensic-node-supporting-evidence'
+        : '';
+    const expandedShellClass = isExpanded
+        ? 'forensic-node-expanded'
+        : '';
+    const expandedOpaqueShellClass = isExpanded
+        ? 'forensic-node-expanded-opaque'
+        : '';
+    const supportTetherSourceShellClass = data.isSupportTetherSource
+        ? 'forensic-node-support-tether-source'
+        : '';
+    const supportTetherTargetShellClass = data.isSupportTetherTarget
+        ? 'forensic-node-support-tether-target'
+        : '';
     const connectionHighlightColor = data.connectionHighlightColor || '#8ee8ff';
     const nodeEntryDelay = Number.isFinite(data.nodeEntryDelayMs) ? Math.max(0, data.nodeEntryDelayMs || 0) : 0;
     const nodeShellToneClass = isPortalNode
@@ -458,7 +487,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         : isDiscoveryNode
             ? 'forensic-badge forensic-badge-warning'
             : 'forensic-badge forensic-badge-imported';
-    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass} ${connectionHighlightShellClass} ${nodeEntryShellClass} ${personaScanShellClass} ${layoutChoreographyShellClass} ${timelineFocusShellClass}`;
+    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass} ${connectionHighlightShellClass} ${nodeEntryShellClass} ${personaScanShellClass} ${layoutChoreographyShellClass} ${timelineFocusShellClass} ${supportEvidenceShellClass} ${expandedShellClass} ${expandedOpaqueShellClass} ${supportTetherSourceShellClass} ${supportTetherTargetShellClass}`;
     const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
     const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
     const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
@@ -625,6 +654,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             ref={shellRef}
             data-testid="custom-node-shell"
             className={shellClassName}
+            onMouseEnter={() => data.id && data.onSupportHover?.(data.id, true)}
+            onMouseLeave={() => data.id && data.onSupportHover?.(data.id, false)}
             style={{
                 width: '100%',
                 height: '100%',

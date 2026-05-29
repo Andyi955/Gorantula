@@ -123,6 +123,105 @@ describe('CustomNode', () => {
     expect(screen.getByTitle('Rabbit Hole tool: vault_search, pass 2')).toBeInTheDocument()
   })
 
+  it('renders supporting Rabbit Hole evidence as a compact secondary trail without a top support badge', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-node"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-node',
+          title: 'Supporting Trail',
+          summary: 'A relevant Rabbit Hole result that supports the investigation without becoming a primary relationship node.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 3,
+          evidenceRole: 'supporting',
+          supportCluster: 'timeline',
+          isSupportEvidenceCompact: true,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-supporting-evidence')
+    expect(screen.queryByText('SUPPORT')).not.toBeInTheDocument()
+    expect(screen.getByTitle('Rabbit Hole tool: timeline_context, pass 3')).toBeInTheDocument()
+  })
+
+  it('keeps expanded supporting Rabbit Hole evidence fully opaque before hover', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-expanded"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-expanded',
+          title: 'Expanded Supporting Trail',
+          summary: 'A compact supporting trail.',
+          fullText: 'Expanded supporting detail '.repeat(40),
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'vault_search',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'vault',
+          isSupportEvidenceCompact: true,
+          expanded: true,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-expanded-opaque')
+  })
+
+  it('does not auto-fit collapsed supporting Rabbit Hole evidence on mount', async () => {
+    const onResizeCommit = vi.fn()
+
+    render(
+      <CustomNode
+        id="rabbit-support-autofit"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        width={288}
+        height={192}
+        data={{
+          id: 'rabbit-support-autofit',
+          title: 'Compact Support Trail',
+          summary: 'Dense supporting detail '.repeat(80),
+          fullText: 'Dense supporting detail '.repeat(120),
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'web_search',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'web',
+          isSupportEvidenceCompact: true,
+          onResizeCommit,
+        }}
+      />,
+    )
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    expect(onResizeCommit).not.toHaveBeenCalled()
+  })
+
   it('animates evidence detail expansion without changing the expand callback contract', async () => {
     const user = userEvent.setup()
     const onExpand = vi.fn()
@@ -155,6 +254,7 @@ describe('CustomNode', () => {
     await user.click(screen.getByTitle('Expand'))
 
     expect(onExpand).toHaveBeenCalledWith('node-expansion', true)
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-expanded')
     expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-expanded')
   })
 
