@@ -589,6 +589,21 @@ const getInvestigationTimestamp = (investigationId: string): number | null => {
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
+const getMostRecentInvestigation = (investigations: InvestigationRecord[]): InvestigationRecord | null => {
+  return investigations.reduce<InvestigationRecord | null>((latest, investigation) => {
+    if (!latest) {
+      return investigation
+    }
+
+    const latestTimestamp = getInvestigationTimestamp(latest.id) ?? Number.NEGATIVE_INFINITY
+    const investigationTimestamp = getInvestigationTimestamp(investigation.id) ?? Number.NEGATIVE_INFINITY
+    return investigationTimestamp > latestTimestamp ? investigation : latest
+  }, null)
+}
+
+const getMostRecentInvestigationId = (investigations: InvestigationRecord[]) =>
+  getMostRecentInvestigation(investigations)?.id || null
+
 const getRelationshipSynthesisPayloadNodes = (boardState: { nodes?: unknown[] } | null | undefined) => {
   if (!boardState || !Array.isArray(boardState.nodes)) {
     return []
@@ -834,7 +849,7 @@ function App() {
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
-  const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => initialInvestigationsRef.current?.[0]?.id || null)
+  const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => getMostRecentInvestigationId(initialInvestigationsRef.current || []))
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
@@ -1347,7 +1362,7 @@ function App() {
       }
       if (data.length > 0) {
         setInvestigations(data)
-        setCurrentInvestigationId(data[0].id)
+        setCurrentInvestigationId(getMostRecentInvestigationId(data))
         const [discoveries, vaultResultEntries] = await Promise.all([
           loadDiscoveriesForInvestigations(data),
           Promise.all(data.map(async (investigation) => [
@@ -1786,7 +1801,7 @@ function App() {
       setCurrentInvestigationId(
         detail?.focusInvestigationId && nextInvestigations.some((investigation) => investigation.id === detail.focusInvestigationId)
           ? detail.focusInvestigationId
-          : (nextInvestigations[0]?.id || null),
+          : getMostRecentInvestigationId(nextInvestigations),
       )
       setReturnVaultId(null)
       setFocusedNodeId(null)
@@ -1803,7 +1818,7 @@ function App() {
       setCurrentInvestigationId((current) => (
         current && nextInvestigations.some((investigation) => investigation.id === current)
           ? current
-          : (nextInvestigations[0]?.id || null)
+          : getMostRecentInvestigationId(nextInvestigations)
       ))
       setReturnVaultId((current) => (
         current && nextInvestigations.some((investigation) => investigation.id === current)
@@ -2538,7 +2553,7 @@ function App() {
     }
 
     if (currentInvestigationId && removal.removedIds.includes(currentInvestigationId)) {
-      setCurrentInvestigationId(removal.investigations[0]?.id || null)
+      setCurrentInvestigationId(getMostRecentInvestigationId(removal.investigations))
       setReturnVaultId(null)
     } else if (returnVaultId && removal.removedIds.includes(returnVaultId)) {
       const survivingCurrent = removal.investigations.find((investigation) => investigation.id === currentInvestigationId)

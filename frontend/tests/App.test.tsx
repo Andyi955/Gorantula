@@ -278,6 +278,22 @@ describe('App', () => {
     expect(localStorage.getItem('gorantula_investigations')).toBe(JSON.stringify(storedInvestigations))
   })
 
+  it('opens the newest cached investigation on first board load', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-1770000000000', topic: 'Older cached case' },
+        { id: 'inv-1880000000000', topic: 'Newest cached case' },
+      ]),
+    )
+
+    render(<App />)
+    await user.click(screen.getByText('Detective Board'))
+
+    expect(await screen.findByTestId('mock-board-investigation-id')).toHaveTextContent('inv-1880000000000')
+  })
+
   it('renders a mockup-style investigation summary and functional sidebar controls in detective board mode', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
