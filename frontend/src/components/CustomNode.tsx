@@ -683,9 +683,6 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const displayContent = isCollapsedSupportingEvidence
         ? collapsedSupportPreview
         : isExpanded ? expandedEvidenceBrief || data.summary : data.summary;
-    const supportPeekContent = isCollapsedSupportingEvidence
-        ? collapsedSupportPreview
-        : displayContent;
     const images = data.images || [];
     const hasImages = nodeHasImages(images);
     const primaryImage = hasImages ? images[0] : null;
@@ -1409,15 +1406,6 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                         __html: parseHighlightedText(displayContent || '')
                                     }}
                                 />
-                                {isCollapsedSupportingEvidence && (
-                                    <div
-                                        data-testid="support-evidence-peek"
-                                        className="forensic-node-support-peek custom-scrollbar nodrag nowheel"
-                                        dangerouslySetInnerHTML={{
-                                            __html: parseHighlightedText(supportPeekContent || '')
-                                        }}
-                                    />
-                                )}
                             </div>
                         )}
                     </div>

@@ -237,8 +237,9 @@ describe('CustomNode', () => {
     expect(imagePreview).not.toHaveStyle({ height: '96px' })
     expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-support-has-image')
     expect(screen.queryByText('Visual Evidence')).not.toBeInTheDocument()
-    expect(screen.getByTestId('support-evidence-peek')).toHaveTextContent('A visual Rabbit Hole result should keep the evidence text readable')
-    expect(screen.getByTestId('support-evidence-peek')).not.toHaveTextContent('Expanded source context remains available on hover.')
+    expect(screen.getByTestId('node-detail-motion')).toHaveTextContent('A visual Rabbit Hole result should keep the evidence text readable')
+    expect(screen.getByTestId('node-detail-motion')).not.toHaveTextContent('Expanded source context remains available on hover.')
+    expect(screen.queryByTestId('support-evidence-peek')).not.toBeInTheDocument()
   })
 
   it('normalizes raw Rabbit Hole report text for collapsed supporting previews', () => {
@@ -276,18 +277,17 @@ describe('CustomNode', () => {
     )
 
     const compactText = screen.getByTestId('node-detail-motion')
-    const peekText = screen.getByTestId('support-evidence-peek')
 
     expect(compactText).toHaveTextContent('NVIDIA')
     expect(compactText).toHaveTextContent('Huawei')
     expect(compactText).toHaveTextContent('Momentum and supplier notes')
-    expect(peekText).toHaveTextContent('Momentum and supplier notes')
     expect(compactText.innerHTML).toContain('bg-cyber-cyan/20')
     expect(compactText).not.toHaveTextContent('EXECUTIVE SUMMARY REPORT TO')
     expect(compactText).not.toHaveTextContent('Rabbit Hole timeline context for')
     expect(compactText).not.toHaveTextContent('https://example.com/raw-report')
     expect(compactText).not.toHaveTextContent('##')
-    expect(peekText).not.toHaveTextContent('Full expansion text should stay behind the expand control')
+    expect(compactText).not.toHaveTextContent('Full expansion text should stay behind the expand control')
+    expect(screen.queryByTestId('support-evidence-peek')).not.toBeInTheDocument()
   })
 
   it('does not invent compact support chips from plain Rabbit Hole entity text', () => {
