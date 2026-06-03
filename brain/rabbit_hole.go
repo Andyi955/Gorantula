@@ -472,7 +472,7 @@ func (b *Brain) runRabbitHoleToolPass(ctx context.Context, originalPrompt string
 			for index, record := range records {
 				record.Rationale = task.Rationale
 				record.Pass = pass
-				node := buildRabbitHoleProvisionalNode(models.NutrientFlow{
+				node := b.buildTaggedRabbitHoleProvisionalNode(ctx, models.NutrientFlow{
 					SourceURL: record.Source,
 					Content:   record.Content,
 				}, task, vaultID, pass, index)
@@ -489,7 +489,7 @@ func (b *Brain) runRabbitHoleToolPass(ctx context.Context, originalPrompt string
 			logger.Logf("pass %d timeline_context sourceRecords=%d query=%q", pass, len(ledger)+len(passRecords), rabbitHoleLogSnippet(task.Query, 120))
 			record.Rationale = task.Rationale
 			record.Pass = pass
-			node := buildRabbitHoleProvisionalNode(models.NutrientFlow{
+			node := b.buildTaggedRabbitHoleProvisionalNode(ctx, models.NutrientFlow{
 				SourceURL: record.Source,
 				Content:   record.Content,
 			}, task, vaultID, pass, len(passRecords))

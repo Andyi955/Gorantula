@@ -88,22 +88,33 @@ const connectedNodeIdsFromEdges = (edges: Edge[]) => {
     return connected
 }
 
+const stripSupportEvidenceMetadata = (node: Node): Node => {
+    const {
+        evidenceRole: _evidenceRole,
+        supportCluster: _supportCluster,
+        isSupportEvidenceCompact: _isSupportEvidenceCompact,
+        isSupportTetherSource: _isSupportTetherSource,
+        isSupportTetherTarget: _isSupportTetherTarget,
+        ...stableData
+    } = node.data || {}
+
+    return {
+        ...node,
+        data: stableData,
+    }
+}
+
 export const classifyRabbitHoleEvidenceNodes = (nodes: Node[], edges: Edge[]): Node[] => {
     const connectedNodeIds = connectedNodeIdsFromEdges(edges)
+    const hasVisibleRelationships = connectedNodeIds.size > 0
 
     return nodes.map((node) => {
         if (!isRabbitHoleNode(node)) {
-            const {
-                evidenceRole: _evidenceRole,
-                supportCluster: _supportCluster,
-                isSupportEvidenceCompact: _isSupportEvidenceCompact,
-                ...stableData
-            } = node.data || {}
+            return stripSupportEvidenceMetadata(node)
+        }
 
-            return {
-                ...node,
-                data: stableData,
-            }
+        if (!hasVisibleRelationships || node.data?.rabbitState === 'provisional') {
+            return stripSupportEvidenceMetadata(node)
         }
 
         const evidenceRole: EvidenceRole = connectedNodeIds.has(node.id) ? 'primary' : 'supporting'

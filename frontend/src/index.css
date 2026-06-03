@@ -2426,6 +2426,63 @@ body {
   transition: none;
 }
 
+.forensic-node-support-image-thumb {
+  width: 3.6rem;
+  height: 3.05rem;
+  background: rgba(4, 9, 14, 0.86);
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(255, 91, 120, 0.08);
+}
+
+.forensic-node-shell.forensic-node-supporting-evidence:not(.forensic-node-expanded) .forensic-node-detail-support-compact {
+  color: rgba(231, 242, 248, 0.84);
+  font-size: 0.68rem;
+  line-height: 1.48;
+  letter-spacing: 0;
+}
+
+.forensic-node-detail-support-has-image {
+  padding-right: 4.35rem;
+}
+
+.forensic-node-support-peek {
+  position: absolute;
+  left: -0.45rem;
+  right: -0.45rem;
+  top: 1.9rem;
+  z-index: 80;
+  max-height: 17rem;
+  overflow-y: auto;
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  border-radius: 0.75rem;
+  padding: 0.78rem 0.84rem;
+  background:
+    linear-gradient(180deg, rgba(9, 15, 22, 0.985), rgba(4, 9, 15, 0.985)),
+    radial-gradient(circle at top right, rgba(255, 47, 84, 0.12), transparent 58%);
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.54),
+    0 0 0 1px rgba(255, 91, 120, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  color: rgba(241, 249, 252, 0.94);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: 1.58;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0.45rem) scale(0.985);
+  transition:
+    opacity 160ms ease,
+    transform 180ms cubic-bezier(0.16, 0.9, 0.24, 1);
+}
+
+.forensic-node-shell.forensic-node-supporting-evidence:hover .forensic-node-support-peek,
+.forensic-node-shell.forensic-node-supporting-evidence:focus-within .forensic-node-support-peek {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
 .forensic-node-source-link {
   position: relative;
   display: inline-flex;

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
 import { getMiniMapNodeColor } from '../../src/components/detectiveBoardMinimap'
+import { layoutSupportingEvidenceNodes } from '../../src/components/supportingEvidenceLayer'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
 import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
@@ -516,6 +517,41 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('waits for visible relationships before moving Rabbit Hole nodes into support', () => {
+    const nodes = [
+      {
+        id: 'rabbit-a',
+        type: 'custom',
+        position: { x: 96, y: 96 },
+        data: {
+          title: 'Rabbit lead A',
+          summary: 'A promoted Rabbit Hole lead before synthesis finishes.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'web_search',
+        },
+      },
+      {
+        id: 'rabbit-b',
+        type: 'custom',
+        position: { x: 528, y: 96 },
+        data: {
+          title: 'Rabbit lead B',
+          summary: 'A second promoted Rabbit Hole lead before synthesis finishes.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+        },
+      },
+    ]
+
+    const supportLayerState = layoutSupportingEvidenceNodes(nodes, [])
+
+    expect(supportLayerState.band).toBeNull()
+    expect(supportLayerState.nodes.every((node) => node.data?.evidenceRole === undefined)).toBe(true)
+    expect(supportLayerState.nodes.every((node) => node.data?.isSupportEvidenceCompact === undefined)).toBe(true)
+  })
+
   it('places unconnected Rabbit Hole nodes into a supporting evidence band with visual tethers', async () => {
     localStorage.setItem(
       'inv_data_inv-rabbit-support',
@@ -619,7 +655,8 @@ describe('DetectiveBoard relationship legend', () => {
     expect(document.querySelector('[data-node-id="rabbit-support-web"]')).toHaveClass('forensic-board-navigator-node-support-source')
     expect(document.querySelector('[data-node-id="rabbit-primary-a"]')).toHaveClass('forensic-board-navigator-node-support-target')
 
-    const renderedNodes = () => (lastReactFlowProps?.nodes || []) as Array<{ id: string; style?: { width?: number; height?: number } }>
+    const renderedNodes = () => (lastReactFlowProps?.nodes || []) as Array<{ id: string; zIndex?: number; style?: { width?: number; height?: number } }>
+    expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.zIndex).toBe(600)
     expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.style).toEqual(expect.objectContaining({ width: 288, height: 192 }))
 
     act(() => {

@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,43 @@ func TestBuildRabbitHoleProvisionalNodeMarksClickableLiveTrail(t *testing.T) {
 	}
 	if !strings.Contains(node.FullText, "Track local permitting pressure") {
 		t.Fatalf("full text did not preserve tool rationale: %s", node.FullText)
+	}
+}
+
+func TestBuildTaggedRabbitHoleProvisionalNodeUsesSummaryEntityTags(t *testing.T) {
+	mock := &MockProvider{
+		NameFunc: func() string { return "deepseek" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			if !strings.Contains(prompt, "REQUIRED TAGGING") {
+				t.Fatalf("expected Rabbit Hole tool node to use standard node tagging prompt: %s", prompt)
+			}
+			return json.Unmarshal([]byte(`{
+				"title": "NERC Alert Conflict",
+				"summary": "[ORG:NERC] issued a [DATE:2026-05-18] alert that conflicts with [ORG:Fermi America] project timing in [LOC:Texas]. [ORG:Meta] demand remains part of the load-pressure context."
+			}`), target)
+		},
+	}
+	brain := &Brain{ModelRouter: map[string]ModelProvider{"deepseek": mock}}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "deepseek")
+
+	node := brain.buildTaggedRabbitHoleProvisionalNode(context.Background(), models.NutrientFlow{
+		SourceURL: "timeline://rabbit-hole/NERC Level 3 alert",
+		Content:   "Rabbit Hole timeline context for: NERC Level 3 alert May 2026 date conflict May 4 vs May 18. Fermi America and Meta are part of the load-pressure context in Texas.",
+	}, RabbitHoleToolTask{
+		ID:        "rabbit-tool-1",
+		Tool:      RabbitHoleToolTimelineContext,
+		Query:     "NERC Level 3 alert May 2026 date conflict May 4 vs May 18",
+		Rationale: "Extract chronology",
+	}, "inv-rabbit", 3, 1)
+
+	if node.Title != "NERC Alert Conflict" {
+		t.Fatalf("title = %q", node.Title)
+	}
+	if !strings.Contains(node.Summary, "[ORG:NERC]") || !strings.Contains(node.Summary, "[DATE:2026-05-18]") || !strings.Contains(node.Summary, "[LOC:Texas]") {
+		t.Fatalf("expected tagged summary, got %q", node.Summary)
+	}
+	if !strings.Contains(node.FullText, "Rabbit tool: timeline_context") || !strings.Contains(node.FullText, "Fermi America and Meta") {
+		t.Fatalf("full text should preserve tool metadata and original content, got %q", node.FullText)
 	}
 }
 

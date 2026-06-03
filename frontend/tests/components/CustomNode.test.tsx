@@ -154,6 +154,135 @@ describe('CustomNode', () => {
     expect(screen.getByTitle('Rabbit Hole tool: timeline_context, pass 3')).toBeInTheDocument()
   })
 
+  it('keeps image-scraped supporting evidence compact without pushing text down', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-image"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-image',
+          title: 'Image Support Trail',
+          summary: 'A visual Rabbit Hole result should keep the evidence text readable in the compact support shelf.',
+          fullText: 'A visual Rabbit Hole result should keep the evidence text readable in the compact support shelf. Expanded source context remains available on hover.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'web_search',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'web',
+          isSupportEvidenceCompact: true,
+          images: [
+            {
+              id: 'support-image-1',
+              path: 'https://example.com/support-image.jpg',
+              caption: 'Scraped visual source',
+            },
+          ],
+        }}
+      />,
+    )
+
+    const imagePreview = screen.getByTestId('node-image-preview')
+    expect(imagePreview).toHaveClass('forensic-node-support-image-thumb')
+    expect(imagePreview).not.toHaveStyle({ height: '96px' })
+    expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-support-has-image')
+    expect(screen.queryByText('Visual Evidence')).not.toBeInTheDocument()
+    expect(screen.getByTestId('support-evidence-peek')).toHaveTextContent('A visual Rabbit Hole result should keep the evidence text readable')
+    expect(screen.getByTestId('support-evidence-peek')).not.toHaveTextContent('Expanded source context remains available on hover.')
+  })
+
+  it('normalizes raw Rabbit Hole report text for collapsed supporting previews', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-raw-report"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-raw-report',
+          title: 'Raw Support Trail',
+          summary: [
+            '## Final Summary',
+            '# Crawler Result Vault ## Final Summary',
+            'EXECUTIVE SUMMARY REPORT TO: Interested Parties FROM: Office of Strategic Analysis DATE: 2026-06-03',
+            'Rabbit Hole timeline context for: [ORG:NVIDIA] H200 clearance [ORG:Huawei] Chinese firms 2025-01-20 ::',
+            'Source: https://example.com/raw-report',
+            'momentum and supplier notes point to H200 clearance timing intersecting export control loopholes and procurement pressure.',
+          ].join('\n'),
+          fullText: 'Full expansion text should stay behind the expand control.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'timeline',
+          isSupportEvidenceCompact: true,
+        }}
+      />,
+    )
+
+    const compactText = screen.getByTestId('node-detail-motion')
+    const peekText = screen.getByTestId('support-evidence-peek')
+
+    expect(compactText).toHaveTextContent('NVIDIA')
+    expect(compactText).toHaveTextContent('Huawei')
+    expect(compactText).toHaveTextContent('Momentum and supplier notes')
+    expect(peekText).toHaveTextContent('Momentum and supplier notes')
+    expect(compactText.innerHTML).toContain('bg-cyber-cyan/20')
+    expect(compactText).not.toHaveTextContent('EXECUTIVE SUMMARY REPORT TO')
+    expect(compactText).not.toHaveTextContent('Rabbit Hole timeline context for')
+    expect(compactText).not.toHaveTextContent('https://example.com/raw-report')
+    expect(compactText).not.toHaveTextContent('##')
+    expect(peekText).not.toHaveTextContent('Full expansion text should stay behind the expand control')
+  })
+
+  it('does not invent compact support chips from plain Rabbit Hole entity text', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-plain-entities"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-plain-entities',
+          title: 'Nvidia H200 Clearance',
+          summary: [
+            'Rabbit Hole timeline context for: Nvidia H200 clearance BIS Chinese firms 2025 - 2025-01-20',
+            'nvidia supplier notes and Huawei procurement signals point to pressure around export-control loopholes.',
+          ].join('\n'),
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'timeline',
+          isSupportEvidenceCompact: true,
+        }}
+      />,
+    )
+
+    const compactText = screen.getByTestId('node-detail-motion')
+
+    expect(compactText).toHaveTextContent('Nvidia')
+    expect(compactText).toHaveTextContent('Huawei')
+    expect(compactText).toHaveTextContent('Nvidia supplier notes')
+    expect(compactText.innerHTML).not.toContain('bg-cyber-cyan/20')
+  })
+
   it('keeps expanded supporting Rabbit Hole evidence fully opaque before hover', () => {
     render(
       <CustomNode

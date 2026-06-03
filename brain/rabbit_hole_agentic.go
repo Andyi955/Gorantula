@@ -181,6 +181,18 @@ func buildRabbitHoleProvisionalNode(nutrient models.NutrientFlow, task RabbitHol
 	}
 }
 
+func (b *Brain) buildTaggedRabbitHoleProvisionalNode(ctx context.Context, nutrient models.NutrientFlow, task RabbitHoleToolTask, vaultID string, passNumber int, index int) models.MemoryNode {
+	node := buildRabbitHoleProvisionalNode(nutrient, task, vaultID, passNumber, index)
+	title, summary, err := b.summarizeNode(ctx, node.FullText)
+	if err != nil || strings.TrimSpace(title) == "" || strings.TrimSpace(summary) == "" {
+		return node
+	}
+
+	node.Title = title
+	node.Summary = summary
+	return node
+}
+
 func rabbitHoleTitleFromTask(task RabbitHoleToolTask, nutrient models.NutrientFlow) string {
 	query := strings.TrimSpace(task.Query)
 	if query == "" {

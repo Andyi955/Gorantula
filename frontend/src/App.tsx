@@ -2304,6 +2304,9 @@ function App() {
     if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
       return
     }
+    if (rabbitHoleGatekeeper.descentMode !== 'guided') {
+      return
+    }
     const vaultId = rabbitHoleGatekeeper.vaultId || currentInvestigationId
     if (!vaultId) {
       return
@@ -2333,6 +2336,9 @@ function App() {
 
   const finishRabbitHoleDescent = useCallback(() => {
     if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
+      return
+    }
+    if (rabbitHoleGatekeeper.descentMode !== 'guided') {
       return
     }
     const vaultId = rabbitHoleGatekeeper.vaultId || currentInvestigationId
@@ -3133,13 +3139,17 @@ function App() {
                         <p>{rabbitHoleGatekeeper.reason}</p>
                         <div>
                           <span>
-                            {rabbitHoleGatekeeper.continueRecommended ? 'Continue recommended' : 'Trail exhausted'}
+                            {rabbitHoleGatekeeper.descentMode === 'max' && rabbitHoleGatekeeper.continueRecommended
+                              ? 'Max descent continuing'
+                              : rabbitHoleGatekeeper.continueRecommended
+                                ? 'Continue recommended'
+                                : 'Trail exhausted'}
                           </span>
                           {typeof rabbitHoleGatekeeper.noveltyScore === 'number' && (
                             <strong>{Math.round(rabbitHoleGatekeeper.noveltyScore * 100)}% novelty</strong>
                           )}
                         </div>
-                        {rabbitHoleGatekeeper.continueRecommended && (
+                        {rabbitHoleGatekeeper.descentMode === 'guided' && rabbitHoleGatekeeper.continueRecommended && (
                           <div className="forensic-rabbit-gatekeeper-actions">
                             <button
                               type="button"

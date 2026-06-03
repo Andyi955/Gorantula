@@ -1486,6 +1486,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         return {
             ...node,
+            zIndex: supportHoverNodeId === node.id && node.data?.evidenceRole === 'supporting'
+                ? STRICT_GRID_EXPANDED_NODE_Z_INDEX
+                : node.zIndex,
             data: {
                 ...node.data,
                 onSupportHover: handleSupportHover,

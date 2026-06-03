@@ -821,6 +821,38 @@ describe('App', () => {
     expect(continueMessage.payload).toBe('AI regulatory capture')
   })
 
+  it('shows max descent gatekeeper updates as read-only status', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_GATEKEEPER', {
+        runId: 'run-max-rabbit',
+        vaultId: 'inv-max-rabbit',
+        pass: 1,
+        descentMode: 'max',
+        decision: {
+          continue: true,
+          reason: 'Novel source trail remains open, continuing automatically.',
+          noveltyScore: 0.76,
+          suggestedQueries: ['follow second pass angle'],
+        },
+        result: 'Max descent pass one synthesis.',
+        prompt: 'AI regulatory capture',
+      })
+    })
+
+    const gatekeeper = await screen.findByTestId('rabbit-hole-gatekeeper-panel')
+    expect(gatekeeper).toHaveTextContent('Max descent continuing')
+    expect(gatekeeper).toHaveTextContent('Novel source trail remains open, continuing automatically.')
+    expect(within(gatekeeper).queryByRole('button', { name: /continue rabbit hole descent/i })).not.toBeInTheDocument()
+    expect(within(gatekeeper).queryByRole('button', { name: /finish rabbit hole/i })).not.toBeInTheDocument()
+  })
+
   it('finishes a guided Rabbit Hole run from the gatekeeper panel', async () => {
     const user = userEvent.setup()
 

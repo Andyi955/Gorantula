@@ -587,6 +587,8 @@ func validateAndRankRelationshipCandidates(nodes []models.MemoryNode, candidates
 	seenAccepted := make(map[string]bool)
 	seenAcceptedPairs := make(map[string]models.RelationshipCandidate)
 	seenMirror := make(map[string]bool)
+	evidenceHygieneAccepted := 0
+	maxEvidenceHygiene := maxEvidenceHygieneConnections(len(nodes))
 	finalConnections := make([]models.BoardConnection, 0, len(candidates))
 
 	for idx := range scoredCandidates {
@@ -614,10 +616,18 @@ func validateAndRankRelationshipCandidates(nodes []models.MemoryNode, candidates
 			scoredCandidates[idx].RejectionReason = "mirrored_duplicate"
 			continue
 		}
+		if isEvidenceHygieneRelationship(candidate) && evidenceHygieneAccepted >= maxEvidenceHygiene {
+			scoredCandidates[idx].ValidationStatus = "rejected"
+			scoredCandidates[idx].RejectionReason = "evidence_hygiene_budget"
+			continue
+		}
 
 		seenAccepted[key] = true
 		seenAcceptedPairs[pairKey] = candidate
 		seenMirror[mirrorKey] = true
+		if isEvidenceHygieneRelationship(candidate) {
+			evidenceHygieneAccepted++
+		}
 		finalConnections = append(finalConnections, models.BoardConnection{
 			Source:             candidate.Source,
 			Target:             candidate.Target,
@@ -727,6 +737,10 @@ func maxConnectionsPerNode(nodeCount int) int {
 		return 2
 	}
 	return 3
+}
+
+func maxEvidenceHygieneConnections(_ int) int {
+	return 1
 }
 
 func writeRelationshipDebugTrace(debugRun models.RelationshipDebugRun) error {
@@ -1308,6 +1322,25 @@ func relationshipsAreSemanticallyOverlapping(existing models.RelationshipCandida
 		return true
 	}
 	return tokenOverlapRatio(existingReasoningTokens, incomingReasoningTokens) >= 0.6
+}
+
+func isEvidenceHygieneRelationship(candidate models.RelationshipCandidate) bool {
+	tag := strings.ToUpper(strings.TrimSpace(candidate.Tag))
+	reasoning := strings.ToLower(candidate.Reasoning)
+	if relationshipConceptFamily(candidate) == "duplicate-content" {
+		return true
+	}
+	return strings.Contains(tag, "DUPLICATE") ||
+		strings.Contains(tag, "CORROBOR") ||
+		strings.Contains(tag, "SAME_SOURCE") ||
+		strings.Contains(tag, "SAME_CONTENT") ||
+		strings.Contains(tag, "MIRROR") ||
+		strings.Contains(tag, "REPEAT") ||
+		strings.Contains(reasoning, "same source") ||
+		strings.Contains(reasoning, "same underlying source") ||
+		strings.Contains(reasoning, "same evidence") ||
+		strings.Contains(reasoning, "identical evidence") ||
+		strings.Contains(reasoning, "duplicate content")
 }
 
 func relationshipConceptFamily(candidate models.RelationshipCandidate) string {
