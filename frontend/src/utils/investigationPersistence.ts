@@ -9,6 +9,9 @@ import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './boardWorkspaceEvents'
 
 const API_BASE = 'http://localhost:8080/api/investigations'
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
+const BOARD_SHADOW_DB_NAME = 'gorantula-board-cache'
+const BOARD_SHADOW_DB_VERSION = 1
+const BOARD_SHADOW_STORE_NAME = 'boards'
 
 export type VaultResultPayload = Record<string, unknown>
 type DiscoveryPayload = Record<string, unknown>[]
@@ -26,6 +29,7 @@ const vaultResultCache = new Map<string, VaultResultPayload>()
 const discoveriesCache = new Map<string, DiscoveryPayload>()
 const relationshipResultCache = new Map<string, RelationshipResultPayload>()
 let investigationCache: InvestigationRecord[] = []
+let boardShadowDatabasePromise: Promise<IDBDatabase | null> | null = null
 
 const isBrowser = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 const shouldUseBackendPersistence = () =>
@@ -74,6 +78,140 @@ const localGet = (key: string) => {
 
 const getLocalBoardStateForInvestigation = (investigationId: string) =>
   parsePersistedBoardState(localGet(`inv_data_${investigationId}`))
+
+const arePersistedBoardStatesEquivalent = (
+  left: PersistedBoardState | null | undefined,
+  right: PersistedBoardState | null | undefined,
+) => {
+  if (!left || !right) {
+    return false
+  }
+  return safeJSONStringify(left) === safeJSONStringify(right)
+}
+
+const parseBoardShadowState = (value: unknown) => {
+  const serialized = safeJSONStringify(value)
+  return serialized ? parsePersistedBoardState(serialized) : null
+}
+
+const openBoardShadowDatabase = () => {
+  if (!isBrowser() || typeof window.indexedDB === 'undefined') {
+    return Promise.resolve(null)
+  }
+
+  if (boardShadowDatabasePromise) {
+    return boardShadowDatabasePromise
+  }
+
+  boardShadowDatabasePromise = new Promise<IDBDatabase | null>((resolve) => {
+    let request: IDBOpenDBRequest
+    try {
+      request = window.indexedDB.open(BOARD_SHADOW_DB_NAME, BOARD_SHADOW_DB_VERSION)
+    } catch {
+      resolve(null)
+      return
+    }
+
+    request.onupgradeneeded = () => {
+      const database = request.result
+      if (!database.objectStoreNames.contains(BOARD_SHADOW_STORE_NAME)) {
+        database.createObjectStore(BOARD_SHADOW_STORE_NAME, { keyPath: 'investigationId' })
+      }
+    }
+
+    request.onsuccess = () => {
+      const database = request.result
+      database.onversionchange = () => database.close()
+      resolve(database)
+    }
+
+    request.onerror = () => resolve(null)
+    request.onblocked = () => resolve(null)
+  })
+
+  return boardShadowDatabasePromise
+}
+
+const withBoardShadowStore = async <T>(
+  mode: IDBTransactionMode,
+  operation: (store: IDBObjectStore) => Promise<T>,
+) => {
+  const database = await openBoardShadowDatabase()
+  if (!database) {
+    return null
+  }
+
+  try {
+    const transaction = database.transaction(BOARD_SHADOW_STORE_NAME, mode)
+    return await operation(transaction.objectStore(BOARD_SHADOW_STORE_NAME))
+  } catch {
+    return null
+  }
+}
+
+const getIndexedBoardShadowStateForInvestigation = async (investigationId: string) =>
+  withBoardShadowStore('readonly', (store) => new Promise<PersistedBoardState | null>((resolve) => {
+    const request = store.get(investigationId)
+
+    request.onsuccess = () => {
+      const record = request.result as { state?: unknown } | undefined
+      resolve(parseBoardShadowState(record?.state))
+    }
+
+    request.onerror = () => resolve(null)
+  }))
+
+const writeIndexedBoardShadowStateForInvestigation = async (
+  investigationId: string,
+  state: PersistedBoardState,
+) => {
+  await withBoardShadowStore('readwrite', (store) => new Promise<boolean>((resolve) => {
+    const request = store.put({
+      investigationId,
+      state,
+      updatedAt: Date.now(),
+    })
+
+    request.onsuccess = () => resolve(true)
+    request.onerror = () => resolve(false)
+  }))
+}
+
+const deleteIndexedBoardShadowStateForInvestigation = async (investigationId: string) => {
+  await withBoardShadowStore('readwrite', (store) => new Promise<boolean>((resolve) => {
+    const request = store.delete(investigationId)
+
+    request.onsuccess = () => resolve(true)
+    request.onerror = () => resolve(false)
+  }))
+}
+
+const refreshBackendBoardCacheFromServer = async (
+  investigationId: string,
+  baselineState: PersistedBoardState,
+) => {
+  try {
+    const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`)
+    const parsed = parsePersistedBoardState(JSON.stringify(payload))
+    if (!parsed) {
+      return
+    }
+
+    const { state: hydrated } = reconcileLoadedBoardState(investigationId, parsed)
+    const currentCachedState = boardStateCache.get(investigationId)
+    if (currentCachedState && !arePersistedBoardStatesEquivalent(currentCachedState, baselineState)) {
+      return
+    }
+
+    const stateToCache = arePersistedBoardStatesEquivalent(baselineState, hydrated)
+      ? baselineState
+      : hydrated
+    boardStateCache.set(investigationId, stateToCache)
+    void writeIndexedBoardShadowStateForInvestigation(investigationId, stateToCache)
+  } catch {
+    // The foreground board has a usable cache; backend refresh is opportunistic.
+  }
+}
 
 const preserveExistingTimelineSnapshot = (
   investigationId: string,
@@ -295,12 +433,28 @@ export const getCachedBoardStateForInvestigation = (investigationId: string) => 
 
 export const loadBoardStateForInvestigation = async (investigationId: string) => {
   if (shouldUseBackendPersistence()) {
+    const memoryState = boardStateCache.get(investigationId)
+    const indexedShadowState = memoryState ? null : await getIndexedBoardShadowStateForInvestigation(investigationId)
+    if (indexedShadowState) {
+      boardStateCache.set(investigationId, indexedShadowState)
+      void refreshBackendBoardCacheFromServer(investigationId, indexedShadowState)
+      return indexedShadowState
+    }
+
     try {
       const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`)
       const parsed = parsePersistedBoardState(JSON.stringify(payload))
       if (parsed) {
         const { state: hydrated, shouldBackfillBackend } = reconcileLoadedBoardState(investigationId, parsed)
+        const cachedState = boardStateCache.get(investigationId)
+        if (cachedState && arePersistedBoardStatesEquivalent(cachedState, hydrated)) {
+          boardStateCache.set(investigationId, cachedState)
+          void writeIndexedBoardShadowStateForInvestigation(investigationId, cachedState)
+          return cachedState
+        }
+
         boardStateCache.set(investigationId, hydrated)
+        void writeIndexedBoardShadowStateForInvestigation(investigationId, hydrated)
         if (shouldBackfillBackend) {
           void saveBoardStateForInvestigation(investigationId, hydrated, { skipFallback: true })
         }
@@ -347,6 +501,7 @@ export const saveBoardStateForInvestigation = async (
 
   try {
     await putJSON(`${API_BASE}/${encodeURIComponent(investigationId)}/board`, stateToPersist)
+    void writeIndexedBoardShadowStateForInvestigation(investigationId, stateToPersist)
     return true
   } catch (error) {
     console.warn('[InvestigationPersistence] Failed to save board state to backend.', error)
@@ -533,6 +688,7 @@ export const deleteInvestigationPersistence = async (investigationId: string) =>
   relationshipResultCache.delete(investigationId)
   localRemove(`inv_data_${investigationId}`)
   localRemove(`vault_result_${investigationId}`)
+  void deleteIndexedBoardShadowStateForInvestigation(investigationId)
 
   try {
     if (!shouldUseBackendPersistence()) {

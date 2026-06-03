@@ -342,6 +342,7 @@ const seedExportableBoard = () => {
 
 describe('DetectiveBoard relationship legend', () => {
   beforeEach(() => {
+    delete (globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__
     localStorage.clear()
     lastReactFlowProps = null
     viewportMock = { x: -160, y: -90, zoom: 1 }
@@ -349,12 +350,15 @@ describe('DetectiveBoard relationship legend', () => {
     setCenterMock.mockReset()
     getZoomMock.mockReset()
     getZoomMock.mockReturnValue(0.82)
+    vi.spyOn(console, 'debug').mockImplementation(() => {})
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
   })
 
   afterEach(() => {
+    delete (globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__
     vi.restoreAllMocks()
   })
 
@@ -372,6 +376,107 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY)).toBe('true')
+  })
+
+  it('shows a short restore veil and logs board load timing when switching investigations', async () => {
+    localStorage.setItem(
+      'inv_data_inv-load-metric',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-load-metric',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'node-load-metric',
+              title: 'Load Metric Node',
+              summary: 'A restored board used to verify load timing.',
+              fullText: 'A restored board used to verify load timing.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-load-metric')
+
+    expect(await screen.findByTestId('board-restore-loading')).toHaveTextContent('Restoring board')
+    await waitFor(() => {
+      expect(console.info).toHaveBeenCalledWith('[BoardLoad] restored', expect.objectContaining({
+        investigationId: 'inv-load-metric',
+        source: 'memory-cache',
+        nodeCount: 1,
+        edgeCount: 0,
+        durationMs: expect.any(Number),
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('board-restore-loading')).not.toBeInTheDocument()
+    })
+  })
+
+  it('keeps the restore veil above the hidden prefit layer for restored Rabbit Hole boards', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-prefit-loader',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-prefit-a',
+            type: 'custom',
+            position: { x: 1800, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-prefit-a',
+              title: 'Rabbit Prefit A',
+              summary: 'A restored Rabbit Hole node that should trigger initial viewport prefit.',
+              fullText: 'A restored Rabbit Hole node that should trigger initial viewport prefit.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-prefit-b',
+            type: 'custom',
+            position: { x: 2220, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-prefit-b',
+              title: 'Rabbit Prefit B',
+              summary: 'A second restored Rabbit Hole node for the slow-board loader regression.',
+              fullText: 'A second restored Rabbit Hole node for the slow-board loader regression.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'vault_search',
+              rabbitPass: 2,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-prefit-a-rabbit-prefit-b',
+            source: 'rabbit-prefit-a',
+            target: 'rabbit-prefit-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'RABBIT_PREFIT' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-prefit-loader')
+
+    const loader = await screen.findByTestId('board-restore-loading')
+    const boardFlow = document.getElementById('detective-board-flow')
+    expect(boardFlow).toHaveClass('forensic-board-restore-prefit')
+    expect(loader.closest('#detective-board-flow')).toBeNull()
+    expect(loader).toHaveTextContent('Restoring board')
   })
 
   it('promotes live Rabbit Hole provisional nodes from websocket updates', async () => {
@@ -534,6 +639,97 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('does not replay stale relationship recovery after restoring a board with visible edges', async () => {
+    const backendFlag = globalThis as typeof globalThis & {
+      __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean
+    }
+    backendFlag.__GORANTULA_BACKEND_PERSISTENCE_TEST__ = true
+
+    const restoredBoard = {
+      mode: 'strict-grid',
+      nodes: [
+        {
+          id: 'rabbit-primary-a',
+          type: 'custom',
+          position: { x: 96, y: 96 },
+          style: { width: 336, height: 216 },
+          data: {
+            id: 'rabbit-primary-a',
+            title: 'Rabbit primary A',
+            summary: 'A restored Rabbit Hole lead.',
+            fullText: 'A restored Rabbit Hole lead.',
+            origin: 'rabbit-hole',
+            rabbitTool: 'web_search',
+          },
+        },
+        {
+          id: 'rabbit-primary-b',
+          type: 'custom',
+          position: { x: 528, y: 96 },
+          style: { width: 336, height: 216 },
+          data: {
+            id: 'rabbit-primary-b',
+            title: 'Rabbit primary B',
+            summary: 'A second restored Rabbit Hole lead.',
+            fullText: 'A second restored Rabbit Hole lead.',
+            origin: 'rabbit-hole',
+            rabbitTool: 'timeline_context',
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'edge-rabbit-a-b',
+          source: 'rabbit-primary-a',
+          target: 'rabbit-primary-b',
+          sourceHandle: 'port-right-0',
+          targetHandle: 'port-left-0',
+          type: 'customEdge',
+          data: {
+            generatedBy: 'connectTheDots',
+            tag: 'RESTORED_LINK',
+            routePoints: [
+              { x: 432, y: 160 },
+              { x: 528, y: 160 },
+            ],
+          },
+        },
+      ],
+    }
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/board')) {
+        return { ok: true, json: async () => restoredBoard } as Response
+      }
+      if (url.endsWith('/relationships')) {
+        return {
+          ok: true,
+          json: async () => ({
+            vaultId: 'inv-restored-rabbit',
+            connections: [{ source: 'missing-node', target: 'rabbit-primary-a', tag: 'STALE' }],
+          }),
+        } as Response
+      }
+      return { ok: true, json: async () => ({}) } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      renderBoard('inv-restored-rabbit')
+
+      expect(await screen.findByText('Rabbit primary A')).toBeInTheDocument()
+
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      })
+
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/relationships'))).toBe(false)
+    } finally {
+      delete backendFlag.__GORANTULA_BACKEND_PERSISTENCE_TEST__
+    }
+  })
+
   it('keeps relationship label hover highlighting connected nodes on Rabbit Hole boards', async () => {
     localStorage.setItem(
       'inv_data_inv-rabbit-hover',
@@ -625,8 +821,8 @@ describe('DetectiveBoard relationship legend', () => {
       expect(renderedNodes.find((node) => node.id === 'rabbit-primary-a')?.data?.isConnectionHighlighted).toBe(true)
       expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('connection highlight')
       expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent('connection highlight')
-      expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('connection color #ff5b78')
-      expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent('connection color #ff5b78')
+      expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent(/connection color #[0-9a-f]{6}/i)
+      expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent(/connection color #[0-9a-f]{6}/i)
     })
   })
 

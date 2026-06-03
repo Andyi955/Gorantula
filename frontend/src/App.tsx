@@ -34,7 +34,12 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
-import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
+import {
+  BOARD_RESTORE_COMPLETE_EVENT,
+  BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
+  BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+  type BoardRestoreCompleteDetail,
+} from './utils/boardWorkspaceEvents'
 import {
   deleteInvestigationPersistence,
   getCachedBoardStateForInvestigation,
@@ -204,6 +209,13 @@ interface DiscoveryEvidenceRecord {
   sourceURL?: string
 }
 
+interface InvestigationSwitchOverlayState {
+  investigationId: string
+  title: string
+  startedAt: number
+  phase: 'switching' | 'restoring'
+}
+
 interface PersistedRelationshipNode {
   id?: unknown
   data?: unknown
@@ -219,6 +231,9 @@ const SIDEBAR_BOARD_DEFAULT_WIDTH = 336
 const SIDEBAR_MIN_WIDTH = 240
 const SIDEBAR_MAX_WIDTH = 424
 const SIDEBAR_COLLAPSED_WIDTH = 64
+const INVESTIGATION_SWITCH_OVERLAY_MIN_MS = 360
+const INVESTIGATION_SWITCH_OVERLAY_MAX_MS = 2400
+const REPORT_READABILITY_CACHE_LIMIT = 40
 const PIPELINE_STEP_TRANSITION_MS = 900
 const PIPELINE_TOKEN_COUNT_MS = 600
 const compactTokenFormatter = new Intl.NumberFormat('en-US', {
@@ -722,6 +737,35 @@ const extractReadableSummary = (rawText: string) => {
   return truncateAtSentenceBoundary(cleaned, 240)
 }
 
+const readableReportCache = new Map<string, { fullReport: string; summary: string }>()
+
+const getReadableReportSnapshot = (rawText: string) => {
+  const cached = readableReportCache.get(rawText)
+  if (cached) {
+    return cached
+  }
+
+  const readableReport = cleanReportBody(rawText)
+  const summary = extractReadableSummary(rawText) || truncateAtSentenceBoundary(readableReport, 240)
+  const snapshot = {
+    fullReport: readableReport || stripMarkdownFormatting(rawText),
+    summary,
+  }
+  readableReportCache.set(rawText, snapshot)
+  if (readableReportCache.size > REPORT_READABILITY_CACHE_LIMIT) {
+    const oldestKey = readableReportCache.keys().next().value
+    if (typeof oldestKey === 'string') {
+      readableReportCache.delete(oldestKey)
+    }
+  }
+  return snapshot
+}
+
+const getAppLoadNow = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+
 const formatWorkspaceTimestamp = (investigationId: string | null) => {
   if (!investigationId) {
     return '--'
@@ -784,6 +828,7 @@ function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [hasCustomSidebarWidth, setHasCustomSidebarWidth] = useState(false)
+  const [investigationSwitchOverlay, setInvestigationSwitchOverlay] = useState<InvestigationSwitchOverlayState | null>(null)
   const [boardWorkspaceRevision, setBoardWorkspaceRevision] = useState(0)
   const [showSummaryLog, setShowSummaryLog] = useState(false)
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
@@ -834,6 +879,9 @@ function App() {
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
   const sidebarResizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const investigationSwitchRequestRef = useRef(0);
+  const investigationSwitchOverlayRef = useRef<InvestigationSwitchOverlayState | null>(null);
+  const investigationSwitchOverlayTimeoutRef = useRef<number | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const pipelineRunsByIdRef = useRef<Record<string, PipelineRunState>>({})
   const pipelineStepTransitionTimeoutsRef = useRef<Record<string, number>>({})
@@ -959,10 +1007,9 @@ function App() {
         const rawResult = typeof savedVaultResult?.result === 'string' ? savedVaultResult.result : ''
         if (rawResult.trim()) {
           hasTheoryReport = true
-          const readableReport = cleanReportBody(rawResult)
-          const readableSummary = extractReadableSummary(rawResult)
-          fullReport = readableReport || stripMarkdownFormatting(rawResult)
-          summary = readableSummary || truncateAtSentenceBoundary(fullReport, 240)
+          const readableSnapshot = getReadableReportSnapshot(rawResult)
+          fullReport = readableSnapshot.fullReport
+          summary = readableSnapshot.summary
         }
       } catch (error) {
         console.error('[App] Failed to parse persisted vault result', error)
@@ -970,9 +1017,9 @@ function App() {
     } else if (nodes.length > 0) {
       const firstSummary = nodes.find((node) => typeof node.data?.summary === 'string' && node.data.summary.trim())?.data?.summary
       if (typeof firstSummary === 'string' && firstSummary.trim()) {
-        const readableReport = cleanReportBody(firstSummary)
-        summary = extractReadableSummary(firstSummary)
-        fullReport = readableReport || summary
+        const readableSnapshot = getReadableReportSnapshot(firstSummary)
+        summary = readableSnapshot.summary
+        fullReport = readableSnapshot.fullReport || summary
       }
     }
 
@@ -1033,6 +1080,77 @@ function App() {
   const focusSpiderInput = useCallback(() => {
     crawlInputRef.current?.focus()
   }, [])
+
+  const clearInvestigationSwitchTimeout = useCallback(() => {
+    if (investigationSwitchOverlayTimeoutRef.current !== null) {
+      window.clearTimeout(investigationSwitchOverlayTimeoutRef.current)
+      investigationSwitchOverlayTimeoutRef.current = null
+    }
+  }, [])
+
+  const clearInvestigationSwitchOverlay = useCallback((expectedInvestigationId?: string, expectedStartedAt?: number) => {
+    const current = investigationSwitchOverlayRef.current
+    if (
+      expectedInvestigationId &&
+      (
+        !current ||
+        current.investigationId !== expectedInvestigationId ||
+        (typeof expectedStartedAt === 'number' && current.startedAt !== expectedStartedAt)
+      )
+    ) {
+      return
+    }
+
+    clearInvestigationSwitchTimeout()
+    investigationSwitchOverlayRef.current = null
+    setInvestigationSwitchOverlay(null)
+  }, [clearInvestigationSwitchTimeout])
+
+  const openInvestigationFromSidebar = useCallback((investigation: InvestigationRecord, source: 'sidebar' | 'collapsed-sidebar' = 'sidebar') => {
+    const nextReturnVaultId = investigation.kind === 'merged-child' ? investigation.primaryParentId : null
+
+    if (currentInvestigationId === investigation.id) {
+      setReturnVaultId(nextReturnVaultId)
+      return
+    }
+
+    const startedAt = getAppLoadNow()
+    const requestId = investigationSwitchRequestRef.current + 1
+    const title = investigation.displayTopic || investigation.topic || investigation.id
+    investigationSwitchRequestRef.current = requestId
+    clearInvestigationSwitchTimeout()
+
+    const nextOverlay: InvestigationSwitchOverlayState = {
+      investigationId: investigation.id,
+      title,
+      startedAt,
+      phase: 'switching',
+    }
+    investigationSwitchOverlayRef.current = nextOverlay
+    setInvestigationSwitchOverlay(nextOverlay)
+    console.info('[InvestigationSwitch] selected', {
+      investigationId: investigation.id,
+      title,
+      source,
+    })
+
+    investigationSwitchOverlayTimeoutRef.current = window.setTimeout(() => {
+      clearInvestigationSwitchOverlay(investigation.id, startedAt)
+    }, INVESTIGATION_SWITCH_OVERLAY_MAX_MS)
+
+    window.setTimeout(() => {
+      if (investigationSwitchRequestRef.current !== requestId) {
+        return
+      }
+
+      setReturnVaultId(nextReturnVaultId)
+      setCurrentInvestigationId(investigation.id)
+      console.info('[InvestigationSwitch] committed', {
+        investigationId: investigation.id,
+        durationMs: Math.max(0, Math.round(getAppLoadNow() - startedAt)),
+      })
+    }, 0)
+  }, [clearInvestigationSwitchOverlay, clearInvestigationSwitchTimeout, currentInvestigationId])
 
   const persistInvestigations = useCallback((nextInvestigations: InvestigationRecord[]) => {
     setInvestigations(nextInvestigations);
@@ -2052,6 +2170,48 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const handleBoardRestoreComplete = (event: Event) => {
+      const detail = (event as CustomEvent<BoardRestoreCompleteDetail>).detail
+      const current = investigationSwitchOverlayRef.current
+      if (!current || !detail?.investigationId || detail.investigationId !== current.investigationId) {
+        return
+      }
+
+      const totalDurationMs = Math.max(0, Math.round(getAppLoadNow() - current.startedAt))
+      console.info('[InvestigationSwitch] board-ready', {
+        investigationId: current.investigationId,
+        switchDurationMs: totalDurationMs,
+        boardDurationMs: detail.durationMs,
+        source: detail.source,
+        nodeCount: detail.nodeCount,
+        edgeCount: detail.edgeCount,
+      })
+
+      const nextOverlay: InvestigationSwitchOverlayState = {
+        ...current,
+        phase: 'restoring',
+      }
+      investigationSwitchOverlayRef.current = nextOverlay
+      setInvestigationSwitchOverlay(nextOverlay)
+      clearInvestigationSwitchTimeout()
+
+      const hideDelayMs = Math.max(0, INVESTIGATION_SWITCH_OVERLAY_MIN_MS - totalDurationMs)
+      investigationSwitchOverlayTimeoutRef.current = window.setTimeout(() => {
+        clearInvestigationSwitchOverlay(current.investigationId, current.startedAt)
+      }, hideDelayMs)
+    }
+
+    window.addEventListener(BOARD_RESTORE_COMPLETE_EVENT, handleBoardRestoreComplete as EventListener)
+    return () => {
+      window.removeEventListener(BOARD_RESTORE_COMPLETE_EVENT, handleBoardRestoreComplete as EventListener)
+    }
+  }, [clearInvestigationSwitchOverlay, clearInvestigationSwitchTimeout])
+
+  useEffect(() => () => {
+    clearInvestigationSwitchTimeout()
+  }, [clearInvestigationSwitchTimeout])
+
+  useEffect(() => {
     if (!currentInvestigationId) {
       investigationHydrationRequestRef.current += 1
       return
@@ -2571,8 +2731,7 @@ function App() {
                     aria-label={`Open ${investigation.displayTopic}`}
                     title={investigation.displayTopic}
                     onClick={() => {
-                      setCurrentInvestigationId(investigation.id);
-                      setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
+                      openInvestigationFromSidebar(investigation, 'collapsed-sidebar');
                     }}
                     className={`forensic-sidebar-collapsed-item ${currentInvestigationId === investigation.id ? 'forensic-sidebar-collapsed-item-active' : ''}`}
                   >
@@ -2645,8 +2804,7 @@ function App() {
                 >
                   <button
                     onClick={() => {
-                      setCurrentInvestigationId(investigation.id);
-                      setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
+                      openInvestigationFromSidebar(investigation);
                     }}
                     className="w-full text-left p-4 transition-colors"
                     style={{ paddingLeft: `${16 + (depth * 18)}px` }}
@@ -3061,6 +3219,27 @@ function App() {
               </Suspense>
             )}
           </div>
+          {investigationSwitchOverlay && (
+            <div
+              data-testid="investigation-switch-loading"
+              className="forensic-board-restore-loading pointer-events-none absolute inset-0 z-[60] flex items-center justify-center"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <div className="forensic-board-restore-loading-panel">
+                <div className="forensic-board-restore-loading-scan" />
+                <div className="forensic-board-restore-loading-title">
+                  Switching investigation
+                </div>
+                <div className="forensic-board-restore-loading-meta">
+                  {investigationSwitchOverlay.phase === 'restoring' ? 'Evidence map ready' : 'Preparing evidence map'}
+                </div>
+                <div className="forensic-board-restore-loading-meta forensic-investigation-switch-title">
+                  {investigationSwitchOverlay.title}
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 

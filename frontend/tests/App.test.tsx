@@ -14,7 +14,7 @@ import {
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
 import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
-import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../src/utils/boardWorkspaceEvents'
+import { BOARD_RESTORE_COMPLETE_EVENT, BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../src/utils/boardWorkspaceEvents'
 
 vi.mock('../src/components/SpiderVisualizer', () => ({
   default: ({
@@ -183,6 +183,7 @@ describe('App', () => {
     localStorage.clear()
     WebSocketMock.instances = []
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.stubGlobal('WebSocket', WebSocketMock)
   })
@@ -449,6 +450,83 @@ describe('App', () => {
       expect(screen.getByText(/Bravo completed theory arrived in the background/i)).toBeInTheDocument()
     })
     expect(screen.queryByText(/Alpha original theory remains selected/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a functional investigation switch loader until the target board reports ready', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-rabbit-guided', topic: 'Rabbit Hole: Semiconductor export controls' },
+        { id: 'inv-rabbit-max', topic: 'Rabbit Hole: AI companies quietly moving into nuclear power' },
+      ]),
+    )
+    localStorage.setItem(
+      'inv_data_inv-rabbit-max',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: Array.from({ length: 22 }, (_, index) => ({
+          id: `rabbit-node-${index}`,
+          data: {
+            title: `Rabbit node ${index}`,
+            summary: 'Large Rabbit Hole support trail summary.',
+            origin: 'rabbit-hole',
+          },
+        })),
+        edges: [],
+      }),
+    )
+
+    try {
+      render(<App />)
+
+      fireEvent.click(screen.getByText('Rabbit Hole: AI companies quietly moving into nuclear power'))
+
+      const switchLoader = screen.getByTestId('investigation-switch-loading')
+      expect(switchLoader).toHaveTextContent('Switching investigation')
+      expect(switchLoader).toHaveTextContent('Preparing evidence map')
+      expect(switchLoader).toHaveTextContent('Rabbit Hole: AI companies quietly moving into nuclear power')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+
+      expect(screen.getByTestId('mock-board-investigation-id')).toHaveTextContent('inv-rabbit-max')
+      expect(console.info).toHaveBeenCalledWith('[InvestigationSwitch] selected', expect.objectContaining({
+        investigationId: 'inv-rabbit-max',
+      }))
+      expect(console.info).toHaveBeenCalledWith('[InvestigationSwitch] committed', expect.objectContaining({
+        investigationId: 'inv-rabbit-max',
+        durationMs: expect.any(Number),
+      }))
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent(BOARD_RESTORE_COMPLETE_EVENT, {
+          detail: {
+            investigationId: 'inv-rabbit-max',
+            source: 'memory-cache',
+            durationMs: 120,
+            nodeCount: 22,
+            edgeCount: 0,
+          },
+        }))
+      })
+
+      expect(screen.getByTestId('investigation-switch-loading')).toHaveTextContent('Evidence map ready')
+      expect(console.info).toHaveBeenCalledWith('[InvestigationSwitch] board-ready', expect.objectContaining({
+        investigationId: 'inv-rabbit-max',
+        source: 'memory-cache',
+        nodeCount: 22,
+      }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400)
+      })
+
+      expect(screen.queryByTestId('investigation-switch-loading')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('switches to the detective board when the active crawl synthesis completes', async () => {
