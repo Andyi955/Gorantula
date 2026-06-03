@@ -547,6 +547,8 @@ const BOARD_MINIMAP_GLIDE_DURATION_MS = 620;
 const BOARD_MINIMAP_DRAG_DURATION_MS = 0;
 const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
 const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
+const INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS = 80;
+const INITIAL_RESTORE_VIEWPORT_REVEAL_DELAY_MS = 16;
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE = { width: 960, height: 540 };
 const BOARD_NAVIGATOR_BOUNDS_PADDING = BOARD_GRID_SIZE * 3;
@@ -1336,6 +1338,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [isBoardCameraMoving, setIsBoardCameraMoving] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
     const [supportHoverNodeId, setSupportHoverNodeId] = useState<string | null>(null);
+    const [connectionHover, setConnectionHover] = useState<{ edgeId?: string; nodeIds: string[]; color: string } | null>(null);
+    const [isInitialRestoreViewportSettling, setIsInitialRestoreViewportSettling] = useState(false);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
     const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
     const [showQaReplayMenu, setShowQaReplayMenu] = useState(false);
@@ -1382,6 +1386,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
     const timelineFocusTimeoutRef = useRef<number | null>(null);
     const boardCameraMovementTimeoutRef = useRef<number | null>(null);
+    const initialRestoreViewportFitTimeoutRef = useRef<number | null>(null);
+    const pendingInitialRestoreViewportFitRef = useRef<string | null>(null);
+    const completedInitialRestoreViewportFitRef = useRef<string | null>(null);
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -1408,15 +1415,25 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             return currentNodeId === nodeId ? null : currentNodeId;
         });
     }, []);
-    const nodesForRender = useMemo(() => nodes.map((node) => ({
-        ...node,
-        data: {
-            ...node.data,
-            onSupportHover: handleSupportHover,
-            isSupportTetherSource: supportHoverNodeId === node.id && node.data?.evidenceRole === 'supporting',
-            isSupportTetherTarget: supportTetherTargetIds.has(node.id),
-        },
-    })), [handleSupportHover, nodes, supportHoverNodeId, supportTetherTargetIds]);
+    const connectionHoverNodeIds = useMemo(
+        () => new Set(connectionHover?.nodeIds || []),
+        [connectionHover]
+    );
+    const nodesForRender = useMemo(() => nodes.map((node) => {
+        const isHoveredConnectionNode = connectionHoverNodeIds.has(node.id);
+
+        return {
+            ...node,
+            data: {
+                ...node.data,
+                onSupportHover: handleSupportHover,
+                isConnectionHighlighted: isHoveredConnectionNode ? true : node.data?.isConnectionHighlighted,
+                connectionHighlightColor: isHoveredConnectionNode ? connectionHover?.color : node.data?.connectionHighlightColor,
+                isSupportTetherSource: supportHoverNodeId === node.id && node.data?.evidenceRole === 'supporting',
+                isSupportTetherTarget: supportTetherTargetIds.has(node.id),
+            },
+        };
+    }), [connectionHover?.color, connectionHoverNodeIds, handleSupportHover, nodes, supportHoverNodeId, supportTetherTargetIds]);
     const supportBandScreenStyle = useCallback((band: SupportingEvidenceBand) => ({
         width: `${band.width}px`,
         height: `${band.height}px`,
@@ -1684,9 +1701,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setNodes((currentNodes) => stripLayoutChoreographyFromNodes(currentNodes));
     }, [clearLayoutChoreographyTimeouts, stripLayoutChoreographyFromNodes]);
 
-    const handleConnectionHover = useCallback((payload: { source?: string; target?: string; color?: string; active?: boolean }) => {
-        const highlightIds = new Set([payload.source, payload.target].filter((id): id is string => Boolean(id)));
-        if (highlightIds.size === 0) {
+    const handleConnectionHover = useCallback((payload: { edgeId?: string; source?: string; target?: string; color?: string; active?: boolean }) => {
+        const highlightIds = [payload.source, payload.target].filter((id): id is string => Boolean(id));
+        if (highlightIds.length === 0) {
             return;
         }
 
@@ -1694,33 +1711,35 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const highlightColor = typeof payload.color === 'string' && payload.color.trim()
             ? payload.color.trim()
             : '#8ee8ff';
+        const highlightNodeIds = new Set(highlightIds);
+
+        setConnectionHover((currentHover) => {
+            if (!shouldHighlight) {
+                return !payload.edgeId || currentHover?.edgeId === payload.edgeId ? null : currentHover;
+            }
+
+            return {
+                edgeId: payload.edgeId,
+                nodeIds: highlightIds,
+                color: highlightColor,
+            };
+        });
+
         setNodes((currentNodes) => currentNodes.map((node) => {
-            if (!highlightIds.has(node.id)) {
+            if (!highlightNodeIds.has(node.id)) {
                 return node;
-            }
-
-            if (
-                Boolean(node.data?.isConnectionHighlighted) === shouldHighlight &&
-                (!shouldHighlight || node.data?.connectionHighlightColor === highlightColor)
-            ) {
-                return node;
-            }
-
-            const nextData = { ...node.data };
-            if (shouldHighlight) {
-                nextData.isConnectionHighlighted = true;
-                nextData.connectionHighlightColor = highlightColor;
-            } else {
-                delete nextData.isConnectionHighlighted;
-                delete nextData.connectionHighlightColor;
             }
 
             return {
                 ...node,
-                data: nextData,
+                data: {
+                    ...node.data,
+                    isConnectionHighlighted: shouldHighlight,
+                    connectionHighlightColor: shouldHighlight ? highlightColor : undefined,
+                },
             };
         }));
-    }, []);
+    }, [setNodes]);
 
     const openImageLightbox = useCallback((images: NodeImageAsset[], initialIndex = 0, nodeTitle?: string, nodeId?: string) => {
         if (!images.length) {
@@ -2054,6 +2073,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     data: {
                         ...edge.data,
                         boardMode: 'strict-grid' as BoardMode,
+                        onConnectionHover: handleConnectionHover,
                         snapEnabled: snapConnectionLabels,
                     }
                 };
@@ -2099,11 +2119,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     routeTargetPoint,
                     sourcePortSide: route.sourceSide,
                     targetPortSide: route.targetSide,
+                    onConnectionHover: handleConnectionHover,
                     snapEnabled: snapConnectionLabels,
                 }
             };
         });
-    }, [snapConnectionLabels]);
+    }, [handleConnectionHover, snapConnectionLabels]);
 
     const buildStrictGridState = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
         const collectActivePortIds = (edgesToInspect: Edge[]) => {
@@ -3127,6 +3148,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
                 const savedNodes = savedState.nodes.filter((node: Node) => node.data?.nodeKind !== 'discovery');
                 const savedEdges = savedState.edges.filter((edge: Edge) => edge.data?.generatedBy !== 'discovery');
+                if (savedNodes.length > 0) {
+                    pendingInitialRestoreViewportFitRef.current = investigationId;
+                    completedInitialRestoreViewportFitRef.current = null;
+                    setIsInitialRestoreViewportSettling(true);
+                } else {
+                    pendingInitialRestoreViewportFitRef.current = null;
+                    setIsInitialRestoreViewportSettling(false);
+                }
                 const savedNodeIdSet = new Set(savedNodes.map((node: Node) => node.id));
                 const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
                     .filter((nodeId) => savedNodeIdSet.has(nodeId));
@@ -3193,6 +3222,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
                 setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
             } else {
+                if (pendingInitialRestoreViewportFitRef.current === investigationId) {
+                    pendingInitialRestoreViewportFitRef.current = null;
+                }
+                setIsInitialRestoreViewportSettling(false);
                 setBoardMode('strict-grid');
                 setNodes([]);
                 setEdges([]);
@@ -3219,6 +3252,49 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             cancelled = true;
         };
     }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, syncStrictGridEdgesToNodes]);
+
+    useEffect(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId) return;
+        if (pendingInitialRestoreViewportFitRef.current !== investigationId) return;
+        if (completedInitialRestoreViewportFitRef.current === investigationId) return;
+        if (nodes.length === 0) return;
+
+        if (initialRestoreViewportFitTimeoutRef.current !== null) {
+            window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
+            initialRestoreViewportFitTimeoutRef.current = null;
+        }
+
+        initialRestoreViewportFitTimeoutRef.current = window.setTimeout(() => {
+            initialRestoreViewportFitTimeoutRef.current = null;
+
+            if (
+                loadedInvestigationIdRef.current !== investigationId ||
+                pendingInitialRestoreViewportFitRef.current !== investigationId ||
+                nodesRef.current.length === 0
+            ) {
+                setIsInitialRestoreViewportSettling(false);
+                return;
+            }
+
+            pendingInitialRestoreViewportFitRef.current = null;
+            completedInitialRestoreViewportFitRef.current = investigationId;
+            fitView({
+                ...BOARD_FIT_VIEW_OPTIONS,
+                duration: 0,
+            });
+            initialRestoreViewportFitTimeoutRef.current = window.setTimeout(() => {
+                initialRestoreViewportFitTimeoutRef.current = null;
+                setIsInitialRestoreViewportSettling(false);
+            }, INITIAL_RESTORE_VIEWPORT_REVEAL_DELAY_MS);
+        }, INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS);
+
+        return () => {
+            if (initialRestoreViewportFitTimeoutRef.current !== null) {
+                window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
+                initialRestoreViewportFitTimeoutRef.current = null;
+            }
+        };
+    }, [fitView, investigationId, loadedInvestigationId, nodes.length]);
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -5146,6 +5222,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
 
     const boardRootClassName = `forensic-board-root relative h-full w-full overflow-hidden ${isBoardCameraMoving ? 'forensic-board-camera-moving' : ''} ${isBoardEmptyIdle ? 'forensic-board-empty-idle' : ''}`;
+    const shouldHoldInitialRestoreViewport = Boolean((investigationId && loadedInvestigationId !== investigationId) || isInitialRestoreViewportSettling);
+    const boardFlowClassName = `relative w-full h-full ${shouldHoldInitialRestoreViewport ? 'forensic-board-restore-prefit' : ''}`;
     const minimapCenterButtonClassName = `forensic-minimap-frame forensic-minimap-center-button pointer-events-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)] ${isBoardCameraMoving ? 'forensic-minimap-center-button-active' : ''}`;
     const utilityRecenterButtonClassName = `forensic-utility-button ${isBoardCameraMoving ? 'forensic-utility-button-camera-moving' : ''}`;
 
@@ -5500,7 +5578,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
             <div
                 ref={flowWrapperRef}
-                className="relative w-full h-full"
+                className={boardFlowClassName}
                 id="detective-board-flow"
                 onPointerDown={onPanePointerDown}
                 onPointerMove={onPanePointerMove}

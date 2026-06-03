@@ -18,6 +18,7 @@ const getZoomMock = vi.fn(() => 0.82)
 let viewportMock = { x: -160, y: -90, zoom: 1 }
 let lastReactFlowProps: Record<string, unknown> | null = null
 type MockNodeComponent = React.ComponentType<Record<string, unknown>>
+type MockEdgeComponent = React.ComponentType<Record<string, unknown>>
 
 vi.mock('reactflow', () => {
   return {
@@ -25,14 +26,18 @@ vi.mock('reactflow', () => {
     default: (props: {
       children?: React.ReactNode
       nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
+      edges?: Array<{ id: string; source: string; target: string; type?: string; data?: Record<string, unknown> }>
       nodeTypes?: Record<string, MockNodeComponent>
+      edgeTypes?: Record<string, MockEdgeComponent>
       proOptions?: Record<string, unknown>
     }) => {
       lastReactFlowProps = props as Record<string, unknown>
       const {
         children,
         nodes = [],
+        edges = [],
         nodeTypes = {},
+        edgeTypes = {},
       } = props
 
       return (
@@ -66,6 +71,24 @@ vi.mock('reactflow', () => {
               data: node.data,
             }),
           )
+        }),
+        edges.map((edge) => {
+          const EdgeComponent = edgeTypes[edge.type || 'default']
+          if (!EdgeComponent) {
+            return null
+          }
+
+          return React.createElement(EdgeComponent, {
+            key: edge.id,
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            sourceX: 0,
+            sourceY: 0,
+            targetX: 100,
+            targetY: 100,
+            data: edge.data,
+          })
         }),
         children,
       )
@@ -217,7 +240,41 @@ vi.mock('../../src/components/CustomNode', () => ({
 
 vi.mock('../../src/components/CustomEdge', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({
+    data,
+    id,
+    source,
+    target,
+  }: {
+    data?: {
+      color?: string
+      onConnectionHover?: (payload: { edgeId?: string; source?: string; target?: string; color?: string; active?: boolean }) => void
+    }
+    id?: string
+    source?: string
+    target?: string
+  }) =>
+    React.createElement(
+      'div',
+      {
+        'data-testid': `mock-edge-label-${id}`,
+        onMouseEnter: () => data?.onConnectionHover?.({
+            edgeId: id,
+            source,
+            target,
+            color: data?.color,
+            active: true,
+        }),
+        onMouseLeave: () => data?.onConnectionHover?.({
+            edgeId: id,
+            source,
+            target,
+            color: data?.color,
+            active: false,
+        }),
+      },
+      'edge label',
+    ),
 }))
 
 vi.mock('../../src/utils/ExportUtils', () => ({
@@ -474,6 +531,187 @@ describe('DetectiveBoard relationship legend', () => {
 
     await waitFor(() => {
       expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.style).toEqual(expect.objectContaining({ width: 288, height: 192 }))
+    })
+  })
+
+  it('keeps relationship label hover highlighting connected nodes on Rabbit Hole boards', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-hover',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-primary-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-a',
+              title: 'Huawei Alternative',
+              summary: 'Huawei offers an AI chip alternative.',
+              fullText: 'Huawei offers an AI chip alternative.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-primary-b',
+            type: 'custom',
+            position: { x: 528, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-b',
+              title: 'Nvidia Controls',
+              summary: 'Nvidia export controls create demand for alternatives.',
+              fullText: 'Nvidia export controls create demand for alternatives.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-support',
+            type: 'custom',
+            position: { x: 960, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-support',
+              title: 'Support Trail',
+              summary: 'Supporting trail should not block relationship hover.',
+              fullText: 'Supporting trail should not block relationship hover.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'timeline_context',
+              rabbitPass: 2,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-primary-a-rabbit-primary-b-HUAWEI_AS_NVIDIA_ALTERNATIVE',
+            source: 'rabbit-primary-a',
+            target: 'rabbit-primary-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'HUAWEI_AS_NVIDIA_ALTERNATIVE', color: '#ff5b78' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-hover')
+
+    await waitFor(() => {
+      const edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: { onConnectionHover?: unknown } }>)[0]
+      expect(edge?.data?.onConnectionHover).toEqual(expect.any(Function))
+    })
+
+    const edge = ((lastReactFlowProps?.edges || []) as Array<{
+      id: string
+      source: string
+      target: string
+      data?: { onConnectionHover?: (payload: { source?: string; target?: string; color?: string; active?: boolean }) => void }
+    }>)[0]
+    expect(edge.source).toBe('rabbit-primary-a')
+    expect(edge.target).toBe('rabbit-primary-b')
+    expect(edge.data?.onConnectionHover).toEqual(expect.any(Function))
+
+    fireEvent.mouseEnter(screen.getByTestId(`mock-edge-label-${edge.id}`))
+
+    await waitFor(() => {
+      const renderedNodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(renderedNodes.find((node) => node.id === 'rabbit-primary-a')?.data?.isConnectionHighlighted).toBe(true)
+      expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('connection highlight')
+      expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent('connection highlight')
+      expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('connection color #ff5b78')
+      expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent('connection color #ff5b78')
+    })
+  })
+
+  it('recenters restored Rabbit Hole boards after strict-grid support layout settles', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-start',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-center-a',
+            type: 'custom',
+            position: { x: 1800, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-center-a',
+              title: 'Rabbit Center A',
+              summary: 'Primary restored Rabbit Hole node.',
+              fullText: 'Primary restored Rabbit Hole node.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-center-b',
+            type: 'custom',
+            position: { x: 2220, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-center-b',
+              title: 'Rabbit Center B',
+              summary: 'Connected restored Rabbit Hole node.',
+              fullText: 'Connected restored Rabbit Hole node.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'vault_search',
+              rabbitPass: 2,
+            },
+          },
+          {
+            id: 'rabbit-center-support',
+            type: 'custom',
+            position: { x: 2640, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-center-support',
+              title: 'Rabbit Center Support',
+              summary: 'Unconnected support trail should not leave the viewport parked in empty space.',
+              fullText: 'Unconnected support trail should not leave the viewport parked in empty space.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'timeline_context',
+              rabbitPass: 3,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-center-a-rabbit-center-b-RELATED',
+            source: 'rabbit-center-a',
+            target: 'rabbit-center-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'RELATED', color: '#8ee8ff' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-start')
+    const boardFlow = document.getElementById('detective-board-flow')
+    expect(boardFlow).toHaveClass('forensic-board-restore-prefit')
+
+    expect(await screen.findByText('Rabbit Center A')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(fitViewMock).toHaveBeenCalledWith({
+        duration: 0,
+        padding: 0.16,
+        minZoom: 0.72,
+        maxZoom: 1,
+      })
+    })
+    await waitFor(() => {
+      expect(boardFlow).not.toHaveClass('forensic-board-restore-prefit')
     })
   })
 

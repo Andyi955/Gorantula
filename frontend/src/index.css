@@ -1586,6 +1586,11 @@ body {
   pointer-events: none;
 }
 
+.forensic-board-restore-prefit {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .forensic-board-root.forensic-board-empty-idle::before {
   animation: forensicBoardEmptyGridDrift 14s linear infinite;
 }
