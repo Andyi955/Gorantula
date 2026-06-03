@@ -129,6 +129,9 @@ const parseHighlightedText = (text: string) => {
 
 const SUPPORTING_EVIDENCE_PREVIEW_MAX_LENGTH = 320;
 const SUPPORTING_EVIDENCE_PREVIEW_ENTITY_LIMIT = 3;
+const EXPANDED_EVIDENCE_BRIEF_MAX_LENGTH = 1180;
+const EXPANDED_EVIDENCE_SIGNAL_LIMIT = 4;
+const EXPANDED_EVIDENCE_LINE_MAX_LENGTH = 210;
 const SUPPORTING_EVIDENCE_ENTITY_STOP_WORDS = new Set([
     'active',
     'crawler result vault',
@@ -240,6 +243,93 @@ const truncateSupportPreview = (text: string) => {
 
     const wordCut = slice.lastIndexOf(' ');
     return `${slice.slice(0, wordCut > 140 ? wordCut : SUPPORTING_EVIDENCE_PREVIEW_MAX_LENGTH).trim()}...`;
+};
+
+const truncateEvidenceLine = (text: string, limit = EXPANDED_EVIDENCE_LINE_MAX_LENGTH) => {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= limit) {
+        return normalized;
+    }
+
+    const slice = normalized.slice(0, limit + 1);
+    const wordCut = slice.lastIndexOf(' ');
+    return `${slice.slice(0, wordCut > 120 ? wordCut : limit).trim()}...`;
+};
+
+const isExpandedBriefMetadataLine = (line: string) =>
+    /^(?:source|sources?|url|query|rationale|rabbit tool|crawler result vault|raw digested facts|final summary|executive summary|intelligence report|report to|from|date|subject)\s*:?\s*/i.test(line) ||
+    /^https?:\/\//i.test(line);
+
+const looksLikeRepetitiveEvidenceDump = (sentence: string) => {
+    const tokens = sentence.toLowerCase().match(/[a-z0-9]+/g) || [];
+    if (tokens.length < 16) {
+        return false;
+    }
+
+    const uniqueRatio = new Set(tokens).size / tokens.length;
+    return uniqueRatio < 0.42;
+};
+
+const splitExpandedEvidenceSentences = (line: string) => {
+    const matches = line.match(/[^.!?]+[.!?]?/g) || [line];
+    return matches
+        .map((sentence) => stripSupportPreviewMarkup(sentence))
+        .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+        .filter((sentence) => sentence.length >= 48 && /[a-z0-9]/i.test(sentence) && !looksLikeRepetitiveEvidenceDump(sentence));
+};
+
+const extractExpandedEvidenceSignals = (text: string) => {
+    const seen = new Set<string>();
+    const signals: string[] = [];
+    const normalizedSource = text
+        .replace(/\r/g, '\n')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/https?:\/\/\S+/gi, ' ');
+
+    normalizedSource.split('\n').forEach((rawLine) => {
+        const line = stripSupportPreviewMarkup(rawLine);
+        if (!line || isExpandedBriefMetadataLine(line)) {
+            return;
+        }
+
+        splitExpandedEvidenceSentences(line).forEach((sentence) => {
+            const normalizedKey = sentence.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            if (!normalizedKey || seen.has(normalizedKey)) {
+                return;
+            }
+
+            seen.add(normalizedKey);
+            signals.push(truncateEvidenceLine(sentence));
+        });
+    });
+
+    return signals;
+};
+
+const getExpandedEvidenceBriefText = (summary?: string, fullText?: string) => {
+    const cleanedSummary = stripSupportPreviewMarkup(summary || '');
+    const source = (fullText || summary || '').trim();
+    if (!source) {
+        return '';
+    }
+
+    const signals = extractExpandedEvidenceSignals(source);
+    const summaryText = cleanedSummary || signals[0] || stripSupportPreviewMarkup(source);
+    const uniqueSignals = signals
+        .filter((signal) => signal.toLowerCase() !== summaryText.toLowerCase())
+        .slice(0, EXPANDED_EVIDENCE_SIGNAL_LIMIT);
+
+    const sections = [`**Brief**\n${truncateEvidenceLine(summaryText, 420)}`];
+    if (uniqueSignals.length > 0) {
+        sections.push(`**Evidence Signals**\n${uniqueSignals.map((signal) => `- ${signal}`).join('\n')}`);
+    }
+
+    const brief = sections.join('\n\n').trim();
+    if (brief.length <= EXPANDED_EVIDENCE_BRIEF_MAX_LENGTH) {
+        return brief;
+    }
+
+    return `${brief.slice(0, EXPANDED_EVIDENCE_BRIEF_MAX_LENGTH).replace(/\s+\S*$/, '').trim()}...`;
 };
 
 const getSupportingEvidencePreviewText = (summary?: string, fullText?: string) => {
@@ -587,9 +677,12 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const collapsedSupportPreview = isCollapsedSupportingEvidence
         ? getSupportingEvidencePreviewText(data.summary, data.fullText)
         : '';
+    const expandedEvidenceBrief = isExpanded
+        ? getExpandedEvidenceBriefText(data.summary, data.fullText)
+        : '';
     const displayContent = isCollapsedSupportingEvidence
         ? collapsedSupportPreview
-        : isExpanded && data.fullText ? data.fullText : data.summary;
+        : isExpanded ? expandedEvidenceBrief || data.summary : data.summary;
     const supportPeekContent = isCollapsedSupportingEvidence
         ? collapsedSupportPreview
         : displayContent;
@@ -680,6 +773,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         : `forensic-node-detail-motion ${isExpanded ? 'forensic-node-detail-expanded' : 'forensic-node-detail-collapsed'}`;
     const supportCompactDetailClassName = isCollapsedSupportingEvidence
         ? `forensic-node-detail-support-compact ${usesCompactSupportImage ? 'forensic-node-detail-support-has-image' : ''}`
+        : '';
+    const expandedBriefDetailClassName = isExpanded
+        ? 'forensic-node-expanded-brief'
         : '';
     const imagePreviewMotionClassName = reducedMotion
         ? 'forensic-node-image-reduced-motion'
@@ -1307,7 +1403,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 <div
                                     ref={detailTextRef}
                                     data-testid="node-detail-motion"
-                                    className={`forensic-node-text ${detailMotionClassName} ${supportCompactDetailClassName} flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    className={`forensic-node-text ${detailMotionClassName} ${supportCompactDetailClassName} ${expandedBriefDetailClassName} flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                     style={isExpanded ? undefined : { maxHeight: COLLAPSED_TEXT_MAX_HEIGHT }}
                                     dangerouslySetInnerHTML={{
                                         __html: parseHighlightedText(displayContent || '')

@@ -2377,6 +2377,20 @@ body {
   isolation: isolate;
 }
 
+.forensic-node-expanded-brief {
+  max-height: 100%;
+  letter-spacing: 0;
+  color: rgba(225, 238, 248, 0.92);
+}
+
+.forensic-node-expanded-brief .text-cyber-green {
+  display: inline-flex;
+  margin: 0.2rem 0 0.05rem;
+  color: #9eefff !important;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .forensic-node-detail-reduced-motion {
   transition: none;
   transform: none;

@@ -64,6 +64,50 @@ describe('CustomNode', () => {
     expect(onReadFull).toHaveBeenCalled()
   })
 
+  it('renders expanded nodes as a formatted evidence brief instead of the full raw dump', async () => {
+    const user = userEvent.setup()
+    render(
+      <CustomNode
+        id="node-expanded-brief"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-expanded-brief',
+          title: 'NERC Alert',
+          summary: '[ORG:NERC] warned that data center load could strain grid reliability near [LOC:Virginia].',
+          fullText: [
+            'Source: https://example.com/nerc-alert',
+            'Rabbit tool: web_search',
+            'Query: NERC Level 3 alert data centers',
+            'Rationale: Track pressure signals',
+            'The NERC alert says hyperscale data center demand is changing peak-load assumptions across multiple regions.',
+            'Dominion Energy filings show the new GS-5 rate class could shift grid upgrade costs toward large customers.',
+            'Meta water permit records describe conflicting annual demand estimates and local scrutiny.',
+            'TAIL RAW PARAGRAPH '.repeat(80),
+          ].join('\n'),
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTitle('Expand'))
+
+    const detail = screen.getByTestId('node-detail-motion')
+    expect(detail).toHaveClass('forensic-node-expanded-brief')
+    expect(detail).toHaveTextContent('Brief')
+    expect(detail).toHaveTextContent('Evidence Signals')
+    expect(detail).toHaveTextContent('NERC')
+    expect(detail).toHaveTextContent('hyperscale data center demand')
+    expect(detail).toHaveTextContent('Dominion Energy filings')
+    expect(detail).not.toHaveTextContent('TAIL RAW PARAGRAPH')
+    expect(detail).not.toHaveTextContent('https://example.com/nerc-alert')
+  })
+
   it('shows merged evidence count for squashed duplicate cards', () => {
     render(
       <CustomNode
