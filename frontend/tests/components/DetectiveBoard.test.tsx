@@ -1016,6 +1016,75 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('opens a formatted dossier reader above relationship and board overlays', async () => {
+    localStorage.setItem(
+      'inv_data_inv-dossier-reader',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-dossier-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 360, height: 240 },
+            data: {
+              id: 'node-dossier-a',
+              title: 'Data Center Water Filing',
+              summary: 'A regulator filing links [ORG:Fermi] data center cooling demand near [LOC:Amarillo] to new water restrictions.',
+              fullText: [
+                'INTELLIGENCE SUMMARY',
+                '',
+                'A regulator filing links [ORG:Fermi] data center cooling demand near [LOC:Amarillo] to new water restrictions.',
+                '',
+                'Source: https://example.com/dossier-water-filing',
+                '',
+                'The filing states that [PERSON:Toby Neugebauer] and higher compute load could change peak withdrawal limits during heat events.',
+              ].join('\n'),
+              sourceURL: 'https://example.com/dossier-water-filing',
+              origin: 'rabbit-hole',
+              rabbitTool: 'web_search',
+              rabbitPass: 2,
+              evidenceRole: 'primary',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-dossier-reader')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-dossier-a')).toBe(true)
+    })
+
+    const restoredNode = ((lastReactFlowProps?.nodes || []) as Array<{
+      id: string
+      data?: { onReadFull?: () => void }
+    }>).find((node) => node.id === 'node-dossier-a')
+
+    act(() => {
+      restoredNode?.data?.onReadFull?.()
+    })
+
+    const overlay = screen.getByTestId('node-dossier-overlay')
+    const dossier = within(overlay)
+
+    expect(overlay).toHaveClass('z-[120]')
+    expect(screen.getByRole('dialog', { name: /data center water filing/i })).toBeInTheDocument()
+    expect(dossier.getByText('Evidence Brief')).toBeInTheDocument()
+    expect(dossier.getByText('Source Detail')).toBeInTheDocument()
+    expect(dossier.getByText('Rabbit Hole')).toBeInTheDocument()
+    expect(dossier.getByText('Web Search')).toBeInTheDocument()
+    expect(dossier.getAllByText('Fermi').some((element) => element.classList.contains('forensic-dossier-entity-chip'))).toBe(true)
+    expect(dossier.getAllByText('Toby Neugebauer').some((element) => element.classList.contains('forensic-dossier-entity-person'))).toBe(true)
+    expect(dossier.getAllByText('Amarillo').some((element) => element.classList.contains('forensic-dossier-entity-loc'))).toBe(true)
+    expect(dossier.queryByText(/\[ORG:Fermi]/i)).not.toBeInTheDocument()
+    expect(dossier.queryByText(/\[PERSON:Toby Neugebauer]/i)).not.toBeInTheDocument()
+    expect(dossier.getAllByRole('link', { name: /https:\/\/example\.com\/dossier-water-filing/i }).length).toBeGreaterThan(0)
+    expect(dossier.queryByText('INTEL_REPORT_FULL')).not.toBeInTheDocument()
+  })
+
   it('restores the minimized legend when the saved preference is hidden', () => {
     localStorage.setItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY, 'false')
 

@@ -89,7 +89,7 @@ import {
 } from './supportingEvidenceLayer';
 import { getMiniMapNodeColor } from './detectiveBoardMinimap';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle, ExternalLink } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -222,6 +222,193 @@ type VisibleLegendStyle = {
 
 const shouldPreserveExistingFullText = (summary?: string, fullText?: string) =>
     Boolean(summary && fullText && summary !== fullText);
+
+type NodeDossier = {
+    title: string;
+    summary: string;
+    fullText: string;
+    sourceURL?: string;
+    origin?: string;
+    rabbitTool?: string;
+    rabbitPass?: number;
+    evidenceRole?: string;
+    images?: NodeImageAsset[];
+};
+
+type NodeDossierInput = {
+    id?: string;
+    title?: string;
+    summary?: string;
+    fullText?: string;
+    sourceURL?: string;
+    origin?: string;
+    rabbitTool?: string;
+    rabbitPass?: number;
+    evidenceRole?: string;
+    images?: readonly NodeImageAsset[];
+};
+
+type DossierBodyBlock = {
+    kind: 'heading' | 'paragraph';
+    text: string;
+};
+
+const DOSSIER_INLINE_URL_PATTERN = /(https?:\/\/[^\s,)\]]+|vault:\/\/[^\s,)\]]+|timeline:\/\/[^\s,)\]]+|rabbit:\/\/[^\s,)\]]+)/i;
+const DOSSIER_ENTITY_PATTERN = /\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)]/i;
+const DOSSIER_RICH_TEXT_PATTERN = new RegExp(
+    `(${DOSSIER_INLINE_URL_PATTERN.source}|${DOSSIER_ENTITY_PATTERN.source})`,
+    'gi'
+);
+const DOSSIER_HEADING_PATTERN = /^(#{1,4}\s*)?[A-Z0-9][A-Z0-9\s:/&().,'"-]{8,}$/;
+
+const normalizeDossierText = (text?: string) =>
+    (text || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+const getDossierBrief = (summary?: string, fullText?: string) => {
+    const source = normalizeDossierText(summary) || normalizeDossierText(fullText);
+    if (!source) {
+        return 'No dossier text has been captured for this evidence card yet.';
+    }
+
+    const firstParagraph = source.split(/\n{2,}/)[0] || source;
+    const firstSentences = firstParagraph.match(/[^.!?]+[.!?]+(?:\s|$)/g)?.slice(0, 2).join(' ').trim();
+    const brief = firstSentences || firstParagraph;
+
+    if (brief.length <= 420) {
+        return brief;
+    }
+
+    return `${brief.slice(0, 416).trimEnd()}...`;
+};
+
+const getDossierBodyBlocks = (fullText?: string): DossierBodyBlock[] => {
+    const normalized = normalizeDossierText(fullText);
+    if (!normalized) {
+        return [];
+    }
+
+    return normalized
+        .split(/\n{2,}/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean)
+        .map((paragraph) => {
+            const singleLine = paragraph.replace(/\s+/g, ' ').trim();
+            const heading = singleLine
+                .replace(/^#{1,4}\s*/, '')
+                .replace(/[_-]+/g, ' ')
+                .trim();
+
+            if (paragraph.split('\n').length === 1 && heading.length <= 110 && DOSSIER_HEADING_PATTERN.test(singleLine)) {
+                return { kind: 'heading', text: heading };
+            }
+
+            return { kind: 'paragraph', text: paragraph };
+        });
+};
+
+const getDossierSourceLinks = (dossier: NodeDossier) => {
+    const explicitSources = [
+        dossier.sourceURL,
+        ...(dossier.images || []).map((image) => image.sourceURL || image.path),
+    ];
+    const textSources = normalizeDossierText(dossier.fullText).match(new RegExp(DOSSIER_INLINE_URL_PATTERN.source, 'gi')) || [];
+
+    return Array.from(new Set(
+        [...explicitSources, ...textSources]
+            .flatMap((source) => (source || '').split(','))
+            .map((source) => source.trim())
+            .filter(Boolean)
+    ));
+};
+
+const isDossierLink = (text: string) => DOSSIER_INLINE_URL_PATTERN.test(text);
+
+const getDossierEntityClassName = (type: string) => {
+    switch (type.toUpperCase()) {
+        case 'PERSON':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-person';
+        case 'ORG':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-org';
+        case 'LOC':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-loc';
+        case 'DATE':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-date';
+        case 'TIME':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-time';
+        default:
+            return 'forensic-dossier-entity-chip';
+    }
+};
+
+const formatDossierMetaLabel = (value?: string | number) =>
+    String(value || '')
+        .replace(/[_-]+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const renderDossierTextWithLinks = (text: string) => {
+    const fragments: React.ReactNode[] = [];
+    let lastIndex = 0;
+
+    Array.from(text.matchAll(DOSSIER_RICH_TEXT_PATTERN)).forEach((match, index) => {
+        const token = match[0];
+        const tokenIndex = match.index ?? 0;
+
+        if (tokenIndex > lastIndex) {
+            fragments.push(
+                <React.Fragment key={`text-${index}-${lastIndex}`}>
+                    {text.slice(lastIndex, tokenIndex)}
+                </React.Fragment>
+            );
+        }
+
+        if (isDossierLink(token)) {
+            fragments.push(
+                <a
+                    key={`link-${index}-${tokenIndex}`}
+                    href={token}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="forensic-dossier-inline-link"
+                >
+                    {token}
+                </a>
+            );
+        } else {
+            const entityMatch = token.match(DOSSIER_ENTITY_PATTERN);
+            if (entityMatch) {
+                fragments.push(
+                    <span
+                        key={`entity-${index}-${tokenIndex}`}
+                        className={getDossierEntityClassName(entityMatch[1])}
+                    >
+                        {entityMatch[2]}
+                    </span>
+                );
+            }
+        }
+
+        lastIndex = tokenIndex + token.length;
+    });
+
+    if (lastIndex < text.length) {
+        fragments.push(
+            <React.Fragment key={`text-tail-${lastIndex}`}>
+                {text.slice(lastIndex)}
+            </React.Fragment>
+        );
+    }
+
+    if (fragments.length === 0) {
+        return text;
+    }
+
+    return fragments;
+};
 
 const mergeEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[]) => {
     const persistedEdges = currentEdges.filter((edge) => edge.data?.generatedBy !== 'discovery');
@@ -1347,7 +1534,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
 
-    const [selectedContent, setSelectedContent] = useState<string | null>(null);
+    const [selectedDossier, setSelectedDossier] = useState<NodeDossier | null>(null);
     const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, rawTag?: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
@@ -1457,6 +1644,23 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds;
     analysisModeRef.current = analysisMode;
 
+    const openNodeDossier = useCallback((nodeData?: NodeDossierInput) => {
+        const summary = normalizeDossierText(nodeData?.summary);
+        const fullText = normalizeDossierText(nodeData?.fullText || nodeData?.summary);
+
+        setSelectedDossier({
+            title: normalizeDossierText(nodeData?.title) || 'Evidence Dossier',
+            summary,
+            fullText,
+            sourceURL: nodeData?.sourceURL,
+            origin: nodeData?.origin,
+            rabbitTool: nodeData?.rabbitTool,
+            rabbitPass: nodeData?.rabbitPass,
+            evidenceRole: nodeData?.evidenceRole,
+            images: nodeData?.images ? [...nodeData.images] : undefined,
+        });
+    }, []);
+
     const supportingEvidenceLayer = useMemo(
         () => layoutSupportingEvidenceNodes(nodes, edges).band,
         [nodes, edges]
@@ -1499,6 +1703,33 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             },
         };
     }), [connectionHover?.color, connectionHoverNodeIds, handleSupportHover, nodes, supportHoverNodeId, supportTetherTargetIds]);
+    const selectedDossierBrief = useMemo(
+        () => selectedDossier ? getDossierBrief(selectedDossier.summary, selectedDossier.fullText) : '',
+        [selectedDossier]
+    );
+    const selectedDossierBodyBlocks = useMemo(
+        () => selectedDossier ? getDossierBodyBlocks(selectedDossier.fullText) : [],
+        [selectedDossier]
+    );
+    const selectedDossierSourceLinks = useMemo(
+        () => selectedDossier ? getDossierSourceLinks(selectedDossier).slice(0, 8) : [],
+        [selectedDossier]
+    );
+    const selectedDossierMetaChips = useMemo(() => {
+        if (!selectedDossier) {
+            return [];
+        }
+
+        const chips = [
+            selectedDossier.origin ? formatDossierMetaLabel(selectedDossier.origin) : 'Evidence',
+            selectedDossier.rabbitTool ? formatDossierMetaLabel(selectedDossier.rabbitTool) : '',
+            selectedDossier.rabbitPass ? `Pass ${selectedDossier.rabbitPass}` : '',
+            selectedDossier.evidenceRole ? formatDossierMetaLabel(selectedDossier.evidenceRole) : '',
+            selectedDossier.images?.length ? `${selectedDossier.images.length} image${selectedDossier.images.length === 1 ? '' : 's'}` : '',
+        ];
+
+        return chips.filter(Boolean);
+    }, [selectedDossier]);
     const supportBandScreenStyle = useCallback((band: SupportingEvidenceBand) => ({
         width: `${band.width}px`,
         height: `${band.height}px`,
@@ -2926,7 +3157,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 lastFocusedRef.current = focusNodeId;
 
                 // Close any open side panels (intel reports) to show the node clearly
-                setSelectedContent(null);
+                setSelectedDossier(null);
 
                 // Center and zoom in slightly on the node
                 const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
@@ -3327,7 +3558,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         },
                         data: {
                             ...stableNode.data,
-                            onReadFull: () => setSelectedContent(stableNode.data.fullText),
+                            onReadFull: () => openNodeDossier(stableNode.data),
                             onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                             onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                             onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -3412,7 +3643,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [finishBoardRestoreLoad, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, startBoardRestoreLoad, syncStrictGridEdgesToNodes]);
+    }, [finishBoardRestoreLoad, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, startBoardRestoreLoad, syncStrictGridEdgesToNodes]);
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -4076,7 +4307,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     style: frame,
                     data: {
                         ...demoNode,
-                        onReadFull: () => setSelectedContent(demoNode.fullText),
+                        onReadFull: () => openNodeDossier(demoNode),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4132,7 +4363,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             style: frame,
                             data: {
                                 ...demoNode,
-                                onReadFull: () => setSelectedContent(demoNode.fullText),
+                                onReadFull: () => openNodeDossier(demoNode),
                                 isDeepDiveSource: false,
                                 expanded: false,
                                 boardMode: 'strict-grid' as BoardMode,
@@ -4180,6 +4411,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         onDeepDiveNode,
         onNavigateToChild,
         openImageLightbox,
+        openNodeDossier,
         scheduleNodeEntryCleanup,
         startConnectLayoutChoreography,
     ]);
@@ -4333,7 +4565,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 targetPosition: Position.Left,
                 data: {
                     ...demoNode,
-                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onReadFull: () => openNodeDossier(demoNode),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4392,7 +4624,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(demoNodes);
         setEdges(demoEdges);
-    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, tagStyles]);
+    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, tagStyles]);
 
     const playBrowserQaTextFitDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
@@ -4434,7 +4666,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 targetPosition: Position.Left,
                 data: {
                     ...demoNode,
-                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onReadFull: () => openNodeDossier(demoNode),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4453,7 +4685,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
 
         setNodes(demoNodes);
-    }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox]);
+    }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier]);
 
     const playBrowserQaRabbitHoleDemo = useCallback((detail?: BrowserQaRabbitHoleDemoDetail | null) => {
         const requestedInvestigationId = typeof detail?.investigationId === 'string'
@@ -4504,7 +4736,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     origin: 'rabbit-hole',
                     rabbitState: 'provisional',
                     rabbitPass: 1,
-                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onReadFull: () => openNodeDossier(demoNode),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4591,6 +4823,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         onDeepDiveNode,
         onNavigateToChild,
         openImageLightbox,
+        openNodeDossier,
         snapConnectionLabels,
         tagStyles,
     ]);
@@ -4681,7 +4914,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         nodeIDs: [QA_EVIDENCE_EXPANSION_NODE_ID],
                     },
                 ],
-                onReadFull: () => setSelectedContent(fullText),
+                onReadFull: () => openNodeDossier({
+                    title: 'QA Evidence Expansion Case File',
+                    summary,
+                    fullText,
+                    sourceURL: 'https://example.com/qa-evidence-expansion',
+                }),
                 onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                 onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4720,6 +4958,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         onDeepDiveNode,
         onNavigateToChild,
         openImageLightbox,
+        openNodeDossier,
     ]);
 
     useEffect(() => {
@@ -4841,7 +5080,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     style: frame,
                     data: {
                         ...node,
-                        onReadFull: () => setSelectedContent(node.fullText),
+                        onReadFull: () => openNodeDossier(node),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -5068,7 +5307,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [addPendingIntegrationNodeId, applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
+    }, [addPendingIntegrationNodeId, applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, openNodeDossier, scheduleNodeEntryCleanup]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -5085,7 +5324,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 title: 'NEW_EVIDENCE',
                 summary: '',
                 fullText: '',
-                onReadFull: () => setSelectedContent(''),
+                onReadFull: () => openNodeDossier({ id, title: 'NEW_EVIDENCE', summary: '', fullText: '' }),
                 onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                 onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
@@ -5107,7 +5346,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
+    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, setNodes, setEditingNodeId]);
 
     // Enhanced node data that includes all necessary context and stable handlers
     // We update nodes whenever stable props like sharedSocket or returnVaultId change
@@ -5248,7 +5487,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             setNodes([]);
             setEdges([]);
             setEdgeReasoning(null);
-            setSelectedContent(null);
+            setSelectedDossier(null);
             setHasConnectedDots(false);
         }
     };
@@ -6447,11 +6686,100 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 </div>
             )}
 
-            {selectedContent && (
-                <div className="forensic-overlay-panel absolute right-0 top-0 z-30 h-full w-1/3 overflow-y-auto border-l p-8 backdrop-blur-md">
-                    <button onClick={() => setSelectedContent(null)} className="mb-6 border border-[rgba(129,227,255,0.28)] px-4 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--forensic-accent-muted)] transition-colors hover:bg-[rgba(129,227,255,0.14)] hover:text-white">[ CLOSE TERMINAL ]</button>
-                    <h2 className="mb-6 text-xl font-black text-[var(--forensic-accent)] underline decoration-[rgba(170,212,255,0.55)] underline-offset-8">INTEL_REPORT_FULL</h2>
-                    <div className="whitespace-pre-wrap font-mono text-sm leading-loose text-gray-300">{selectedContent}</div>
+            {selectedDossier && (
+                <div
+                    data-testid="node-dossier-overlay"
+                    className="pointer-events-none absolute inset-0 z-[120] flex justify-end p-4"
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="node-dossier-title"
+                        className="forensic-dossier-reader pointer-events-auto flex h-full w-[min(46rem,calc(100vw-2rem))] flex-col overflow-hidden"
+                    >
+                        <div className="flex items-start justify-between gap-4 border-b border-[rgba(129,227,255,0.14)] px-6 py-5">
+                            <div className="min-w-0">
+                                <div className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--forensic-accent-muted)]">
+                                    Dossier
+                                </div>
+                                <h2 id="node-dossier-title" className="mt-2 text-xl font-black leading-tight text-[var(--forensic-accent)]">
+                                    {selectedDossier.title}
+                                </h2>
+                                {selectedDossierMetaChips.length > 0 && (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {selectedDossierMetaChips.map((chip) => (
+                                            <span key={chip} className="forensic-dossier-chip">
+                                                {chip}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedDossier(null)}
+                                className="shrink-0 rounded-lg border border-[rgba(129,227,255,0.24)] bg-[rgba(129,227,255,0.06)] p-2 text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.42)] hover:bg-[rgba(129,227,255,0.14)] hover:text-white"
+                                title="Close dossier"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                            <section className="forensic-dossier-brief">
+                                <div className="forensic-dossier-section-label">Evidence Brief</div>
+                                <p>{renderDossierTextWithLinks(selectedDossierBrief)}</p>
+                            </section>
+
+                            {selectedDossierSourceLinks.length > 0 && (
+                                <section className="mt-5">
+                                    <div className="forensic-dossier-section-label">Sources</div>
+                                    <div className="mt-2 grid gap-2">
+                                        {selectedDossierSourceLinks.map((source, index) => (
+                                            <a
+                                                key={`${source}-${index}`}
+                                                href={source}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="forensic-dossier-source-link"
+                                            >
+                                                <span className="truncate">{source}</span>
+                                                <ExternalLink size={13} />
+                                            </a>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+
+                            <section className="mt-6">
+                                <div className="forensic-dossier-section-label">Source Detail</div>
+                                <div className="mt-3 space-y-3">
+                                    {selectedDossierBodyBlocks.length > 0 ? (
+                                        selectedDossierBodyBlocks.map((block, index) => (
+                                            block.kind === 'heading' ? (
+                                                <h3 key={`${block.kind}-${index}`} className="forensic-dossier-body-heading">
+                                                    {block.text}
+                                                </h3>
+                                            ) : (
+                                                <p key={`${block.kind}-${index}`} className="forensic-dossier-body-paragraph">
+                                                    {block.text.split('\n').map((line, lineIndex) => (
+                                                        <React.Fragment key={`${line}-${lineIndex}`}>
+                                                            {lineIndex > 0 && <br />}
+                                                            {renderDossierTextWithLinks(line)}
+                                                        </React.Fragment>
+                                                    ))}
+                                                </p>
+                                            )
+                                        ))
+                                    ) : (
+                                        <p className="forensic-dossier-body-paragraph">
+                                            No extended source text is available for this card yet.
+                                        </p>
+                                    )}
+                                </div>
+                            </section>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

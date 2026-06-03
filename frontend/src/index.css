@@ -2271,6 +2271,153 @@ body {
     radial-gradient(circle at top right, rgba(129, 227, 255, 0.06), transparent 30%);
 }
 
+.forensic-dossier-reader {
+  border: 1px solid rgba(129, 227, 255, 0.2);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(8, 14, 20, 0.985), rgba(4, 8, 13, 0.99)),
+    radial-gradient(circle at top right, rgba(129, 227, 255, 0.1), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(220, 54, 91, 0.08), transparent 32%);
+  box-shadow:
+    0 32px 72px rgba(0, 0, 0, 0.68),
+    0 0 0 1px rgba(255, 255, 255, 0.025) inset,
+    0 0 48px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-dossier-chip {
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(129, 227, 255, 0.07);
+  padding: 0.24rem 0.5rem;
+  color: rgba(194, 238, 255, 0.82);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-section-label {
+  color: rgba(129, 227, 255, 0.72);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-brief {
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(129, 227, 255, 0.07), rgba(129, 227, 255, 0.025)),
+    rgba(4, 10, 15, 0.72);
+  padding: 1rem;
+}
+
+.forensic-dossier-brief p {
+  margin-top: 0.65rem;
+  color: rgba(234, 248, 255, 0.92);
+  font-size: 0.92rem;
+  line-height: 1.78;
+}
+
+.forensic-dossier-source-link {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(2, 8, 12, 0.58);
+  padding: 0.62rem 0.75rem;
+  color: rgba(178, 232, 255, 0.78);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.forensic-dossier-source-link:hover {
+  border-color: rgba(129, 227, 255, 0.34);
+  background: rgba(129, 227, 255, 0.1);
+  color: white;
+}
+
+.forensic-dossier-body-heading {
+  border-left: 2px solid rgba(129, 227, 255, 0.32);
+  padding-left: 0.75rem;
+  color: rgba(215, 244, 255, 0.92);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-body-paragraph {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(1, 6, 10, 0.48);
+  padding: 0.9rem 1rem;
+  color: rgba(219, 232, 238, 0.86);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.72;
+}
+
+.forensic-dossier-inline-link {
+  color: rgba(129, 227, 255, 0.88);
+  text-decoration: underline;
+  text-decoration-color: rgba(129, 227, 255, 0.35);
+  text-underline-offset: 0.22em;
+  word-break: break-word;
+}
+
+.forensic-dossier-inline-link:hover {
+  color: white;
+  text-decoration-color: rgba(255, 255, 255, 0.7);
+}
+
+.forensic-dossier-entity-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid rgba(129, 227, 255, 0.38);
+  border-radius: 5px;
+  background: rgba(129, 227, 255, 0.12);
+  padding: 0.08rem 0.38rem;
+  color: white;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  text-transform: uppercase;
+  vertical-align: 0.08em;
+}
+
+.forensic-dossier-entity-person {
+  border-color: rgba(213, 128, 255, 0.56);
+  background: rgba(188, 19, 254, 0.22);
+}
+
+.forensic-dossier-entity-org {
+  border-color: rgba(129, 227, 255, 0.56);
+  background: rgba(129, 227, 255, 0.18);
+}
+
+.forensic-dossier-entity-loc {
+  border-color: rgba(249, 115, 22, 0.56);
+  background: rgba(249, 115, 22, 0.2);
+}
+
+.forensic-dossier-entity-date,
+.forensic-dossier-entity-time {
+  border-color: rgba(234, 179, 8, 0.56);
+  background: rgba(234, 179, 8, 0.18);
+}
+
 .forensic-node-shell {
   background:
     linear-gradient(180deg, rgba(18, 27, 36, 0.98), rgba(10, 16, 23, 0.98)),
