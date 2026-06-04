@@ -266,12 +266,9 @@ func buildRabbitHolePassPrompt(originalPrompt string, passNumber int, suggestedQ
 func rabbitHoleEvidenceSummaries(records []RabbitHoleEvidenceRecord) []string {
 	summaries := make([]string, 0, len(records))
 	for _, record := range records {
-		content := strings.TrimSpace(record.Content)
+		content := rabbitHoleExcerpt(record.Content, 1200, 0)
 		if content == "" {
 			continue
-		}
-		if len([]rune(content)) > 900 {
-			content = string([]rune(content)[:900])
 		}
 		summaries = append(summaries, fmt.Sprintf("[%s] %s\n%s", record.Tool, record.Source, content))
 	}

@@ -2322,8 +2322,92 @@ body {
   line-height: 1.78;
 }
 
+.forensic-dossier-context-note {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 0.7rem;
+  border: 1px solid rgba(255, 67, 108, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 67, 108, 0.08);
+  padding: 0.26rem 0.55rem;
+  color: rgba(255, 190, 204, 0.84);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-signal-panel {
+  margin-top: 1rem;
+  border-top: 1px solid rgba(129, 227, 255, 0.1);
+  padding-top: 0.9rem;
+}
+
+.forensic-dossier-signal-list {
+  display: grid;
+  gap: 0.58rem;
+  margin-top: 0.65rem;
+  color: rgba(225, 241, 248, 0.9);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  line-height: 1.62;
+  list-style: none;
+}
+
+.forensic-dossier-signal-list li {
+  position: relative;
+  padding-left: 1rem;
+}
+
+.forensic-dossier-signal-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.74em;
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: rgba(255, 67, 108, 0.82);
+  box-shadow: 0 0 12px rgba(255, 67, 108, 0.42);
+}
+
+.forensic-dossier-source-toggle {
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(129, 227, 255, 0.06);
+  padding: 0.4rem 0.72rem;
+  color: rgba(198, 240, 255, 0.84);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.forensic-dossier-source-toggle:hover {
+  border-color: rgba(129, 227, 255, 0.4);
+  background: rgba(129, 227, 255, 0.12);
+  color: white;
+}
+
+.forensic-dossier-source-summary {
+  margin-top: 0.75rem;
+  border: 1px dashed rgba(129, 227, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(1, 6, 10, 0.36);
+  padding: 0.78rem 0.9rem;
+  color: rgba(174, 203, 215, 0.7);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.58;
+}
+
 .forensic-dossier-source-link {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
@@ -2338,20 +2422,50 @@ body {
   transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
 }
 
+.forensic-dossier-source-link-internal,
+.forensic-dossier-source-link-static {
+  color: rgba(255, 196, 209, 0.82);
+}
+
+.forensic-dossier-source-link-internal {
+  cursor: pointer;
+  text-align: left;
+}
+
+.forensic-dossier-source-link-static {
+  cursor: default;
+}
+
 .forensic-dossier-source-link:hover {
   border-color: rgba(129, 227, 255, 0.34);
   background: rgba(129, 227, 255, 0.1);
   color: white;
 }
 
+.forensic-dossier-source-link-internal:hover {
+  border-color: rgba(255, 67, 108, 0.36);
+  background: rgba(255, 67, 108, 0.1);
+}
+
 .forensic-dossier-body-heading {
-  border-left: 2px solid rgba(129, 227, 255, 0.32);
+  border-left: 2px solid rgba(129, 227, 255, 0.58);
   padding-left: 0.75rem;
-  color: rgba(215, 244, 255, 0.92);
+  color: rgba(158, 235, 255, 0.96);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.75rem;
   font-weight: 900;
   letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-body-subheading {
+  border-left: 2px solid rgba(255, 67, 108, 0.72);
+  padding-left: 0.65rem;
+  color: rgba(255, 183, 198, 0.96);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
@@ -2366,6 +2480,121 @@ body {
   line-height: 1.72;
 }
 
+.forensic-dossier-body-list {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid rgba(129, 227, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(1, 6, 10, 0.42);
+  padding: 0.85rem 1rem 0.85rem 1.35rem;
+  color: rgba(219, 232, 238, 0.88);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.68;
+  list-style: none;
+}
+
+.forensic-dossier-body-list li {
+  position: relative;
+  padding-left: 0.8rem;
+}
+
+.forensic-dossier-body-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.76em;
+  width: 0.28rem;
+  height: 0.28rem;
+  border-radius: 999px;
+  background: rgba(129, 227, 255, 0.76);
+  box-shadow: 0 0 10px rgba(129, 227, 255, 0.34);
+}
+
+.forensic-dossier-body-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(129, 227, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(1, 6, 10, 0.48);
+}
+
+.forensic-dossier-body-table {
+  width: 100%;
+  min-width: 32rem;
+  border-collapse: collapse;
+  color: rgba(219, 232, 238, 0.88);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.62;
+}
+
+.forensic-dossier-body-table th,
+.forensic-dossier-body-table td {
+  border-bottom: 1px solid rgba(129, 227, 255, 0.08);
+  padding: 0.7rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.forensic-dossier-body-table th {
+  color: rgba(129, 227, 255, 0.78);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-body-table:not(:has(thead)) td:first-child {
+  color: rgba(235, 247, 252, 0.94);
+  font-weight: 900;
+}
+
+.forensic-dossier-body-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.forensic-dossier-body-table th:first-child,
+.forensic-dossier-body-table td:first-child {
+  min-width: 8.75rem;
+}
+
+.forensic-dossier-body-table th:nth-child(2),
+.forensic-dossier-body-table td:nth-child(2) {
+  min-width: 13rem;
+}
+
+.forensic-dossier-body-table th:last-child,
+.forensic-dossier-body-table td:last-child {
+  min-width: 11rem;
+}
+
+.forensic-dossier-excerpt-marker {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid rgba(255, 67, 108, 0.18);
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 67, 108, 0.1), rgba(129, 227, 255, 0.06));
+  padding: 0.32rem 0.62rem;
+  color: rgba(255, 190, 204, 0.82);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.forensic-dossier-strong {
+  color: rgba(237, 251, 255, 0.98);
+  font-weight: 900;
+}
+
 .forensic-dossier-inline-link {
   color: rgba(129, 227, 255, 0.88);
   text-decoration: underline;
@@ -2377,6 +2606,18 @@ body {
 .forensic-dossier-inline-link:hover {
   color: white;
   text-decoration-color: rgba(255, 255, 255, 0.7);
+}
+
+.forensic-dossier-internal-ref {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid rgba(255, 67, 108, 0.22);
+  border-radius: 5px;
+  background: rgba(255, 67, 108, 0.08);
+  padding: 0.04rem 0.28rem;
+  color: rgba(255, 196, 209, 0.9);
+  overflow-wrap: anywhere;
+  vertical-align: 0.08em;
 }
 
 .forensic-dossier-entity-chip {

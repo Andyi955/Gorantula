@@ -248,18 +248,49 @@ type NodeDossierInput = {
     images?: readonly NodeImageAsset[];
 };
 
-type DossierBodyBlock = {
-    kind: 'heading' | 'paragraph';
-    text: string;
-};
+type DossierBodyBlock =
+    | {
+        kind: 'heading';
+        text: string;
+        level: number;
+    }
+    | {
+        kind: 'paragraph';
+        lines: string[];
+    }
+    | {
+        kind: 'list';
+        items: string[];
+    }
+    | {
+        kind: 'table';
+        hasHeader: boolean;
+        rows: string[][];
+    }
+    | {
+        kind: 'excerpt';
+        text: string;
+    };
 
 const DOSSIER_INLINE_URL_PATTERN = /(https?:\/\/[^\s,)\]]+|vault:\/\/[^\s,)\]]+|timeline:\/\/[^\s,)\]]+|rabbit:\/\/[^\s,)\]]+)/i;
 const DOSSIER_ENTITY_PATTERN = /\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)]/i;
-const DOSSIER_RICH_TEXT_PATTERN = new RegExp(
-    `(${DOSSIER_INLINE_URL_PATTERN.source}|${DOSSIER_ENTITY_PATTERN.source})`,
-    'gi'
-);
+const DOSSIER_MARKDOWN_BOLD_PATTERN = /\*\*([^*]+)\*\*/i;
 const DOSSIER_HEADING_PATTERN = /^(#{1,4}\s*)?[A-Z0-9][A-Z0-9\s:/&().,'"-]{8,}$/;
+const DOSSIER_SEPARATOR_PATTERN = /^[-_*]{3,}$/;
+const DOSSIER_BULLET_PATTERN = /^\s*[-*+]\s+/;
+const DOSSIER_TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
+const DOSSIER_EXCERPT_MARKER_PATTERN = /^(?:\.{3}|…|\[Excerpt begins mid-source]|\[Excerpt continues])$/i;
+const DOSSIER_EXCERPT_PREFIX_PATTERN = /^\s*(?:\.{3}|…)\s+(?=\S)/;
+const DOSSIER_EXCERPT_SUFFIX_PATTERN = /\s+(?:\.{3}|…)\s*$/;
+const DOSSIER_METADATA_LINE_PATTERN = /^(?:Rabbit tool|Query|Rationale|Source|Date|Subject|Based on|Content):/i;
+const DOSSIER_KEY_SIGNAL_LIMIT = 5;
+const DOSSIER_KEY_SIGNAL_MIN_LENGTH = 32;
+const DOSSIER_BOILERPLATE_PATTERNS = [
+    /^INTEL_REPORT_FULL$/i,
+    /^#?\s*Crawler Result Vault\b/i,
+    /^EXECUTIVE SUMMARY REPORT TO:/i,
+    /^INTELLIGENCE SUMMARY REPORT TO:/i,
+];
 
 const normalizeDossierText = (text?: string) =>
     (text || '')
@@ -285,29 +316,304 @@ const getDossierBrief = (summary?: string, fullText?: string) => {
     return `${brief.slice(0, 416).trimEnd()}...`;
 };
 
+const cleanDossierInlineMarkdown = (text: string) => text
+    .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/gi, '$1 $2')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(DOSSIER_EXCERPT_PREFIX_PATTERN, '')
+    .replace(DOSSIER_EXCERPT_SUFFIX_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const cleanDossierPlainFragment = (text: string) => text
+    .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/gi, '$1 $2')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(DOSSIER_EXCERPT_PREFIX_PATTERN, '')
+    .replace(DOSSIER_EXCERPT_SUFFIX_PATTERN, '')
+    .replace(/\s+/g, ' ');
+
+const cleanDossierHeadingText = (text: string) => cleanDossierInlineMarkdown(text)
+    .replace(/^#{1,6}\s*/, '')
+    .replace(DOSSIER_BULLET_PATTERN, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/^[-_*]+\s*/, '')
+    .trim();
+
+const getDossierExcerptMarkerText = (line: string) => {
+    const trimmed = line.trim();
+    if (!DOSSIER_EXCERPT_MARKER_PATTERN.test(trimmed)) {
+        return '';
+    }
+    if (/^\[Excerpt begins mid-source]$/i.test(trimmed)) {
+        return 'Excerpt begins mid-source';
+    }
+    if (/^\[Excerpt continues]$/i.test(trimmed) || /^(?:\.{3}|…)$/i.test(trimmed)) {
+        return 'Excerpt continues';
+    }
+    return '';
+};
+
+const hasDossierExcerptPrefix = (line: string) => DOSSIER_EXCERPT_PREFIX_PATTERN.test(line);
+const hasDossierExcerptSuffix = (line: string) => DOSSIER_EXCERPT_SUFFIX_PATTERN.test(line);
+const stripDossierExcerptAffixes = (line: string) => line
+    .replace(DOSSIER_EXCERPT_PREFIX_PATTERN, '')
+    .replace(DOSSIER_EXCERPT_SUFFIX_PATTERN, '')
+    .trim();
+
+const normalizeDossierTableLine = (line: string) => stripDossierExcerptAffixes(line);
+
+const parseDossierTableRow = (line: string) => line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cleanDossierInlineMarkdown(cell))
+    .filter(Boolean);
+
+const isDossierTableSeparatorRow = (cells: string[]) =>
+    cells.length > 0 && cells.every((cell) => /^:?-{2,}:?$/.test(cell.replace(/\s+/g, '')));
+
+const shouldSkipDossierLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed || DOSSIER_SEPARATOR_PATTERN.test(trimmed)) {
+        return true;
+    }
+
+    if (/^Source:\s*(?:https?:\/\/|vault:\/\/|timeline:\/\/|rabbit:\/\/)/i.test(trimmed)) {
+        return true;
+    }
+
+    return DOSSIER_BOILERPLATE_PATTERNS.some((pattern) => pattern.test(trimmed));
+};
+
 const getDossierBodyBlocks = (fullText?: string): DossierBodyBlock[] => {
     const normalized = normalizeDossierText(fullText);
     if (!normalized) {
         return [];
     }
 
-    return normalized
-        .split(/\n{2,}/)
-        .map((paragraph) => paragraph.trim())
-        .filter(Boolean)
-        .map((paragraph) => {
-            const singleLine = paragraph.replace(/\s+/g, ' ').trim();
-            const heading = singleLine
-                .replace(/^#{1,4}\s*/, '')
-                .replace(/[_-]+/g, ' ')
-                .trim();
+    const blocks: DossierBodyBlock[] = [];
+    let paragraphLines: string[] = [];
+    let listItems: string[] = [];
+    let tableRows: string[][] = [];
+    let tableHasHeader = false;
 
-            if (paragraph.split('\n').length === 1 && heading.length <= 110 && DOSSIER_HEADING_PATTERN.test(singleLine)) {
-                return { kind: 'heading', text: heading };
+    const flushParagraph = () => {
+        const lines = paragraphLines
+            .map(cleanDossierInlineMarkdown)
+            .filter(Boolean);
+
+        if (lines.length > 0) {
+            blocks.push({ kind: 'paragraph', lines });
+        }
+
+        paragraphLines = [];
+    };
+
+    const flushList = () => {
+        const items = listItems
+            .map(cleanDossierInlineMarkdown)
+            .filter(Boolean);
+
+        if (items.length > 0) {
+            blocks.push({ kind: 'list', items });
+        }
+
+        listItems = [];
+    };
+
+    const flushTable = () => {
+        if (tableRows.length > 0) {
+            blocks.push({ kind: 'table', hasHeader: tableHasHeader, rows: tableRows });
+        }
+
+        tableRows = [];
+        tableHasHeader = false;
+    };
+
+    const addExcerptMarker = (text: string) => {
+        flushParagraph();
+        flushList();
+        flushTable();
+        blocks.push({ kind: 'excerpt', text });
+    };
+
+    normalized.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        const explicitExcerptMarker = getDossierExcerptMarkerText(trimmed);
+        if (explicitExcerptMarker) {
+            addExcerptMarker(explicitExcerptMarker);
+            return;
+        }
+
+        const excerptPrefix = hasDossierExcerptPrefix(trimmed);
+        const excerptSuffix = hasDossierExcerptSuffix(trimmed);
+        const displayLine = stripDossierExcerptAffixes(trimmed);
+
+        if (excerptPrefix) {
+            addExcerptMarker('Excerpt begins mid-source');
+        }
+
+        if (shouldSkipDossierLine(displayLine)) {
+            flushParagraph();
+            flushList();
+            flushTable();
+            return;
+        }
+
+        const tableLine = normalizeDossierTableLine(displayLine);
+        if (DOSSIER_TABLE_ROW_PATTERN.test(tableLine)) {
+            flushParagraph();
+            flushList();
+
+            const cells = parseDossierTableRow(tableLine);
+            if (isDossierTableSeparatorRow(cells)) {
+                if (tableRows.length === 1) {
+                    tableHasHeader = true;
+                }
+            } else if (cells.length > 0) {
+                tableRows.push(cells);
             }
+            if (excerptSuffix) {
+                addExcerptMarker('Excerpt continues');
+            }
+            return;
+        }
 
-            return { kind: 'paragraph', text: paragraph };
-        });
+        const markdownHeadingMatch = displayLine.match(/^(#{1,6})\s*/);
+        const heading = cleanDossierHeadingText(displayLine);
+        const isHeading = Boolean(markdownHeadingMatch)
+            || (
+                !DOSSIER_BULLET_PATTERN.test(displayLine)
+                && heading.length <= 110
+                && DOSSIER_HEADING_PATTERN.test(heading)
+            );
+
+        if (isHeading && heading) {
+            flushParagraph();
+            flushList();
+            flushTable();
+            blocks.push({ kind: 'heading', text: heading, level: markdownHeadingMatch ? markdownHeadingMatch[1].length : 2 });
+            if (excerptSuffix) {
+                addExcerptMarker('Excerpt continues');
+            }
+            return;
+        }
+
+        if (DOSSIER_BULLET_PATTERN.test(displayLine)) {
+            flushParagraph();
+            flushTable();
+            listItems.push(displayLine.replace(DOSSIER_BULLET_PATTERN, ''));
+            if (excerptSuffix) {
+                addExcerptMarker('Excerpt continues');
+            }
+            return;
+        }
+
+        flushList();
+        flushTable();
+        paragraphLines.push(displayLine);
+        if (excerptSuffix) {
+            addExcerptMarker('Excerpt continues');
+        }
+    });
+
+    flushParagraph();
+    flushList();
+    flushTable();
+
+    return blocks;
+};
+
+const normalizeDossierSignalText = (text: string) => cleanDossierInlineMarkdown(text)
+    .replace(/^\d+(?:\.\d+)*[.)]\s+/, '')
+    .replace(/^[-:#\s]+/, '')
+    .trim();
+
+const formatDossierSignalForBrief = (text: string) => {
+    const emphasizedSignal = text.match(/^\*\*([^*]+)\*\*\s*[-:]\s*(.+)$/);
+    if (!emphasizedSignal) {
+        return text;
+    }
+
+    const signalDetail = emphasizedSignal[2]
+        .replace(/\bremains unresolved\b/i, 'needs follow-up')
+        .replace(/\bcreates a\b/i, 'maps to a')
+        .trim();
+
+    return `**${emphasizedSignal[1]}** signal: ${signalDetail}`;
+};
+
+const shouldUseDossierSignal = (text: string) => {
+    const signal = normalizeDossierSignalText(text);
+    if (signal.length < DOSSIER_KEY_SIGNAL_MIN_LENGTH) {
+        return false;
+    }
+    if (DOSSIER_METADATA_LINE_PATTERN.test(signal) || DOSSIER_EXCERPT_MARKER_PATTERN.test(signal)) {
+        return false;
+    }
+    if (DOSSIER_TABLE_ROW_PATTERN.test(signal) || isDossierTableSeparatorRow(parseDossierTableRow(signal))) {
+        return false;
+    }
+    return !DOSSIER_BOILERPLATE_PATTERNS.some((pattern) => pattern.test(signal));
+};
+
+const getDossierKeySignals = (summary?: string, fullText?: string) => {
+    const signals: string[] = [];
+    const seen = new Set<string>();
+
+    const addSignal = (value: string) => {
+        const signal = normalizeDossierSignalText(value);
+        const displaySignal = formatDossierSignalForBrief(signal);
+        const normalizedKey = displaySignal.toLowerCase();
+        if (!signal || !shouldUseDossierSignal(signal) || seen.has(normalizedKey)) {
+            return;
+        }
+        seen.add(normalizedKey);
+        signals.push(displaySignal);
+    };
+
+    getDossierBodyBlocks(fullText).forEach((block) => {
+        if (signals.length >= DOSSIER_KEY_SIGNAL_LIMIT) {
+            return;
+        }
+
+        if (block.kind === 'list') {
+            block.items.forEach(addSignal);
+            return;
+        }
+
+        if (block.kind === 'paragraph') {
+            block.lines
+                .flatMap((line) => line.match(/[^.!?]+[.!?]+(?:\s|$)/g) || [line])
+                .forEach(addSignal);
+        }
+    });
+
+    if (signals.length === 0) {
+        addSignal(getDossierBrief(summary, fullText));
+    }
+
+    return signals.slice(0, DOSSIER_KEY_SIGNAL_LIMIT);
+};
+
+const getDossierContextNote = (dossier: NodeDossier) => {
+    if (dossier.rabbitTool === 'vault_search' || dossier.sourceURL?.startsWith('vault://')) {
+        return 'Based on a vault source excerpt';
+    }
+    if (dossier.rabbitTool === 'timeline_context' || dossier.sourceURL?.startsWith('timeline://')) {
+        return 'Based on generated timeline context';
+    }
+    if (dossier.rabbitTool === 'web_search') {
+        return 'Based on a live web evidence excerpt';
+    }
+    if (dossier.origin === 'rabbit-hole') {
+        return 'Based on a Rabbit Hole evidence excerpt';
+    }
+    return '';
 };
 
 const getDossierSourceLinks = (dossier: NodeDossier) => {
@@ -326,6 +632,8 @@ const getDossierSourceLinks = (dossier: NodeDossier) => {
 };
 
 const isDossierLink = (text: string) => DOSSIER_INLINE_URL_PATTERN.test(text);
+const isDossierExternalLink = (text: string) => /^https?:\/\//i.test(text);
+const isDossierInternalReference = (text: string) => /^(?:vault|timeline|rabbit):\/\//i.test(text);
 
 const getDossierEntityClassName = (type: string) => {
     switch (type.toUpperCase()) {
@@ -350,23 +658,41 @@ const formatDossierMetaLabel = (value?: string | number) =>
         .trim()
         .replace(/\b\w/g, (char) => char.toUpperCase());
 
-const renderDossierTextWithLinks = (text: string) => {
+const renderDossierTextWithLinks = (text: string): React.ReactNode => {
     const fragments: React.ReactNode[] = [];
     let lastIndex = 0;
+    const richTextPattern = new RegExp(
+        `(${DOSSIER_INLINE_URL_PATTERN.source}|${DOSSIER_ENTITY_PATTERN.source}|${DOSSIER_MARKDOWN_BOLD_PATTERN.source})`,
+        'gi'
+    );
 
-    Array.from(text.matchAll(DOSSIER_RICH_TEXT_PATTERN)).forEach((match, index) => {
+    Array.from(text.matchAll(richTextPattern)).forEach((match, index) => {
         const token = match[0];
         const tokenIndex = match.index ?? 0;
 
         if (tokenIndex > lastIndex) {
             fragments.push(
                 <React.Fragment key={`text-${index}-${lastIndex}`}>
-                    {text.slice(lastIndex, tokenIndex)}
+                    {cleanDossierPlainFragment(text.slice(lastIndex, tokenIndex))}
                 </React.Fragment>
             );
         }
 
         if (isDossierLink(token)) {
+            if (isDossierInternalReference(token)) {
+                fragments.push(
+                    <span
+                        key={`internal-ref-${index}-${tokenIndex}`}
+                        className="forensic-dossier-internal-ref"
+                        title="Stored Gorantula reference"
+                    >
+                        {token}
+                    </span>
+                );
+                lastIndex = tokenIndex + token.length;
+                return;
+            }
+
             fragments.push(
                 <a
                     key={`link-${index}-${tokenIndex}`}
@@ -389,6 +715,15 @@ const renderDossierTextWithLinks = (text: string) => {
                         {entityMatch[2]}
                     </span>
                 );
+            } else {
+                const boldMatch = token.match(DOSSIER_MARKDOWN_BOLD_PATTERN);
+                if (boldMatch) {
+                    fragments.push(
+                        <strong key={`bold-${index}-${tokenIndex}`} className="forensic-dossier-strong">
+                            {renderDossierTextWithLinks(boldMatch[1])}
+                        </strong>
+                    );
+                }
             }
         }
 
@@ -398,7 +733,7 @@ const renderDossierTextWithLinks = (text: string) => {
     if (lastIndex < text.length) {
         fragments.push(
             <React.Fragment key={`text-tail-${lastIndex}`}>
-                {text.slice(lastIndex)}
+                {cleanDossierPlainFragment(text.slice(lastIndex))}
             </React.Fragment>
         );
     }
@@ -408,6 +743,84 @@ const renderDossierTextWithLinks = (text: string) => {
     }
 
     return fragments;
+};
+
+const renderDossierBodyBlock = (block: DossierBodyBlock, index: number) => {
+    if (block.kind === 'heading') {
+        return (
+            <h3
+                key={`${block.kind}-${index}`}
+                className={block.level >= 3 ? 'forensic-dossier-body-subheading' : 'forensic-dossier-body-heading'}
+            >
+                {block.text}
+            </h3>
+        );
+    }
+
+    if (block.kind === 'list') {
+        return (
+            <ul key={`${block.kind}-${index}`} className="forensic-dossier-body-list">
+                {block.items.map((item, itemIndex) => (
+                    <li key={`${item}-${itemIndex}`}>
+                        {renderDossierTextWithLinks(item)}
+                    </li>
+                ))}
+            </ul>
+        );
+    }
+
+    if (block.kind === 'table') {
+        const headerRow = block.hasHeader ? block.rows[0] : null;
+        const bodyRows = block.hasHeader ? block.rows.slice(1) : block.rows;
+
+        return (
+            <div key={`${block.kind}-${index}`} className="forensic-dossier-body-table-wrap">
+                <table className="forensic-dossier-body-table">
+                    {headerRow && (
+                        <thead>
+                            <tr>
+                                {headerRow.map((cell, cellIndex) => (
+                                    <th key={`${cell}-${cellIndex}`}>
+                                        {renderDossierTextWithLinks(cell)}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                    )}
+                    <tbody>
+                        {bodyRows.map((row, rowIndex) => (
+                            <tr key={`${row.join('-')}-${rowIndex}`}>
+                                {row.map((cell, cellIndex) => (
+                                    <td key={`${cell}-${cellIndex}`}>
+                                        {renderDossierTextWithLinks(cell)}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    }
+
+    if (block.kind === 'excerpt') {
+        return (
+            <div key={`${block.kind}-${index}`} className="forensic-dossier-excerpt-marker">
+                {block.text}
+            </div>
+        );
+    }
+
+    return (
+        <p key={`${block.kind}-${index}`} className="forensic-dossier-body-paragraph">
+            {block.lines.map((line, lineIndex) => (
+                <React.Fragment key={`${line}-${lineIndex}`}>
+                    {lineIndex > 0 && <br />}
+                    {renderDossierTextWithLinks(line)}
+                </React.Fragment>
+            ))}
+        </p>
+    );
 };
 
 const mergeEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[]) => {
@@ -1535,6 +1948,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [edges, setEdges] = useState<Edge[]>([]);
 
     const [selectedDossier, setSelectedDossier] = useState<NodeDossier | null>(null);
+    const [isDossierSourceMaterialOpen, setIsDossierSourceMaterialOpen] = useState(false);
     const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, rawTag?: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
@@ -1648,6 +2062,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const summary = normalizeDossierText(nodeData?.summary);
         const fullText = normalizeDossierText(nodeData?.fullText || nodeData?.summary);
 
+        setIsDossierSourceMaterialOpen(false);
         setSelectedDossier({
             title: normalizeDossierText(nodeData?.title) || 'Evidence Dossier',
             summary,
@@ -1705,6 +2120,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }), [connectionHover?.color, connectionHoverNodeIds, handleSupportHover, nodes, supportHoverNodeId, supportTetherTargetIds]);
     const selectedDossierBrief = useMemo(
         () => selectedDossier ? getDossierBrief(selectedDossier.summary, selectedDossier.fullText) : '',
+        [selectedDossier]
+    );
+    const selectedDossierKeySignals = useMemo(
+        () => selectedDossier ? getDossierKeySignals(selectedDossier.summary, selectedDossier.fullText) : [],
+        [selectedDossier]
+    );
+    const selectedDossierContextNote = useMemo(
+        () => selectedDossier ? getDossierContextNote(selectedDossier) : '',
         [selectedDossier]
     );
     const selectedDossierBodyBlocks = useMemo(
@@ -6695,7 +7118,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="node-dossier-title"
-                        className="forensic-dossier-reader pointer-events-auto flex h-full w-[min(46rem,calc(100vw-2rem))] flex-col overflow-hidden"
+                        className="forensic-dossier-reader pointer-events-auto flex h-full w-[min(54rem,calc(100vw-2rem))] flex-col overflow-hidden"
                     >
                         <div className="flex items-start justify-between gap-4 border-b border-[rgba(129,227,255,0.14)] px-6 py-5">
                             <div className="min-w-0">
@@ -6717,7 +7140,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             </div>
                             <button
                                 type="button"
-                                onClick={() => setSelectedDossier(null)}
+                                onClick={() => {
+                                    setSelectedDossier(null);
+                                    setIsDossierSourceMaterialOpen(false);
+                                }}
                                 className="shrink-0 rounded-lg border border-[rgba(129,227,255,0.24)] bg-[rgba(129,227,255,0.06)] p-2 text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.42)] hover:bg-[rgba(129,227,255,0.14)] hover:text-white"
                                 title="Close dossier"
                             >
@@ -6727,56 +7153,103 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
                         <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
                             <section className="forensic-dossier-brief">
-                                <div className="forensic-dossier-section-label">Evidence Brief</div>
+                                <div className="forensic-dossier-section-label">Intel Brief</div>
+                                {selectedDossierContextNote && (
+                                    <div className="forensic-dossier-context-note">
+                                        {selectedDossierContextNote}
+                                    </div>
+                                )}
                                 <p>{renderDossierTextWithLinks(selectedDossierBrief)}</p>
+                                {selectedDossierKeySignals.length > 0 && (
+                                    <div className="forensic-dossier-signal-panel">
+                                        <div className="forensic-dossier-section-label">Key Signals</div>
+                                        <ul className="forensic-dossier-signal-list">
+                                            {selectedDossierKeySignals.map((signal, index) => (
+                                                <li key={`${signal}-${index}`}>
+                                                    {renderDossierTextWithLinks(signal)}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
                             </section>
 
                             {selectedDossierSourceLinks.length > 0 && (
                                 <section className="mt-5">
                                     <div className="forensic-dossier-section-label">Sources</div>
                                     <div className="mt-2 grid gap-2">
-                                        {selectedDossierSourceLinks.map((source, index) => (
-                                            <a
-                                                key={`${source}-${index}`}
-                                                href={source}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="forensic-dossier-source-link"
-                                            >
-                                                <span className="truncate">{source}</span>
-                                                <ExternalLink size={13} />
-                                            </a>
-                                        ))}
+                                        {selectedDossierSourceLinks.map((source, index) => {
+                                            if (isDossierInternalReference(source)) {
+                                                return (
+                                                    <button
+                                                        key={`${source}-${index}`}
+                                                        type="button"
+                                                        onClick={() => setIsDossierSourceMaterialOpen(true)}
+                                                        className="forensic-dossier-source-link forensic-dossier-source-link-internal"
+                                                        title="Show stored source material in this dossier"
+                                                    >
+                                                        <span className="truncate">{source}</span>
+                                                        <FileText size={13} />
+                                                    </button>
+                                                );
+                                            }
+
+                                            if (isDossierExternalLink(source)) {
+                                                return (
+                                                    <a
+                                                        key={`${source}-${index}`}
+                                                        href={source}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="forensic-dossier-source-link"
+                                                    >
+                                                        <span className="truncate">{source}</span>
+                                                        <ExternalLink size={13} />
+                                                    </a>
+                                                );
+                                            }
+
+                                            return (
+                                                <span
+                                                    key={`${source}-${index}`}
+                                                    className="forensic-dossier-source-link forensic-dossier-source-link-static"
+                                                >
+                                                    <span className="truncate">{source}</span>
+                                                    <FileText size={13} />
+                                                </span>
+                                            );
+                                        })}
                                     </div>
                                 </section>
                             )}
 
                             <section className="mt-6">
-                                <div className="forensic-dossier-section-label">Source Detail</div>
-                                <div className="mt-3 space-y-3">
-                                    {selectedDossierBodyBlocks.length > 0 ? (
-                                        selectedDossierBodyBlocks.map((block, index) => (
-                                            block.kind === 'heading' ? (
-                                                <h3 key={`${block.kind}-${index}`} className="forensic-dossier-body-heading">
-                                                    {block.text}
-                                                </h3>
-                                            ) : (
-                                                <p key={`${block.kind}-${index}`} className="forensic-dossier-body-paragraph">
-                                                    {block.text.split('\n').map((line, lineIndex) => (
-                                                        <React.Fragment key={`${line}-${lineIndex}`}>
-                                                            {lineIndex > 0 && <br />}
-                                                            {renderDossierTextWithLinks(line)}
-                                                        </React.Fragment>
-                                                    ))}
-                                                </p>
-                                            )
-                                        ))
-                                    ) : (
-                                        <p className="forensic-dossier-body-paragraph">
-                                            No extended source text is available for this card yet.
-                                        </p>
-                                    )}
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="forensic-dossier-section-label">Source Material</div>
+                                    <button
+                                        type="button"
+                                        aria-expanded={isDossierSourceMaterialOpen}
+                                        onClick={() => setIsDossierSourceMaterialOpen((isOpen) => !isOpen)}
+                                        className="forensic-dossier-source-toggle"
+                                    >
+                                        {isDossierSourceMaterialOpen ? 'Hide Source Material' : 'Show Source Material'}
+                                    </button>
                                 </div>
+                                {isDossierSourceMaterialOpen ? (
+                                    <div className="mt-3 space-y-3">
+                                        {selectedDossierBodyBlocks.length > 0 ? (
+                                            selectedDossierBodyBlocks.map(renderDossierBodyBlock)
+                                        ) : (
+                                            <p className="forensic-dossier-body-paragraph">
+                                                No extended source text is available for this card yet.
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="forensic-dossier-source-summary">
+                                        Source material is kept collapsed so the Dossier opens as a readable brief. Expand it when you need the raw crawl, vault, or timeline text.
+                                    </p>
+                                )}
                             </section>
                         </div>
                     </div>

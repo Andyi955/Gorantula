@@ -249,6 +249,36 @@ func TestSearchRabbitHoleVaultMemoryFindsOlderInvestigations(t *testing.T) {
 	}
 }
 
+func TestRabbitHoleSnippetEndsCleanlyWhenTruncated(t *testing.T) {
+	content := strings.Repeat("Background sentence. ", 60) +
+		"Dominion Energy filed a new rate class for data centers. " +
+		"Residential ratepayer concerns remained unresolved. " +
+		strings.Repeat("Trailing details sentence. ", 60)
+
+	snippet := rabbitHoleSnippet(content, map[string]struct{}{"dominion": {}}, 180)
+
+	if !strings.Contains(snippet, "Dominion Energy filed a new rate class") {
+		t.Fatalf("snippet should stay centered on matching evidence, got %q", snippet)
+	}
+	if !strings.HasSuffix(snippet, "[Excerpt continues]") {
+		t.Fatalf("truncated snippet should visibly mark omitted text, got %q", snippet)
+	}
+	if strings.Contains(snippet, "...") {
+		t.Fatalf("snippet should use explicit excerpt markers instead of raw ellipses, got %q", snippet)
+	}
+
+	body := strings.TrimSpace(strings.TrimSuffix(snippet, "[Excerpt continues]"))
+	if body == "" {
+		t.Fatalf("snippet body should not be empty: %q", snippet)
+	}
+	body = strings.TrimPrefix(body, "[Excerpt begins mid-source]")
+	body = strings.TrimSpace(body)
+	last := []rune(body)[len([]rune(body))-1]
+	if last != '.' && last != '!' && last != '?' {
+		t.Fatalf("snippet should end on a sentence boundary before ellipsis, got %q", snippet)
+	}
+}
+
 func TestSearchRabbitHoleVaultMemorySkipsCurrentVaultReports(t *testing.T) {
 	root := t.TempDir()
 	currentVault := filepath.Join(root, "inv-current")

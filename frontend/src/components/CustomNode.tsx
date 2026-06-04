@@ -502,6 +502,12 @@ const prefersReducedMotion = () =>
     && typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+const getExternalNodeSourceURL = (sourceURL?: string) =>
+    (sourceURL || '')
+        .split(',')
+        .map((source) => source.trim())
+        .find((source) => /^https?:\/\//i.test(source)) || '';
+
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
     currentInvestigationId?: string | null, 
@@ -540,6 +546,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const [imageLoadState, setImageLoadState] = useState<NodeImageLoadState>('idle');
     const [imageRetryAttempt, setImageRetryAttempt] = useState(0);
     const reducedMotion = prefersReducedMotion();
+    const externalSourceURL = getExternalNodeSourceURL(data.sourceURL);
 
     // Let the browser handle the smooth scrolling natively!
     // All we do is stop the event from bubbling up to React Flow to prevent canvas zooming.
@@ -1576,9 +1583,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 </button>
                             </>
                         )}
-                        {!isPortalNode && !isDiscoveryNode && data.sourceURL && (
+                        {!isPortalNode && !isDiscoveryNode && externalSourceURL && (
                             <a
-                                href={data.sourceURL?.split(',')[0].trim()}
+                                href={externalSourceURL}
                                 target="_blank"
                                 rel="noreferrer"
                                 onClick={(e) => e.stopPropagation()}

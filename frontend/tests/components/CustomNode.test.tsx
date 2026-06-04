@@ -1031,6 +1031,55 @@ describe('CustomNode', () => {
     expect(sourceLink).toHaveAttribute('rel', 'noreferrer')
   })
 
+  it('uses the first external source instead of opening internal vault references', () => {
+    render(
+      <CustomNode
+        id="node-internal-source"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-internal-source',
+          title: 'Internal Source Node',
+          summary: 'Summary',
+          sourceURL: 'vault://abdomen_vault/inv-old/report.md, https://example.com/source',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const sourceLink = screen.getByTitle('Verify Source')
+    expect(sourceLink).toHaveAttribute('href', 'https://example.com/source')
+  })
+
+  it('hides the card source link when only internal vault references exist', () => {
+    render(
+      <CustomNode
+        id="node-internal-only-source"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-internal-only-source',
+          title: 'Internal Only Source Node',
+          summary: 'Summary',
+          sourceURL: 'vault://abdomen_vault/inv-old/report.md',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(screen.queryByTitle('Verify Source')).not.toBeInTheDocument()
+  })
+
   it('reveals persona discussion cards with stagger metadata', async () => {
     const user = userEvent.setup()
 

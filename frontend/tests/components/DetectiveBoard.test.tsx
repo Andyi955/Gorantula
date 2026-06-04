@@ -1016,7 +1016,9 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
-  it('opens a formatted dossier reader above relationship and board overlays', async () => {
+  it('opens a structured dossier brief with source material collapsed by default', async () => {
+    const user = userEvent.setup()
+
     localStorage.setItem(
       'inv_data_inv-dossier-reader',
       JSON.stringify({
@@ -1032,6 +1034,10 @@ describe('DetectiveBoard relationship legend', () => {
               title: 'Data Center Water Filing',
               summary: 'A regulator filing links [ORG:Fermi] data center cooling demand near [LOC:Amarillo] to new water restrictions.',
               fullText: [
+                'Rabbit tool: vault_search',
+                'Query: data center water filing',
+                'Rationale: Search older vault context for matching water and grid pressure.',
+                '',
                 'INTELLIGENCE SUMMARY',
                 '',
                 'A regulator filing links [ORG:Fermi] data center cooling demand near [LOC:Amarillo] to new water restrictions.',
@@ -1039,10 +1045,30 @@ describe('DetectiveBoard relationship legend', () => {
                 'Source: https://example.com/dossier-water-filing',
                 '',
                 'The filing states that [PERSON:Toby Neugebauer] and higher compute load could change peak withdrawal limits during heat events.',
+                '',
+                '## Strategic Implications',
+                '',
+                'The filing reframes water demand as a public reliability problem.',
+                '',
+                '| Finding | Source | Date |',
+                '|---|---|---|',
+                '| [ORG:NERC] issued a reliability alert tied to peak load. | vault://inv-dossier-reader/node-dossier-a | [DATE:2026-05-27] |',
+                '',
+                '... | Amazon | Agility Robotics / Fauna Robotics | Acquisition signals dual industrial + consumer strategy. |',
+                '[Excerpt continues]',
+                '',
+                '### **4. Key Challenges and Vulnerabilities**',
+                '',
+                '- **Meta** - Water permit overlap remains unresolved.',
+                '- **NERC** - Alert timing creates a reliability pressure point.',
+                '',
+                '---',
+                '',
+                '* **Silicon Valley Blacklisting:** The policy note should render as a clean list item, not raw markdown.',
               ].join('\n'),
-              sourceURL: 'https://example.com/dossier-water-filing',
+              sourceURL: 'vault://abdomen_vault/inv-old/dossier-water-filing.md',
               origin: 'rabbit-hole',
-              rabbitTool: 'web_search',
+              rabbitTool: 'vault_search',
               rabbitPass: 2,
               evidenceRole: 'primary',
             },
@@ -1072,17 +1098,40 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(overlay).toHaveClass('z-[120]')
     expect(screen.getByRole('dialog', { name: /data center water filing/i })).toBeInTheDocument()
-    expect(dossier.getByText('Evidence Brief')).toBeInTheDocument()
-    expect(dossier.getByText('Source Detail')).toBeInTheDocument()
+    expect(dossier.getByText('Intel Brief')).toBeInTheDocument()
+    expect(dossier.getByText('Key Signals')).toBeInTheDocument()
+    expect(dossier.getByText('Based on a vault source excerpt')).toBeInTheDocument()
     expect(dossier.getByText('Rabbit Hole')).toBeInTheDocument()
-    expect(dossier.getByText('Web Search')).toBeInTheDocument()
+    expect(dossier.getByText('Vault Search')).toBeInTheDocument()
     expect(dossier.getAllByText('Fermi').some((element) => element.classList.contains('forensic-dossier-entity-chip'))).toBe(true)
     expect(dossier.getAllByText('Toby Neugebauer').some((element) => element.classList.contains('forensic-dossier-entity-person'))).toBe(true)
     expect(dossier.getAllByText('Amarillo').some((element) => element.classList.contains('forensic-dossier-entity-loc'))).toBe(true)
+    expect(dossier.getAllByText('Meta').some((element) => element.classList.contains('forensic-dossier-strong'))).toBe(true)
+    expect(dossier.queryByText('Strategic Implications')).not.toBeInTheDocument()
+    expect(dossier.queryByText('Finding')).not.toBeInTheDocument()
+    expect(dossier.queryByText('Excerpt continues')).not.toBeInTheDocument()
     expect(dossier.queryByText(/\[ORG:Fermi]/i)).not.toBeInTheDocument()
     expect(dossier.queryByText(/\[PERSON:Toby Neugebauer]/i)).not.toBeInTheDocument()
+    expect(dossier.queryByText(/\*\*/)).not.toBeInTheDocument()
+    expect(dossier.queryByText(/###/)).not.toBeInTheDocument()
+    expect(dossier.queryByText('---')).not.toBeInTheDocument()
     expect(dossier.getAllByRole('link', { name: /https:\/\/example\.com\/dossier-water-filing/i }).length).toBeGreaterThan(0)
+    const vaultReference = dossier.getByRole('button', { name: /vault:\/\/abdomen_vault\/inv-old\/dossier-water-filing\.md/i })
+    expect(vaultReference).toHaveClass('forensic-dossier-source-link-internal')
     expect(dossier.queryByText('INTEL_REPORT_FULL')).not.toBeInTheDocument()
+
+    await user.click(vaultReference)
+
+    expect(dossier.getByText('Strategic Implications')).toHaveClass('forensic-dossier-body-heading')
+    expect(dossier.getByText('4. Key Challenges and Vulnerabilities')).toHaveClass('forensic-dossier-body-subheading')
+    expect(dossier.getByText('Finding').closest('table')).toHaveClass('forensic-dossier-body-table')
+    expect(dossier.getByText('Amazon').closest('td')).toBeInTheDocument()
+    expect(dossier.getAllByText('Excerpt continues').some((element) => element.classList.contains('forensic-dossier-excerpt-marker'))).toBe(true)
+    expect(dossier.getAllByText('Excerpt begins mid-source').some((element) => element.classList.contains('forensic-dossier-excerpt-marker'))).toBe(true)
+    expect(dossier.getAllByText('NERC').some((element) => element.classList.contains('forensic-dossier-entity-org'))).toBe(true)
+    expect(dossier.queryByRole('link', { name: /vault:\/\/inv-dossier-reader\/node-dossier-a/i })).not.toBeInTheDocument()
+    expect(dossier.getAllByText('vault://inv-dossier-reader/node-dossier-a').some((element) => element.classList.contains('forensic-dossier-internal-ref'))).toBe(true)
+    expect(dossier.getByText(/Water permit overlap remains unresolved/i).closest('ul')).toHaveClass('forensic-dossier-body-list')
   })
 
   it('restores the minimized legend when the saved preference is hidden', () => {

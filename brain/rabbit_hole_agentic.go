@@ -22,6 +22,8 @@ const (
 	RabbitHoleNodeStateProvisional = "provisional"
 	RabbitHoleNodeStatePromoted    = "promoted"
 	RabbitHoleNodeStateStale       = "stale"
+
+	rabbitHoleVaultExcerptRuneLimit = 2400
 )
 
 type RabbitHoleToolTask struct {
@@ -286,7 +288,7 @@ func searchRabbitHoleVaultMemoryInRoot(root string, currentVaultID string, query
 				Tool:    RabbitHoleToolVaultSearch,
 				Query:   query,
 				Source:  "vault://" + filepath.ToSlash(strings.TrimPrefix(path, root+string(os.PathSeparator))),
-				Content: rabbitHoleSnippet(content, queryTokens, 1200),
+				Content: rabbitHoleSnippet(content, queryTokens, rabbitHoleVaultExcerptRuneLimit),
 			},
 		})
 		return nil
@@ -347,23 +349,96 @@ func rabbitHoleSnippet(content string, tokens map[string]struct{}, limit int) st
 	if limit <= 0 {
 		return ""
 	}
-	lower := strings.ToLower(content)
-	bestIndex := 0
+	normalized := strings.TrimSpace(content)
+	if normalized == "" {
+		return ""
+	}
+	lower := strings.ToLower(normalized)
+	bestRuneIndex := 0
 	for token := range tokens {
 		if index := strings.Index(lower, token); index >= 0 {
-			bestIndex = index
+			bestRuneIndex = len([]rune(normalized[:index]))
 			break
 		}
 	}
-	start := bestIndex - limit/4
+	start := bestRuneIndex - limit/4
 	if start < 0 {
 		start = 0
 	}
-	runes := []rune(content[start:])
-	if len(runes) > limit {
-		runes = runes[:limit]
+	return rabbitHoleExcerpt(normalized, limit, start)
+}
+
+func rabbitHoleExcerpt(content string, limit int, preferredStart int) string {
+	content = strings.TrimSpace(content)
+	if content == "" || limit <= 0 {
+		return ""
 	}
-	return strings.TrimSpace(string(runes))
+
+	runes := []rune(content)
+	if len(runes) <= limit {
+		return content
+	}
+
+	start := preferredStart
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(runes) {
+		start = max(0, len(runes)-limit)
+	}
+
+	end := start + limit
+	if end > len(runes) {
+		end = len(runes)
+		start = max(0, end-limit)
+	}
+
+	if start > 0 {
+		start = nearestExcerptStartBoundary(runes, start)
+	}
+	if end < len(runes) {
+		end = nearestExcerptEndBoundary(runes, start, end)
+	}
+
+	excerpt := strings.TrimSpace(string(runes[start:end]))
+	if excerpt == "" {
+		return ""
+	}
+	if start > 0 {
+		excerpt = "[Excerpt begins mid-source]\n" + excerpt
+	}
+	if end < len(runes) {
+		excerpt += "\n[Excerpt continues]"
+	}
+	return excerpt
+}
+
+func nearestExcerptStartBoundary(runes []rune, start int) int {
+	lookbackLimit := max(0, start-240)
+	for index := start; index >= lookbackLimit; index-- {
+		if index < len(runes) && (runes[index] == '\n' || runes[index] == '.' || runes[index] == '!' || runes[index] == '?') {
+			return min(len(runes), index+1)
+		}
+	}
+	return start
+}
+
+func nearestExcerptEndBoundary(runes []rune, start int, end int) int {
+	minimum := start + max(120, (end-start)*2/3)
+	if minimum > end {
+		minimum = start
+	}
+	for index := end - 1; index >= minimum; index-- {
+		if runes[index] == '\n' || runes[index] == '.' || runes[index] == '!' || runes[index] == '?' {
+			return min(len(runes), index+1)
+		}
+	}
+	for index := end - 1; index >= minimum; index-- {
+		if unicode.IsSpace(runes[index]) {
+			return index
+		}
+	}
+	return end
 }
 
 var rabbitHoleDatePattern = regexp.MustCompile(`\b(?:20\d{2}[-/]\d{2}[-/]\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+20\d{2})\b`)
