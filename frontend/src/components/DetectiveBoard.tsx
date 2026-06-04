@@ -2050,6 +2050,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const boardCameraMovementTimeoutRef = useRef<number | null>(null);
     const initialRestoreViewportFitTimeoutRef = useRef<number | null>(null);
     const boardRestoreOverlayTimeoutRef = useRef<number | null>(null);
+    const boardRestoreWatchdogTimeoutRef = useRef<number | null>(null);
     const pendingInitialRestoreViewportFitRef = useRef<string | null>(null);
     const completedInitialRestoreViewportFitRef = useRef<string | null>(null);
 
@@ -2262,6 +2263,52 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             ));
         }, hideDelayMs);
     }, []);
+
+    useEffect(() => {
+        if (!boardRestoreOverlay) {
+            if (boardRestoreWatchdogTimeoutRef.current !== null) {
+                window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+                boardRestoreWatchdogTimeoutRef.current = null;
+            }
+            return;
+        }
+
+        const isLoadedInvestigation = loadedInvestigationId === boardRestoreOverlay.investigationId;
+        if (!isLoadedInvestigation) {
+            return;
+        }
+
+        if (boardRestoreWatchdogTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+            boardRestoreWatchdogTimeoutRef.current = null;
+        }
+
+        const elapsedMs = Math.max(0, getBoardLoadNow() - boardRestoreOverlay.startedAt);
+        const clearDelayMs = isInitialRestoreViewportSettling
+            ? Math.max(0, BOARD_RESTORE_OVERLAY_MAX_MS - elapsedMs)
+            : Math.max(0, Math.min(BOARD_RESTORE_OVERLAY_MIN_MS - elapsedMs, 120));
+
+        boardRestoreWatchdogTimeoutRef.current = window.setTimeout(() => {
+            boardRestoreWatchdogTimeoutRef.current = null;
+            if (pendingInitialRestoreViewportFitRef.current === boardRestoreOverlay.investigationId) {
+                pendingInitialRestoreViewportFitRef.current = null;
+            }
+            setIsInitialRestoreViewportSettling(false);
+            setBoardRestoreOverlay((current) => (
+                current?.investigationId === boardRestoreOverlay.investigationId &&
+                current.startedAt === boardRestoreOverlay.startedAt
+                    ? null
+                    : current
+            ));
+        }, clearDelayMs);
+
+        return () => {
+            if (boardRestoreWatchdogTimeoutRef.current !== null) {
+                window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+                boardRestoreWatchdogTimeoutRef.current = null;
+            }
+        };
+    }, [boardRestoreOverlay, isInitialRestoreViewportSettling, loadedInvestigationId]);
 
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
@@ -4184,9 +4231,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             window.clearTimeout(timelineFocusTimeoutRef.current);
             timelineFocusTimeoutRef.current = null;
         }
+        if (initialRestoreViewportFitTimeoutRef.current !== null) {
+            window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
+            initialRestoreViewportFitTimeoutRef.current = null;
+        }
         if (boardRestoreOverlayTimeoutRef.current !== null) {
             window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
             boardRestoreOverlayTimeoutRef.current = null;
+        }
+        if (boardRestoreWatchdogTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+            boardRestoreWatchdogTimeoutRef.current = null;
         }
     }, []);
 

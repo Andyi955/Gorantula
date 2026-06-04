@@ -480,6 +480,40 @@ describe('DetectiveBoard relationship legend', () => {
     expect(loader).toHaveTextContent('Restoring board')
   })
 
+  it('releases the cached restore veil after a refreshed board settles', async () => {
+    localStorage.setItem(
+      'inv_data_inv-refresh-loader',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'refresh-loader-a',
+            type: 'custom',
+            position: { x: 1600, y: 1120 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'refresh-loader-a',
+              title: 'Refresh Loader A',
+              summary: 'A cached board node used to simulate a browser refresh restore.',
+              fullText: 'A cached board node used to simulate a browser refresh restore.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-refresh-loader')
+
+    expect(await screen.findByTestId('board-restore-loading')).toHaveTextContent('Restoring board')
+    expect(document.getElementById('detective-board-flow')).toHaveClass('forensic-board-restore-prefit')
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('board-restore-loading')).not.toBeInTheDocument()
+    })
+    expect(document.getElementById('detective-board-flow')).not.toHaveClass('forensic-board-restore-prefit')
+  })
+
   it('promotes live Rabbit Hole provisional nodes from websocket updates', async () => {
     const socket = new MockSocket()
     renderBoard('inv-rabbit', socket as unknown as WebSocket)
