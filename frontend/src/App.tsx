@@ -1633,15 +1633,18 @@ function App() {
       : activePipelineRun.status === 'error' || activePipelineRun.status === 'cancelled'
         ? activePipelineRun.status
         : 'running'
+  const activePipelineMode = activePipelineRailStatus === 'running'
+    ? activePipelineRun?.mode
+    : null
   const promptLocalFilePaths = useMemo(
     () => (crawlMode === 'local' ? parseLocalCrawlPaths(prompt) : []),
     [crawlMode, prompt],
   )
   const spiderOperationMode: SpiderOperationMode = qaLocalIngestionDemoRequest
     ? 'local'
-    : activePipelineRun?.mode === 'local'
+    : activePipelineMode === 'local'
       ? 'local'
-      : activePipelineRun?.mode === 'rabbit-hole'
+      : activePipelineMode === 'rabbit-hole'
         ? 'rabbit-hole'
       : crawlMode
   const visibleLocalIngestionPaths = useMemo(() => {

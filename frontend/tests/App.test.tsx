@@ -780,6 +780,48 @@ describe('App', () => {
     expect(crawlMessage.vaultId).toMatch(/^inv-/)
   })
 
+  it('returns the spider visual theme to the selected mode after a Rabbit Hole run completes', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'rabbit theme reset')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage.type).toBe('CRAWL_RABBIT_HOLE')
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('rabbit-hole')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        mode: 'rabbit-hole',
+        stepId: 'complete',
+        stepLabel: 'Pipeline complete',
+        status: 'complete',
+        completedSteps: 8,
+        totalSteps: 8,
+        elapsedMs: 1200,
+        steps: [
+          { id: 'complete', label: 'Pipeline complete', status: 'complete', durationMs: 1200 },
+        ],
+      })
+    })
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /^web$/i }))
+
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('web')
+    expect(within(crawlConsole).getByRole('button', { name: /^web$/i })).toHaveClass('forensic-spider-mode-active')
+  })
+
   it('renders Rabbit Hole gatekeeper recommendations for guided runs', async () => {
     const user = userEvent.setup()
 
