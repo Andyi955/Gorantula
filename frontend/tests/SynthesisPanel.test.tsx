@@ -585,6 +585,41 @@ describe('SynthesisPanel', () => {
     expect(screen.getByTestId('synthesis-theory-section-1')).toHaveClass('forensic-synthesis-theory-section-reveal')
   })
 
+  it('formats Rabbit Hole theory markdown tables instead of showing raw pipe text', () => {
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-rabbit"
+        returnVaultId={null}
+        investigations={[{ id: 'inv-rabbit', topic: 'Rabbit Hole: AI ecosystem' }]}
+        currentTheoryReport={[
+          '## Key Findings',
+          '',
+          '| Finding | Source Grounding | Date/Significance |',
+          '',
+          '|---------|------------------|-------------------|',
+          '',
+          '| OpenAI Deployment Co. formed | CRN | June 2026 - services consolidation |',
+          '',
+          '| Huawei Ascend 920 mass production | Reuters | Hardware export control bypass |',
+          '',
+          '### Unresolved Leads',
+          '',
+          '1. Which firms received H200 clearance?',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: /key findings/i })).toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /source grounding/i })).toBeInTheDocument()
+    expect(screen.getByTestId('synthesis-theory-table-wrap')).toHaveClass('forensic-synthesis-theory-table-wrap-carded')
+    expect(screen.getAllByText(/openai deployment co\. formed/i).some((element) =>
+      element.closest('.forensic-synthesis-theory-table-card-row'),
+    )).toBe(true)
+    expect(screen.getByText(/which firms received h200 clearance/i)).toBeInTheDocument()
+  })
+
   it('keeps the synthesis panel closed for active investigation alerts without the legacy toast', async () => {
     const socket = new SocketMock() as unknown as WebSocket
 

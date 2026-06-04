@@ -761,6 +761,7 @@ describe('App', () => {
     await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
 
     expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('rabbit-hole')
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
     expect(within(crawlConsole).getByRole('group', { name: /rabbit hole descent/i })).toBeInTheDocument()
     expect(within(crawlConsole).getByRole('button', { name: /guided/i })).toHaveClass('forensic-spider-mode-active')
 
@@ -778,6 +779,50 @@ describe('App', () => {
     }))
     expect(crawlMessage.runId).toMatch(/^run-/)
     expect(crawlMessage.vaultId).toMatch(/^inv-/)
+  })
+
+  it('removes the Rabbit shell theme when the Spider console returns to Web mode', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    expect(screen.getByTestId('app-shell')).not.toHaveClass('forensic-rabbit-context')
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByRole('button', { name: /timeline view/i }))
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByRole('button', { name: /spider view/i }))
+    await user.click(within(crawlConsole).getByRole('button', { name: /^web$/i }))
+    expect(screen.getByTestId('app-shell')).not.toHaveClass('forensic-rabbit-context')
+  })
+
+  it('keeps the Rabbit shell theme across tabs for Rabbit Hole investigations', async () => {
+    const user = userEvent.setup()
+
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-1779700000000', topic: 'regular web case' },
+        { id: 'inv-1779800000000', topic: 'Rabbit Hole: humanoid robotics deployment surge' },
+      ]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByRole('button', { name: /timeline view/i }))
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByText('regular web case'))
+    await waitFor(() => {
+      expect(screen.getByTestId('app-shell')).not.toHaveClass('forensic-rabbit-context')
+    })
   })
 
   it('returns the spider visual theme to the selected mode after a Rabbit Hole run completes', async () => {

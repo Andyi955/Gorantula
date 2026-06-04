@@ -115,12 +115,16 @@ describe('SpiderVisualizer', () => {
 
     expect(screen.getByTestId('spider-view-root')).toHaveClass('forensic-spider-root-rabbit-hole')
     expect(screen.getByTestId('spider-lab-stage')).toHaveTextContent('Rabbit Hole')
+    expect(screen.getByTestId('rabbit-descent-telemetry')).toHaveTextContent('Descent Tools')
+    expect(screen.getByTestId('rabbit-descent-tool-1')).toHaveTextContent('Descent')
+    expect(screen.queryByTestId('spider-leg-telemetry-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('rabbit-hole-entrance')).toBeInTheDocument()
+    expect(screen.queryByTestId('canvas')).not.toBeInTheDocument()
+    expect(spiderSceneMock).not.toHaveBeenCalled()
     expect(screen.getByAltText('Rabbit Hole cyber rabbit emblem')).toHaveAttribute(
       'src',
       '/assets/rabbit-hole/rabbit-hole-emblem.png',
     )
-    expect(screen.getByTestId('mock-scene-operation-mode')).toHaveTextContent('rabbit-hole')
   })
 
   it('uses a static Rabbit Hole entrance when reduced motion is preferred', () => {

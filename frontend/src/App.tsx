@@ -284,6 +284,15 @@ const formatSystemNotice = (message: string) => {
   return trimmed
 }
 
+const isRabbitHoleInvestigation = (investigation?: InvestigationRecord | null) => {
+  if (!investigation) {
+    return false
+  }
+
+  const topic = `${investigation.displayTopic || ''} ${investigation.topic || ''}`.trim().toLowerCase()
+  return topic.startsWith('rabbit hole:') || topic.includes(' rabbit hole:')
+}
+
 const clampSidebarWidth = (value: number) =>
   Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)))
 
@@ -967,6 +976,7 @@ function App() {
         evidenceByNodeId: {},
         hasTheoryReport: false,
         relationshipLabels: [],
+        hasRabbitHoleEvidence: false,
       }
     }
 
@@ -979,6 +989,7 @@ function App() {
     const persistedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
     const savedDiscoveries = persistedDiscoveries
     const nodes = savedBoardState?.nodes || []
+    const hasRabbitHoleEvidence = nodes.some((node) => node.data?.origin === 'rabbit-hole')
     const evidenceByNodeId = nodes.reduce<Record<string, DiscoveryEvidenceRecord>>((lookup, node) => {
       const id = typeof node.id === 'string' ? node.id : ''
       if (!id) {
@@ -1062,6 +1073,7 @@ function App() {
       evidenceByNodeId,
       hasTheoryReport,
       relationshipLabels,
+      hasRabbitHoleEvidence,
     }
   }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation, vaultResultsByInvestigation])
 
@@ -1647,6 +1659,12 @@ function App() {
       : activePipelineMode === 'rabbit-hole'
         ? 'rabbit-hole'
       : crawlMode
+  const isRabbitContext =
+    isRabbitHoleInvestigation(currentInvestigation) ||
+    currentBoardSnapshot.hasRabbitHoleEvidence ||
+    activePipelineMode === 'rabbit-hole' ||
+    crawlMode === 'rabbit-hole' ||
+    spiderOperationMode === 'rabbit-hole'
   const visibleLocalIngestionPaths = useMemo(() => {
     if (qaLocalIngestionDemoRequest) {
       return qaLocalIngestionFilePaths
@@ -2568,8 +2586,8 @@ function App() {
     ? 'forensic-app-shell-header'
     : 'flex items-center justify-between border-b border-cyber-gray bg-cyber-black px-6 py-4 z-50'
   const appShellClassName = isForensicWorkspaceActive
-    ? 'forensic-app-shell flex h-screen w-screen flex-col overflow-hidden font-mono'
-    : 'flex h-screen w-screen flex-col overflow-hidden bg-cyber-black font-mono'
+    ? `forensic-app-shell ${isRabbitContext ? 'forensic-rabbit-context' : ''} flex h-screen w-screen flex-col overflow-hidden font-mono`
+    : `flex h-screen w-screen flex-col overflow-hidden bg-cyber-black font-mono ${isRabbitContext ? 'forensic-rabbit-context' : ''}`
   const brandClassName = isForensicWorkspaceActive
     ? 'forensic-app-brand text-2xl font-black tracking-tighter italic'
     : 'text-2xl font-black tracking-tighter italic text-cyber-green'
@@ -2637,7 +2655,7 @@ function App() {
   }, [expandedSidebarWidth, hasCustomSidebarWidth, isSidebarCollapsed])
 
   return (
-    <div className={appShellClassName}>
+    <div data-testid="app-shell" className={appShellClassName}>
       {/* Top Header */}
       <header className={headerClassName}>
         <h1 className={brandClassName}>

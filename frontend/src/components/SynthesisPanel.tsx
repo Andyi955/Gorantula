@@ -1,5 +1,7 @@
-import { useCallback, useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { Children, isValidElement, useCallback, useState, useEffect, useMemo, useRef, type CSSProperties, type ReactElement, type ReactNode } from 'react';
 import { Network, ChevronRight, Hash, Clock, Database, ChevronLeft, ArrowRightToLine, ArrowLeft, CheckCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { type PersistedSynthesisAlert } from '../utils/hierarchicalCanvas';
 import { BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT } from '../utils/boardWorkspaceEvents';
 import {
@@ -124,10 +126,138 @@ const normalizeAlert = (alert: SynthesisAlert): SynthesisAlert => ({
         : [],
 });
 
-const splitTheoryReport = (report: string) => report
+const THEORY_TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
+
+const normalizeTheoryMarkdown = (report: string) => {
+    const lines = report.replace(/\r\n/g, '\n').split('\n');
+    const normalizedLines: string[] = [];
+
+    lines.forEach((line, index) => {
+        const isBlank = line.trim().length === 0;
+        const previousLine = normalizedLines[normalizedLines.length - 1] || '';
+        const nextLine = lines[index + 1] || '';
+        if (
+            isBlank &&
+            THEORY_TABLE_ROW_PATTERN.test(previousLine) &&
+            THEORY_TABLE_ROW_PATTERN.test(nextLine)
+        ) {
+            return;
+        }
+        normalizedLines.push(line);
+    });
+
+    return normalizedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const splitTheoryReport = (report: string) => normalizeTheoryMarkdown(report)
     .split(/\n{2,}/)
     .map((section) => section.trim())
     .filter(Boolean);
+
+type TheoryTableData = {
+    headers: string[];
+    rows: string[][];
+};
+
+const getElementChildren = (node: ReactNode): ReactNode | undefined => {
+    if (!isValidElement<{ children?: ReactNode }>(node)) {
+        return undefined;
+    }
+    return node.props.children;
+};
+
+const getElementTagName = (node: ReactNode) => {
+    if (!isValidElement(node) || typeof node.type !== 'string') {
+        return '';
+    }
+    return node.type;
+};
+
+const getReactNodeText = (node: ReactNode): string => {
+    if (node === null || node === undefined || typeof node === 'boolean') {
+        return '';
+    }
+    if (typeof node === 'string' || typeof node === 'number') {
+        return String(node);
+    }
+    if (Array.isArray(node)) {
+        return node.map(getReactNodeText).join('');
+    }
+    return getReactNodeText(getElementChildren(node));
+};
+
+const collectElementsByTag = (node: ReactNode, tagName: string): ReactElement<{ children?: ReactNode }>[] => {
+    const matches: ReactElement<{ children?: ReactNode }>[] = [];
+    Children.toArray(node).forEach((child) => {
+        if (!isValidElement<{ children?: ReactNode }>(child)) {
+            return;
+        }
+        if (getElementTagName(child) === tagName) {
+            matches.push(child);
+            return;
+        }
+        matches.push(...collectElementsByTag(child.props.children, tagName));
+    });
+    return matches;
+};
+
+const getTheoryTableRows = (node: ReactNode): string[][] => collectElementsByTag(node, 'tr')
+    .map((row) => Children.toArray(row.props.children)
+        .filter((cell) => getElementTagName(cell) === 'th' || getElementTagName(cell) === 'td')
+        .map((cell) => getReactNodeText(cell).replace(/\s+/g, ' ').trim()))
+    .filter((row) => row.some(Boolean));
+
+const getTheoryTableData = (children: ReactNode): TheoryTableData => {
+    const thead = collectElementsByTag(children, 'thead')[0];
+    const tbody = collectElementsByTag(children, 'tbody')[0];
+    const headerRows = thead ? getTheoryTableRows(thead) : [];
+    const bodyRows = tbody ? getTheoryTableRows(tbody) : [];
+    const fallbackRows = getTheoryTableRows(children);
+    const headers = headerRows[0] || fallbackRows[0] || [];
+    const rows = bodyRows.length > 0 ? bodyRows : fallbackRows.slice(headers.length > 0 ? 1 : 0);
+    return { headers, rows };
+};
+
+const TheoryMarkdownTable = ({ children }: { children?: ReactNode }) => {
+    const tableData = getTheoryTableData(children);
+    const hasCardRows = tableData.headers.length > 0 && tableData.rows.length > 0;
+
+    return (
+        <div
+            data-testid="synthesis-theory-table-wrap"
+            className={`forensic-synthesis-theory-table-wrap ${hasCardRows ? 'forensic-synthesis-theory-table-wrap-carded' : ''}`}
+        >
+            <table className="forensic-synthesis-theory-table">{children}</table>
+            {hasCardRows && (
+                <div className="forensic-synthesis-theory-table-cards" aria-hidden="true">
+                    {tableData.rows.map((row, rowIndex) => (
+                        <div key={`${rowIndex}-${row.join('|').slice(0, 32)}`} className="forensic-synthesis-theory-table-card-row">
+                            {row.map((cell, cellIndex) => {
+                                if (!cell) {
+                                    return null;
+                                }
+                                return (
+                                    <div key={`${cellIndex}-${cell.slice(0, 18)}`} className="forensic-synthesis-theory-table-card-cell">
+                                        <span className="forensic-synthesis-theory-table-card-label">
+                                            {tableData.headers[cellIndex] || `Field ${cellIndex + 1}`}
+                                        </span>
+                                        <span className="forensic-synthesis-theory-table-card-value">
+                                            {cell}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const theoryMarkdownComponents = {
+    table: TheoryMarkdownTable,
+};
 
 const upsertAlertBucket = (alerts: SynthesisAlert[], incomingAlert: SynthesisAlert): SynthesisAlert[] => {
     const deduped = alerts.filter((alert) => (alert.alertKey || buildAlertKey(alert)) !== incomingAlert.alertKey);
@@ -785,16 +915,18 @@ export default function SynthesisPanel({
                             </div>
                             <div className="max-h-[52vh] overflow-y-auto pr-1">
                                 {theorySections.map((section, index) => (
-                                    <p
+                                    <div
                                         key={`${index}-${section.slice(0, 24)}`}
                                         data-testid={`synthesis-theory-section-${index}`}
-                                        className={`whitespace-pre-wrap ${shouldRevealTheorySections ? 'forensic-synthesis-theory-section-reveal' : ''}`}
+                                        className={`forensic-synthesis-theory-markdown ${shouldRevealTheorySections ? 'forensic-synthesis-theory-section-reveal' : ''}`}
                                         style={{
                                             '--synthesis-theory-section-delay': `${index * THEORY_SECTION_STAGGER_MS}ms`,
                                         } as CSSProperties}
                                     >
-                                        {section}
-                                    </p>
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={theoryMarkdownComponents}>
+                                            {section}
+                                        </ReactMarkdown>
+                                    </div>
                                 ))}
                             </div>
                         </div>

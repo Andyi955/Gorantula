@@ -226,6 +226,55 @@ const LegTelemetryCard = ({
     );
 };
 
+const RabbitDescentTelemetryPanel = ({
+    legIds,
+    legStates,
+    legVisualStatuses,
+    legRoles,
+}: {
+    legIds: number[];
+    legStates: Record<number, string>;
+    legVisualStatuses: Record<number, SpiderLegVisualStatus>;
+    legRoles: string[];
+}) => {
+    const activeTools = legIds.filter((id) => legVisualStatuses[id] !== 'idle').length;
+
+    return (
+        <section data-testid="rabbit-descent-telemetry" className="forensic-rabbit-descent-telemetry" aria-label="Rabbit Hole descent tools">
+            <header className="forensic-rabbit-descent-header">
+                <div>
+                    <span>Descent Tools</span>
+                    <strong>{activeTools} / 8 armed</strong>
+                </div>
+                <small>Agentic trail control</small>
+            </header>
+            <div className="forensic-rabbit-descent-tool-grid">
+                {legIds.map((id) => {
+                    const state = legStates[id] || 'Idle';
+                    const color = getSignalColor(state);
+                    const visualStatus = legVisualStatuses[id] || 'idle';
+
+                    return (
+                        <article
+                            key={id}
+                            data-testid={`rabbit-descent-tool-${id + 1}`}
+                            className={`forensic-rabbit-descent-tool forensic-rabbit-descent-tool-${visualStatus}`}
+                            style={{ '--rabbit-tool-color': color } as React.CSSProperties}
+                        >
+                            <div className="forensic-rabbit-descent-tool-head">
+                                <span>{legRoles[id]}</span>
+                                <strong>{getLegDisplayState(visualStatus)}</strong>
+                            </div>
+                            <p>{state}</p>
+                            <SignalBars level={getSignalLevel(state)} color={color} />
+                        </article>
+                    );
+                })}
+            </div>
+        </section>
+    );
+};
+
 const MetricReadout = ({ label, value, title }: { label: string; value: string | number; title?: string }) => (
     <div className="forensic-spider-readout" title={title}>
         <span>{label}</span>
@@ -611,7 +660,11 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     const localChunkCount = effectiveLocalProgress?.counters?.documentChunks || 0;
     const confidenceScore = Math.round((displayMetrics?.confidenceScore ?? 0) * 100);
     const throughput = activeLegCount > 0
-        ? (effectiveOperationMode === 'local' ? `${Math.max(2, activeLegCount * 3)} docs/min` : `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps`)
+        ? (effectiveOperationMode === 'local'
+            ? `${Math.max(2, activeLegCount * 3)} docs/min`
+            : effectiveOperationMode === 'rabbit-hole'
+                ? `${Math.max(1, Math.ceil(activeLegCount / 2))} layers/min`
+                : `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps`)
         : 'Standby';
     const normalizedPipelinePercent = Math.max(0, Math.min(100, Math.round(pipelineProgressPercent)));
     const pipelineTitle = normalizedPipelinePercent > 0
@@ -666,7 +719,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                         </div>
                     </div>
                     <div className="forensic-spider-top-metrics">
-                        <MetricReadout label="Legs Active" value={`${activeLegCount} / 8`} />
+                        <MetricReadout label={isRabbitHoleMode ? 'Tools Active' : 'Legs Active'} value={`${activeLegCount} / 8`} />
                         <MetricReadout label="Evidence" value={evidenceCount} />
                         <MetricReadout label="Tokens" value={tokenReadout?.value || '0'} title={tokenReadout?.title} />
                         <MetricReadout label="Throughput" value={throughput} />
@@ -674,19 +727,28 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                 </header>
 
                 <div className="forensic-spider-workbench">
-                    <div className="forensic-spider-leg-bank">
-                        {[0, 2, 4, 6].map((id) => (
-                            <LegTelemetryCard
-                                key={id}
-                                id={id}
-                                state={legStates[id] || 'Idle'}
-                                pipelineStatus={effectivePipelineStatus}
-                                role={legRoles[id]}
-                                operationMode={effectiveOperationMode}
-                                transientStatus={legTransitionStates[id]}
-                            />
-                        ))}
-                    </div>
+                    {isRabbitHoleMode ? (
+                        <RabbitDescentTelemetryPanel
+                            legIds={legIds}
+                            legStates={legStates}
+                            legVisualStatuses={legVisualStatuses}
+                            legRoles={legRoles}
+                        />
+                    ) : (
+                        <div className="forensic-spider-leg-bank">
+                            {[0, 2, 4, 6].map((id) => (
+                                <LegTelemetryCard
+                                    key={id}
+                                    id={id}
+                                    state={legStates[id] || 'Idle'}
+                                    pipelineStatus={effectivePipelineStatus}
+                                    role={legRoles[id]}
+                                    operationMode={effectiveOperationMode}
+                                    transientStatus={legTransitionStates[id]}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     <div data-testid="spider-lab-stage" className="forensic-spider-lab-stage">
                         <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-top">
@@ -707,42 +769,46 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                                 />
                             </div>
                         )}
-                        <Canvas
-                            camera={{ position: [0, -0.4, 13], fov: 45 }}
-                            dpr={[1, 1.5]}
-                            gl={{ antialias: true, alpha: true }}
-                        >
-                            <SpiderScene
-                                legStates={legStates}
-                                legVisualStatuses={legVisualStatuses}
-                                brainState={brainState}
-                                pipelineStatus={effectivePipelineStatus}
-                                evidencePackets={evidencePackets}
-                                operationMode={effectiveOperationMode}
-                            />
-                            <EffectComposer>
-                                <Bloom luminanceThreshold={0.18} mipmapBlur intensity={0.72} />
-                            </EffectComposer>
-                        </Canvas>
+                        {!isRabbitHoleMode && (
+                            <Canvas
+                                camera={{ position: [0, -0.4, 13], fov: 45 }}
+                                dpr={[1, 1.5]}
+                                gl={{ antialias: true, alpha: true }}
+                            >
+                                <SpiderScene
+                                    legStates={legStates}
+                                    legVisualStatuses={legVisualStatuses}
+                                    brainState={brainState}
+                                    pipelineStatus={effectivePipelineStatus}
+                                    evidencePackets={evidencePackets}
+                                    operationMode={effectiveOperationMode}
+                                />
+                                <EffectComposer>
+                                    <Bloom luminanceThreshold={0.18} mipmapBlur intensity={0.72} />
+                                </EffectComposer>
+                            </Canvas>
+                        )}
                         <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-bottom">
                             <span>{stageBottomLabel}</span>
                             <strong>{stageBottomValue}</strong>
                         </div>
                     </div>
 
-                    <div className="forensic-spider-leg-bank">
-                        {[1, 3, 5, 7].map((id) => (
-                            <LegTelemetryCard
-                                key={id}
-                                id={id}
-                                state={legStates[id] || 'Idle'}
-                                pipelineStatus={effectivePipelineStatus}
-                                role={legRoles[id]}
-                                operationMode={effectiveOperationMode}
-                                transientStatus={legTransitionStates[id]}
-                            />
-                        ))}
-                    </div>
+                    {!isRabbitHoleMode && (
+                        <div className="forensic-spider-leg-bank">
+                            {[1, 3, 5, 7].map((id) => (
+                                <LegTelemetryCard
+                                    key={id}
+                                    id={id}
+                                    state={legStates[id] || 'Idle'}
+                                    pipelineStatus={effectivePipelineStatus}
+                                    role={legRoles[id]}
+                                    operationMode={effectiveOperationMode}
+                                    transientStatus={legTransitionStates[id]}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     <aside data-testid="spider-evidence-intake" className="forensic-spider-intake-panel">
                         <div className="flex items-center justify-between gap-3">
