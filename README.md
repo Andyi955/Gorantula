@@ -8,8 +8,6 @@ Gorantula is a local-first intelligence research workspace. It crawls a topic, g
 ![Detective Board Preview](./public/assets/detectiveboard.png)
 ![Timeline Preview](./public/assets/timeline-v2.png)
 
-<img src="./frontend/public/assets/rabbit-hole/rabbit-hole-emblem.png" alt="Rabbit Hole Mode emblem" width="420" />
-
 ## What It Does
 
 - Runs concurrent web crawling with multiple worker legs.
@@ -22,6 +20,8 @@ Gorantula is a local-first intelligence research workspace. It crawls a topic, g
 - Adds a Rabbit Hole mode for deeper pass-based research, Gatekeeper review, optional image scraping, supporting evidence bands, and final relationship synthesis.
 - Uses configurable AI routing with DeepSeek as the default day-to-day provider.
 - Supports Gemini, OpenAI, Anthropic, Qwen, GLM, Kimi, MiniMax, Ollama, LM Studio, and compatible `/v1/chat/completions` providers.
+
+![Rabbit Hole Spider View Preview](./public/assets/rabbitholedashboard.png)
 
 ## Rabbit Hole Mode
 
