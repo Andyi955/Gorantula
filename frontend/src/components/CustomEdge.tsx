@@ -32,6 +32,9 @@ type RelationshipEdgeData = {
     routeTargetPoint?: StrictGridPoint;
     routeLabelPoint?: StrictGridPoint;
     routePoints?: StrictGridPoint[];
+    isDragPreview?: boolean;
+    dragPreviewSourcePoint?: StrictGridPoint;
+    dragPreviewTargetPoint?: StrictGridPoint;
     sourcePortSide?: PortSide;
     targetPortSide?: PortSide;
     labelX?: number;
@@ -454,6 +457,23 @@ const alignRouteEndpoint = (
 };
 
 const getStrictRouteData = (data: RelationshipEdgeData | undefined, sourceX: number, sourceY: number, targetX: number, targetY: number) => {
+    const dragPreviewSourcePoint = coerceRoutePoint(data?.dragPreviewSourcePoint);
+    const dragPreviewTargetPoint = coerceRoutePoint(data?.dragPreviewTargetPoint);
+    if (data?.isDragPreview && dragPreviewSourcePoint && dragPreviewTargetPoint) {
+        const pathPoints = [dragPreviewSourcePoint, dragPreviewTargetPoint];
+        return {
+            pathPoints,
+            edgePath: buildPolylinePath(pathPoints),
+            labelPoint: getMidpoint(
+                dragPreviewSourcePoint.x,
+                dragPreviewSourcePoint.y,
+                dragPreviewTargetPoint.x,
+                dragPreviewTargetPoint.y,
+            ),
+            hasAutoLabelPoint: true,
+        };
+    }
+
     const routeAnchorX = typeof data?.routeAnchorX === 'number' ? data.routeAnchorX : undefined;
     const routeAnchorY = typeof data?.routeAnchorY === 'number' ? data.routeAnchorY : undefined;
     const hasRouteAnchor = routeAnchorX !== undefined && routeAnchorY !== undefined;
@@ -513,6 +533,7 @@ export default function CustomEdge({
     const boardMode = data?.boardMode as BoardMode | undefined;
     const isStrictGrid = boardMode === 'strict-grid';
     const isConnectionRevealing = data?.isConnectionRevealing === true;
+    const isDragPreview = data?.isDragPreview === true;
 
     const [smoothPath, smoothLabelX, smoothLabelY] = getSmoothStepPath({
         sourceX,
@@ -591,10 +612,14 @@ export default function CustomEdge({
     }, [data?.color, data?.pattern, data?.shape, style]);
     const displayedEdgeStyle = useMemo(() => ({
         ...resolvedEdgeStyle,
+        opacity: isDragPreview ? 0.7 : resolvedEdgeStyle.opacity,
+        strokeDasharray: isDragPreview ? (resolvedEdgeStyle.strokeDasharray || '8 8') : resolvedEdgeStyle.strokeDasharray,
         filter: isHovered
             ? `drop-shadow(0 0 5px ${data?.color || resolvedEdgeStyle.stroke || '#8ee8ff'}66)`
-            : resolvedEdgeStyle.filter,
-    }), [data?.color, isHovered, resolvedEdgeStyle]);
+            : (isDragPreview
+                ? `drop-shadow(0 0 8px ${data?.color || resolvedEdgeStyle.stroke || '#8ee8ff'}55)`
+                : resolvedEdgeStyle.filter),
+    }), [data?.color, isDragPreview, isHovered, resolvedEdgeStyle]);
 
     const onMouseDown = useCallback(
         (evt: React.MouseEvent) => {
@@ -774,7 +799,8 @@ export default function CustomEdge({
                     style={{
                         position: 'absolute',
                         transform: `translate(-50%, -50%) translate(${currentLabelPoint.x}px, ${currentLabelPoint.y}px)`,
-                        pointerEvents: 'all',
+                        opacity: isDragPreview ? 0.38 : 1,
+                        pointerEvents: isDragPreview ? 'none' : 'all',
                         zIndex: 15,
                     }}
                     className="nodrag nopan"

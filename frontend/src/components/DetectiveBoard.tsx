@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import ReactFlow, {
     Background,
     BackgroundVariant,
@@ -25,7 +25,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode, { type NodeData, type NodeSaveMode, type PersonaInsight } from './CustomNode';
 import CustomEdge from './CustomEdge';
-import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
+import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeCenter, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
@@ -34,6 +34,7 @@ import {
     getStrictGridLayoutedNodes,
     normalizeStrictGridNodes,
     STRICT_GRID_EDGE_Z_INDEX,
+    STRICT_GRID_EXPANDED_NODE_Z_INDEX,
     STRICT_GRID_NODE_Z_INDEX,
 } from './detectiveBoardStrictGridLayout';
 import { type PersistedBoardState } from '../utils/hierarchicalCanvas';
@@ -56,8 +57,10 @@ import {
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 import {
+    BOARD_RESTORE_COMPLETE_EVENT,
     BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
     BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
+    type BoardRestoreCompleteDetail,
     emitBoardWorkspaceEvent,
 } from '../utils/boardWorkspaceEvents';
 import {
@@ -68,15 +71,25 @@ import {
     BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT,
     BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT,
     BROWSER_QA_PIPELINE_DEMO_EVENT,
+    BROWSER_QA_RABBIT_HOLE_DEMO_EVENT,
     BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT,
     BROWSER_QA_SYNTHESIS_DEMO_EVENT,
     BROWSER_QA_TIMELINE_DEMO_EVENT,
     type BrowserQaAnimationDemoDetail,
     type BrowserQaEvidenceExpansionDemoDetail,
+    type BrowserQaRabbitHoleDemoDetail,
 } from '../utils/browserQaSeed';
 import type { InvestigationRecord } from '../utils/investigations';
+import {
+    buildSupportTethers,
+    layoutSupportingEvidenceNodes,
+    SUPPORT_NODE_FRAME,
+    type SupportTether,
+    type SupportingEvidenceBand,
+} from './supportingEvidenceLayer';
+import { getMiniMapNodeColor } from './detectiveBoardMinimap';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle, ExternalLink } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -210,6 +223,606 @@ type VisibleLegendStyle = {
 const shouldPreserveExistingFullText = (summary?: string, fullText?: string) =>
     Boolean(summary && fullText && summary !== fullText);
 
+type NodeDossier = {
+    title: string;
+    summary: string;
+    fullText: string;
+    sourceURL?: string;
+    origin?: string;
+    rabbitTool?: string;
+    rabbitPass?: number;
+    evidenceRole?: string;
+    images?: NodeImageAsset[];
+};
+
+type NodeDossierInput = {
+    id?: string;
+    title?: string;
+    summary?: string;
+    fullText?: string;
+    sourceURL?: string;
+    origin?: string;
+    rabbitTool?: string;
+    rabbitPass?: number;
+    evidenceRole?: string;
+    images?: readonly NodeImageAsset[];
+};
+
+type DossierBodyBlock =
+    | {
+        kind: 'heading';
+        text: string;
+        level: number;
+    }
+    | {
+        kind: 'paragraph';
+        lines: string[];
+    }
+    | {
+        kind: 'list';
+        items: string[];
+    }
+    | {
+        kind: 'table';
+        hasHeader: boolean;
+        rows: string[][];
+    }
+    | {
+        kind: 'excerpt';
+        text: string;
+    };
+
+const DOSSIER_INLINE_URL_PATTERN = /(https?:\/\/[^\s,)\]]+|vault:\/\/[^\s,)\]]+|timeline:\/\/[^\s,)\]]+|rabbit:\/\/[^\s,)\]]+)/i;
+const DOSSIER_ENTITY_PATTERN = /\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)]/i;
+const DOSSIER_MARKDOWN_BOLD_PATTERN = /\*\*([^*]+)\*\*/i;
+const DOSSIER_HEADING_PATTERN = /^(#{1,4}\s*)?[A-Z0-9][A-Z0-9\s:/&().,'"-]{8,}$/;
+const DOSSIER_SEPARATOR_PATTERN = /^[-_*]{3,}$/;
+const DOSSIER_BULLET_PATTERN = /^\s*[-*+]\s+/;
+const DOSSIER_TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
+const DOSSIER_EXCERPT_MARKER_PATTERN = /^(?:\.{3}|…|\[Excerpt begins mid-source]|\[Excerpt continues])$/i;
+const DOSSIER_EXCERPT_PREFIX_PATTERN = /^\s*(?:\.{3}|…)\s+(?=\S)/;
+const DOSSIER_EXCERPT_SUFFIX_PATTERN = /\s+(?:\.{3}|…)\s*$/;
+const DOSSIER_METADATA_LINE_PATTERN = /^(?:Rabbit tool|Query|Rationale|Source|Date|Subject|Based on|Content):/i;
+const DOSSIER_KEY_SIGNAL_LIMIT = 5;
+const DOSSIER_KEY_SIGNAL_MIN_LENGTH = 32;
+const DOSSIER_BOILERPLATE_PATTERNS = [
+    /^INTEL_REPORT_FULL$/i,
+    /^#?\s*Crawler Result Vault\b/i,
+    /^EXECUTIVE SUMMARY REPORT TO:/i,
+    /^INTELLIGENCE SUMMARY REPORT TO:/i,
+];
+
+const normalizeDossierText = (text?: string) =>
+    (text || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+const getDossierBrief = (summary?: string, fullText?: string) => {
+    const source = normalizeDossierText(summary) || normalizeDossierText(fullText);
+    if (!source) {
+        return 'No dossier text has been captured for this evidence card yet.';
+    }
+
+    const firstParagraph = source.split(/\n{2,}/)[0] || source;
+    const firstSentences = firstParagraph.match(/[^.!?]+[.!?]+(?:\s|$)/g)?.slice(0, 2).join(' ').trim();
+    const brief = firstSentences || firstParagraph;
+
+    if (brief.length <= 420) {
+        return brief;
+    }
+
+    return `${brief.slice(0, 416).trimEnd()}...`;
+};
+
+const cleanDossierInlineMarkdown = (text: string) => text
+    .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/gi, '$1 $2')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(DOSSIER_EXCERPT_PREFIX_PATTERN, '')
+    .replace(DOSSIER_EXCERPT_SUFFIX_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const cleanDossierPlainFragment = (text: string) => text
+    .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/gi, '$1 $2')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(DOSSIER_EXCERPT_PREFIX_PATTERN, '')
+    .replace(DOSSIER_EXCERPT_SUFFIX_PATTERN, '')
+    .replace(/\s+/g, ' ');
+
+const cleanDossierHeadingText = (text: string) => cleanDossierInlineMarkdown(text)
+    .replace(/^#{1,6}\s*/, '')
+    .replace(DOSSIER_BULLET_PATTERN, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/^[-_*]+\s*/, '')
+    .trim();
+
+const getDossierExcerptMarkerText = (line: string) => {
+    const trimmed = line.trim();
+    if (!DOSSIER_EXCERPT_MARKER_PATTERN.test(trimmed)) {
+        return '';
+    }
+    if (/^\[Excerpt begins mid-source]$/i.test(trimmed)) {
+        return 'Excerpt begins mid-source';
+    }
+    if (/^\[Excerpt continues]$/i.test(trimmed) || /^(?:\.{3}|…)$/i.test(trimmed)) {
+        return 'Excerpt continues';
+    }
+    return '';
+};
+
+const hasDossierExcerptPrefix = (line: string) => DOSSIER_EXCERPT_PREFIX_PATTERN.test(line);
+const hasDossierExcerptSuffix = (line: string) => DOSSIER_EXCERPT_SUFFIX_PATTERN.test(line);
+const stripDossierExcerptAffixes = (line: string) => line
+    .replace(DOSSIER_EXCERPT_PREFIX_PATTERN, '')
+    .replace(DOSSIER_EXCERPT_SUFFIX_PATTERN, '')
+    .trim();
+
+const normalizeDossierTableLine = (line: string) => stripDossierExcerptAffixes(line);
+
+const parseDossierTableRow = (line: string) => line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cleanDossierInlineMarkdown(cell))
+    .filter(Boolean);
+
+const isDossierTableSeparatorRow = (cells: string[]) =>
+    cells.length > 0 && cells.every((cell) => /^:?-{2,}:?$/.test(cell.replace(/\s+/g, '')));
+
+const shouldSkipDossierLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed || DOSSIER_SEPARATOR_PATTERN.test(trimmed)) {
+        return true;
+    }
+
+    if (/^Source:\s*(?:https?:\/\/|vault:\/\/|timeline:\/\/|rabbit:\/\/)/i.test(trimmed)) {
+        return true;
+    }
+
+    return DOSSIER_BOILERPLATE_PATTERNS.some((pattern) => pattern.test(trimmed));
+};
+
+const getDossierBodyBlocks = (fullText?: string): DossierBodyBlock[] => {
+    const normalized = normalizeDossierText(fullText);
+    if (!normalized) {
+        return [];
+    }
+
+    const blocks: DossierBodyBlock[] = [];
+    let paragraphLines: string[] = [];
+    let listItems: string[] = [];
+    let tableRows: string[][] = [];
+    let tableHasHeader = false;
+
+    const flushParagraph = () => {
+        const lines = paragraphLines
+            .map(cleanDossierInlineMarkdown)
+            .filter(Boolean);
+
+        if (lines.length > 0) {
+            blocks.push({ kind: 'paragraph', lines });
+        }
+
+        paragraphLines = [];
+    };
+
+    const flushList = () => {
+        const items = listItems
+            .map(cleanDossierInlineMarkdown)
+            .filter(Boolean);
+
+        if (items.length > 0) {
+            blocks.push({ kind: 'list', items });
+        }
+
+        listItems = [];
+    };
+
+    const flushTable = () => {
+        if (tableRows.length > 0) {
+            blocks.push({ kind: 'table', hasHeader: tableHasHeader, rows: tableRows });
+        }
+
+        tableRows = [];
+        tableHasHeader = false;
+    };
+
+    const addExcerptMarker = (text: string) => {
+        flushParagraph();
+        flushList();
+        flushTable();
+        blocks.push({ kind: 'excerpt', text });
+    };
+
+    normalized.split('\n').forEach((line) => {
+        const trimmed = line.trim();
+        const explicitExcerptMarker = getDossierExcerptMarkerText(trimmed);
+        if (explicitExcerptMarker) {
+            addExcerptMarker(explicitExcerptMarker);
+            return;
+        }
+
+        const excerptPrefix = hasDossierExcerptPrefix(trimmed);
+        const excerptSuffix = hasDossierExcerptSuffix(trimmed);
+        const displayLine = stripDossierExcerptAffixes(trimmed);
+
+        if (excerptPrefix) {
+            addExcerptMarker('Excerpt begins mid-source');
+        }
+
+        if (shouldSkipDossierLine(displayLine)) {
+            flushParagraph();
+            flushList();
+            flushTable();
+            return;
+        }
+
+        const tableLine = normalizeDossierTableLine(displayLine);
+        if (DOSSIER_TABLE_ROW_PATTERN.test(tableLine)) {
+            flushParagraph();
+            flushList();
+
+            const cells = parseDossierTableRow(tableLine);
+            if (isDossierTableSeparatorRow(cells)) {
+                if (tableRows.length === 1) {
+                    tableHasHeader = true;
+                }
+            } else if (cells.length > 0) {
+                tableRows.push(cells);
+            }
+            if (excerptSuffix) {
+                addExcerptMarker('Excerpt continues');
+            }
+            return;
+        }
+
+        const markdownHeadingMatch = displayLine.match(/^(#{1,6})\s*/);
+        const heading = cleanDossierHeadingText(displayLine);
+        const isHeading = Boolean(markdownHeadingMatch)
+            || (
+                !DOSSIER_BULLET_PATTERN.test(displayLine)
+                && heading.length <= 110
+                && DOSSIER_HEADING_PATTERN.test(heading)
+            );
+
+        if (isHeading && heading) {
+            flushParagraph();
+            flushList();
+            flushTable();
+            blocks.push({ kind: 'heading', text: heading, level: markdownHeadingMatch ? markdownHeadingMatch[1].length : 2 });
+            if (excerptSuffix) {
+                addExcerptMarker('Excerpt continues');
+            }
+            return;
+        }
+
+        if (DOSSIER_BULLET_PATTERN.test(displayLine)) {
+            flushParagraph();
+            flushTable();
+            listItems.push(displayLine.replace(DOSSIER_BULLET_PATTERN, ''));
+            if (excerptSuffix) {
+                addExcerptMarker('Excerpt continues');
+            }
+            return;
+        }
+
+        flushList();
+        flushTable();
+        paragraphLines.push(displayLine);
+        if (excerptSuffix) {
+            addExcerptMarker('Excerpt continues');
+        }
+    });
+
+    flushParagraph();
+    flushList();
+    flushTable();
+
+    return blocks;
+};
+
+const normalizeDossierSignalText = (text: string) => cleanDossierInlineMarkdown(text)
+    .replace(/^\d+(?:\.\d+)*[.)]\s+/, '')
+    .replace(/^[-:#\s]+/, '')
+    .trim();
+
+const formatDossierSignalForBrief = (text: string) => {
+    const emphasizedSignal = text.match(/^\*\*([^*]+)\*\*\s*[-:]\s*(.+)$/);
+    if (!emphasizedSignal) {
+        return text;
+    }
+
+    const signalDetail = emphasizedSignal[2]
+        .replace(/\bremains unresolved\b/i, 'needs follow-up')
+        .replace(/\bcreates a\b/i, 'maps to a')
+        .trim();
+
+    return `**${emphasizedSignal[1]}** signal: ${signalDetail}`;
+};
+
+const shouldUseDossierSignal = (text: string) => {
+    const signal = normalizeDossierSignalText(text);
+    if (signal.length < DOSSIER_KEY_SIGNAL_MIN_LENGTH) {
+        return false;
+    }
+    if (DOSSIER_METADATA_LINE_PATTERN.test(signal) || DOSSIER_EXCERPT_MARKER_PATTERN.test(signal)) {
+        return false;
+    }
+    if (DOSSIER_TABLE_ROW_PATTERN.test(signal) || isDossierTableSeparatorRow(parseDossierTableRow(signal))) {
+        return false;
+    }
+    return !DOSSIER_BOILERPLATE_PATTERNS.some((pattern) => pattern.test(signal));
+};
+
+const getDossierKeySignals = (summary?: string, fullText?: string) => {
+    const signals: string[] = [];
+    const seen = new Set<string>();
+
+    const addSignal = (value: string) => {
+        const signal = normalizeDossierSignalText(value);
+        const displaySignal = formatDossierSignalForBrief(signal);
+        const normalizedKey = displaySignal.toLowerCase();
+        if (!signal || !shouldUseDossierSignal(signal) || seen.has(normalizedKey)) {
+            return;
+        }
+        seen.add(normalizedKey);
+        signals.push(displaySignal);
+    };
+
+    getDossierBodyBlocks(fullText).forEach((block) => {
+        if (signals.length >= DOSSIER_KEY_SIGNAL_LIMIT) {
+            return;
+        }
+
+        if (block.kind === 'list') {
+            block.items.forEach(addSignal);
+            return;
+        }
+
+        if (block.kind === 'paragraph') {
+            block.lines
+                .flatMap((line) => line.match(/[^.!?]+[.!?]+(?:\s|$)/g) || [line])
+                .forEach(addSignal);
+        }
+    });
+
+    if (signals.length === 0) {
+        addSignal(getDossierBrief(summary, fullText));
+    }
+
+    return signals.slice(0, DOSSIER_KEY_SIGNAL_LIMIT);
+};
+
+const getDossierContextNote = (dossier: NodeDossier) => {
+    if (dossier.rabbitTool === 'vault_search' || dossier.sourceURL?.startsWith('vault://')) {
+        return 'Based on a vault source excerpt';
+    }
+    if (dossier.rabbitTool === 'timeline_context' || dossier.sourceURL?.startsWith('timeline://')) {
+        return 'Based on generated timeline context';
+    }
+    if (dossier.rabbitTool === 'web_search') {
+        return 'Based on a live web evidence excerpt';
+    }
+    if (dossier.origin === 'rabbit-hole') {
+        return 'Based on a Rabbit Hole evidence excerpt';
+    }
+    return '';
+};
+
+const getDossierSourceLinks = (dossier: NodeDossier) => {
+    const explicitSources = [
+        dossier.sourceURL,
+        ...(dossier.images || []).map((image) => image.sourceURL || image.path),
+    ];
+    const textSources = normalizeDossierText(dossier.fullText).match(new RegExp(DOSSIER_INLINE_URL_PATTERN.source, 'gi')) || [];
+
+    return Array.from(new Set(
+        [...explicitSources, ...textSources]
+            .flatMap((source) => (source || '').split(','))
+            .map((source) => source.trim())
+            .filter(Boolean)
+    ));
+};
+
+const isDossierLink = (text: string) => DOSSIER_INLINE_URL_PATTERN.test(text);
+const isDossierExternalLink = (text: string) => /^https?:\/\//i.test(text);
+const isDossierInternalReference = (text: string) => /^(?:vault|timeline|rabbit):\/\//i.test(text);
+
+const getDossierEntityClassName = (type: string) => {
+    switch (type.toUpperCase()) {
+        case 'PERSON':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-person';
+        case 'ORG':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-org';
+        case 'LOC':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-loc';
+        case 'DATE':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-date';
+        case 'TIME':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-time';
+        default:
+            return 'forensic-dossier-entity-chip';
+    }
+};
+
+const formatDossierMetaLabel = (value?: string | number) =>
+    String(value || '')
+        .replace(/[_-]+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const renderDossierTextWithLinks = (text: string): React.ReactNode => {
+    const fragments: React.ReactNode[] = [];
+    let lastIndex = 0;
+    const richTextPattern = new RegExp(
+        `(${DOSSIER_INLINE_URL_PATTERN.source}|${DOSSIER_ENTITY_PATTERN.source}|${DOSSIER_MARKDOWN_BOLD_PATTERN.source})`,
+        'gi'
+    );
+
+    Array.from(text.matchAll(richTextPattern)).forEach((match, index) => {
+        const token = match[0];
+        const tokenIndex = match.index ?? 0;
+
+        if (tokenIndex > lastIndex) {
+            fragments.push(
+                <React.Fragment key={`text-${index}-${lastIndex}`}>
+                    {cleanDossierPlainFragment(text.slice(lastIndex, tokenIndex))}
+                </React.Fragment>
+            );
+        }
+
+        if (isDossierLink(token)) {
+            if (isDossierInternalReference(token)) {
+                fragments.push(
+                    <span
+                        key={`internal-ref-${index}-${tokenIndex}`}
+                        className="forensic-dossier-internal-ref"
+                        title="Stored Gorantula reference"
+                    >
+                        {token}
+                    </span>
+                );
+                lastIndex = tokenIndex + token.length;
+                return;
+            }
+
+            fragments.push(
+                <a
+                    key={`link-${index}-${tokenIndex}`}
+                    href={token}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="forensic-dossier-inline-link"
+                >
+                    {token}
+                </a>
+            );
+        } else {
+            const entityMatch = token.match(DOSSIER_ENTITY_PATTERN);
+            if (entityMatch) {
+                fragments.push(
+                    <span
+                        key={`entity-${index}-${tokenIndex}`}
+                        className={getDossierEntityClassName(entityMatch[1])}
+                    >
+                        {entityMatch[2]}
+                    </span>
+                );
+            } else {
+                const boldMatch = token.match(DOSSIER_MARKDOWN_BOLD_PATTERN);
+                if (boldMatch) {
+                    fragments.push(
+                        <strong key={`bold-${index}-${tokenIndex}`} className="forensic-dossier-strong">
+                            {renderDossierTextWithLinks(boldMatch[1])}
+                        </strong>
+                    );
+                }
+            }
+        }
+
+        lastIndex = tokenIndex + token.length;
+    });
+
+    if (lastIndex < text.length) {
+        fragments.push(
+            <React.Fragment key={`text-tail-${lastIndex}`}>
+                {cleanDossierPlainFragment(text.slice(lastIndex))}
+            </React.Fragment>
+        );
+    }
+
+    if (fragments.length === 0) {
+        return text;
+    }
+
+    return fragments;
+};
+
+const renderDossierBodyBlock = (block: DossierBodyBlock, index: number) => {
+    if (block.kind === 'heading') {
+        return (
+            <h3
+                key={`${block.kind}-${index}`}
+                className={block.level >= 3 ? 'forensic-dossier-body-subheading' : 'forensic-dossier-body-heading'}
+            >
+                {block.text}
+            </h3>
+        );
+    }
+
+    if (block.kind === 'list') {
+        return (
+            <ul key={`${block.kind}-${index}`} className="forensic-dossier-body-list">
+                {block.items.map((item, itemIndex) => (
+                    <li key={`${item}-${itemIndex}`}>
+                        {renderDossierTextWithLinks(item)}
+                    </li>
+                ))}
+            </ul>
+        );
+    }
+
+    if (block.kind === 'table') {
+        const headerRow = block.hasHeader ? block.rows[0] : null;
+        const bodyRows = block.hasHeader ? block.rows.slice(1) : block.rows;
+
+        return (
+            <div key={`${block.kind}-${index}`} className="forensic-dossier-body-table-wrap">
+                <table className="forensic-dossier-body-table">
+                    {headerRow && (
+                        <thead>
+                            <tr>
+                                {headerRow.map((cell, cellIndex) => (
+                                    <th key={`${cell}-${cellIndex}`}>
+                                        {renderDossierTextWithLinks(cell)}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                    )}
+                    <tbody>
+                        {bodyRows.map((row, rowIndex) => (
+                            <tr key={`${row.join('-')}-${rowIndex}`}>
+                                {row.map((cell, cellIndex) => (
+                                    <td key={`${cell}-${cellIndex}`}>
+                                        {renderDossierTextWithLinks(cell)}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    }
+
+    if (block.kind === 'excerpt') {
+        return (
+            <div key={`${block.kind}-${index}`} className="forensic-dossier-excerpt-marker">
+                {block.text}
+            </div>
+        );
+    }
+
+    return (
+        <p key={`${block.kind}-${index}`} className="forensic-dossier-body-paragraph">
+            {block.lines.map((line, lineIndex) => (
+                <React.Fragment key={`${line}-${lineIndex}`}>
+                    {lineIndex > 0 && <br />}
+                    {renderDossierTextWithLinks(line)}
+                </React.Fragment>
+            ))}
+        </p>
+    );
+};
+
 const mergeEvidenceEdges = (currentEdges: Edge[], incomingEdges: Edge[]) => {
     const persistedEdges = currentEdges.filter((edge) => edge.data?.generatedBy !== 'discovery');
     const persistedEdgeIds = new Set(persistedEdges.map((edge) => edge.id));
@@ -308,6 +921,69 @@ const connectionVaultId = (connection: RelationshipConnection) =>
 
 const hasConnectTheDotsEdges = (edges: Edge[]) =>
     edges.some((edge) => edge.data?.generatedBy === 'connectTheDots');
+
+const isVisibleBoardRelationshipEdge = (edge: Edge) =>
+    edge.hidden !== true &&
+    edge.data?.generatedBy !== 'discovery' &&
+    edge.data?.generatedBy !== 'supportEvidenceTether';
+
+const hasVisibleBoardRelationshipEdges = (edges: Edge[]) =>
+    edges.some(isVisibleBoardRelationshipEdge);
+
+const isPersistedStrictGridPoint = (point: unknown): point is { x: number; y: number } => (
+    !!point &&
+    typeof point === 'object' &&
+    Number.isFinite((point as { x?: unknown }).x) &&
+    Number.isFinite((point as { y?: unknown }).y)
+);
+
+const hasPersistedStrictGridRoute = (edge: Edge) => {
+    if (!isVisibleBoardRelationshipEdge(edge)) {
+        return true;
+    }
+
+    const routePoints = edge.data?.routePoints;
+
+    return (
+        typeof edge.sourceHandle === 'string' &&
+        edge.sourceHandle.trim().length > 0 &&
+        typeof edge.targetHandle === 'string' &&
+        edge.targetHandle.trim().length > 0 &&
+        Array.isArray(routePoints) &&
+        routePoints.length >= 2 &&
+        routePoints.every(isPersistedStrictGridPoint) &&
+        isPersistedStrictGridPoint(edge.data?.routeSourcePoint) &&
+        isPersistedStrictGridPoint(edge.data?.routeTargetPoint)
+    );
+};
+
+const attachRestoredActivePorts = (nodes: Node[], edges: Edge[]) => {
+    const activePortIdsByNode = new Map<string, Set<string>>();
+
+    edges.filter(isVisibleBoardRelationshipEdge).forEach((edge) => {
+        if (edge.sourceHandle) {
+            if (!activePortIdsByNode.has(edge.source)) {
+                activePortIdsByNode.set(edge.source, new Set<string>());
+            }
+            activePortIdsByNode.get(edge.source)?.add(edge.sourceHandle);
+        }
+
+        if (edge.targetHandle) {
+            if (!activePortIdsByNode.has(edge.target)) {
+                activePortIdsByNode.set(edge.target, new Set<string>());
+            }
+            activePortIdsByNode.get(edge.target)?.add(edge.targetHandle);
+        }
+    });
+
+    return nodes.map((node) => ({
+        ...node,
+        data: {
+            ...node.data,
+            activePortIds: Array.from(activePortIdsByNode.get(node.id) || []),
+        },
+    }));
+};
 
 interface DetectiveBoardProps {
     investigationId: string | null;
@@ -475,7 +1151,7 @@ const logResizePipelineDebug = (stage: string, payload: Record<string, unknown>)
 };
 
 const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNodesChange>[0]) => {
-    const resizedDimensions = new Map<string, { width: number; height: number }>();
+    const resizedDimensions = new Map<string, { width: number; height: number; isLiveResize: boolean }>();
 
     changes.forEach((change) => {
         if (change.type !== 'dimensions' || !('dimensions' in change) || !change.dimensions) {
@@ -492,7 +1168,7 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
         const isLiveResize = 'resizing' in change && change.resizing;
         resizedDimensions.set(
             change.id,
-            isLiveResize ? { width, height } : normalizeNodeFrame(width, height)
+            { ...(isLiveResize ? { width, height } : normalizeNodeFrame(width, height)), isLiveResize: Boolean(isLiveResize) }
         );
     });
 
@@ -514,12 +1190,16 @@ const applyResizeDimensionsToStyles = (nodes: Node[], changes: Parameters<OnNode
         if (!nextDimensions) {
             return node;
         }
+        if (node.data?.evidenceRole === 'supporting' && !node.data?.expanded && !nextDimensions.isLiveResize) {
+            return node;
+        }
+        const { isLiveResize: _isLiveResize, ...styleDimensions } = nextDimensions;
 
         return {
             ...node,
             style: {
                 ...node.style,
-                ...nextDimensions,
+                ...styleDimensions,
             }
         };
     });
@@ -532,6 +1212,10 @@ const BOARD_MINIMAP_GLIDE_DURATION_MS = 620;
 const BOARD_MINIMAP_DRAG_DURATION_MS = 0;
 const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
 const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
+const INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS = 80;
+const INITIAL_RESTORE_VIEWPORT_REVEAL_DELAY_MS = 16;
+const BOARD_RESTORE_OVERLAY_MIN_MS = 380;
+const BOARD_RESTORE_OVERLAY_MAX_MS = 1600;
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE = { width: 960, height: 540 };
 const BOARD_NAVIGATOR_BOUNDS_PADDING = BOARD_GRID_SIZE * 3;
@@ -569,6 +1253,11 @@ const appendClassName = (className: string | undefined, nextClassName: string) =
 
 const removeClassName = (className: string | undefined, targetClassName: string) =>
     (className || '').split(/\s+/).filter((classNamePart) => classNamePart && classNamePart !== targetClassName).join(' ');
+
+const getBoardLoadNow = () =>
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
 
 const getConnectLayoutSettleDelay = () => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -773,6 +1462,59 @@ const QA_TEXT_FIT_DEMO_POSITIONS = [
     { x: 1400, y: 128 },
 ] as const;
 
+const QA_RABBIT_HOLE_DEMO_PROMOTION_MS = 1450;
+
+const QA_RABBIT_HOLE_DEMO_NODES = [
+    {
+        id: 'qa-rabbit-web-descent',
+        title: 'QA Rabbit Web Descent',
+        summary: 'Rabbit Hole web_search follows data center grid pressure, cooling water filings, and operator reliability warnings into a live provisional evidence trail.',
+        fullText: 'Rabbit Hole web_search follows data center grid pressure, cooling water filings, and operator reliability warnings into a live provisional evidence trail. This browser-only QA node should appear as RABBIT TRAIL / ACTIVE before promotion.',
+        sourceURL: 'https://example.com/qa-rabbit-web-descent',
+        rabbitTool: 'web_search',
+        confidence: 0.82,
+    },
+    {
+        id: 'qa-rabbit-vault-echo',
+        title: 'QA Rabbit Vault Echo',
+        summary: 'Rabbit Hole vault_search finds an older investigation that mentions the same substation corridor, water constraint, and procurement delay pattern.',
+        fullText: 'Rabbit Hole vault_search finds an older investigation that mentions the same substation corridor, water constraint, and procurement delay pattern. It is intentionally clickable while still provisional.',
+        sourceURL: 'vault://qa-browser-prior-near-miss',
+        rabbitTool: 'vault_search',
+        confidence: 0.76,
+    },
+    {
+        id: 'qa-rabbit-timeline-rift',
+        title: 'QA Rabbit Timeline Rift',
+        summary: 'Rabbit Hole timeline_context extracts May 2026 filings, hearing dates, and operator notes into a chronological pressure trail for the Gatekeeper.',
+        fullText: 'Rabbit Hole timeline_context extracts May 2026 filings, hearing dates, and operator notes into a chronological pressure trail for the Gatekeeper.',
+        sourceURL: 'timeline://qa-rabbit-hole',
+        rabbitTool: 'timeline_context',
+        confidence: 0.79,
+    },
+] as const;
+
+const QA_RABBIT_HOLE_DEMO_POSITIONS = [
+    { x: 128, y: 136 },
+    { x: 640, y: 136 },
+    { x: 1152, y: 136 },
+] as const;
+
+const QA_RABBIT_HOLE_DEMO_CONNECTIONS = [
+    {
+        source: 'qa-rabbit-web-descent',
+        target: 'qa-rabbit-vault-echo',
+        tag: 'HIDDEN_CONNECTION',
+        reasoning: 'The live web trail and older vault memory share the same infrastructure stress pattern.',
+    },
+    {
+        source: 'qa-rabbit-vault-echo',
+        target: 'qa-rabbit-timeline-rift',
+        tag: 'TIMELINE_LEAD',
+        reasoning: 'The older memory gives the timeline context a prior event window to compare against the current descent.',
+    },
+] as const;
+
 const QA_ANIMATION_DEMO_INSIGHTS = [
     {
         personaName: 'Discovery',
@@ -868,6 +1610,8 @@ const stripTransientNodeData = (node: Node): Node => {
         layoutChoreographyStartedAt: _layoutChoreographyStartedAt,
         isTimelineFocused: _isTimelineFocused,
         timelineFocusStartedAt: _timelineFocusStartedAt,
+        isSupportTetherSource: _isSupportTetherSource,
+        isSupportTetherTarget: _isSupportTetherTarget,
         ...stableNodeData
     } = node.data || {};
     const stableClassName = removeClassName((node as Node & { className?: string }).className, LAYOUT_CHOREOGRAPHY_NODE_CLASS);
@@ -909,6 +1653,9 @@ const stripTransientEdgeData = (edge: Edge): Edge => {
         isConnectionRevealing: _isConnectionRevealing,
         connectionRevealStartedAt: _connectionRevealStartedAt,
         onConnectionHover: _onConnectionHover,
+        isDragPreview: _isDragPreview,
+        dragPreviewSourcePoint: _dragPreviewSourcePoint,
+        dragPreviewTargetPoint: _dragPreviewTargetPoint,
         ...stableEdgeData
     } = edge.data || {};
 
@@ -920,20 +1667,26 @@ const stripTransientEdgeData = (edge: Edge): Edge => {
 
 const sanitizeEdgesForPersistence = (edges: Edge[]) => edges.map(stripTransientEdgeData);
 
-const getMiniMapNodeColor = (node: Node) => {
-    if (node.data?.portalKind === 'merged-child') {
-        return '#d946ef';
+const clearEdgeDragPreview = (edge: Edge): Edge => {
+    const {
+        isDragPreview: _isDragPreview,
+        dragPreviewSourcePoint: _dragPreviewSourcePoint,
+        dragPreviewTargetPoint: _dragPreviewTargetPoint,
+        ...stableEdgeData
+    } = edge.data || {};
+
+    if (
+        _isDragPreview === undefined &&
+        _dragPreviewSourcePoint === undefined &&
+        _dragPreviewTargetPoint === undefined
+    ) {
+        return edge;
     }
 
-    if (node.data?.isDeepDiveSource) {
-        return '#10b981';
-    }
-
-    if (typeof node.data?.title === 'string' && (node.data.title.includes('[IMPORTED]') || node.id.startsWith('imported-'))) {
-        return '#f59e0b';
-    }
-
-    return '#00f3ff';
+    return {
+        ...edge,
+        data: stableEdgeData,
+    };
 };
 
 type BoardNavigatorInteraction = 'click' | 'drag';
@@ -959,6 +1712,7 @@ interface BoardNavigatorProps {
     width: number;
     height: number;
     isCameraMoving: boolean;
+    activeSupportTethers?: SupportTether[];
     getNodeColor: (node: Node) => string;
     onNavigate: (position: XYPosition, interaction: BoardNavigatorInteraction) => void;
 }
@@ -1027,6 +1781,15 @@ const projectNavigatorRect = (
     height: Math.max(2, rect.height * projection.scale),
 });
 
+const projectNavigatorPoint = (
+    point: XYPosition,
+    bounds: BoardNavigatorRect,
+    projection: ReturnType<typeof getNavigatorProjection>
+): XYPosition => ({
+    x: projection.offsetX + (point.x - bounds.x) * projection.scale,
+    y: projection.offsetY + (point.y - bounds.y) * projection.scale,
+});
+
 const BoardNavigator: React.FC<BoardNavigatorProps> = ({
     nodes,
     viewport,
@@ -1034,6 +1797,7 @@ const BoardNavigator: React.FC<BoardNavigatorProps> = ({
     width,
     height,
     isCameraMoving,
+    activeSupportTethers = [],
     getNodeColor,
     onNavigate,
 }) => {
@@ -1057,6 +1821,8 @@ const BoardNavigator: React.FC<BoardNavigatorProps> = ({
     const bounds = getBoardNavigatorBounds([...nodeRects, visibleRect]);
     const projection = getNavigatorProjection(bounds, width, height);
     const viewportRect = projectNavigatorRect(visibleRect, bounds, projection);
+    const activeSupportSourceIds = new Set(activeSupportTethers.map((tether) => tether.sourceId));
+    const activeSupportTargetIds = new Set(activeSupportTethers.map((tether) => tether.targetId));
     const getFlowPositionFromEvent = (
         event: React.MouseEvent<SVGSVGElement> | React.PointerEvent<SVGSVGElement>
     ): XYPosition => {
@@ -1144,14 +1910,42 @@ const BoardNavigator: React.FC<BoardNavigatorProps> = ({
                 rx={14}
             />
             <g aria-hidden="true">
+                {activeSupportTethers.length > 0 && (
+                    <g data-testid="board-navigator-support-tethers" className="forensic-board-navigator-support-tethers">
+                        {activeSupportTethers.map((tether) => {
+                            const source = projectNavigatorPoint(tether.source, bounds, projection);
+                            const target = projectNavigatorPoint(tether.target, bounds, projection);
+
+                            return (
+                                <line
+                                    key={`${tether.sourceId}-${tether.targetId}`}
+                                    data-testid="board-navigator-support-tether"
+                                    className={`forensic-board-navigator-support-tether forensic-board-navigator-support-tether-${tether.strength}`}
+                                    x1={source.x}
+                                    y1={source.y}
+                                    x2={target.x}
+                                    y2={target.y}
+                                />
+                            );
+                        })}
+                    </g>
+                )}
                 {nodeRects.map((nodeRect) => {
                     const projectedNode = projectNavigatorRect(nodeRect, bounds, projection);
+                    const isSupportSource = activeSupportSourceIds.has(nodeRect.node.id);
+                    const isSupportTarget = activeSupportTargetIds.has(nodeRect.node.id);
+                    const supportStateClass = isSupportSource
+                        ? 'forensic-board-navigator-node-support-source'
+                        : isSupportTarget
+                            ? 'forensic-board-navigator-node-support-target'
+                            : '';
 
                     return (
                         <rect
                             key={nodeRect.node.id}
                             data-testid="board-navigator-node"
-                            className="forensic-board-navigator-node"
+                            data-node-id={nodeRect.node.id}
+                            className={`forensic-board-navigator-node ${supportStateClass}`}
                             x={projectedNode.x}
                             y={projectedNode.y}
                             width={projectedNode.width}
@@ -1194,7 +1988,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [nodes, setNodes] = useState<Node[]>([]);
     const [edges, setEdges] = useState<Edge[]>([]);
 
-    const [selectedContent, setSelectedContent] = useState<string | null>(null);
+    const [selectedDossier, setSelectedDossier] = useState<NodeDossier | null>(null);
+    const [isDossierSourceMaterialOpen, setIsDossierSourceMaterialOpen] = useState(false);
     const [edgeReasoning, setEdgeReasoning] = useState<{ tag: string, rawTag?: string, text: string, color: string, personas?: string[], qualityScore?: number, evidenceNodeIDs?: string[] } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGathering, setIsGathering] = useState(false);
@@ -1240,6 +2035,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
     const [isBoardCameraMoving, setIsBoardCameraMoving] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
+    const [supportHoverNodeId, setSupportHoverNodeId] = useState<string | null>(null);
+    const [connectionHover, setConnectionHover] = useState<{ edgeId?: string; nodeIds: string[]; color: string } | null>(null);
+    const [isInitialRestoreViewportSettling, setIsInitialRestoreViewportSettling] = useState(false);
+    const [boardRestoreOverlay, setBoardRestoreOverlay] = useState<{
+        investigationId: string;
+        startedAt: number;
+        source: string;
+    } | null>(null);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
     const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
     const [showQaReplayMenu, setShowQaReplayMenu] = useState(false);
@@ -1264,7 +2067,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const stoppedPipelineRunIdsRef = useRef<Set<string>>(new Set());
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
-    const dragRouteFrameRef = useRef<number | null>(null);
+    const dragPreviewFrameRef = useRef<number | null>(null);
     const persistTimerRef = useRef<number | null>(null);
     const marqueePointerIdRef = useRef<number | null>(null);
     const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
@@ -1282,14 +2085,131 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const qaGatheringStatusTimeoutRef = useRef<number | null>(null);
     const qaAnimationDemoActiveRef = useRef(false);
     const qaEvidenceExpansionDemoActiveRef = useRef(false);
+    const qaRabbitHoleDemoActiveRef = useRef(false);
     const lastQaAnimationDemoRequestIdRef = useRef<string | null>(null);
     const timelineFocusTimeoutRef = useRef<number | null>(null);
     const boardCameraMovementTimeoutRef = useRef<number | null>(null);
+    const initialRestoreViewportFitTimeoutRef = useRef<number | null>(null);
+    const boardRestoreOverlayTimeoutRef = useRef<number | null>(null);
+    const boardRestoreWatchdogTimeoutRef = useRef<number | null>(null);
+    const pendingInitialRestoreViewportFitRef = useRef<string | null>(null);
+    const completedInitialRestoreViewportFitRef = useRef<string | null>(null);
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
     pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds;
     analysisModeRef.current = analysisMode;
+
+    const openNodeDossier = useCallback((nodeData?: NodeDossierInput) => {
+        const summary = normalizeDossierText(nodeData?.summary);
+        const fullText = normalizeDossierText(nodeData?.fullText || nodeData?.summary);
+
+        setIsDossierSourceMaterialOpen(false);
+        setSelectedDossier({
+            title: normalizeDossierText(nodeData?.title) || 'Evidence Dossier',
+            summary,
+            fullText,
+            sourceURL: nodeData?.sourceURL,
+            origin: nodeData?.origin,
+            rabbitTool: nodeData?.rabbitTool,
+            rabbitPass: nodeData?.rabbitPass,
+            evidenceRole: nodeData?.evidenceRole,
+            images: nodeData?.images ? [...nodeData.images] : undefined,
+        });
+    }, []);
+
+    const supportingEvidenceLayer = useMemo(
+        () => layoutSupportingEvidenceNodes(nodes, edges).band,
+        [nodes, edges]
+    );
+    const supportTethers = useMemo(
+        () => supportHoverNodeId ? buildSupportTethers(nodes, supportHoverNodeId) : [],
+        [nodes, supportHoverNodeId]
+    );
+    const supportTetherTargetIds = useMemo(
+        () => new Set(supportTethers.map((tether) => tether.targetId)),
+        [supportTethers]
+    );
+    const handleSupportHover = useCallback((nodeId: string, active: boolean) => {
+        setSupportHoverNodeId((currentNodeId) => {
+            if (active) {
+                return nodeId;
+            }
+            return currentNodeId === nodeId ? null : currentNodeId;
+        });
+    }, []);
+    const connectionHoverNodeIds = useMemo(
+        () => new Set(connectionHover?.nodeIds || []),
+        [connectionHover]
+    );
+    const nodesForRender = useMemo(() => nodes.map((node) => {
+        const isHoveredConnectionNode = connectionHoverNodeIds.has(node.id);
+
+        return {
+            ...node,
+            zIndex: supportHoverNodeId === node.id && node.data?.evidenceRole === 'supporting'
+                ? STRICT_GRID_EXPANDED_NODE_Z_INDEX
+                : node.zIndex,
+            data: {
+                ...node.data,
+                onSupportHover: handleSupportHover,
+                isConnectionHighlighted: isHoveredConnectionNode ? true : node.data?.isConnectionHighlighted,
+                connectionHighlightColor: isHoveredConnectionNode ? connectionHover?.color : node.data?.connectionHighlightColor,
+                isSupportTetherSource: supportHoverNodeId === node.id && node.data?.evidenceRole === 'supporting',
+                isSupportTetherTarget: supportTetherTargetIds.has(node.id),
+            },
+        };
+    }), [connectionHover?.color, connectionHoverNodeIds, handleSupportHover, nodes, supportHoverNodeId, supportTetherTargetIds]);
+    const selectedDossierBrief = useMemo(
+        () => selectedDossier ? getDossierBrief(selectedDossier.summary, selectedDossier.fullText) : '',
+        [selectedDossier]
+    );
+    const selectedDossierKeySignals = useMemo(
+        () => selectedDossier ? getDossierKeySignals(selectedDossier.summary, selectedDossier.fullText) : [],
+        [selectedDossier]
+    );
+    const selectedDossierContextNote = useMemo(
+        () => selectedDossier ? getDossierContextNote(selectedDossier) : '',
+        [selectedDossier]
+    );
+    const selectedDossierBodyBlocks = useMemo(
+        () => selectedDossier ? getDossierBodyBlocks(selectedDossier.fullText) : [],
+        [selectedDossier]
+    );
+    const selectedDossierSourceLinks = useMemo(
+        () => selectedDossier ? getDossierSourceLinks(selectedDossier).slice(0, 8) : [],
+        [selectedDossier]
+    );
+    const selectedDossierMetaChips = useMemo(() => {
+        if (!selectedDossier) {
+            return [];
+        }
+
+        const chips = [
+            selectedDossier.origin ? formatDossierMetaLabel(selectedDossier.origin) : 'Evidence',
+            selectedDossier.rabbitTool ? formatDossierMetaLabel(selectedDossier.rabbitTool) : '',
+            selectedDossier.rabbitPass ? `Pass ${selectedDossier.rabbitPass}` : '',
+            selectedDossier.evidenceRole ? formatDossierMetaLabel(selectedDossier.evidenceRole) : '',
+            selectedDossier.images?.length ? `${selectedDossier.images.length} image${selectedDossier.images.length === 1 ? '' : 's'}` : '',
+        ];
+
+        return chips.filter(Boolean);
+    }, [selectedDossier]);
+    const supportBandScreenStyle = useCallback((band: SupportingEvidenceBand) => ({
+        width: `${band.width}px`,
+        height: `${band.height}px`,
+        transform: `translate(${(band.x * boardViewport.zoom) + boardViewport.x}px, ${(band.y * boardViewport.zoom) + boardViewport.y}px) scale(${boardViewport.zoom})`,
+    }), [boardViewport.x, boardViewport.y, boardViewport.zoom]);
+    const supportTetherScreenPoint = useCallback((point: XYPosition) => ({
+        x: (point.x * boardViewport.zoom) + boardViewport.x,
+        y: (point.y * boardViewport.zoom) + boardViewport.y,
+    }), [boardViewport.x, boardViewport.y, boardViewport.zoom]);
+
+    useEffect(() => {
+        if (supportHoverNodeId && !nodes.some((node) => node.id === supportHoverNodeId)) {
+            setSupportHoverNodeId(null);
+        }
+    }, [nodes, supportHoverNodeId]);
 
     useEffect(() => {
         const updateViewportSize = () => {
@@ -1316,6 +2236,120 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         return () => observer.disconnect();
     }, []);
+
+    const startBoardRestoreLoad = useCallback((nextInvestigationId: string) => {
+        const startedAt = getBoardLoadNow();
+
+        if (boardRestoreOverlayTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
+            boardRestoreOverlayTimeoutRef.current = null;
+        }
+
+        setBoardRestoreOverlay({
+            investigationId: nextInvestigationId,
+            startedAt,
+            source: 'loading',
+        });
+        console.debug('[BoardLoad] started', { investigationId: nextInvestigationId });
+
+        return startedAt;
+    }, []);
+
+    const finishBoardRestoreLoad = useCallback((
+        nextInvestigationId: string,
+        startedAt: number,
+        source: string,
+        nodeCount: number,
+        edgeCount: number
+    ) => {
+        const durationMs = Math.max(0, Math.round(getBoardLoadNow() - startedAt));
+        console.info('[BoardLoad] restored', {
+            investigationId: nextInvestigationId,
+            source,
+            durationMs,
+            nodeCount,
+            edgeCount,
+        });
+        window.dispatchEvent(new CustomEvent<BoardRestoreCompleteDetail>(BOARD_RESTORE_COMPLETE_EVENT, {
+            detail: {
+                investigationId: nextInvestigationId,
+                source,
+                durationMs,
+                nodeCount,
+                edgeCount,
+            },
+        }));
+
+        const hideDelayMs = Math.min(
+            BOARD_RESTORE_OVERLAY_MAX_MS,
+            Math.max(BOARD_RESTORE_OVERLAY_MIN_MS - durationMs, INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS)
+        );
+
+        setBoardRestoreOverlay({
+            investigationId: nextInvestigationId,
+            startedAt,
+            source,
+        });
+
+        if (boardRestoreOverlayTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
+        }
+
+        boardRestoreOverlayTimeoutRef.current = window.setTimeout(() => {
+            boardRestoreOverlayTimeoutRef.current = null;
+            setBoardRestoreOverlay((current) => (
+                current?.investigationId === nextInvestigationId && current.startedAt === startedAt
+                    ? null
+                    : current
+            ));
+        }, hideDelayMs);
+    }, []);
+
+    useEffect(() => {
+        if (!boardRestoreOverlay) {
+            if (boardRestoreWatchdogTimeoutRef.current !== null) {
+                window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+                boardRestoreWatchdogTimeoutRef.current = null;
+            }
+            return;
+        }
+
+        const isLoadedInvestigation = loadedInvestigationId === boardRestoreOverlay.investigationId;
+        if (!isLoadedInvestigation) {
+            return;
+        }
+
+        if (boardRestoreWatchdogTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+            boardRestoreWatchdogTimeoutRef.current = null;
+        }
+
+        const elapsedMs = Math.max(0, getBoardLoadNow() - boardRestoreOverlay.startedAt);
+        const clearDelayMs = isInitialRestoreViewportSettling
+            ? Math.max(0, BOARD_RESTORE_OVERLAY_MAX_MS - elapsedMs)
+            : Math.max(0, Math.min(BOARD_RESTORE_OVERLAY_MIN_MS - elapsedMs, 120));
+
+        boardRestoreWatchdogTimeoutRef.current = window.setTimeout(() => {
+            boardRestoreWatchdogTimeoutRef.current = null;
+            if (pendingInitialRestoreViewportFitRef.current === boardRestoreOverlay.investigationId) {
+                pendingInitialRestoreViewportFitRef.current = null;
+            }
+            setIsInitialRestoreViewportSettling(false);
+            setBoardRestoreOverlay((current) => (
+                current?.investigationId === boardRestoreOverlay.investigationId &&
+                current.startedAt === boardRestoreOverlay.startedAt
+                    ? null
+                    : current
+            ));
+        }, clearDelayMs);
+
+        return () => {
+            if (boardRestoreWatchdogTimeoutRef.current !== null) {
+                window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+                boardRestoreWatchdogTimeoutRef.current = null;
+            }
+        };
+    }, [boardRestoreOverlay, isInitialRestoreViewportSettling, loadedInvestigationId]);
 
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
@@ -1542,9 +2576,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setNodes((currentNodes) => stripLayoutChoreographyFromNodes(currentNodes));
     }, [clearLayoutChoreographyTimeouts, stripLayoutChoreographyFromNodes]);
 
-    const handleConnectionHover = useCallback((payload: { source?: string; target?: string; color?: string; active?: boolean }) => {
-        const highlightIds = new Set([payload.source, payload.target].filter((id): id is string => Boolean(id)));
-        if (highlightIds.size === 0) {
+    const handleConnectionHover = useCallback((payload: { edgeId?: string; source?: string; target?: string; color?: string; active?: boolean }) => {
+        const highlightIds = [payload.source, payload.target].filter((id): id is string => Boolean(id));
+        if (highlightIds.length === 0) {
             return;
         }
 
@@ -1552,33 +2586,35 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const highlightColor = typeof payload.color === 'string' && payload.color.trim()
             ? payload.color.trim()
             : '#8ee8ff';
+        const highlightNodeIds = new Set(highlightIds);
+
+        setConnectionHover((currentHover) => {
+            if (!shouldHighlight) {
+                return !payload.edgeId || currentHover?.edgeId === payload.edgeId ? null : currentHover;
+            }
+
+            return {
+                edgeId: payload.edgeId,
+                nodeIds: highlightIds,
+                color: highlightColor,
+            };
+        });
+
         setNodes((currentNodes) => currentNodes.map((node) => {
-            if (!highlightIds.has(node.id)) {
+            if (!highlightNodeIds.has(node.id)) {
                 return node;
-            }
-
-            if (
-                Boolean(node.data?.isConnectionHighlighted) === shouldHighlight &&
-                (!shouldHighlight || node.data?.connectionHighlightColor === highlightColor)
-            ) {
-                return node;
-            }
-
-            const nextData = { ...node.data };
-            if (shouldHighlight) {
-                nextData.isConnectionHighlighted = true;
-                nextData.connectionHighlightColor = highlightColor;
-            } else {
-                delete nextData.isConnectionHighlighted;
-                delete nextData.connectionHighlightColor;
             }
 
             return {
                 ...node,
-                data: nextData,
+                data: {
+                    ...node.data,
+                    isConnectionHighlighted: shouldHighlight,
+                    connectionHighlightColor: shouldHighlight ? highlightColor : undefined,
+                },
             };
         }));
-    }, []);
+    }, [setNodes]);
 
     const openImageLightbox = useCallback((images: NodeImageAsset[], initialIndex = 0, nodeTitle?: string, nodeId?: string) => {
         if (!images.length) {
@@ -1902,16 +2938,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const assignments = assignStrictGridPorts(nextEdges, nextNodes);
 
         return nextEdges.map((edge) => {
-            const sourceNode = nodeMap.get(edge.source);
-            const targetNode = nodeMap.get(edge.target);
+            const stableEdge = clearEdgeDragPreview(edge);
+            const sourceNode = nodeMap.get(stableEdge.source);
+            const targetNode = nodeMap.get(stableEdge.target);
 
             if (!sourceNode || !targetNode) {
                 return {
-                    ...edge,
+                    ...stableEdge,
                     zIndex: STRICT_GRID_EDGE_Z_INDEX,
                     data: {
-                        ...edge.data,
+                        ...stableEdge.data,
                         boardMode: 'strict-grid' as BoardMode,
+                        onConnectionHover: handleConnectionHover,
                         snapEnabled: snapConnectionLabels,
                     }
                 };
@@ -1920,19 +2958,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             const route = assignments.get(edge.id)?.route || buildStrictGridRoute(
                 sourceNode,
                 targetNode,
-                edge.sourceHandle,
-                edge.targetHandle
+                stableEdge.sourceHandle,
+                stableEdge.targetHandle
             );
             const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
             const routeTargetPoint = getPortById(targetNode, route.targetPortId);
 
             if (import.meta.env.DEV) {
                 console.debug('[StrictGridRoute]', {
-                    edgeId: edge.id,
-                    source: edge.source,
-                    target: edge.target,
-                    sourceHandleIn: edge.sourceHandle,
-                    targetHandleIn: edge.targetHandle,
+                    edgeId: stableEdge.id,
+                    source: stableEdge.source,
+                    target: stableEdge.target,
+                    sourceHandleIn: stableEdge.sourceHandle,
+                    targetHandleIn: stableEdge.targetHandle,
                     sourceHandleOut: route.sourcePortId,
                     targetHandleOut: route.targetPortId,
                     routePoints: route.points,
@@ -1942,13 +2980,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             }
 
             return {
-                ...edge,
+                ...stableEdge,
                 sourceHandle: route.sourcePortId,
                 targetHandle: route.targetPortId,
                 type: 'customEdge',
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 data: {
-                    ...edge.data,
+                    ...stableEdge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
                     routeStrategy: route.strategy,
@@ -1957,11 +2995,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     routeTargetPoint,
                     sourcePortSide: route.sourceSide,
                     targetPortSide: route.targetSide,
+                    onConnectionHover: handleConnectionHover,
                     snapEnabled: snapConnectionLabels,
                 }
             };
         });
-    }, [snapConnectionLabels]);
+    }, [handleConnectionHover, snapConnectionLabels]);
 
     const buildStrictGridState = useCallback((nextEdges: Edge[], nextNodes = nodesRef.current) => {
         const collectActivePortIds = (edgesToInspect: Edge[]) => {
@@ -2011,9 +3050,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             nodeCount: finalizedNodes.length,
             edgeCount: finalizedStrictEdges.length,
         });
+        const supportLayerState = layoutSupportingEvidenceNodes(finalizedNodes, finalizedStrictEdges);
 
         return {
-            nodes: finalizedNodes,
+            nodes: supportLayerState.nodes,
             edges: finalizedStrictEdges,
         };
     }, [decorateStrictGridEdges]);
@@ -2041,21 +3081,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const affectedEdges = nextEdges.filter((edge) => changedNodeIdSet.has(edge.source) || changedNodeIdSet.has(edge.target));
         const affectedAssignments = assignStrictGridPorts(affectedEdges, normalizedNodes);
         const updatedEdges = nextEdges.map((edge) => {
+            const stableEdge = clearEdgeDragPreview(edge);
             const route = affectedAssignments.get(edge.id)?.route;
             if (!route) {
-                return edge;
+                return stableEdge;
             }
-            const sourceNode = normalizedNodeMap.get(edge.source);
-            const targetNode = normalizedNodeMap.get(edge.target);
+            const sourceNode = normalizedNodeMap.get(stableEdge.source);
+            const targetNode = normalizedNodeMap.get(stableEdge.target);
 
             return {
-                ...edge,
+                ...stableEdge,
                 sourceHandle: route.sourcePortId,
                 targetHandle: route.targetPortId,
                 type: 'customEdge',
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 data: {
-                    ...edge.data,
+                    ...stableEdge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
                     routeStrategy: route.strategy,
@@ -2099,6 +3140,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }
             };
         });
+        const supportLayerState = layoutSupportingEvidenceNodes(finalizedNodes, updatedEdges);
 
         logResizePipelineDebug('strict-sync-subset', {
             changedNodeIds,
@@ -2106,11 +3148,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
 
         setBoardMode('strict-grid');
-        setNodes(finalizedNodes);
+        setNodes(supportLayerState.nodes);
         setEdges(updatedEdges);
     }, [snapConnectionLabels]);
 
-    const updateStrictGridDragRoutes = useCallback((
+    const updateStrictGridDragPreview = useCallback((
         changedNodeIds: string[],
         nextNodes: Node[]
     ) => {
@@ -2120,51 +3162,32 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
-        setEdges((currentEdges) => {
-            const assignments = assignStrictGridPorts(currentEdges, nextNodes);
 
-            return currentEdges.map((edge) => {
-                if (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target)) {
-                    return edge;
-                }
+        setEdges((currentEdges) => currentEdges.map((edge) => {
+            if (
+                !isVisibleBoardRelationshipEdge(edge) ||
+                (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target))
+            ) {
+                return edge;
+            }
 
-                const sourceNode = nodeMap.get(edge.source);
-                const targetNode = nodeMap.get(edge.target);
-                if (!sourceNode || !targetNode) {
-                    return edge;
-                }
+            const sourceNode = nodeMap.get(edge.source);
+            const targetNode = nodeMap.get(edge.target);
+            if (!sourceNode || !targetNode) {
+                return edge;
+            }
 
-                const route = assignments.get(edge.id)?.route || buildStrictGridRoute(
-                    sourceNode,
-                    targetNode,
-                    edge.sourceHandle,
-                    edge.targetHandle
-                );
-                const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
-                const routeTargetPoint = getPortById(targetNode, route.targetPortId);
-
-                return {
-                    ...edge,
-                    sourceHandle: route.sourcePortId,
-                    targetHandle: route.targetPortId,
-                    type: 'customEdge',
-                    zIndex: STRICT_GRID_EDGE_Z_INDEX,
-                    data: {
-                        ...edge.data,
-                        boardMode: 'strict-grid' as BoardMode,
-                        routePoints: route.points,
-                        routeStrategy: route.strategy,
-                        routeLabelPoint: route.labelPoint,
-                        routeSourcePoint,
-                        routeTargetPoint,
-                        sourcePortSide: route.sourceSide,
-                        targetPortSide: route.targetSide,
-                        snapEnabled: snapConnectionLabels,
-                    }
-                };
-            });
-        });
-    }, [snapConnectionLabels]);
+            return {
+                ...edge,
+                data: {
+                    ...edge.data,
+                    isDragPreview: true,
+                    dragPreviewSourcePoint: getPortById(sourceNode, edge.sourceHandle) || getNodeCenter(sourceNode),
+                    dragPreviewTargetPoint: getPortById(targetNode, edge.targetHandle) || getNodeCenter(targetNode),
+                },
+            };
+        }));
+    }, []);
 
     const openRelationshipEditor = useCallback((draft: RelationshipDraft) => {
         setRelationshipDraft(draft);
@@ -2217,7 +3240,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
-        setNodes(handledNodes);
+        const supportLayerState = layoutSupportingEvidenceNodes(handledNodes, finalEdges);
+        setNodes(supportLayerState.nodes);
         setEdges(finalEdges);
     }, [boardMode, syncStrictGridEdgesToNodes]);
 
@@ -2229,9 +3253,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         const { edges: finalEdges, handledNodes } = distributeEdges(nextEdges, nextNodes);
         const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+        const supportLayerState = layoutSupportingEvidenceNodes(layoutedNodes, finalEdges);
 
         return {
-            nodes: layoutedNodes,
+            nodes: supportLayerState.nodes,
             edges: finalEdges,
         };
     }, [boardMode, buildStrictGridState]);
@@ -2242,7 +3267,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         return {
-            nodes: layoutedNodes,
+            nodes: layoutSupportingEvidenceNodes(layoutedNodes, nextEdges).nodes,
             edges: nextEdges,
         };
     }, [boardMode, buildStrictGridState]);
@@ -2314,15 +3339,18 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 return node;
             }
 
-            const nextFrame = calculateNodeFrame(
-                node.data.summary || '',
-                node.data.fullText || '',
-                expanded,
-                nodeHasImages(node.data.images)
-            );
+            const nextFrame = node.data?.evidenceRole === 'supporting' && !expanded
+                ? SUPPORT_NODE_FRAME
+                : calculateNodeFrame(
+                    node.data.summary || '',
+                    node.data.fullText || '',
+                    expanded,
+                    nodeHasImages(node.data.images)
+                );
 
             return {
                 ...node,
+                zIndex: expanded ? STRICT_GRID_EXPANDED_NODE_Z_INDEX : STRICT_GRID_NODE_Z_INDEX,
                 data: {
                     ...node.data,
                     expanded,
@@ -2623,7 +3651,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 lastFocusedRef.current = focusNodeId;
 
                 // Close any open side panels (intel reports) to show the node clearly
-                setSelectedContent(null);
+                setSelectedDossier(null);
 
                 // Center and zoom in slightly on the node
                 const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
@@ -2888,6 +3916,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = false;
     }, [clearBoardCameraMovement, clearLayoutChoreographyState, investigationId]);
 
     useEffect(() => {
@@ -2968,16 +3997,35 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         console.debug('[DetectiveBoard] Loading investigation:', investigationId);
         let cancelled = false;
+        const loadStartedAt = startBoardRestoreLoad(investigationId);
 
-        const applyBoardState = (savedState: PersistedBoardState | null) => {
+        const applyBoardState = (savedState: PersistedBoardState | null, source: string, shouldFinishLoad = true) => {
             if (cancelled) {
                 return;
             }
+            let restoredNodeCount = 0;
+            let restoredEdgeCount = 0;
             if (savedState) {
                 const savedMode = savedState.mode === 'strict-grid' ? 'strict-grid' : 'legacy';
                 const savedNodes = savedState.nodes.filter((node: Node) => node.data?.nodeKind !== 'discovery');
-                const savedEdges = savedState.edges.filter((edge: Edge) => edge.data?.generatedBy !== 'discovery');
                 const savedNodeIdSet = new Set(savedNodes.map((node: Node) => node.id));
+                const savedEdges = savedState.edges.filter((edge: Edge) => (
+                    edge.data?.generatedBy !== 'discovery' &&
+                    (
+                        savedMode !== 'strict-grid' ||
+                        (savedNodeIdSet.has(edge.source) && savedNodeIdSet.has(edge.target))
+                    )
+                ));
+                restoredNodeCount = savedNodes.length;
+                restoredEdgeCount = savedEdges.length;
+                if (savedNodes.length > 0) {
+                    pendingInitialRestoreViewportFitRef.current = investigationId;
+                    completedInitialRestoreViewportFitRef.current = null;
+                    setIsInitialRestoreViewportSettling(true);
+                } else {
+                    pendingInitialRestoreViewportFitRef.current = null;
+                    setIsInitialRestoreViewportSettling(false);
+                }
                 const restoredPendingIntegrationNodeIds = (savedState.pendingIntegrationNodeIds || [])
                     .filter((nodeId) => savedNodeIdSet.has(nodeId));
                 const restoredNodes = savedNodes.map((n: Node) => {
@@ -2997,13 +4045,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
                     return {
                         ...stableNode,
+                        zIndex: stableNode.zIndex ?? STRICT_GRID_NODE_Z_INDEX,
                         style: {
                             ...stableNode.style,
                             ...normalizedFrame,
                         },
                         data: {
                             ...stableNode.data,
-                            onReadFull: () => setSelectedContent(stableNode.data.fullText),
+                            onReadFull: () => openNodeDossier(stableNode.data),
                             onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                             onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                             onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -3033,15 +4082,29 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
                 setBoardMode(savedMode);
                 if (savedMode === 'strict-grid') {
-                    syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
+                    if (restoredEdges.every(hasPersistedStrictGridRoute)) {
+                        const supportLayerState = layoutSupportingEvidenceNodes(
+                            attachRestoredActivePorts(restoredNodes, restoredEdges),
+                            restoredEdges
+                        );
+                        setNodes(supportLayerState.nodes);
+                        setEdges(restoredEdges);
+                    } else {
+                        syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
+                    }
                 } else {
                     const { edges: finalEdges, handledNodes } = distributeEdges(restoredEdges, restoredNodes);
-                    setNodes(handledNodes);
+                    const supportLayerState = layoutSupportingEvidenceNodes(handledNodes, finalEdges);
+                    setNodes(supportLayerState.nodes);
                     setEdges(finalEdges);
                 }
                 setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
                 setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
             } else {
+                if (pendingInitialRestoreViewportFitRef.current === investigationId) {
+                    pendingInitialRestoreViewportFitRef.current = null;
+                }
+                setIsInitialRestoreViewportSettling(false);
                 setBoardMode('strict-grid');
                 setNodes([]);
                 setEdges([]);
@@ -3050,29 +4113,83 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             }
             loadedInvestigationIdRef.current = investigationId;
             setLoadedInvestigationId(investigationId);
+            if (shouldFinishLoad) {
+                finishBoardRestoreLoad(investigationId, loadStartedAt, source, restoredNodeCount, restoredEdgeCount);
+            }
         };
 
         const immediateState = getCachedBoardStateForInvestigation(investigationId);
-        applyBoardState(immediateState);
+        applyBoardState(immediateState, immediateState ? 'memory-cache' : 'awaiting-async-restore', Boolean(immediateState));
 
         void loadBoardStateForInvestigation(investigationId).then((backendState) => {
-            if (qaAnimationDemoActiveRef.current || qaEvidenceExpansionDemoActiveRef.current) {
+            if (qaAnimationDemoActiveRef.current || qaEvidenceExpansionDemoActiveRef.current || qaRabbitHoleDemoActiveRef.current) {
                 return;
             }
             if (backendState && backendState !== immediateState) {
-                applyBoardState(backendState);
+                applyBoardState(backendState, immediateState ? 'backend-refresh' : 'async-restore');
+                return;
+            }
+            if (!immediateState) {
+                finishBoardRestoreLoad(investigationId, loadStartedAt, backendState ? 'async-restore' : 'empty', 0, 0);
             }
         });
 
         return () => {
             cancelled = true;
         };
-    }, [handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, syncStrictGridEdgesToNodes]);
+    }, [finishBoardRestoreLoad, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, startBoardRestoreLoad, syncStrictGridEdgesToNodes]);
+
+    useEffect(() => {
+        if (!investigationId || loadedInvestigationId !== investigationId) return;
+        if (pendingInitialRestoreViewportFitRef.current !== investigationId) return;
+        if (completedInitialRestoreViewportFitRef.current === investigationId) return;
+        if (nodes.length === 0) return;
+
+        if (initialRestoreViewportFitTimeoutRef.current !== null) {
+            window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
+            initialRestoreViewportFitTimeoutRef.current = null;
+        }
+
+        initialRestoreViewportFitTimeoutRef.current = window.setTimeout(() => {
+            initialRestoreViewportFitTimeoutRef.current = null;
+
+            if (
+                loadedInvestigationIdRef.current !== investigationId ||
+                pendingInitialRestoreViewportFitRef.current !== investigationId ||
+                nodesRef.current.length === 0
+            ) {
+                setIsInitialRestoreViewportSettling(false);
+                return;
+            }
+
+            pendingInitialRestoreViewportFitRef.current = null;
+            completedInitialRestoreViewportFitRef.current = investigationId;
+            fitView({
+                ...BOARD_FIT_VIEW_OPTIONS,
+                duration: 0,
+            });
+            initialRestoreViewportFitTimeoutRef.current = window.setTimeout(() => {
+                initialRestoreViewportFitTimeoutRef.current = null;
+                setIsInitialRestoreViewportSettling(false);
+            }, INITIAL_RESTORE_VIEWPORT_REVEAL_DELAY_MS);
+        }, INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS);
+
+        return () => {
+            if (initialRestoreViewportFitTimeoutRef.current !== null) {
+                window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
+                initialRestoreViewportFitTimeoutRef.current = null;
+            }
+        };
+    }, [fitView, investigationId, loadedInvestigationId, nodes.length]);
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
         if (nodes.length === 0 && edges.length === 0) return;
-        if (qaEvidenceExpansionDemoActiveRef.current || nodes.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID)) return;
+        if (
+            qaEvidenceExpansionDemoActiveRef.current ||
+            qaRabbitHoleDemoActiveRef.current ||
+            nodes.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID || node.id.startsWith('qa-rabbit-'))
+        ) return;
         if (isDraggingNodeRef.current) return;
 
         if (persistTimerRef.current) {
@@ -3137,6 +4254,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         if (timelineFocusTimeoutRef.current !== null) {
             window.clearTimeout(timelineFocusTimeoutRef.current);
             timelineFocusTimeoutRef.current = null;
+        }
+        if (initialRestoreViewportFitTimeoutRef.current !== null) {
+            window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
+            initialRestoreViewportFitTimeoutRef.current = null;
+        }
+        if (boardRestoreOverlayTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
+            boardRestoreOverlayTimeoutRef.current = null;
+        }
+        if (boardRestoreWatchdogTimeoutRef.current !== null) {
+            window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
+            boardRestoreWatchdogTimeoutRef.current = null;
+        }
+        if (dragPreviewFrameRef.current !== null) {
+            window.cancelAnimationFrame(dragPreviewFrameRef.current);
+            dragPreviewFrameRef.current = null;
         }
     }, []);
 
@@ -3209,13 +4342,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     }
                 });
 
-                if (dragRouteFrameRef.current) {
-                    window.cancelAnimationFrame(dragRouteFrameRef.current);
+                if (dragPreviewFrameRef.current) {
+                    window.cancelAnimationFrame(dragPreviewFrameRef.current);
                 }
 
-                dragRouteFrameRef.current = window.requestAnimationFrame(() => {
-                    dragRouteFrameRef.current = null;
-                    updateStrictGridDragRoutes(
+                dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
+                    dragPreviewFrameRef.current = null;
+                    updateStrictGridDragPreview(
                         Array.from(draggingNodeIdsRef.current),
                         nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current
                     );
@@ -3242,7 +4375,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }
             }
         },
-        [boardMode, marquee, syncStrictGridEdgesToNodes, updateStrictGridDragRoutes]
+        [boardMode, marquee, syncStrictGridEdgesToNodes, updateStrictGridDragPreview]
     );
     const onEdgesChange: OnEdgesChange = useCallback(
         (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -3367,10 +4500,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const onNodeDragStart = useCallback(() => {
         isDraggingNodeRef.current = true;
         draggingNodeIdsRef.current.clear();
-        if (dragRouteFrameRef.current) {
-            window.cancelAnimationFrame(dragRouteFrameRef.current);
-            dragRouteFrameRef.current = null;
+        if (dragPreviewFrameRef.current) {
+            window.cancelAnimationFrame(dragPreviewFrameRef.current);
+            dragPreviewFrameRef.current = null;
         }
+        setEdges((currentEdges) => currentEdges.map(clearEdgeDragPreview));
         if (persistTimerRef.current) {
             window.clearTimeout(persistTimerRef.current);
             persistTimerRef.current = null;
@@ -3378,9 +4512,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, []);
     const onNodeDragStop = useCallback(() => {
         isDraggingNodeRef.current = false;
-        if (dragRouteFrameRef.current) {
-            window.cancelAnimationFrame(dragRouteFrameRef.current);
-            dragRouteFrameRef.current = null;
+        if (dragPreviewFrameRef.current) {
+            window.cancelAnimationFrame(dragPreviewFrameRef.current);
+            dragPreviewFrameRef.current = null;
         }
         if (boardMode === 'strict-grid') {
             const changedNodeIds = Array.from(draggingNodeIdsRef.current);
@@ -3664,6 +4798,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setAnalysisMode(null);
         setDeepDiveTopic(null);
         qaAnimationDemoActiveRef.current = true;
+        qaRabbitHoleDemoActiveRef.current = false;
         setEdges([]);
         setNodes([]);
 
@@ -3679,7 +4814,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     style: frame,
                     data: {
                         ...demoNode,
-                        onReadFull: () => setSelectedContent(demoNode.fullText),
+                        onReadFull: () => openNodeDossier(demoNode),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -3735,7 +4870,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                             style: frame,
                             data: {
                                 ...demoNode,
-                                onReadFull: () => setSelectedContent(demoNode.fullText),
+                                onReadFull: () => openNodeDossier(demoNode),
                                 isDeepDiveSource: false,
                                 expanded: false,
                                 boardMode: 'strict-grid' as BoardMode,
@@ -3783,6 +4918,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         onDeepDiveNode,
         onNavigateToChild,
         openImageLightbox,
+        openNodeDossier,
         scheduleNodeEntryCleanup,
         startConnectLayoutChoreography,
     ]);
@@ -3912,6 +5048,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = false;
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -3935,7 +5072,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 targetPosition: Position.Left,
                 data: {
                     ...demoNode,
-                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onReadFull: () => openNodeDossier(demoNode),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -3994,7 +5131,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(demoNodes);
         setEdges(demoEdges);
-    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, snapConnectionLabels, tagStyles]);
+    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, tagStyles]);
 
     const playBrowserQaTextFitDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
@@ -4011,6 +5148,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = false;
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -4035,7 +5173,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 targetPosition: Position.Left,
                 data: {
                     ...demoNode,
-                    onReadFull: () => setSelectedContent(demoNode.fullText),
+                    onReadFull: () => openNodeDossier(demoNode),
                     onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                     onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                     onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4054,7 +5192,148 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
 
         setNodes(demoNodes);
-    }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox]);
+    }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier]);
+
+    const playBrowserQaRabbitHoleDemo = useCallback((detail?: BrowserQaRabbitHoleDemoDetail | null) => {
+        const requestedInvestigationId = typeof detail?.investigationId === 'string'
+            ? detail.investigationId.trim()
+            : '';
+        if (!investigationId || loadedInvestigationId !== investigationId) {
+            return;
+        }
+        if (requestedInvestigationId && requestedInvestigationId !== investigationId) {
+            return;
+        }
+
+        if (persistTimerRef.current) {
+            window.clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+
+        qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+        qaAnimationTimeoutsRef.current = [];
+        clearLayoutChoreographyState();
+        qaAnimationDemoActiveRef.current = false;
+        qaEvidenceExpansionDemoActiveRef.current = false;
+        qaRabbitHoleDemoActiveRef.current = true;
+        nodeEntrySequenceRef.current = 0;
+        setBoardMode('strict-grid');
+        setPendingIntegrationNodeIds(QA_RABBIT_HOLE_DEMO_NODES.map((demoNode) => demoNode.id));
+        setHasConnectedDots(false);
+        setIsGathering(true);
+        setIsAnalyzing(false);
+        setAnalysisMode(null);
+        setDeepDiveTopic('Rabbit Hole QA');
+        setEditingNodeId(null);
+        setEdges([]);
+
+        const demoNodes: Node[] = QA_RABBIT_HOLE_DEMO_NODES.map((demoNode, index) => {
+            const frame = calculateNodeFrame(demoNode.summary, demoNode.fullText, false, false);
+
+            return {
+                id: demoNode.id,
+                type: 'custom',
+                zIndex: STRICT_GRID_NODE_Z_INDEX,
+                position: QA_RABBIT_HOLE_DEMO_POSITIONS[index] || { x: 128 + index * 512, y: 136 },
+                style: frame,
+                sourcePosition: Position.Right,
+                targetPosition: Position.Left,
+                data: {
+                    ...demoNode,
+                    origin: 'rabbit-hole',
+                    rabbitState: 'provisional',
+                    rabbitPass: 1,
+                    onReadFull: () => openNodeDossier(demoNode),
+                    onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
+                    onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
+                    onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
+                    onDelete: (id: string) => handleDeleteNode(id),
+                    onUpdate: (id: string, data: Partial<NodeData>) => handleUpdateNode(id, data),
+                    onSave: (nodeId: string, title: string, text: string, mode: NodeSaveMode) => handleSaveNode(nodeId, title, text, mode),
+                    onSetEditing: (id: string | null) => handleSetEditing(id),
+                    onViewImages: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => openImageLightbox(images, initialIndex, nodeTitle, nodeId),
+                    onAttachImage: (nodeId: string, file: File) => handleAttachImage(nodeId, file),
+                    onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
+                    onResizeCommit: handleNodeResizeCommit,
+                    boardMode: 'strict-grid' as BoardMode,
+                    expanded: false,
+                },
+            };
+        });
+
+        setNodes(demoNodes);
+
+        const promotionTimeout = window.setTimeout(() => {
+            setIsGathering(false);
+            setDeepDiveTopic(null);
+            setPendingIntegrationNodeIds([]);
+            setHasConnectedDots(true);
+            setNodes((currentNodes) => currentNodes.map((node) => (
+                QA_RABBIT_HOLE_DEMO_NODES.some((demoNode) => demoNode.id === node.id)
+                    ? { ...node, data: { ...node.data, rabbitState: 'promoted' } }
+                    : node
+            )));
+            setEdges(QA_RABBIT_HOLE_DEMO_CONNECTIONS.map((connection) => {
+                const visuals = buildEdgeVisuals(connection.tag, tagStyles);
+                const displayLabel = getRelationshipDisplayLabel(visuals.tag);
+
+                return {
+                    id: `qa-rabbit-edge-${connection.source}-${connection.target}-${visuals.tag}`,
+                    source: connection.source,
+                    target: connection.target,
+                    type: 'customEdge',
+                    label: displayLabel,
+                    zIndex: STRICT_GRID_EDGE_Z_INDEX,
+                    updatable: true,
+                    interactionWidth: 20,
+                    animated: visuals.animated,
+                    data: {
+                        tag: visuals.tag,
+                        displayLabel,
+                        reasoning: connection.reasoning,
+                        color: visuals.color,
+                        pattern: visuals.pattern,
+                        shape: visuals.shape,
+                        generatedBy: 'qaRabbitHole',
+                        snapEnabled: snapConnectionLabels,
+                        boardMode: 'strict-grid',
+                        onConnectionHover: handleConnectionHover,
+                    },
+                    style: {
+                        stroke: visuals.color,
+                        strokeWidth: visuals.strokeWidth ?? 2,
+                        strokeDasharray: visuals.strokeDasharray,
+                        strokeLinecap: visuals.strokeLinecap,
+                    },
+                    labelStyle: { fill: visuals.color, fontWeight: 900, fontSize: 10, letterSpacing: '0.1em' },
+                    labelBgStyle: { fill: '#050505', fillOpacity: 0.9, stroke: visuals.color, strokeWidth: 1 },
+                    labelBgPadding: [8, 4] as [number, number],
+                    labelBgBorderRadius: 2,
+                };
+            }));
+        }, QA_RABBIT_HOLE_DEMO_PROMOTION_MS);
+        qaAnimationTimeoutsRef.current.push(promotionTimeout);
+    }, [
+        buildEdgeVisuals,
+        clearLayoutChoreographyState,
+        handleAttachImage,
+        handleConnectionHover,
+        handleDeleteNode,
+        handleNodeExpand,
+        handleNodeResizeCommit,
+        handleRemoveImage,
+        handleSaveNode,
+        handleSetEditing,
+        handleUpdateNode,
+        investigationId,
+        loadedInvestigationId,
+        onDeepDiveNode,
+        onNavigateToChild,
+        openImageLightbox,
+        openNodeDossier,
+        snapConnectionLabels,
+        tagStyles,
+    ]);
 
     const playBrowserQaEvidenceExpansionDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
@@ -4071,6 +5350,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         clearLayoutChoreographyState();
         qaAnimationDemoActiveRef.current = false;
         qaEvidenceExpansionDemoActiveRef.current = true;
+        qaRabbitHoleDemoActiveRef.current = false;
         nodeEntrySequenceRef.current = 0;
         setBoardMode('strict-grid');
         setPendingIntegrationNodeIds([]);
@@ -4141,7 +5421,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         nodeIDs: [QA_EVIDENCE_EXPANSION_NODE_ID],
                     },
                 ],
-                onReadFull: () => setSelectedContent(fullText),
+                onReadFull: () => openNodeDossier({
+                    title: 'QA Evidence Expansion Case File',
+                    summary,
+                    fullText,
+                    sourceURL: 'https://example.com/qa-evidence-expansion',
+                }),
                 onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                 onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4180,6 +5465,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         onDeepDiveNode,
         onNavigateToChild,
         openImageLightbox,
+        openNodeDossier,
     ]);
 
     useEffect(() => {
@@ -4211,11 +5497,24 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, [tryPlayBrowserQaAnimationDemo]);
 
     useEffect(() => {
+        const handleBrowserQaRabbitHoleDemo = (event: Event) => {
+            const detail = (event as CustomEvent<BrowserQaRabbitHoleDemoDetail>).detail;
+            playBrowserQaRabbitHoleDemo(detail);
+        };
+
+        window.addEventListener(BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, handleBrowserQaRabbitHoleDemo as EventListener);
+
+        return () => {
+            window.removeEventListener(BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, handleBrowserQaRabbitHoleDemo as EventListener);
+        };
+    }, [playBrowserQaRabbitHoleDemo]);
+
+    useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId || nodes.length < 2) {
             return;
         }
 
-        if (!isAnalyzing && hasConnectTheDotsEdges(edges)) {
+        if (!isAnalyzing && (hasConnectedDots || hasConnectTheDotsEdges(edges) || hasVisibleBoardRelationshipEdges(edges))) {
             return;
         }
 
@@ -4263,7 +5562,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 window.clearInterval(intervalId);
             }
         };
-    }, [edges, handleNewConnections, investigationId, isAnalyzing, loadedInvestigationId, nodes.length]);
+    }, [edges, handleNewConnections, hasConnectedDots, investigationId, isAnalyzing, loadedInvestigationId, nodes.length]);
 
     useEffect(() => {
         if (!sharedSocket) return;
@@ -4288,7 +5587,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     style: frame,
                     data: {
                         ...node,
-                        onReadFull: () => setSelectedContent(node.fullText),
+                        onReadFull: () => openNodeDossier(node),
                         onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                         onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                         onExpand: (id: string, expanded: boolean) => handleNodeExpand(id, expanded),
@@ -4346,6 +5645,33 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 if (append && vaultId === investigationId) {
                     addPendingIntegrationNodeId(node.id);
                 }
+            } else if (msg.type === 'RABBIT_HOLE_NODE_UPDATE') {
+                const payload = msg.payload || {};
+                const vaultId = typeof payload.vaultId === 'string' ? payload.vaultId.trim() : '';
+                const nodeIds = Array.isArray(payload.nodeIds)
+                    ? payload.nodeIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim() !== '').map((id: string) => id.trim())
+                    : [];
+                const rabbitState = typeof payload.rabbitState === 'string' ? payload.rabbitState.trim() : '';
+                if (!vaultId || nodeIds.length === 0 || !rabbitState) {
+                    return;
+                }
+                const nodeIdSet = new Set(nodeIds);
+                const applyRabbitState = (node: Node) => nodeIdSet.has(node.id)
+                    ? { ...node, data: { ...node.data, rabbitState } }
+                    : node;
+
+                if (vaultId && vaultId !== investigationId) {
+                    const savedState = getCachedBoardStateForInvestigation(vaultId);
+                    if (savedState) {
+                        void saveBoardStateForInvestigation(vaultId, {
+                            ...savedState,
+                            nodes: (savedState.nodes || []).map(applyRabbitState),
+                        });
+                    }
+                    return;
+                }
+
+                setNodes((nds) => nds.map(applyRabbitState));
             } else if (msg.type === 'PERSONA_INSIGHTS') {
                 // Handle full persona insights with chat data
                 const insights = msg.payload as Array<{
@@ -4488,7 +5814,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             sharedSocket.removeEventListener('message', handleMessage);
         };
-    }, [addPendingIntegrationNodeId, applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, scheduleNodeEntryCleanup]);
+    }, [addPendingIntegrationNodeId, applyPersonaInsightsToNodes, boardMode, sharedSocket, clearLayoutChoreographyState, createNodeEntryMetadata, getNodeEntryStagingPosition, handleAttachImage, handleNewConnections, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, markNodeAsRecentlyImported, onDeepDiveNode, onNavigateToChild, isGathering, investigationId, openImageLightbox, openNodeDossier, scheduleNodeEntryCleanup]);
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
@@ -4505,7 +5831,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 title: 'NEW_EVIDENCE',
                 summary: '',
                 fullText: '',
-                onReadFull: () => setSelectedContent(''),
+                onReadFull: () => openNodeDossier({ id, title: 'NEW_EVIDENCE', summary: '', fullText: '' }),
                 onDeepDive: (prompt: string, titleStr: string, srcId: string) => onDeepDiveNode(prompt, titleStr, srcId),
                 onNavigateToChild: (id: string, parentId?: string) => onNavigateToChild(id, parentId),
                 onExpand: (nodeId: string, expanded: boolean) => handleNodeExpand(nodeId, expanded),
@@ -4527,7 +5853,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(nds => [...nds, newNode]);
         setEditingNodeId(id);
-    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, setNodes, setEditingNodeId]);
+    }, [getViewportCenteredNodePosition, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, setNodes, setEditingNodeId]);
 
     // Enhanced node data that includes all necessary context and stable handlers
     // We update nodes whenever stable props like sharedSocket or returnVaultId change
@@ -4668,7 +5994,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             setNodes([]);
             setEdges([]);
             setEdgeReasoning(null);
-            setSelectedContent(null);
+            setSelectedDossier(null);
             setHasConnectedDots(false);
         }
     };
@@ -4706,11 +6032,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 // Compute new layout positions
                 console.debug('[TidyUp] Running Dagre layout...');
                 const { nodes: layoutedNodes } = getLayoutedElements(handledNodes, finalEdges);
+                const supportLayerState = layoutSupportingEvidenceNodes(layoutedNodes, finalEdges);
 
                 console.debug('[TidyUp] Setting state with layouted nodes...');
 
                 // Set both at once. The CSS transition in index.css will handle the motion.
-                setNodes(layoutedNodes);
+                setNodes(supportLayerState.nodes);
                 setEdges(finalEdges);
 
                 // Wait for the SLIDE transition to complete (0.8s) before fitting view
@@ -4806,6 +6133,8 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
 
     const boardRootClassName = `forensic-board-root relative h-full w-full overflow-hidden ${isBoardCameraMoving ? 'forensic-board-camera-moving' : ''} ${isBoardEmptyIdle ? 'forensic-board-empty-idle' : ''}`;
+    const shouldHoldInitialRestoreViewport = Boolean((investigationId && loadedInvestigationId !== investigationId) || isInitialRestoreViewportSettling);
+    const boardFlowClassName = `relative w-full h-full ${shouldHoldInitialRestoreViewport ? 'forensic-board-restore-prefit' : ''}`;
     const minimapCenterButtonClassName = `forensic-minimap-frame forensic-minimap-center-button pointer-events-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.36)] hover:text-[var(--forensic-accent)] ${isBoardCameraMoving ? 'forensic-minimap-center-button-active' : ''}`;
     const utilityRecenterButtonClassName = `forensic-utility-button ${isBoardCameraMoving ? 'forensic-utility-button-camera-moving' : ''}`;
 
@@ -5160,14 +6489,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
             <div
                 ref={flowWrapperRef}
-                className="relative w-full h-full"
+                className={boardFlowClassName}
                 id="detective-board-flow"
                 onPointerDown={onPanePointerDown}
                 onPointerMove={onPanePointerMove}
                 onPointerUp={onPanePointerUp}
             >
                 <ReactFlow
-                    nodes={nodes}
+                    nodes={nodesForRender}
                     edges={edges}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
@@ -5197,6 +6526,51 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                         />
                     )}
                 </ReactFlow>
+                {supportingEvidenceLayer && (
+                    <div
+                        data-testid="supporting-evidence-layer"
+                        className="forensic-supporting-evidence-layer"
+                        style={supportBandScreenStyle(supportingEvidenceLayer)}
+                        aria-hidden="true"
+                    >
+                        <div className="forensic-supporting-evidence-label">
+                            <span>Supporting Evidence</span>
+                            <span className="forensic-supporting-evidence-count">{supportingEvidenceLayer.total}</span>
+                        </div>
+                        <div className="forensic-supporting-evidence-counters">
+                            <span className="forensic-supporting-evidence-chip">Web {supportingEvidenceLayer.counts.web}</span>
+                            <span className="forensic-supporting-evidence-chip">Vault {supportingEvidenceLayer.counts.vault}</span>
+                            <span className="forensic-supporting-evidence-chip">Timeline {supportingEvidenceLayer.counts.timeline}</span>
+                        </div>
+                    </div>
+                )}
+                {supportTethers.length > 0 && (
+                    <svg
+                        data-testid="support-evidence-tether-overlay"
+                        className="forensic-support-tether-overlay"
+                        width={boardViewportSize.width}
+                        height={boardViewportSize.height}
+                        viewBox={`0 0 ${boardViewportSize.width} ${boardViewportSize.height}`}
+                        aria-hidden="true"
+                    >
+                        {supportTethers.map((tether: SupportTether) => {
+                            const source = supportTetherScreenPoint(tether.source);
+                            const target = supportTetherScreenPoint(tether.target);
+
+                            return (
+                                <line
+                                    key={`${tether.sourceId}-${tether.targetId}`}
+                                    data-testid="support-evidence-tether-line"
+                                    className={`forensic-support-tether-line forensic-support-tether-line-${tether.strength}`}
+                                    x1={source.x}
+                                    y1={source.y}
+                                    x2={target.x}
+                                    y2={target.y}
+                                />
+                            );
+                        })}
+                    </svg>
+                )}
                 <div
                     data-testid="minimap-panel"
                     className="pointer-events-none absolute z-20"
@@ -5227,6 +6601,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 width={minimapLayout.map.width}
                                 height={minimapLayout.map.height}
                                 isCameraMoving={isBoardCameraMoving}
+                                activeSupportTethers={supportTethers}
                                 getNodeColor={getMiniMapNodeColor}
                                 onNavigate={handleMiniMapNavigate}
                             />
@@ -5371,6 +6746,17 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => {
+                                            playBrowserQaRabbitHoleDemo({ investigationId: investigationId || undefined, requestId: `qa-rabbit-hole-${Date.now()}` });
+                                            setShowQaReplayMenu(false);
+                                        }}
+                                        aria-label="Replay Rabbit Hole trail demo"
+                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-left text-[10px] font-black uppercase tracking-[0.16em] text-rose-100 transition-colors hover:bg-white/8 hover:text-white"
+                                    >
+                                        <FileSearch size={14} /> Rabbit Hole trails
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
                                             playBrowserQaLocalIngestionDemo();
                                             setShowQaReplayMenu(false);
                                         }}
@@ -5472,6 +6858,28 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     />
                 )}
             </div>
+            {boardRestoreOverlay && (
+                <div
+                    data-testid="board-restore-loading"
+                    className="forensic-board-restore-loading pointer-events-none absolute inset-0 z-[45] flex items-center justify-center"
+                    aria-live="polite"
+                    aria-atomic="true"
+                >
+                    <div className="forensic-board-restore-loading-panel">
+                        <div className="forensic-board-restore-loading-scan" />
+                        <div className="forensic-board-restore-loading-title">
+                            Restoring board
+                        </div>
+                        <div className="forensic-board-restore-loading-meta">
+                            {boardRestoreOverlay.source === 'memory-cache'
+                                ? 'Local map ready'
+                                : boardRestoreOverlay.source === 'backend-refresh'
+                                    ? 'Checking latest board'
+                                    : 'Loading evidence map'}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {edgeReasoning && (
                 <div className="forensic-board-dialog absolute bottom-10 left-10 z-40 w-80 p-4 backdrop-blur-md" style={{ borderColor: edgeReasoning.color, boxShadow: `0 24px 44px rgba(0,0,0,0.45), 0 0 20px ${edgeReasoning.color}33` }}>
@@ -5785,11 +7193,150 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 </div>
             )}
 
-            {selectedContent && (
-                <div className="forensic-overlay-panel absolute right-0 top-0 z-30 h-full w-1/3 overflow-y-auto border-l p-8 backdrop-blur-md">
-                    <button onClick={() => setSelectedContent(null)} className="mb-6 border border-[rgba(129,227,255,0.28)] px-4 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--forensic-accent-muted)] transition-colors hover:bg-[rgba(129,227,255,0.14)] hover:text-white">[ CLOSE TERMINAL ]</button>
-                    <h2 className="mb-6 text-xl font-black text-[var(--forensic-accent)] underline decoration-[rgba(170,212,255,0.55)] underline-offset-8">INTEL_REPORT_FULL</h2>
-                    <div className="whitespace-pre-wrap font-mono text-sm leading-loose text-gray-300">{selectedContent}</div>
+            {selectedDossier && (
+                <div
+                    data-testid="node-dossier-overlay"
+                    className="pointer-events-none absolute inset-0 z-[120] flex justify-end p-4"
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="node-dossier-title"
+                        className="forensic-dossier-reader pointer-events-auto flex h-full w-[min(54rem,calc(100vw-2rem))] flex-col overflow-hidden"
+                    >
+                        <div className="flex items-start justify-between gap-4 border-b border-[rgba(129,227,255,0.14)] px-6 py-5">
+                            <div className="min-w-0">
+                                <div className="text-[10px] font-black uppercase tracking-[0.24em] text-[var(--forensic-accent-muted)]">
+                                    Dossier
+                                </div>
+                                <h2 id="node-dossier-title" className="mt-2 text-xl font-black leading-tight text-[var(--forensic-accent)]">
+                                    {selectedDossier.title}
+                                </h2>
+                                {selectedDossierMetaChips.length > 0 && (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {selectedDossierMetaChips.map((chip) => (
+                                            <span key={chip} className="forensic-dossier-chip">
+                                                {chip}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSelectedDossier(null);
+                                    setIsDossierSourceMaterialOpen(false);
+                                }}
+                                className="shrink-0 rounded-lg border border-[rgba(129,227,255,0.24)] bg-[rgba(129,227,255,0.06)] p-2 text-[var(--forensic-accent-muted)] transition-colors hover:border-[rgba(129,227,255,0.42)] hover:bg-[rgba(129,227,255,0.14)] hover:text-white"
+                                title="Close dossier"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                            <section className="forensic-dossier-brief">
+                                <div className="forensic-dossier-section-label">Intel Brief</div>
+                                {selectedDossierContextNote && (
+                                    <div className="forensic-dossier-context-note">
+                                        {selectedDossierContextNote}
+                                    </div>
+                                )}
+                                <p>{renderDossierTextWithLinks(selectedDossierBrief)}</p>
+                                {selectedDossierKeySignals.length > 0 && (
+                                    <div className="forensic-dossier-signal-panel">
+                                        <div className="forensic-dossier-section-label">Key Signals</div>
+                                        <ul className="forensic-dossier-signal-list">
+                                            {selectedDossierKeySignals.map((signal, index) => (
+                                                <li key={`${signal}-${index}`}>
+                                                    {renderDossierTextWithLinks(signal)}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </section>
+
+                            {selectedDossierSourceLinks.length > 0 && (
+                                <section className="mt-5">
+                                    <div className="forensic-dossier-section-label">Sources</div>
+                                    <div className="mt-2 grid gap-2">
+                                        {selectedDossierSourceLinks.map((source, index) => {
+                                            if (isDossierInternalReference(source)) {
+                                                return (
+                                                    <button
+                                                        key={`${source}-${index}`}
+                                                        type="button"
+                                                        onClick={() => setIsDossierSourceMaterialOpen(true)}
+                                                        className="forensic-dossier-source-link forensic-dossier-source-link-internal"
+                                                        title="Show stored source material in this dossier"
+                                                    >
+                                                        <span className="truncate">{source}</span>
+                                                        <FileText size={13} />
+                                                    </button>
+                                                );
+                                            }
+
+                                            if (isDossierExternalLink(source)) {
+                                                return (
+                                                    <a
+                                                        key={`${source}-${index}`}
+                                                        href={source}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="forensic-dossier-source-link"
+                                                    >
+                                                        <span className="truncate">{source}</span>
+                                                        <ExternalLink size={13} />
+                                                    </a>
+                                                );
+                                            }
+
+                                            return (
+                                                <span
+                                                    key={`${source}-${index}`}
+                                                    className="forensic-dossier-source-link forensic-dossier-source-link-static"
+                                                >
+                                                    <span className="truncate">{source}</span>
+                                                    <FileText size={13} />
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                </section>
+                            )}
+
+                            <section className="mt-6">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="forensic-dossier-section-label">Source Material</div>
+                                    <button
+                                        type="button"
+                                        aria-expanded={isDossierSourceMaterialOpen}
+                                        onClick={() => setIsDossierSourceMaterialOpen((isOpen) => !isOpen)}
+                                        className="forensic-dossier-source-toggle"
+                                    >
+                                        {isDossierSourceMaterialOpen ? 'Hide Source Material' : 'Show Source Material'}
+                                    </button>
+                                </div>
+                                {isDossierSourceMaterialOpen ? (
+                                    <div className="mt-3 space-y-3">
+                                        {selectedDossierBodyBlocks.length > 0 ? (
+                                            selectedDossierBodyBlocks.map(renderDossierBodyBlock)
+                                        ) : (
+                                            <p className="forensic-dossier-body-paragraph">
+                                                No extended source text is available for this card yet.
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="forensic-dossier-source-summary">
+                                        Source material is kept collapsed so the Dossier opens as a readable brief. Expand it when you need the raw crawl, vault, or timeline text.
+                                    </p>
+                                )}
+                            </section>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

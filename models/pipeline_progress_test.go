@@ -97,6 +97,31 @@ func TestLocalPipelineProgressStepsIncludePostIngestionAnalysis(t *testing.T) {
 	}
 }
 
+func TestRabbitHolePipelineProgressStepsIncludeGatekeeper(t *testing.T) {
+	steps := RabbitHolePipelineProgressSteps()
+
+	foundGatekeeper := false
+	foundComplete := false
+	for _, step := range steps {
+		if step.ID == "rabbit_gatekeeper" {
+			foundGatekeeper = true
+			if step.Label != "Rabbit Hole gatekeeper" {
+				t.Fatalf("gatekeeper label = %q", step.Label)
+			}
+		}
+		if step.ID == "complete" {
+			foundComplete = true
+		}
+	}
+
+	if !foundGatekeeper {
+		t.Fatal("expected Rabbit Hole pipeline steps to include gatekeeper review")
+	}
+	if !foundComplete {
+		t.Fatal("expected Rabbit Hole pipeline steps to retain completion step")
+	}
+}
+
 func TestPipelineProgressTrackerCancelMarksTerminalProfile(t *testing.T) {
 	now := time.Date(2026, 5, 18, 9, 30, 0, 0, time.UTC)
 	tracker := NewPipelineProgressTrackerWithClock(

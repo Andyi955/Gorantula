@@ -14,7 +14,7 @@ import {
   seedBrowserQaData,
 } from '../src/utils/browserQaSeed'
 import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
-import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../src/utils/boardWorkspaceEvents'
+import { BOARD_RESTORE_COMPLETE_EVENT, BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../src/utils/boardWorkspaceEvents'
 
 vi.mock('../src/components/SpiderVisualizer', () => ({
   default: ({
@@ -34,7 +34,7 @@ vi.mock('../src/components/SpiderVisualizer', () => ({
     pipelineLabel?: string
     pipelineProgressPercent?: number
     onOpenPipelineMonitor?: () => void
-    operationMode?: 'web' | 'local'
+    operationMode?: 'web' | 'local' | 'rabbit-hole'
     localIngestionFiles?: Array<{ path: string; name: string; state: string }>
     localIngestionProgress?: { stepId?: string; status?: string; detail?: string } | null
     qaLocalIngestionDemoRequest?: { requestId: string } | null
@@ -183,6 +183,7 @@ describe('App', () => {
     localStorage.clear()
     WebSocketMock.instances = []
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.stubGlobal('WebSocket', WebSocketMock)
   })
@@ -214,6 +215,62 @@ describe('App', () => {
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
     expect(screen.queryByText('SynthesisPanel Handle')).not.toBeInTheDocument()
     expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
+  })
+
+  it('persists rabbit hole nodes globally while the spider tab is active', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-rabbit', topic: 'Rabbit Hole: Quantum test' }]),
+    )
+
+    render(<App />)
+
+    await user.click(screen.getByText('Spider View'))
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    await waitFor(() => expect(WebSocketMock.instances.length).toBeGreaterThan(0))
+    act(() => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+    await waitFor(() => expect(WebSocketMock.instances[0]?.addEventListener).toHaveBeenCalledWith('message', expect.any(Function)))
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('MEMORY_NODE_GATHERED', {
+        vaultId: 'inv-rabbit',
+        append: true,
+        node: {
+          id: 'node-rabbit-missed',
+          title: 'Missed Rabbit Node',
+          summary: 'Rabbit evidence gathered while the board is unmounted.',
+          fullText: 'Rabbit evidence gathered while the board is unmounted and should persist for later relationship replay.',
+          sourceURL: 'https://example.com/rabbit-node',
+          origin: 'rabbit-hole',
+          rabbitState: 'provisional',
+          rabbitTool: 'web_search',
+          rabbitPass: 2,
+        },
+      })
+    })
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('inv_data_inv-rabbit') || '{}')
+      expect(saved.nodes?.some((node: { id?: string }) => node.id === 'node-rabbit-missed')).toBe(true)
+      expect(saved.pendingIntegrationNodeIds).toContain('node-rabbit-missed')
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_NODE_UPDATE', {
+        vaultId: 'inv-rabbit',
+        nodeIds: ['node-rabbit-missed'],
+        rabbitState: 'promoted',
+      })
+    })
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('inv_data_inv-rabbit') || '{}')
+      const savedNode = saved.nodes?.find((node: { id?: string }) => node.id === 'node-rabbit-missed')
+      expect(savedNode?.data?.rabbitState).toBe('promoted')
+    })
   })
 
   it('hides floating synthesis and discovery handles on settings view', async () => {
@@ -275,6 +332,22 @@ describe('App', () => {
     expect(within(sidebar).getByText('Merged Signal')).toBeInTheDocument()
     expect(within(sidebar).queryByText('Alpha Thread')).not.toBeInTheDocument()
     expect(localStorage.getItem('gorantula_investigations')).toBe(JSON.stringify(storedInvestigations))
+  })
+
+  it('opens the newest cached investigation on first board load', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-1770000000000', topic: 'Older cached case' },
+        { id: 'inv-1880000000000', topic: 'Newest cached case' },
+      ]),
+    )
+
+    render(<App />)
+    await user.click(screen.getByText('Detective Board'))
+
+    expect(await screen.findByTestId('mock-board-investigation-id')).toHaveTextContent('inv-1880000000000')
   })
 
   it('renders a mockup-style investigation summary and functional sidebar controls in detective board mode', async () => {
@@ -449,6 +522,83 @@ describe('App', () => {
       expect(screen.getByText(/Bravo completed theory arrived in the background/i)).toBeInTheDocument()
     })
     expect(screen.queryByText(/Alpha original theory remains selected/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a functional investigation switch loader until the target board reports ready', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-rabbit-guided', topic: 'Rabbit Hole: Semiconductor export controls' },
+        { id: 'inv-rabbit-max', topic: 'Rabbit Hole: AI companies quietly moving into nuclear power' },
+      ]),
+    )
+    localStorage.setItem(
+      'inv_data_inv-rabbit-max',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: Array.from({ length: 22 }, (_, index) => ({
+          id: `rabbit-node-${index}`,
+          data: {
+            title: `Rabbit node ${index}`,
+            summary: 'Large Rabbit Hole support trail summary.',
+            origin: 'rabbit-hole',
+          },
+        })),
+        edges: [],
+      }),
+    )
+
+    try {
+      render(<App />)
+
+      fireEvent.click(screen.getByText('Rabbit Hole: AI companies quietly moving into nuclear power'))
+
+      const switchLoader = screen.getByTestId('investigation-switch-loading')
+      expect(switchLoader).toHaveTextContent('Switching investigation')
+      expect(switchLoader).toHaveTextContent('Preparing evidence map')
+      expect(switchLoader).toHaveTextContent('Rabbit Hole: AI companies quietly moving into nuclear power')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+
+      expect(screen.getByTestId('mock-board-investigation-id')).toHaveTextContent('inv-rabbit-max')
+      expect(console.info).toHaveBeenCalledWith('[InvestigationSwitch] selected', expect.objectContaining({
+        investigationId: 'inv-rabbit-max',
+      }))
+      expect(console.info).toHaveBeenCalledWith('[InvestigationSwitch] committed', expect.objectContaining({
+        investigationId: 'inv-rabbit-max',
+        durationMs: expect.any(Number),
+      }))
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent(BOARD_RESTORE_COMPLETE_EVENT, {
+          detail: {
+            investigationId: 'inv-rabbit-max',
+            source: 'memory-cache',
+            durationMs: 120,
+            nodeCount: 22,
+            edgeCount: 0,
+          },
+        }))
+      })
+
+      expect(screen.getByTestId('investigation-switch-loading')).toHaveTextContent('Evidence map ready')
+      expect(console.info).toHaveBeenCalledWith('[InvestigationSwitch] board-ready', expect.objectContaining({
+        investigationId: 'inv-rabbit-max',
+        source: 'memory-cache',
+        nodeCount: 22,
+      }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400)
+      })
+
+      expect(screen.queryByTestId('investigation-switch-loading')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('switches to the detective board when the active crawl synthesis completes', async () => {
@@ -653,6 +803,262 @@ describe('App', () => {
     expect(crawlMessage.scrapeImages).toBe(true)
   })
 
+  it('launches Rabbit Hole crawls with descent controls and optional image scraping', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('rabbit-hole')
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+    expect(within(crawlConsole).getByRole('group', { name: /rabbit hole descent/i })).toBeInTheDocument()
+    expect(within(crawlConsole).getByRole('button', { name: /guided/i })).toHaveClass('forensic-spider-mode-active')
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /max descent/i }))
+    await user.click(screen.getByRole('switch', { name: /scrape images/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'AI regulatory capture')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL_RABBIT_HOLE',
+      payload: 'AI regulatory capture',
+      descentMode: 'max',
+      scrapeImages: true,
+    }))
+    expect(crawlMessage.runId).toMatch(/^run-/)
+    expect(crawlMessage.vaultId).toMatch(/^inv-/)
+  })
+
+  it('removes the Rabbit shell theme when the Spider console returns to Web mode', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    expect(screen.getByTestId('app-shell')).not.toHaveClass('forensic-rabbit-context')
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByRole('button', { name: /timeline view/i }))
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByRole('button', { name: /spider view/i }))
+    await user.click(within(crawlConsole).getByRole('button', { name: /^web$/i }))
+    expect(screen.getByTestId('app-shell')).not.toHaveClass('forensic-rabbit-context')
+  })
+
+  it('keeps the Rabbit shell theme across tabs for Rabbit Hole investigations', async () => {
+    const user = userEvent.setup()
+
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-1779700000000', topic: 'regular web case' },
+        { id: 'inv-1779800000000', topic: 'Rabbit Hole: humanoid robotics deployment surge' },
+      ]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByRole('button', { name: /timeline view/i }))
+    expect(screen.getByTestId('app-shell')).toHaveClass('forensic-rabbit-context')
+
+    await user.click(screen.getByText('regular web case'))
+    await waitFor(() => {
+      expect(screen.getByTestId('app-shell')).not.toHaveClass('forensic-rabbit-context')
+    })
+  })
+
+  it('returns the spider visual theme to the selected mode after a Rabbit Hole run completes', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'rabbit theme reset')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage.type).toBe('CRAWL_RABBIT_HOLE')
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('rabbit-hole')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        mode: 'rabbit-hole',
+        stepId: 'complete',
+        stepLabel: 'Pipeline complete',
+        status: 'complete',
+        completedSteps: 8,
+        totalSteps: 8,
+        elapsedMs: 1200,
+        steps: [
+          { id: 'complete', label: 'Pipeline complete', status: 'complete', durationMs: 1200 },
+        ],
+      })
+    })
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /^web$/i }))
+
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('web')
+    expect(within(crawlConsole).getByRole('button', { name: /^web$/i })).toHaveClass('forensic-spider-mode-active')
+  })
+
+  it('renders Rabbit Hole gatekeeper recommendations for guided runs', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'AI regulatory capture')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_GATEKEEPER', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        pass: 1,
+        descentMode: 'guided',
+        decision: {
+          continue: true,
+          reason: 'Two credible open angles remain.',
+          noveltyScore: 0.82,
+          suggestedQueries: ['follow procurement exception trail'],
+        },
+        result: 'Rabbit Hole pass one synthesis.',
+        prompt: 'AI regulatory capture',
+      })
+    })
+
+    const gatekeeper = await screen.findByTestId('rabbit-hole-gatekeeper-panel')
+    expect(gatekeeper).toHaveTextContent('Gatekeeper')
+    expect(gatekeeper).toHaveTextContent('Pass 1')
+    expect(gatekeeper).toHaveTextContent('Two credible open angles remain.')
+    expect(gatekeeper).toHaveTextContent('Continue recommended')
+    expect(within(gatekeeper).getByRole('button', { name: /finish rabbit hole/i })).toBeInTheDocument()
+
+    await user.click(within(gatekeeper).getByRole('button', { name: /continue rabbit hole descent/i }))
+
+    const continueMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(continueMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL_RABBIT_HOLE',
+      vaultId: crawlMessage.vaultId,
+      scrapeImages: false,
+      descentMode: 'guided',
+      append: true,
+      continuationPass: 2,
+      priorFindings: ['Pass 1 summary:\nRabbit Hole pass one synthesis.'],
+      suggestedQueries: ['follow procurement exception trail'],
+    }))
+    expect(continueMessage.payload).toBe('AI regulatory capture')
+  })
+
+  it('shows max descent gatekeeper updates as read-only status', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_GATEKEEPER', {
+        runId: 'run-max-rabbit',
+        vaultId: 'inv-max-rabbit',
+        pass: 1,
+        descentMode: 'max',
+        decision: {
+          continue: true,
+          reason: 'Novel source trail remains open, continuing automatically.',
+          noveltyScore: 0.76,
+          suggestedQueries: ['follow second pass angle'],
+        },
+        result: 'Max descent pass one synthesis.',
+        prompt: 'AI regulatory capture',
+      })
+    })
+
+    const gatekeeper = await screen.findByTestId('rabbit-hole-gatekeeper-panel')
+    expect(gatekeeper).toHaveTextContent('Max descent continuing')
+    expect(gatekeeper).toHaveTextContent('Novel source trail remains open, continuing automatically.')
+    expect(within(gatekeeper).queryByRole('button', { name: /continue rabbit hole descent/i })).not.toBeInTheDocument()
+    expect(within(gatekeeper).queryByRole('button', { name: /finish rabbit hole/i })).not.toBeInTheDocument()
+  })
+
+  it('finishes a guided Rabbit Hole run from the gatekeeper panel', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const crawlConsole = screen.getByTestId('spider-crawl-console')
+    await user.click(within(crawlConsole).getByRole('button', { name: /rabbit hole/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic for rabbit hole mode/i), 'AI regulatory capture')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_GATEKEEPER', {
+        runId: crawlMessage.runId,
+        vaultId: crawlMessage.vaultId,
+        pass: 1,
+        descentMode: 'guided',
+        decision: {
+          continue: true,
+          reason: 'Two credible open angles remain.',
+          noveltyScore: 0.82,
+          suggestedQueries: ['follow procurement exception trail'],
+        },
+        result: 'Rabbit Hole pass one synthesis.',
+        prompt: 'AI regulatory capture',
+      })
+    })
+
+    const gatekeeper = await screen.findByTestId('rabbit-hole-gatekeeper-panel')
+    await user.click(within(gatekeeper).getByRole('button', { name: /finish rabbit hole/i }))
+
+    const finishMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(finishMessage).toEqual(expect.objectContaining({
+      type: 'FINISH_RABBIT_HOLE',
+      vaultId: crawlMessage.vaultId,
+      runId: crawlMessage.runId,
+      result: 'Rabbit Hole pass one synthesis.',
+      prompt: 'AI regulatory capture',
+    }))
+  })
+
   it('keeps the spider crawl console focused on actionable controls', async () => {
     render(<App />)
     expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
@@ -665,6 +1071,7 @@ describe('App', () => {
     expect(within(controlStack).getByText(/crawl console/i)).toBeInTheDocument()
     expect(within(controlStack).getByRole('button', { name: /web/i })).toBeInTheDocument()
     expect(within(controlStack).getByRole('button', { name: /local/i })).toBeInTheDocument()
+    expect(within(controlStack).getByRole('button', { name: /rabbit hole/i })).toBeInTheDocument()
     expect(within(crawlConsole).getByRole('button', { name: /execute/i })).toBeInTheDocument()
 
     expect(within(crawlConsole).queryByText(/crawl parameters/i)).not.toBeInTheDocument()

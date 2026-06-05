@@ -17,6 +17,7 @@ export const BROWSER_QA_SYNTHESIS_DEMO_EVENT = 'gorantula:browser-qa-play-synthe
 export const BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT = 'gorantula:browser-qa-play-spider-telemetry-demo'
 export const BROWSER_QA_PIPELINE_DEMO_EVENT = 'gorantula:browser-qa-play-pipeline-demo'
 export const BROWSER_QA_TIMELINE_DEMO_EVENT = 'gorantula:browser-qa-play-timeline-demo'
+export const BROWSER_QA_RABBIT_HOLE_DEMO_EVENT = 'gorantula:browser-qa-play-rabbit-hole-demo'
 export const BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT = 'gorantula:browser-qa-play-evidence-expansion-demo'
 export const BROWSER_QA_LOCAL_INGESTION_DEMO_EVENT = 'gorantula:browser-qa-play-local-ingestion-demo'
 export const BROWSER_QA_ERROR_EMPTY_DEMO_EVENT = 'gorantula:browser-qa-play-error-empty-demo'
@@ -68,6 +69,11 @@ export interface BrowserQaPipelineDemoDetail {
 }
 
 export interface BrowserQaTimelineDemoDetail {
+  investigationId?: string
+  requestId?: string
+}
+
+export interface BrowserQaRabbitHoleDemoDetail {
   investigationId?: string
   requestId?: string
 }

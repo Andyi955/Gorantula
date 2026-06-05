@@ -64,6 +64,50 @@ describe('CustomNode', () => {
     expect(onReadFull).toHaveBeenCalled()
   })
 
+  it('renders expanded nodes as a formatted evidence brief instead of the full raw dump', async () => {
+    const user = userEvent.setup()
+    render(
+      <CustomNode
+        id="node-expanded-brief"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-expanded-brief',
+          title: 'NERC Alert',
+          summary: '[ORG:NERC] warned that data center load could strain grid reliability near [LOC:Virginia].',
+          fullText: [
+            'Source: https://example.com/nerc-alert',
+            'Rabbit tool: web_search',
+            'Query: NERC Level 3 alert data centers',
+            'Rationale: Track pressure signals',
+            'The NERC alert says hyperscale data center demand is changing peak-load assumptions across multiple regions.',
+            'Dominion Energy filings show the new GS-5 rate class could shift grid upgrade costs toward large customers.',
+            'Meta water permit records describe conflicting annual demand estimates and local scrutiny.',
+            'TAIL RAW PARAGRAPH '.repeat(80),
+          ].join('\n'),
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTitle('Expand'))
+
+    const detail = screen.getByTestId('node-detail-motion')
+    expect(detail).toHaveClass('forensic-node-expanded-brief')
+    expect(detail).toHaveTextContent('Brief')
+    expect(detail).toHaveTextContent('Evidence Signals')
+    expect(detail).toHaveTextContent('NERC')
+    expect(detail).toHaveTextContent('hyperscale data center demand')
+    expect(detail).toHaveTextContent('Dominion Energy filings')
+    expect(detail).not.toHaveTextContent('TAIL RAW PARAGRAPH')
+    expect(detail).not.toHaveTextContent('https://example.com/nerc-alert')
+  })
+
   it('shows merged evidence count for squashed duplicate cards', () => {
     render(
       <CustomNode
@@ -93,6 +137,262 @@ describe('CustomNode', () => {
 
     expect(screen.getByText('MERGED EVIDENCE 3')).toBeInTheDocument()
     expect(screen.getByTitle('Squashed 3 duplicate evidence items into this card')).toBeInTheDocument()
+  })
+
+  it('labels provisional Rabbit Hole nodes as active trails', () => {
+    render(
+      <CustomNode
+        id="rabbit-node"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-node',
+          title: 'Rabbit Lead',
+          summary: 'A live Rabbit Hole trail is still under investigation.',
+          origin: 'rabbit-hole',
+          rabbitState: 'provisional',
+          rabbitTool: 'vault_search',
+          rabbitPass: 2,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('RABBIT TRAIL')).toBeInTheDocument()
+    expect(screen.getByText('ACTIVE')).toBeInTheDocument()
+    expect(screen.getByTitle('Rabbit Hole tool: vault_search, pass 2')).toBeInTheDocument()
+  })
+
+  it('renders supporting Rabbit Hole evidence as a compact secondary trail without a top support badge', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-node"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-node',
+          title: 'Supporting Trail',
+          summary: 'A relevant Rabbit Hole result that supports the investigation without becoming a primary relationship node.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 3,
+          evidenceRole: 'supporting',
+          supportCluster: 'timeline',
+          isSupportEvidenceCompact: true,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-supporting-evidence')
+    expect(screen.queryByText('SUPPORT')).not.toBeInTheDocument()
+    expect(screen.getByTitle('Rabbit Hole tool: timeline_context, pass 3')).toBeInTheDocument()
+  })
+
+  it('keeps image-scraped supporting evidence compact without pushing text down', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-image"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-image',
+          title: 'Image Support Trail',
+          summary: 'A visual Rabbit Hole result should keep the evidence text readable in the compact support shelf.',
+          fullText: 'A visual Rabbit Hole result should keep the evidence text readable in the compact support shelf. Expanded source context remains available on hover.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'web_search',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'web',
+          isSupportEvidenceCompact: true,
+          images: [
+            {
+              id: 'support-image-1',
+              path: 'https://example.com/support-image.jpg',
+              caption: 'Scraped visual source',
+            },
+          ],
+        }}
+      />,
+    )
+
+    const imagePreview = screen.getByTestId('node-image-preview')
+    expect(imagePreview).toHaveClass('forensic-node-support-image-thumb')
+    expect(imagePreview).not.toHaveStyle({ height: '96px' })
+    expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-support-has-image')
+    expect(screen.queryByText('Visual Evidence')).not.toBeInTheDocument()
+    expect(screen.getByTestId('node-detail-motion')).toHaveTextContent('A visual Rabbit Hole result should keep the evidence text readable')
+    expect(screen.getByTestId('node-detail-motion')).not.toHaveTextContent('Expanded source context remains available on hover.')
+    expect(screen.queryByTestId('support-evidence-peek')).not.toBeInTheDocument()
+  })
+
+  it('normalizes raw Rabbit Hole report text for collapsed supporting previews', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-raw-report"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-raw-report',
+          title: 'Raw Support Trail',
+          summary: [
+            '## Final Summary',
+            '# Crawler Result Vault ## Final Summary',
+            'EXECUTIVE SUMMARY REPORT TO: Interested Parties FROM: Office of Strategic Analysis DATE: 2026-06-03',
+            'Rabbit Hole timeline context for: [ORG:NVIDIA] H200 clearance [ORG:Huawei] Chinese firms 2025-01-20 ::',
+            'Source: https://example.com/raw-report',
+            'momentum and supplier notes point to H200 clearance timing intersecting export control loopholes and procurement pressure.',
+          ].join('\n'),
+          fullText: 'Full expansion text should stay behind the expand control.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'timeline',
+          isSupportEvidenceCompact: true,
+        }}
+      />,
+    )
+
+    const compactText = screen.getByTestId('node-detail-motion')
+
+    expect(compactText).toHaveTextContent('NVIDIA')
+    expect(compactText).toHaveTextContent('Huawei')
+    expect(compactText).toHaveTextContent('Momentum and supplier notes')
+    expect(compactText.innerHTML).toContain('bg-cyber-cyan/20')
+    expect(compactText).not.toHaveTextContent('EXECUTIVE SUMMARY REPORT TO')
+    expect(compactText).not.toHaveTextContent('Rabbit Hole timeline context for')
+    expect(compactText).not.toHaveTextContent('https://example.com/raw-report')
+    expect(compactText).not.toHaveTextContent('##')
+    expect(compactText).not.toHaveTextContent('Full expansion text should stay behind the expand control')
+    expect(screen.queryByTestId('support-evidence-peek')).not.toBeInTheDocument()
+  })
+
+  it('does not invent compact support chips from plain Rabbit Hole entity text', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-plain-entities"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-plain-entities',
+          title: 'Nvidia H200 Clearance',
+          summary: [
+            'Rabbit Hole timeline context for: Nvidia H200 clearance BIS Chinese firms 2025 - 2025-01-20',
+            'nvidia supplier notes and Huawei procurement signals point to pressure around export-control loopholes.',
+          ].join('\n'),
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'timeline',
+          isSupportEvidenceCompact: true,
+        }}
+      />,
+    )
+
+    const compactText = screen.getByTestId('node-detail-motion')
+
+    expect(compactText).toHaveTextContent('Nvidia')
+    expect(compactText).toHaveTextContent('Huawei')
+    expect(compactText).toHaveTextContent('Nvidia supplier notes')
+    expect(compactText.innerHTML).not.toContain('bg-cyber-cyan/20')
+  })
+
+  it('keeps expanded supporting Rabbit Hole evidence fully opaque before hover', () => {
+    render(
+      <CustomNode
+        id="rabbit-support-expanded"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'rabbit-support-expanded',
+          title: 'Expanded Supporting Trail',
+          summary: 'A compact supporting trail.',
+          fullText: 'Expanded supporting detail '.repeat(40),
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'vault_search',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'vault',
+          isSupportEvidenceCompact: true,
+          expanded: true,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-expanded-opaque')
+  })
+
+  it('does not auto-fit collapsed supporting Rabbit Hole evidence on mount', async () => {
+    const onResizeCommit = vi.fn()
+
+    render(
+      <CustomNode
+        id="rabbit-support-autofit"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        width={288}
+        height={192}
+        data={{
+          id: 'rabbit-support-autofit',
+          title: 'Compact Support Trail',
+          summary: 'Dense supporting detail '.repeat(80),
+          fullText: 'Dense supporting detail '.repeat(120),
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'web_search',
+          rabbitPass: 2,
+          evidenceRole: 'supporting',
+          supportCluster: 'web',
+          isSupportEvidenceCompact: true,
+          onResizeCommit,
+        }}
+      />,
+    )
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+
+    expect(onResizeCommit).not.toHaveBeenCalled()
   })
 
   it('animates evidence detail expansion without changing the expand callback contract', async () => {
@@ -127,6 +427,7 @@ describe('CustomNode', () => {
     await user.click(screen.getByTitle('Expand'))
 
     expect(onExpand).toHaveBeenCalledWith('node-expansion', true)
+    expect(screen.getByTestId('custom-node-shell')).toHaveClass('forensic-node-expanded')
     expect(screen.getByTestId('node-detail-motion')).toHaveClass('forensic-node-detail-expanded')
   })
 
@@ -728,6 +1029,55 @@ describe('CustomNode', () => {
     expect(sourceLink).toHaveAttribute('href', 'https://example.com/source')
     expect(sourceLink).toHaveAttribute('target', '_blank')
     expect(sourceLink).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('uses the first external source instead of opening internal vault references', () => {
+    render(
+      <CustomNode
+        id="node-internal-source"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-internal-source',
+          title: 'Internal Source Node',
+          summary: 'Summary',
+          sourceURL: 'vault://abdomen_vault/inv-old/report.md, https://example.com/source',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    const sourceLink = screen.getByTitle('Verify Source')
+    expect(sourceLink).toHaveAttribute('href', 'https://example.com/source')
+  })
+
+  it('hides the card source link when only internal vault references exist', () => {
+    render(
+      <CustomNode
+        id="node-internal-only-source"
+        type="custom"
+        selected={false}
+        dragging={false}
+        zIndex={1}
+        isConnectable
+        positionAbsoluteX={0}
+        positionAbsoluteY={0}
+        data={{
+          id: 'node-internal-only-source',
+          title: 'Internal Only Source Node',
+          summary: 'Summary',
+          sourceURL: 'vault://abdomen_vault/inv-old/report.md',
+          onReadFull: vi.fn(),
+        }}
+      />,
+    )
+
+    expect(screen.queryByTitle('Verify Source')).not.toBeInTheDocument()
   })
 
   it('reveals persona discussion cards with stagger metadata', async () => {

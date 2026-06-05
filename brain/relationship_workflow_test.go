@@ -474,6 +474,90 @@ func TestValidateAndRankRelationshipCandidatesCollapsesDuplicateContentTags(t *t
 	}
 }
 
+func TestValidateAndRankRelationshipCandidatesLimitsDuplicateEvidenceFamily(t *testing.T) {
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "Virginia data center water filing", Summary: "Virginia officials warn data centers are using most of a water allocation.", FullText: "Virginia water authority documents say data centers consume most available allocation and strain local approvals."},
+		{ID: "node-2", Title: "Virginia water hearing duplicate", Summary: "Virginia officials repeat that data centers are using most of a water allocation.", FullText: "Virginia water authority documents say data centers consume most available allocation and strain local approvals."},
+		{ID: "node-3", Title: "Oklo reactor permit", Summary: "Oklo expects an NRC reactor permit decision before buildout choices.", FullText: "Oklo expects an NRC reactor permit decision before buildout choices and financing milestones."},
+		{ID: "node-4", Title: "Oklo permit mirror", Summary: "Oklo repeats the NRC reactor permit timing before financing milestones.", FullText: "Oklo expects an NRC reactor permit decision before buildout choices and financing milestones."},
+		{ID: "node-5", Title: "Texas grid testimony", Summary: "ERCOT testimony says data center load strains grid and water planning.", FullText: "ERCOT testimony says data center load strains grid and water planning for large AI facilities."},
+		{ID: "node-6", Title: "AI data center buildout", Summary: "AI data center buildout depends on grid and water capacity.", FullText: "AI data center buildout depends on grid and water capacity before new facility approvals."},
+	}
+
+	finalConnections, candidates, notes := validateAndRankRelationshipCandidates(nodes, []models.RelationshipCandidate{
+		{
+			Source:             "node-1",
+			Target:             "node-2",
+			Tag:                "VA_WATER_USE_DUPLICATE",
+			Reasoning:          "Both nodes present the same Virginia water allocation evidence for data center approvals.",
+			Confidence:         0.97,
+			EvidenceNodeIDs:    []string{"node-1", "node-2"},
+			SupportingPersonas: []string{"Connector", "Skeptic", "Evidence Triage"},
+		},
+		{
+			Source:             "node-3",
+			Target:             "node-4",
+			Tag:                "OKLO_PERMIT_DUPLICATE",
+			Reasoning:          "Both nodes share identical Oklo NRC permit timing and financing milestone evidence.",
+			Confidence:         0.96,
+			EvidenceNodeIDs:    []string{"node-3", "node-4"},
+			SupportingPersonas: []string{"Connector", "Skeptic", "Evidence Triage"},
+		},
+		{
+			Source:             "node-5",
+			Target:             "node-6",
+			Tag:                "GRID_WATER_CAPACITY",
+			Reasoning:          "ERCOT grid and water planning constraints match the capacity dependencies described for AI data center buildout.",
+			Confidence:         0.88,
+			EvidenceNodeIDs:    []string{"node-5", "node-6"},
+			SupportingPersonas: []string{"Connector", "Context Brief"},
+		},
+		{
+			Source:             "node-1",
+			Target:             "node-5",
+			Tag:                "RESOURCE_BOTTLENECK",
+			Reasoning:          "Virginia water allocation constraints and ERCOT grid and water testimony both describe infrastructure bottlenecks around data center growth.",
+			Confidence:         0.86,
+			EvidenceNodeIDs:    []string{"node-1", "node-5"},
+			SupportingPersonas: []string{"Connector", "Implications Mapper"},
+		},
+	})
+
+	duplicateAcceptedCount := 0
+	for _, connection := range finalConnections {
+		if strings.Contains(connection.Tag, "DUPLICATE") {
+			duplicateAcceptedCount++
+		}
+	}
+	if duplicateAcceptedCount > 1 {
+		t.Fatalf("expected at most one duplicate evidence edge on the visible board, got %d: %#v", duplicateAcceptedCount, finalConnections)
+	}
+
+	if !connectionTagsInclude(finalConnections, "GRID_WATER_CAPACITY") && !connectionTagsInclude(finalConnections, "RESOURCE_BOTTLENECK") {
+		t.Fatalf("expected a non-duplicate investigative relationship to survive, got %#v", finalConnections)
+	}
+
+	var sawDuplicateBudget bool
+	for _, candidate := range candidates {
+		if strings.Contains(candidate.Tag, "DUPLICATE") && candidate.RejectionReason == "evidence_hygiene_budget" {
+			sawDuplicateBudget = true
+			break
+		}
+	}
+	if !sawDuplicateBudget {
+		t.Fatalf("expected extra duplicate evidence candidates to be rejected by evidence hygiene budget; notes=%v candidates=%#v", notes, candidates)
+	}
+}
+
+func connectionTagsInclude(connections []models.BoardConnection, tag string) bool {
+	for _, connection := range connections {
+		if connection.Tag == tag {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateAndRankRelationshipCandidatesPrefersHigherQualityCandidateOverConfidenceOrder(t *testing.T) {
 	nodes := []models.MemoryNode{
 		{ID: "node-1", Title: "LoRA", Summary: "LoRA reduces adapter latency.", FullText: "LoRA introduces no additional inference latency compared to adapter-based methods."},

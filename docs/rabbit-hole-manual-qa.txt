@@ -1,0 +1,58 @@
+Rabbit Hole Manual QA Recipe
+============================
+
+Backend
+-------
+Restart the backend before testing so Rabbit Hole debug logs are active:
+
+go run ./cmd/gorantula
+
+All Rabbit Hole-specific terminal traces are prefixed with:
+
+[RabbitHole]
+
+Manual Test Prompt
+------------------
+AI data centers, water permits, grid pressure, utility ratepayer costs, interconnection delays, and local opposition across Texas, Virginia, and Louisiana. Look for repeated entities, older case echoes, timeline overlaps, and unresolved trails worth deeper descent.
+
+Recommended Settings
+--------------------
+Mode: Rabbit Hole
+Descent: Max Descent
+Scrape Images: off for the first test
+
+Turn Scrape Images on for a second run if you want to specifically QA image review behavior.
+
+Expected Terminal Log Shape
+---------------------------
+[RabbitHole] accepted run=... vault=... mode=max append=false scrapeImages=false
+[RabbitHole] start vault=... run=... mode=max ...
+[RabbitHole] pass 1 start ...
+[RabbitHole] pass 1 plan task id=rabbit-tool-1 tool=web_search ...
+[RabbitHole] tool event ... status=queued/running/complete
+[RabbitHole] pass 1 dispatch web_search signals=...
+[RabbitHole] pass 1 web_search returned nutrients=...
+[RabbitHole] node broadcast ... state=provisional tool=web_search pass=1
+[RabbitHole] pass 1 vault_search ... results=...
+[RabbitHole] pass 1 timeline_context sourceRecords=...
+[RabbitHole] gatekeeper pass=1 continue=... novelty=...
+[RabbitHole] continuing descent ...
+[RabbitHole] promoting nodes vault=... count=...
+[RabbitHole] complete vault=... nodesPromoted=...
+
+What To Watch In The UI
+-----------------------
+1. Rabbit Hole entrance animation appears in the Spider Console.
+2. Pipeline reads as Rabbit Hole / RABBIT-HOLE style progress.
+3. Live board nodes appear as Rabbit Trail / Active before final completion.
+4. Vault search and timeline context nodes are clickable like normal evidence nodes.
+5. Gatekeeper explains whether the trail continues or stops.
+6. Final completion promotes Rabbit nodes and triggers relationship/discovery synthesis once.
+
+Good Failure Signals
+--------------------
+- No [RabbitHole] lines appear: backend was not restarted or request did not route to CRAWL_RABBIT_HOLE.
+- Tool plan lacks vault_search or timeline_context for this prompt: planner may be too web-search-heavy.
+- Provisional nodes never promote: finalization or RABBIT_HOLE_NODE_UPDATE is not firing.
+- Relationship synthesis fires more than once per finished descent: finalization may be double-triggering.
+- Gatekeeper continues with no useful suggested queries: stop/continue parsing needs tightening.

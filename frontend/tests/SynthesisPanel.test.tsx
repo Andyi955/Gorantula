@@ -164,6 +164,31 @@ describe('SynthesisPanel', () => {
     expect(screen.queryByText(/No cross-investigation overlaps yet/i)).not.toBeInTheDocument()
   })
 
+  it('keeps normal investigation theory reports in the legacy plain-text reader', () => {
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-a', topic: 'Investigation A' },
+        ]}
+        currentTheoryReport={[
+          '## Normal Theory',
+          '',
+          '| Finding | Source |',
+          '|---------|--------|',
+          '| Plain table text | Normal source |',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.queryByRole('heading', { name: /normal theory/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.getByTestId('synthesis-theory-section-1')).toHaveTextContent('| Finding | Source |')
+    expect(screen.getByTestId('synthesis-theory-section-1')).toHaveClass('whitespace-pre-wrap')
+  })
+
   it('rehydrates synthesis alerts from persisted board state on investigation load', async () => {
     localStorage.setItem('inv_data_inv-a', JSON.stringify({
       mode: 'strict-grid',
@@ -583,6 +608,51 @@ describe('SynthesisPanel', () => {
 
     expect(screen.getByTestId('synthesis-theory-section-0')).toHaveClass('forensic-synthesis-theory-section-reveal')
     expect(screen.getByTestId('synthesis-theory-section-1')).toHaveClass('forensic-synthesis-theory-section-reveal')
+  })
+
+  it('formats Rabbit Hole theory markdown tables instead of showing raw pipe text', () => {
+    const onNavigateVault = vi.fn()
+
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-rabbit"
+        onNavigateVault={onNavigateVault}
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-rabbit', topic: 'Rabbit Hole: AI ecosystem' },
+          { id: 'inv-linked', topic: 'AI chip export overlap' },
+        ]}
+        currentTheoryReport={[
+          '## Key Findings',
+          '',
+          '| Finding | Source Grounding | Date/Significance |',
+          '',
+          '|---------|------------------|-------------------|',
+          '',
+          '| OpenAI Deployment Co. formed | vault://abdomen_vault/inv-linked/crawl.md | June 2026 - services consolidation |',
+          '',
+          '| Huawei Ascend 920 mass production | Reuters | Hardware export control bypass |',
+          '',
+          '### Unresolved Leads',
+          '',
+          '1. Which firms received H200 clearance?',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.getByText('Current Investigation Theory').closest('.forensic-synthesis-theory-reader')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /ai chip export overlap/i }))
+    expect(onNavigateVault).toHaveBeenCalledWith('inv-linked', undefined)
+    expect(screen.getByRole('heading', { name: /key findings/i })).toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /source grounding/i })).toBeInTheDocument()
+    expect(screen.getByTestId('synthesis-theory-table-wrap')).toHaveClass('forensic-synthesis-theory-table-wrap-carded')
+    expect(screen.getAllByText(/openai deployment co\. formed/i).some((element) =>
+      element.closest('.forensic-synthesis-theory-table-card-row'),
+    )).toBe(true)
+    expect(screen.getAllByTitle(/open linked investigation inv-linked/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/which firms received h200 clearance/i)).toBeInTheDocument()
   })
 
   it('keeps the synthesis panel closed for active investigation alerts without the legacy toast', async () => {

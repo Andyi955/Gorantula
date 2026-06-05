@@ -36,6 +36,16 @@ export interface NodeData {
     evidenceCount?: number;
     mergedSourceURLs?: string[];
     duplicateNodeIds?: string[];
+    origin?: 'rabbit-hole' | string;
+    rabbitState?: 'provisional' | 'promoted' | 'stale' | string;
+    rabbitTool?: string;
+    rabbitPass?: number;
+    evidenceRole?: 'primary' | 'supporting' | string;
+    supportCluster?: 'web' | 'vault' | 'timeline' | string;
+    isSupportEvidenceCompact?: boolean;
+    isSupportTetherSource?: boolean;
+    isSupportTetherTarget?: boolean;
+    confidence?: number;
     nodeKind?: 'discovery';
     discoveryClaim?: string;
     discoveryImpact?: string;
@@ -67,6 +77,7 @@ export interface NodeData {
     onViewImages?: (images: NodeImageAsset[], initialIndex: number, nodeTitle?: string, nodeId?: string) => void;
     onAttachImage?: (nodeId: string, file: File) => Promise<void>;
     onRemoveImage?: (nodeId: string, imageId: string) => void;
+    onSupportHover?: (nodeId: string, active: boolean) => void;
     expanded?: boolean;
     isRecentlyImported?: boolean;
     isConnectionHighlighted?: boolean;
@@ -114,6 +125,271 @@ const parseHighlightedText = (text: string) => {
     parsed = parsed.replace(/\[TIME:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-400/20 px-1.5 py-0.5 rounded border border-yellow-400/55 text-[11px] uppercase tracking-tight">$1</span>');
     
     return parsed;
+};
+
+const SUPPORTING_EVIDENCE_PREVIEW_MAX_LENGTH = 320;
+const SUPPORTING_EVIDENCE_PREVIEW_ENTITY_LIMIT = 3;
+const EXPANDED_EVIDENCE_BRIEF_MAX_LENGTH = 1180;
+const EXPANDED_EVIDENCE_SIGNAL_LIMIT = 4;
+const EXPANDED_EVIDENCE_LINE_MAX_LENGTH = 210;
+const SUPPORTING_EVIDENCE_ENTITY_STOP_WORDS = new Set([
+    'active',
+    'crawler result vault',
+    'executive summary',
+    'final summary',
+    'intelligence report',
+    'rabbit hole',
+    'source',
+    'summary',
+]);
+
+type SupportPreviewEntityTag = {
+    token: string;
+    value: string;
+};
+
+const stripSupportPreviewMarkup = (line: string) => line
+    .replace(/!\[[^\]]*]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)]\((?:https?:\/\/|\/)[^)]+\)/gi, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^[\s>#*-]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizeSupportEntityValue = (value: string) => stripSupportPreviewMarkup(value)
+    .replace(/^(?:the|a|an)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const isUsableSupportEntityValue = (value: string) => {
+    const normalized = normalizeSupportEntityValue(value);
+    if (!normalized || normalized.length < 2) {
+        return false;
+    }
+
+    const lower = normalized.toLowerCase();
+    return !SUPPORTING_EVIDENCE_ENTITY_STOP_WORDS.has(lower)
+        && !/^(?:rabbit|hole|timeline|context|source|report|summary)$/i.test(normalized)
+        && /[a-z0-9]/i.test(normalized);
+};
+
+const getBracketSupportEntityTags = (text: string) => {
+    const seen = new Set<string>();
+    const tags: SupportPreviewEntityTag[] = [];
+    const entityPattern = /\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)]/gi;
+
+    Array.from(text.matchAll(entityPattern)).forEach((match) => {
+        const type = match[1].toUpperCase();
+        const value = normalizeSupportEntityValue(match[2] || '');
+        if (!isUsableSupportEntityValue(value)) {
+            return;
+        }
+
+        const key = `${type}:${value.toLowerCase()}`;
+        if (seen.has(key)) {
+            return;
+        }
+
+        seen.add(key);
+        tags.push({ token: `[${type}:${value}]`, value });
+    });
+
+    return tags.slice(0, SUPPORTING_EVIDENCE_PREVIEW_ENTITY_LIMIT);
+};
+
+const getSupportEntityTags = (preview: string, source: string) => {
+    return getBracketSupportEntityTags(`${preview}\n${source}`);
+};
+
+const applySupportEntityTags = (preview: string, source: string) => {
+    let output = preview;
+    const prefixTags: string[] = [];
+
+    getSupportEntityTags(preview, source).forEach(({ token, value }) => {
+        if (new RegExp(escapeRegExp(token), 'i').test(output)) {
+            return;
+        }
+
+        const valuePattern = new RegExp(`\\b${escapeRegExp(value)}\\b`, 'i');
+        if (valuePattern.test(output)) {
+            output = output.replace(valuePattern, token);
+            return;
+        }
+
+        prefixTags.push(token);
+    });
+
+    return [...prefixTags, output].join(' ').trim();
+};
+
+const capitalizeSupportPreviewLead = (text: string) => text.replace(
+    /^((?:\[[A-Z]+:[^\]]+]\s*)*)([a-z])/,
+    (_match, tagPrefix: string, firstLetter: string) => `${tagPrefix}${firstLetter.toUpperCase()}`,
+);
+
+const truncateSupportPreview = (text: string) => {
+    if (text.length <= SUPPORTING_EVIDENCE_PREVIEW_MAX_LENGTH) {
+        return text;
+    }
+
+    const slice = text.slice(0, SUPPORTING_EVIDENCE_PREVIEW_MAX_LENGTH + 1);
+    const sentenceCut = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('? '), slice.lastIndexOf('! '));
+    if (sentenceCut > 140) {
+        return slice.slice(0, sentenceCut + 1).trim();
+    }
+
+    const wordCut = slice.lastIndexOf(' ');
+    return `${slice.slice(0, wordCut > 140 ? wordCut : SUPPORTING_EVIDENCE_PREVIEW_MAX_LENGTH).trim()}...`;
+};
+
+const truncateEvidenceLine = (text: string, limit = EXPANDED_EVIDENCE_LINE_MAX_LENGTH) => {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= limit) {
+        return normalized;
+    }
+
+    const slice = normalized.slice(0, limit + 1);
+    const wordCut = slice.lastIndexOf(' ');
+    return `${slice.slice(0, wordCut > 120 ? wordCut : limit).trim()}...`;
+};
+
+const isExpandedBriefMetadataLine = (line: string) =>
+    /^(?:source|sources?|url|query|rationale|rabbit tool|crawler result vault|raw digested facts|final summary|executive summary|intelligence report|report to|from|date|subject)\s*:?\s*/i.test(line) ||
+    /^https?:\/\//i.test(line);
+
+const looksLikeRepetitiveEvidenceDump = (sentence: string) => {
+    const tokens = sentence.toLowerCase().match(/[a-z0-9]+/g) || [];
+    if (tokens.length < 16) {
+        return false;
+    }
+
+    const uniqueRatio = new Set(tokens).size / tokens.length;
+    return uniqueRatio < 0.42;
+};
+
+const splitExpandedEvidenceSentences = (line: string) => {
+    const matches = line.match(/[^.!?]+[.!?]?/g) || [line];
+    return matches
+        .map((sentence) => stripSupportPreviewMarkup(sentence))
+        .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+        .filter((sentence) => sentence.length >= 48 && /[a-z0-9]/i.test(sentence) && !looksLikeRepetitiveEvidenceDump(sentence));
+};
+
+const extractExpandedEvidenceSignals = (text: string) => {
+    const seen = new Set<string>();
+    const signals: string[] = [];
+    const normalizedSource = text
+        .replace(/\r/g, '\n')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/https?:\/\/\S+/gi, ' ');
+
+    normalizedSource.split('\n').forEach((rawLine) => {
+        const line = stripSupportPreviewMarkup(rawLine);
+        if (!line || isExpandedBriefMetadataLine(line)) {
+            return;
+        }
+
+        splitExpandedEvidenceSentences(line).forEach((sentence) => {
+            const normalizedKey = sentence.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            if (!normalizedKey || seen.has(normalizedKey)) {
+                return;
+            }
+
+            seen.add(normalizedKey);
+            signals.push(truncateEvidenceLine(sentence));
+        });
+    });
+
+    return signals;
+};
+
+const getExpandedEvidenceBriefText = (summary?: string, fullText?: string) => {
+    const cleanedSummary = stripSupportPreviewMarkup(summary || '');
+    const source = (fullText || summary || '').trim();
+    if (!source) {
+        return '';
+    }
+
+    const signals = extractExpandedEvidenceSignals(source);
+    const summaryText = cleanedSummary || signals[0] || stripSupportPreviewMarkup(source);
+    const uniqueSignals = signals
+        .filter((signal) => signal.toLowerCase() !== summaryText.toLowerCase())
+        .slice(0, EXPANDED_EVIDENCE_SIGNAL_LIMIT);
+
+    const sections = [`**Brief**\n${truncateEvidenceLine(summaryText, 420)}`];
+    if (uniqueSignals.length > 0) {
+        sections.push(`**Evidence Signals**\n${uniqueSignals.map((signal) => `- ${signal}`).join('\n')}`);
+    }
+
+    const brief = sections.join('\n\n').trim();
+    if (brief.length <= EXPANDED_EVIDENCE_BRIEF_MAX_LENGTH) {
+        return brief;
+    }
+
+    return `${brief.slice(0, EXPANDED_EVIDENCE_BRIEF_MAX_LENGTH).replace(/\s+\S*$/, '').trim()}...`;
+};
+
+const getSupportingEvidencePreviewText = (summary?: string, fullText?: string) => {
+    const source = (summary || fullText || '').trim();
+    if (!source) {
+        return '';
+    }
+
+    const normalizedSource = source
+        .replace(/\r/g, '\n')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/https?:\/\/\S+/gi, ' ');
+    const primaryLines: string[] = [];
+    const fallbackLines: string[] = [];
+
+    normalizedSource.split('\n').forEach((rawLine) => {
+        let line = stripSupportPreviewMarkup(rawLine);
+        if (!line) {
+            return;
+        }
+
+        const rabbitContextMatch = line.match(/^Rabbit Hole\s+[^:]+:\s*(.+)$/i);
+        if (rabbitContextMatch) {
+            const topic = stripSupportPreviewMarkup(rabbitContextMatch[1].split('::')[0] || '');
+            if (topic) {
+                fallbackLines.push(topic);
+            }
+            return;
+        }
+
+        if (/^(?:crawler result vault|final summary|executive summary|intelligence report)\b/i.test(line)) {
+            line = line
+                .replace(/^(?:crawler result vault|final summary|executive summary|intelligence report)\b\s*:?\s*/i, '')
+                .trim();
+            line = stripSupportPreviewMarkup(line);
+            if (!line || /^(?:report to|from|date|subject)\s*:/i.test(line)) {
+                return;
+            }
+        }
+
+        if (/^(?:report to|from|date|subject|source|sources?|url|query|rationale)\s*:/i.test(line)) {
+            return;
+        }
+
+        line = line
+            .replace(/\b(?:final summary|executive summary|intelligence report)\b\s*:?\s*/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        line = stripSupportPreviewMarkup(line);
+
+        if (/[a-z0-9]/i.test(line)) {
+            primaryLines.push(line);
+        }
+    });
+
+    const preview = (primaryLines.length > 0 ? primaryLines : fallbackLines).join(' ').trim();
+    return truncateSupportPreview(capitalizeSupportPreviewLead(applySupportEntityTags(
+        preview || stripSupportPreviewMarkup(source),
+        source,
+    )));
 };
 
 const getGridAlignedHandleOffsets = (count: number, length: number) => {
@@ -188,6 +464,10 @@ const RESIZE_HANDLE_STYLE: CSSProperties = {
 };
 
 const COLLAPSED_TEXT_MAX_HEIGHT = 'calc(8 * 1.65em + 0.75rem)';
+const SUPPORTING_EVIDENCE_COMPACT_FRAME = {
+    width: MIN_NODE_WIDTH,
+    height: MIN_NODE_HEIGHT,
+};
 const isBackendServedImage = (path?: string) =>
     Boolean(path && /^https?:\/\/localhost:8080\/vault-assets\//i.test(path));
 const BACKEND_IMAGE_MAX_RETRIES = 3;
@@ -221,6 +501,12 @@ const prefersReducedMotion = () =>
     typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const getExternalNodeSourceURL = (sourceURL?: string) =>
+    (sourceURL || '')
+        .split(',')
+        .map((source) => source.trim())
+        .find((source) => /^https?:\/\//i.test(source)) || '';
 
 const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & { 
     returnVaultId?: string | null, 
@@ -260,6 +546,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const [imageLoadState, setImageLoadState] = useState<NodeImageLoadState>('idle');
     const [imageRetryAttempt, setImageRetryAttempt] = useState(0);
     const reducedMotion = prefersReducedMotion();
+    const externalSourceURL = getExternalNodeSourceURL(data.sourceURL);
 
     // Let the browser handle the smooth scrolling natively!
     // All we do is stop the event from bubbling up to React Flow to prevent canvas zooming.
@@ -308,12 +595,16 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         }
     }, [isEditing, data.fullText, data.summary, data.title]);
 
-    const fallbackFrame = calculateNodeFrame(
-        data.summary || '',
-        data.fullText || '',
-        isExpanded,
-        nodeHasImages(data.images)
-    );
+    const isSupportingEvidence = data.evidenceRole === 'supporting';
+    const isCollapsedSupportingEvidence = isSupportingEvidence && !isExpanded;
+    const fallbackFrame = isCollapsedSupportingEvidence
+        ? SUPPORTING_EVIDENCE_COMPACT_FRAME
+        : calculateNodeFrame(
+            data.summary || '',
+            data.fullText || '',
+            isExpanded,
+            nodeHasImages(data.images)
+        );
     const frameWidth = typeof props.width === 'number' ? props.width : fallbackFrame.width;
     const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
     const isStrictGrid = data.boardMode === 'strict-grid';
@@ -389,11 +680,20 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         }
     };
 
-    // Show expanded content when isExpanded is true
-    const displayContent = isExpanded && data.fullText ? data.fullText : data.summary;
+    // Supporting evidence cards need a compact preview even when raw Rabbit Hole output is report-shaped.
+    const collapsedSupportPreview = isCollapsedSupportingEvidence
+        ? getSupportingEvidencePreviewText(data.summary, data.fullText)
+        : '';
+    const expandedEvidenceBrief = isExpanded
+        ? getExpandedEvidenceBriefText(data.summary, data.fullText)
+        : '';
+    const displayContent = isCollapsedSupportingEvidence
+        ? collapsedSupportPreview
+        : isExpanded ? expandedEvidenceBrief || data.summary : data.summary;
     const images = data.images || [];
     const hasImages = nodeHasImages(images);
     const primaryImage = hasImages ? images[0] : null;
+    const usesCompactSupportImage = Boolean(isCollapsedSupportingEvidence && primaryImage);
     const primaryImagePath = primaryImage?.path || '';
     const isBackendImage = isBackendServedImage(primaryImagePath);
     const previewImageSrc = primaryImagePath ? withImageRetryParam(primaryImagePath, isBackendImage ? imageRetryAttempt : 0) : '';
@@ -405,6 +705,18 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const isImported = data.title?.includes("[IMPORTED]") || data.id?.startsWith("imported-");
     const isPortalNode = data.portalKind === 'merged-child';
     const isDiscoveryNode = data.nodeKind === 'discovery';
+    const isRabbitHoleNode = data.origin === 'rabbit-hole';
+    const isRabbitHoleProvisional = isRabbitHoleNode && data.rabbitState === 'provisional';
+    const rabbitStatusLabel = data.rabbitState === 'provisional'
+        ? 'ACTIVE'
+        : data.rabbitState === 'stale'
+            ? 'STALE'
+            : data.rabbitState === 'promoted'
+                ? 'PROMOTED'
+                : '';
+    const rabbitToolTitle = data.rabbitTool
+        ? `Rabbit Hole tool: ${data.rabbitTool}${data.rabbitPass ? `, pass ${data.rabbitPass}` : ''}`
+        : 'Rabbit Hole evidence';
     const mergedEvidenceCount = Number.isFinite(data.evidenceCount || 0) ? Math.max(0, data.evidenceCount || 0) : 0;
     const hasMergedEvidence = mergedEvidenceCount > 1;
     const recentImportShellClass = data.isRecentlyImported
@@ -425,6 +737,21 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const timelineFocusShellClass = data.isTimelineFocused
         ? 'forensic-node-timeline-focus'
         : '';
+    const supportEvidenceShellClass = isSupportingEvidence
+        ? 'forensic-node-supporting-evidence'
+        : '';
+    const expandedShellClass = isExpanded
+        ? 'forensic-node-expanded'
+        : '';
+    const expandedOpaqueShellClass = isExpanded
+        ? 'forensic-node-expanded-opaque'
+        : '';
+    const supportTetherSourceShellClass = data.isSupportTetherSource
+        ? 'forensic-node-support-tether-source'
+        : '';
+    const supportTetherTargetShellClass = data.isSupportTetherTarget
+        ? 'forensic-node-support-tether-target'
+        : '';
     const connectionHighlightColor = data.connectionHighlightColor || '#8ee8ff';
     const nodeEntryDelay = Number.isFinite(data.nodeEntryDelayMs) ? Math.max(0, data.nodeEntryDelayMs || 0) : 0;
     const nodeShellToneClass = isPortalNode
@@ -433,22 +760,33 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             ? 'forensic-node-discovery'
             : isImported
                 ? 'forensic-node-imported'
+                : isRabbitHoleProvisional
+                    ? 'forensic-node-rabbit-provisional'
                 : '';
     const nodeBadgeClass = isPortalNode
         ? 'forensic-badge border-fuchsia-300/40 bg-fuchsia-400/14 text-fuchsia-100'
         : isDiscoveryNode
             ? 'forensic-badge forensic-badge-warning'
             : 'forensic-badge forensic-badge-imported';
-    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass} ${connectionHighlightShellClass} ${nodeEntryShellClass} ${personaScanShellClass} ${layoutChoreographyShellClass} ${timelineFocusShellClass}`;
+    const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass} ${connectionHighlightShellClass} ${nodeEntryShellClass} ${personaScanShellClass} ${layoutChoreographyShellClass} ${timelineFocusShellClass} ${supportEvidenceShellClass} ${expandedShellClass} ${expandedOpaqueShellClass} ${supportTetherSourceShellClass} ${supportTetherTargetShellClass}`;
     const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
     const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
     const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
     const detailMotionClassName = reducedMotion
         ? 'forensic-node-detail-motion forensic-node-detail-reduced-motion'
         : `forensic-node-detail-motion ${isExpanded ? 'forensic-node-detail-expanded' : 'forensic-node-detail-collapsed'}`;
+    const supportCompactDetailClassName = isCollapsedSupportingEvidence
+        ? `forensic-node-detail-support-compact ${usesCompactSupportImage ? 'forensic-node-detail-support-has-image' : ''}`
+        : '';
+    const expandedBriefDetailClassName = isExpanded
+        ? 'forensic-node-expanded-brief'
+        : '';
     const imagePreviewMotionClassName = reducedMotion
         ? 'forensic-node-image-reduced-motion'
         : `forensic-node-image-fade ${imageLoadState === 'loaded' ? 'forensic-node-image-loaded' : 'forensic-node-image-loading'} ${data.isAnalyzing ? 'forensic-node-image-analyzing' : ''}`;
+    const imagePreviewClassName = usesCompactSupportImage
+        ? `forensic-node-image forensic-node-support-image-thumb ${imagePreviewMotionClassName} nodrag nowheel group/image absolute right-1 top-1 z-20 overflow-hidden rounded-lg text-left transition-all hover:border-[rgba(129,227,255,0.42)] hover:shadow-[0_0_0_1px_rgba(129,227,255,0.22)] ${data.isAnalyzing ? 'opacity-30' : ''}`
+        : `forensic-node-image ${imagePreviewMotionClassName} nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-xl text-left transition-all hover:border-[rgba(129,227,255,0.34)] hover:shadow-[0_0_0_1px_rgba(129,227,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`;
     const personaCardMotionClassName = reducedMotion
         ? 'forensic-persona-card-reduced-motion'
         : 'forensic-persona-card-reveal';
@@ -606,6 +944,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             ref={shellRef}
             data-testid="custom-node-shell"
             className={shellClassName}
+            onMouseEnter={() => data.id && data.onSupportHover?.(data.id, true)}
+            onMouseLeave={() => data.id && data.onSupportHover?.(data.id, false)}
             style={{
                 width: '100%',
                 height: '100%',
@@ -667,6 +1007,19 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             {isDiscoveryNode && (
                 <div className={`absolute -top-2.5 -left-2 z-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] ${nodeBadgeClass}`}>
                     DISCOVERY
+                </div>
+            )}
+            {isRabbitHoleNode && !isImported && !isPortalNode && !isDiscoveryNode && (
+                <div
+                    className="forensic-badge forensic-badge-rabbit-hole absolute -top-2.5 -left-2 z-50 flex items-center gap-1.5 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em]"
+                    title={rabbitToolTitle}
+                >
+                    {isRabbitHoleProvisional ? 'RABBIT TRAIL' : 'RABBIT HOLE'}
+                    {rabbitStatusLabel && (
+                        <span className="forensic-rabbit-state-pill">
+                            {rabbitStatusLabel}
+                        </span>
+                    )}
                 </div>
             )}
             {data.isDeepDiveSource && (
@@ -1004,8 +1357,8 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                             e.stopPropagation();
                                             data.onViewImages?.(images, 0, data.title, data.id);
                                         }}
-                                        className={`forensic-node-image ${imagePreviewMotionClassName} nodrag nowheel group/image relative mb-3 w-full shrink-0 overflow-hidden rounded-xl text-left transition-all hover:border-[rgba(129,227,255,0.34)] hover:shadow-[0_0_0_1px_rgba(129,227,255,0.18)] ${data.isAnalyzing ? 'opacity-30' : ''}`}
-                                        style={{ height: NODE_IMAGE_PREVIEW_HEIGHT }}
+                                        className={imagePreviewClassName}
+                                        style={usesCompactSupportImage ? undefined : { height: NODE_IMAGE_PREVIEW_HEIGHT }}
                                         title={images.length > 1 ? `View ${images.length} attached images` : 'View attached image'}
                                     >
                                         <img
@@ -1023,15 +1376,27 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                                 {imageOverlayLabel}
                                             </div>
                                         )}
-                                        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-[rgba(4,9,14,0.94)] via-[rgba(4,9,14,0.58)] to-transparent px-2 py-1.5">
-                                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">
-                                                <ImageIcon size={11} />
-                                                Visual Evidence
-                                            </div>
+                                        <div className={usesCompactSupportImage
+                                            ? 'absolute inset-x-0 bottom-0 flex items-center justify-end bg-gradient-to-t from-[rgba(4,9,14,0.94)] via-[rgba(4,9,14,0.58)] to-transparent px-1.5 py-1'
+                                            : 'absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-[rgba(4,9,14,0.94)] via-[rgba(4,9,14,0.58)] to-transparent px-2 py-1.5'}
+                                        >
+                                            {!usesCompactSupportImage && (
+                                                <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--forensic-accent)]">
+                                                    <ImageIcon size={11} />
+                                                    Visual Evidence
+                                                </div>
+                                            )}
+                                            {usesCompactSupportImage && (
+                                                <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-[0.12em] text-[var(--forensic-accent)]">
+                                                    <ImageIcon size={10} />
+                                                </div>
+                                            )}
                                             {images.length > 1 && (
                                                 <span
                                                     data-testid="node-image-count"
-                                                    className="rounded-full border border-white/12 bg-[rgba(8,14,20,0.9)] px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-white"
+                                                    className={usesCompactSupportImage
+                                                        ? 'rounded-full border border-white/12 bg-[rgba(8,14,20,0.9)] px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.12em] text-white'
+                                                        : 'rounded-full border border-white/12 bg-[rgba(8,14,20,0.9)] px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-white'}
                                                 >
                                                     +{images.length - 1}
                                                 </span>
@@ -1042,7 +1407,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 <div
                                     ref={detailTextRef}
                                     data-testid="node-detail-motion"
-                                    className={`forensic-node-text ${detailMotionClassName} flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
+                                    className={`forensic-node-text ${detailMotionClassName} ${supportCompactDetailClassName} ${expandedBriefDetailClassName} flex-1 whitespace-pre-wrap pr-2 pb-3 font-mono text-[12px] leading-[1.65] ${isExpanded ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'} ${data.isAnalyzing ? 'opacity-30' : ''}`}
                                     style={isExpanded ? undefined : { maxHeight: COLLAPSED_TEXT_MAX_HEIGHT }}
                                     dangerouslySetInnerHTML={{
                                         __html: parseHighlightedText(displayContent || '')
@@ -1218,9 +1583,9 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                 </button>
                             </>
                         )}
-                        {!isPortalNode && !isDiscoveryNode && data.sourceURL && (
+                        {!isPortalNode && !isDiscoveryNode && externalSourceURL && (
                             <a
-                                href={data.sourceURL?.split(',')[0].trim()}
+                                href={externalSourceURL}
                                 target="_blank"
                                 rel="noreferrer"
                                 onClick={(e) => e.stopPropagation()}

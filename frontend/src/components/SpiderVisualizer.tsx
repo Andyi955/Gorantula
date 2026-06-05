@@ -6,7 +6,7 @@ import { SpiderScene } from './SpiderScene';
 
 type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
 export type SpiderLegVisualStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
-export type SpiderOperationMode = 'web' | 'local';
+export type SpiderOperationMode = 'web' | 'local' | 'rabbit-hole';
 export type LocalIngestionFileState = 'queued' | 'parsing' | 'chunking' | 'summarizing' | 'imported' | 'failed';
 
 export interface SpiderEvidencePacket {
@@ -63,9 +63,11 @@ interface SpiderVisualizerProps {
 
 const webLegRoles = ['Discovery', 'Link Finder', 'Scraper', 'Content Map', 'Extractor', 'Deduper', 'Validator', 'Archiver'];
 const localLegRoles = ['Parser', 'Chunker', 'Summarizer', 'Classifier', 'Indexer', 'Verifier', 'Dossier', 'Archiver'];
+const rabbitHoleLegRoles = ['Descent', 'Trace', 'Source Drill', 'Contradiction', 'Entity Echo', 'Timeline Rift', 'Gatekeeper', 'Archive'];
 
 const getSignalColor = (state: string) => {
     if (state.includes('Error')) return '#ff8c86';
+    if (state.includes('Rabbit') || state.includes('Gatekeeper')) return '#ff2f54';
     if (state.includes('Synthesizing') || state.includes('Deep Dive')) return '#f6c879';
     if (state.includes('Reading') || state.includes('Processing')) return '#bc13fe';
     if (state.includes('Scraping')) return '#59e4ff';
@@ -221,6 +223,55 @@ const LegTelemetryCard = ({
             </dl>
             <MiniWaveform color={color} seed={id} />
         </article>
+    );
+};
+
+const RabbitDescentTelemetryPanel = ({
+    legIds,
+    legStates,
+    legVisualStatuses,
+    legRoles,
+}: {
+    legIds: number[];
+    legStates: Record<number, string>;
+    legVisualStatuses: Record<number, SpiderLegVisualStatus>;
+    legRoles: string[];
+}) => {
+    const activeTools = legIds.filter((id) => legVisualStatuses[id] !== 'idle').length;
+
+    return (
+        <section data-testid="rabbit-descent-telemetry" className="forensic-rabbit-descent-telemetry" aria-label="Rabbit Hole descent tools">
+            <header className="forensic-rabbit-descent-header">
+                <div>
+                    <span>Descent Tools</span>
+                    <strong>{activeTools} / 8 armed</strong>
+                </div>
+                <small>Agentic trail control</small>
+            </header>
+            <div className="forensic-rabbit-descent-tool-grid">
+                {legIds.map((id) => {
+                    const state = legStates[id] || 'Idle';
+                    const color = getSignalColor(state);
+                    const visualStatus = legVisualStatuses[id] || 'idle';
+
+                    return (
+                        <article
+                            key={id}
+                            data-testid={`rabbit-descent-tool-${id + 1}`}
+                            className={`forensic-rabbit-descent-tool forensic-rabbit-descent-tool-${visualStatus}`}
+                            style={{ '--rabbit-tool-color': color } as React.CSSProperties}
+                        >
+                            <div className="forensic-rabbit-descent-tool-head">
+                                <span>{legRoles[id]}</span>
+                                <strong>{getLegDisplayState(visualStatus)}</strong>
+                            </div>
+                            <p>{state}</p>
+                            <SignalBars level={getSignalLevel(state)} color={color} />
+                        </article>
+                    );
+                })}
+            </div>
+        </section>
     );
 };
 
@@ -609,24 +660,46 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
     const localChunkCount = effectiveLocalProgress?.counters?.documentChunks || 0;
     const confidenceScore = Math.round((displayMetrics?.confidenceScore ?? 0) * 100);
     const throughput = activeLegCount > 0
-        ? (effectiveOperationMode === 'local' ? `${Math.max(2, activeLegCount * 3)} docs/min` : `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps`)
+        ? (effectiveOperationMode === 'local'
+            ? `${Math.max(2, activeLegCount * 3)} docs/min`
+            : effectiveOperationMode === 'rabbit-hole'
+                ? `${Math.max(1, Math.ceil(activeLegCount / 2))} layers/min`
+                : `${Math.max(14.2, activeLegCount * 18.4).toFixed(1)} rps`)
         : 'Standby';
     const normalizedPipelinePercent = Math.max(0, Math.min(100, Math.round(pipelineProgressPercent)));
     const pipelineTitle = normalizedPipelinePercent > 0
         ? `Pipeline: ${pipelineLabel} (${normalizedPipelinePercent}%)`
         : `Pipeline: ${pipelineLabel}`;
     const brainVisualStatus = getBrainVisualStatus(brainState, activeLegCount, effectivePipelineStatus);
-    const legRoles = effectiveOperationMode === 'local' ? localLegRoles : webLegRoles;
-    const stageTopLabel = effectiveOperationMode === 'local' ? 'Document Intake' : 'Neural Mesh';
+    const isRabbitHoleMode = effectiveOperationMode === 'rabbit-hole';
+    const reducedMotion = prefersReducedMotion();
+    const legRoles = effectiveOperationMode === 'local'
+        ? localLegRoles
+        : isRabbitHoleMode
+            ? rabbitHoleLegRoles
+            : webLegRoles;
+    const stageTopLabel = effectiveOperationMode === 'local'
+        ? 'Document Intake'
+        : isRabbitHoleMode
+            ? 'Rabbit Hole'
+            : 'Neural Mesh';
     const stageTopValue = effectiveOperationMode === 'local'
         ? (localFileCount > 0 ? `${localFileCount} file${localFileCount === 1 ? '' : 's'}` : 'Local Files')
-        : (brainState === 'Offline' ? 'Local Preview' : 'Connected');
-    const stageBottomLabel = effectiveOperationMode === 'local' ? 'Case File Index' : 'Scan Radius';
+        : isRabbitHoleMode
+            ? (brainState === 'Offline' ? 'Descent Preview' : 'Descent Active')
+            : (brainState === 'Offline' ? 'Local Preview' : 'Connected');
+    const stageBottomLabel = effectiveOperationMode === 'local'
+        ? 'Case File Index'
+        : isRabbitHoleMode
+            ? 'Descent Depth'
+            : 'Scan Radius';
     const stageBottomValue = effectiveOperationMode === 'local'
         ? `${displayMetrics?.nodeCount ?? 0} evidence / ${localChunkCount || 'queued'} chunks`
-        : `${displayMetrics?.nodeCount ?? 0} nodes / ${displayMetrics?.edgeCount ?? 0} links`;
-    const intakeHeading = effectiveOperationMode === 'local' ? 'Document Intake' : 'Evidence Intake';
-    const healthHeading = effectiveOperationMode === 'local' ? 'Import Health' : 'Crawl Health';
+        : isRabbitHoleMode
+            ? `${displayMetrics?.nodeCount ?? 0} nodes / gatekeeper armed`
+            : `${displayMetrics?.nodeCount ?? 0} nodes / ${displayMetrics?.edgeCount ?? 0} links`;
+    const intakeHeading = effectiveOperationMode === 'local' ? 'Document Intake' : isRabbitHoleMode ? 'Rabbit Evidence' : 'Evidence Intake';
+    const healthHeading = effectiveOperationMode === 'local' ? 'Import Health' : isRabbitHoleMode ? 'Descent Health' : 'Crawl Health';
 
     return (
         <section data-testid="spider-view-root" className={`forensic-board-root forensic-spider-root forensic-spider-root-${brainVisualStatus} forensic-spider-root-${effectiveOperationMode} h-full overflow-hidden text-[var(--forensic-text)]`}>
@@ -646,7 +719,7 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                         </div>
                     </div>
                     <div className="forensic-spider-top-metrics">
-                        <MetricReadout label="Legs Active" value={`${activeLegCount} / 8`} />
+                        <MetricReadout label={isRabbitHoleMode ? 'Tools Active' : 'Legs Active'} value={`${activeLegCount} / 8`} />
                         <MetricReadout label="Evidence" value={evidenceCount} />
                         <MetricReadout label="Tokens" value={tokenReadout?.value || '0'} title={tokenReadout?.title} />
                         <MetricReadout label="Throughput" value={throughput} />
@@ -654,61 +727,88 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                 </header>
 
                 <div className="forensic-spider-workbench">
-                    <div className="forensic-spider-leg-bank">
-                        {[0, 2, 4, 6].map((id) => (
-                            <LegTelemetryCard
-                                key={id}
-                                id={id}
-                                state={legStates[id] || 'Idle'}
-                                pipelineStatus={effectivePipelineStatus}
-                                role={legRoles[id]}
-                                operationMode={effectiveOperationMode}
-                                transientStatus={legTransitionStates[id]}
-                            />
-                        ))}
-                    </div>
+                    {isRabbitHoleMode ? (
+                        <RabbitDescentTelemetryPanel
+                            legIds={legIds}
+                            legStates={legStates}
+                            legVisualStatuses={legVisualStatuses}
+                            legRoles={legRoles}
+                        />
+                    ) : (
+                        <div className="forensic-spider-leg-bank">
+                            {[0, 2, 4, 6].map((id) => (
+                                <LegTelemetryCard
+                                    key={id}
+                                    id={id}
+                                    state={legStates[id] || 'Idle'}
+                                    pipelineStatus={effectivePipelineStatus}
+                                    role={legRoles[id]}
+                                    operationMode={effectiveOperationMode}
+                                    transientStatus={legTransitionStates[id]}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     <div data-testid="spider-lab-stage" className="forensic-spider-lab-stage">
                         <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-top">
                             <span>{stageTopLabel}</span>
                             <strong>{stageTopValue}</strong>
                         </div>
-                        <Canvas
-                            camera={{ position: [0, -0.4, 13], fov: 45 }}
-                            dpr={[1, 1.5]}
-                            gl={{ antialias: true, alpha: true }}
-                        >
-                            <SpiderScene
-                                legStates={legStates}
-                                legVisualStatuses={legVisualStatuses}
-                                brainState={brainState}
-                                pipelineStatus={effectivePipelineStatus}
-                                evidencePackets={evidencePackets}
-                                operationMode={effectiveOperationMode}
-                            />
-                            <EffectComposer>
-                                <Bloom luminanceThreshold={0.18} mipmapBlur intensity={0.72} />
-                            </EffectComposer>
-                        </Canvas>
+                        {isRabbitHoleMode && (
+                            <div
+                                data-testid="rabbit-hole-entrance"
+                                className={`forensic-rabbit-hole-entrance ${reducedMotion ? 'forensic-rabbit-hole-entrance-reduced-motion' : ''}`}
+                                aria-hidden="true"
+                            >
+                                <div className="forensic-rabbit-hole-tunnel" />
+                                <img
+                                    src="/assets/rabbit-hole/rabbit-hole-emblem.png"
+                                    alt="Rabbit Hole cyber rabbit emblem"
+                                    className="forensic-rabbit-hole-emblem"
+                                />
+                            </div>
+                        )}
+                        {!isRabbitHoleMode && (
+                            <Canvas
+                                camera={{ position: [0, -0.4, 13], fov: 45 }}
+                                dpr={[1, 1.5]}
+                                gl={{ antialias: true, alpha: true }}
+                            >
+                                <SpiderScene
+                                    legStates={legStates}
+                                    legVisualStatuses={legVisualStatuses}
+                                    brainState={brainState}
+                                    pipelineStatus={effectivePipelineStatus}
+                                    evidencePackets={evidencePackets}
+                                    operationMode={effectiveOperationMode}
+                                />
+                                <EffectComposer>
+                                    <Bloom luminanceThreshold={0.18} mipmapBlur intensity={0.72} />
+                                </EffectComposer>
+                            </Canvas>
+                        )}
                         <div className="forensic-spider-stage-overlay forensic-spider-stage-overlay-bottom">
                             <span>{stageBottomLabel}</span>
                             <strong>{stageBottomValue}</strong>
                         </div>
                     </div>
 
-                    <div className="forensic-spider-leg-bank">
-                        {[1, 3, 5, 7].map((id) => (
-                            <LegTelemetryCard
-                                key={id}
-                                id={id}
-                                state={legStates[id] || 'Idle'}
-                                pipelineStatus={effectivePipelineStatus}
-                                role={legRoles[id]}
-                                operationMode={effectiveOperationMode}
-                                transientStatus={legTransitionStates[id]}
-                            />
-                        ))}
-                    </div>
+                    {!isRabbitHoleMode && (
+                        <div className="forensic-spider-leg-bank">
+                            {[1, 3, 5, 7].map((id) => (
+                                <LegTelemetryCard
+                                    key={id}
+                                    id={id}
+                                    state={legStates[id] || 'Idle'}
+                                    pipelineStatus={effectivePipelineStatus}
+                                    role={legRoles[id]}
+                                    operationMode={effectiveOperationMode}
+                                    transientStatus={legTransitionStates[id]}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     <aside data-testid="spider-evidence-intake" className="forensic-spider-intake-panel">
                         <div className="flex items-center justify-between gap-3">

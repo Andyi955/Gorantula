@@ -1,5 +1,6 @@
 import { createRootInvestigation, INVESTIGATIONS_STORAGE_KEY } from '../src/utils/investigations'
 import {
+  getCachedBoardStateForInvestigation,
   loadInvestigations,
   loadBoardStateForInvestigation,
   loadDiscoveriesForInvestigation,
@@ -22,8 +23,8 @@ const buildBoardState = (): PersistedBoardState => ({
     },
   ],
   edges: [],
-  pendingIntegrationIds: ['node-1'],
-  synthesisAlerts: [{ id: 'alert-1', title: 'Theory ready' }],
+  pendingIntegrationNodeIds: ['node-1'],
+  synthesisAlerts: [],
 })
 
 describe('investigation persistence', () => {
@@ -107,7 +108,65 @@ describe('investigation persistence', () => {
 
     expect(saved).toBe(false)
     expect(localStorage.getItem('inv_data_inv-fallback')).toBeNull()
+    expect(localStorage.getItem('gorantula_board_shadow_inv-fallback')).toBeNull()
     expect(failedEvents).toHaveLength(1)
+  })
+
+  it('serves a backend-mode board from the in-memory cache before backend hydration', async () => {
+    const boardState = buildBoardState()
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => ({}) } as Response
+    }))
+
+    await saveBoardStateForInvestigation('inv-memory-cache', boardState)
+
+    const cached = getCachedBoardStateForInvestigation('inv-memory-cache')
+
+    expect(cached?.nodes).toHaveLength(1)
+    expect(cached?.nodes[0]?.data?.title).toBe('Persisted lead')
+  })
+
+  it('keeps the cached board object when backend hydration matches memory cache', async () => {
+    const boardState = buildBoardState()
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => ({}) } as Response
+    }))
+
+    await saveBoardStateForInvestigation('inv-shadow-match', boardState)
+    const cached = getCachedBoardStateForInvestigation('inv-shadow-match')
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => boardState } as Response
+    }))
+
+    const loaded = await loadBoardStateForInvestigation('inv-shadow-match')
+
+    expect(loaded).toBe(cached)
+  })
+
+  it('does not use quota-limited browser storage for backend board shadow saves', async () => {
+    const boardState = buildBoardState()
+    const failedEvents: Event[] = []
+    window.addEventListener(BOARD_PERSIST_FAILED_EVENT, (event) => failedEvents.push(event))
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError')
+    })
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => ({}) } as Response
+    }))
+
+    try {
+      const saved = await saveBoardStateForInvestigation('inv-shadow-save', boardState)
+
+      expect(saved).toBe(true)
+      expect(localStorage.getItem('inv_data_inv-shadow-save')).toBeNull()
+      expect(localStorage.getItem('gorantula_board_shadow_inv-shadow-save')).toBeNull()
+      expect(setItemSpy).not.toHaveBeenCalled()
+      expect(failedEvents).toHaveLength(0)
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 
   it('keeps backend board state authoritative when browser storage has stale board evidence', async () => {

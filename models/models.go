@@ -98,6 +98,11 @@ type MemoryNode struct {
 	EvidenceCount    int               `json:"evidenceCount,omitempty"`
 	MergedSourceURLs []string          `json:"mergedSourceURLs,omitempty"`
 	DuplicateNodeIDs []string          `json:"duplicateNodeIds,omitempty"`
+	Origin           string            `json:"origin,omitempty"`
+	RabbitState      string            `json:"rabbitState,omitempty"`
+	RabbitTool       string            `json:"rabbitTool,omitempty"`
+	RabbitPass       int               `json:"rabbitPass,omitempty"`
+	Confidence       float32           `json:"confidence,omitempty"`
 }
 
 // BoardConnection represents an edge between two nodes with its reasoning

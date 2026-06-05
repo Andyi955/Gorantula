@@ -34,7 +34,12 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
-import { BOARD_TOGGLE_DISCOVERY_PANEL_EVENT, BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './utils/boardWorkspaceEvents'
+import {
+  BOARD_RESTORE_COMPLETE_EVENT,
+  BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
+  BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+  type BoardRestoreCompleteDetail,
+} from './utils/boardWorkspaceEvents'
 import {
   deleteInvestigationPersistence,
   getCachedBoardStateForInvestigation,
@@ -51,6 +56,9 @@ import {
   type VaultResultPayload,
 } from './utils/investigationPersistence'
 import type { LocalIngestionFile, SpiderOperationMode } from './components/SpiderVisualizer'
+import { calculateNodeFrame } from './components/boardGeometry'
+import { STRICT_GRID_NODE_Z_INDEX } from './components/detectiveBoardStrictGridLayout'
+import { nodeHasImages, type NodeImageAsset } from './components/nodeImages'
 
 const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
 const DetectiveBoard = lazy(() => import('./components/DetectiveBoard'))
@@ -160,6 +168,19 @@ interface AnimatedPipelineTokenState {
   isAnimating: boolean
 }
 
+interface RabbitHoleGatekeeperPanelState {
+  runId?: string
+  vaultId?: string
+  pass: number
+  descentMode: 'guided' | 'max'
+  continueRecommended: boolean
+  reason: string
+  noveltyScore?: number
+  suggestedQueries: string[]
+  result?: string
+  prompt?: string
+}
+
 interface AutosaveWarning {
   investigationId?: string
   errorName?: string
@@ -191,6 +212,13 @@ interface DiscoveryEvidenceRecord {
   sourceURL?: string
 }
 
+interface InvestigationSwitchOverlayState {
+  investigationId: string
+  title: string
+  startedAt: number
+  phase: 'switching' | 'restoring'
+}
+
 interface PersistedRelationshipNode {
   id?: unknown
   data?: unknown
@@ -206,6 +234,9 @@ const SIDEBAR_BOARD_DEFAULT_WIDTH = 336
 const SIDEBAR_MIN_WIDTH = 240
 const SIDEBAR_MAX_WIDTH = 424
 const SIDEBAR_COLLAPSED_WIDTH = 64
+const INVESTIGATION_SWITCH_OVERLAY_MIN_MS = 360
+const INVESTIGATION_SWITCH_OVERLAY_MAX_MS = 2400
+const REPORT_READABILITY_CACHE_LIMIT = 40
 const PIPELINE_STEP_TRANSITION_MS = 900
 const PIPELINE_TOKEN_COUNT_MS = 600
 const compactTokenFormatter = new Intl.NumberFormat('en-US', {
@@ -254,6 +285,15 @@ const formatSystemNotice = (message: string) => {
   }
 
   return trimmed
+}
+
+const isRabbitHoleInvestigation = (investigation?: InvestigationRecord | null) => {
+  if (!investigation) {
+    return false
+  }
+
+  const topic = `${investigation.displayTopic || ''} ${investigation.topic || ''}`.trim().toLowerCase()
+  return topic.startsWith('rabbit hole:') || topic.includes(' rabbit hole:')
 }
 
 const clampSidebarWidth = (value: number) =>
@@ -350,6 +390,36 @@ const coercePipelineProgressPayload = (payload: unknown): PipelineProgressPayloa
     detail: typeof candidate.detail === 'string' ? candidate.detail : undefined,
     error: typeof candidate.error === 'string' ? candidate.error : undefined,
     steps,
+  }
+}
+
+const coerceRabbitHoleGatekeeperPayload = (payload: unknown): RabbitHoleGatekeeperPanelState | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+  const candidate = payload as Record<string, unknown>
+  const decision = candidate.decision && typeof candidate.decision === 'object' && !Array.isArray(candidate.decision)
+    ? candidate.decision as Record<string, unknown>
+    : {}
+  const suggestedQueries = (Array.isArray(decision.suggestedQueries) ? decision.suggestedQueries : [])
+    .filter((query): query is string => typeof query === 'string' && query.trim() !== '')
+    .map((query) => query.trim())
+
+  return {
+    runId: typeof candidate.runId === 'string' ? candidate.runId.trim() : undefined,
+    vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId.trim() : undefined,
+    pass: Math.max(1, parseTokenCount(candidate.pass)),
+    descentMode: candidate.descentMode === 'max' ? 'max' : 'guided',
+    continueRecommended: decision.continue === true,
+    reason: typeof decision.reason === 'string' && decision.reason.trim()
+      ? decision.reason.trim()
+      : (typeof decision.stopReason === 'string' ? decision.stopReason.trim() : 'Gatekeeper review complete.'),
+    noveltyScore: typeof decision.noveltyScore === 'number' && Number.isFinite(decision.noveltyScore)
+      ? decision.noveltyScore
+      : undefined,
+    suggestedQueries,
+    result: typeof candidate.result === 'string' ? candidate.result : undefined,
+    prompt: typeof candidate.prompt === 'string' ? candidate.prompt : undefined,
   }
 }
 
@@ -531,6 +601,21 @@ const getInvestigationTimestamp = (investigationId: string): number | null => {
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
+const getMostRecentInvestigation = (investigations: InvestigationRecord[]): InvestigationRecord | null => {
+  return investigations.reduce<InvestigationRecord | null>((latest, investigation) => {
+    if (!latest) {
+      return investigation
+    }
+
+    const latestTimestamp = getInvestigationTimestamp(latest.id) ?? Number.NEGATIVE_INFINITY
+    const investigationTimestamp = getInvestigationTimestamp(investigation.id) ?? Number.NEGATIVE_INFINITY
+    return investigationTimestamp > latestTimestamp ? investigation : latest
+  }, null)
+}
+
+const getMostRecentInvestigationId = (investigations: InvestigationRecord[]) =>
+  getMostRecentInvestigation(investigations)?.id || null
+
 const getRelationshipSynthesisPayloadNodes = (boardState: { nodes?: unknown[] } | null | undefined) => {
   if (!boardState || !Array.isArray(boardState.nodes)) {
     return []
@@ -562,6 +647,181 @@ const getRelationshipSynthesisPayloadNodes = (boardState: { nodes?: unknown[] } 
       }
     })
     .filter((node): node is Record<string, unknown> => Boolean(node))
+}
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value))
+
+const getStringField = (value: unknown) =>
+  typeof value === 'string' ? value.trim() : ''
+
+const getNumberField = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const isRabbitHoleMemoryNode = (node: Record<string, unknown>) =>
+  getStringField(node.origin) === 'rabbit-hole' ||
+  Boolean(getStringField(node.rabbitState)) ||
+  Boolean(getStringField(node.rabbitTool)) ||
+  getNumberField(node.rabbitPass) !== undefined
+
+const coerceMemoryNodeMessagePayload = (payload: unknown) => {
+  if (!isRecordValue(payload) || !isRecordValue(payload.node)) {
+    return null
+  }
+
+  const vaultId = getStringField(payload.vaultId)
+  const nodeId = getStringField(payload.node.id)
+  if (!vaultId || !nodeId || !isRabbitHoleMemoryNode(payload.node)) {
+    return null
+  }
+
+  return {
+    vaultId,
+    append: payload.append === true,
+    node: {
+      ...payload.node,
+      id: nodeId,
+    },
+  }
+}
+
+const coerceRabbitHoleNodeUpdatePayload = (payload: unknown) => {
+  if (!isRecordValue(payload)) {
+    return null
+  }
+
+  const vaultId = getStringField(payload.vaultId)
+  const rabbitState = getStringField(payload.rabbitState)
+  const nodeIds = Array.isArray(payload.nodeIds)
+    ? payload.nodeIds.map(getStringField).filter(Boolean)
+    : []
+
+  if (!vaultId || !rabbitState || nodeIds.length === 0) {
+    return null
+  }
+
+  return { vaultId, rabbitState, nodeIds }
+}
+
+const getDurableRabbitNodePosition = (nodeIndex: number) => {
+  const column = nodeIndex % 4
+  const row = Math.floor(nodeIndex / 4)
+  return {
+    x: 144 + column * 432,
+    y: 144 + row * 288,
+  }
+}
+
+const createDurableRabbitNode = (
+  node: Record<string, unknown> & { id: string },
+  nodeIndex: number,
+): PersistedBoardState['nodes'][number] => {
+  const summary = getStringField(node.summary)
+  const fullText = getStringField(node.fullText)
+  const images = Array.isArray(node.images) ? node.images as NodeImageAsset[] : undefined
+  const frame = calculateNodeFrame(summary, fullText, false, nodeHasImages(images))
+
+  return {
+    id: node.id,
+    type: 'custom',
+    zIndex: STRICT_GRID_NODE_Z_INDEX,
+    style: frame,
+    position: getDurableRabbitNodePosition(nodeIndex),
+    data: {
+      ...node,
+      id: node.id,
+      expanded: false,
+      origin: getStringField(node.origin) || 'rabbit-hole',
+      boardMode: 'strict-grid',
+    },
+  }
+}
+
+const persistDurableRabbitMemoryNode = async (
+  payload: ReturnType<typeof coerceMemoryNodeMessagePayload>,
+) => {
+  if (!payload) {
+    return
+  }
+
+  const incomingNode = payload.node as Record<string, unknown> & { id: string }
+  const existingState = getCachedBoardStateForInvestigation(payload.vaultId)
+    || await loadBoardStateForInvestigation(payload.vaultId)
+    || { mode: 'strict-grid', nodes: [], edges: [], pendingIntegrationNodeIds: [] }
+  const existingNodeIndex = existingState.nodes.findIndex((node) => node.id === incomingNode.id)
+  const nextNodes = existingNodeIndex >= 0
+    ? existingState.nodes.map((node, index) => (
+      index === existingNodeIndex
+        ? {
+          ...node,
+          data: {
+            ...node.data,
+            ...incomingNode,
+            id: incomingNode.id,
+            origin: getStringField(incomingNode.origin) || node.data?.origin || 'rabbit-hole',
+          },
+        }
+        : node
+    ))
+    : [
+      ...existingState.nodes,
+      createDurableRabbitNode(incomingNode, existingState.nodes.length),
+    ]
+
+  const pendingIntegrationNodeIds = payload.append
+    ? Array.from(new Set([...(existingState.pendingIntegrationNodeIds || []), incomingNode.id]))
+    : existingState.pendingIntegrationNodeIds || []
+
+  await saveBoardStateForInvestigation(payload.vaultId, {
+    ...existingState,
+    mode: existingState.mode || 'strict-grid',
+    nodes: nextNodes,
+    edges: existingState.edges || [],
+    pendingIntegrationNodeIds,
+    synthesisAlerts: existingState.synthesisAlerts || [],
+  })
+}
+
+const persistDurableRabbitNodeUpdate = async (
+  payload: ReturnType<typeof coerceRabbitHoleNodeUpdatePayload>,
+) => {
+  if (!payload) {
+    return
+  }
+
+  const existingState = getCachedBoardStateForInvestigation(payload.vaultId)
+    || await loadBoardStateForInvestigation(payload.vaultId)
+  if (!existingState) {
+    return
+  }
+
+  const nodeIdSet = new Set(payload.nodeIds)
+  let changed = false
+  const nextNodes = existingState.nodes.map((node) => {
+    if (!nodeIdSet.has(node.id)) {
+      return node
+    }
+    changed = true
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        rabbitState: payload.rabbitState,
+      },
+    }
+  })
+
+  if (!changed) {
+    return
+  }
+
+  await saveBoardStateForInvestigation(payload.vaultId, {
+    ...existingState,
+    nodes: nextNodes,
+    edges: existingState.edges || [],
+    pendingIntegrationNodeIds: existingState.pendingIntegrationNodeIds || [],
+    synthesisAlerts: existingState.synthesisAlerts || [],
+  })
 }
 
 const formatSidebarActivity = (investigationId: string) => {
@@ -679,6 +939,35 @@ const extractReadableSummary = (rawText: string) => {
   return truncateAtSentenceBoundary(cleaned, 240)
 }
 
+const readableReportCache = new Map<string, { fullReport: string; summary: string }>()
+
+const getReadableReportSnapshot = (rawText: string) => {
+  const cached = readableReportCache.get(rawText)
+  if (cached) {
+    return cached
+  }
+
+  const readableReport = cleanReportBody(rawText)
+  const summary = extractReadableSummary(rawText) || truncateAtSentenceBoundary(readableReport, 240)
+  const snapshot = {
+    fullReport: readableReport || stripMarkdownFormatting(rawText),
+    summary,
+  }
+  readableReportCache.set(rawText, snapshot)
+  if (readableReportCache.size > REPORT_READABILITY_CACHE_LIMIT) {
+    const oldestKey = readableReportCache.keys().next().value
+    if (typeof oldestKey === 'string') {
+      readableReportCache.delete(oldestKey)
+    }
+  }
+  return snapshot
+}
+
+const getAppLoadNow = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+
 const formatWorkspaceTimestamp = (investigationId: string | null) => {
   if (!investigationId) {
     return '--'
@@ -734,18 +1023,20 @@ function App() {
 
   const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
   const [prompt, setPrompt] = useState('')
-  const [crawlMode, setCrawlMode] = useState<'web' | 'local'>('web')
+  const [crawlMode, setCrawlMode] = useState<SpiderOperationMode>('web')
+  const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
   const [imageScrapingEnabled, setImageScrapingEnabled] = useState(() => readImageScrapingPreference())
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [hasCustomSidebarWidth, setHasCustomSidebarWidth] = useState(false)
+  const [investigationSwitchOverlay, setInvestigationSwitchOverlay] = useState<InvestigationSwitchOverlayState | null>(null)
   const [boardWorkspaceRevision, setBoardWorkspaceRevision] = useState(0)
   const [showSummaryLog, setShowSummaryLog] = useState(false)
   const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
-  const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => initialInvestigationsRef.current?.[0]?.id || null)
+  const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => getMostRecentInvestigationId(initialInvestigationsRef.current || []))
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
@@ -769,6 +1060,7 @@ function App() {
   const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
   const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
   const [pipelineStepTransitions, setPipelineStepTransitions] = useState<Record<string, PipelineProgressStepState['status']>>({})
+  const [rabbitHoleGatekeeper, setRabbitHoleGatekeeper] = useState<RabbitHoleGatekeeperPanelState | null>(null)
   const [animatedPipelineToken, setAnimatedPipelineToken] = useState<AnimatedPipelineTokenState>({
     runId: null,
     target: 0,
@@ -789,6 +1081,9 @@ function App() {
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
   const sidebarResizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const investigationSwitchRequestRef = useRef(0);
+  const investigationSwitchOverlayRef = useRef<InvestigationSwitchOverlayState | null>(null);
+  const investigationSwitchOverlayTimeoutRef = useRef<number | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
   const pipelineRunsByIdRef = useRef<Record<string, PipelineRunState>>({})
   const pipelineStepTransitionTimeoutsRef = useRef<Record<string, number>>({})
@@ -859,6 +1154,7 @@ function App() {
         evidenceByNodeId: {},
         hasTheoryReport: false,
         relationshipLabels: [],
+        hasRabbitHoleEvidence: false,
       }
     }
 
@@ -871,6 +1167,7 @@ function App() {
     const persistedDiscoveries = discoveriesByInvestigation[currentInvestigationId] || []
     const savedDiscoveries = persistedDiscoveries
     const nodes = savedBoardState?.nodes || []
+    const hasRabbitHoleEvidence = nodes.some((node) => node.data?.origin === 'rabbit-hole')
     const evidenceByNodeId = nodes.reduce<Record<string, DiscoveryEvidenceRecord>>((lookup, node) => {
       const id = typeof node.id === 'string' ? node.id : ''
       if (!id) {
@@ -914,10 +1211,9 @@ function App() {
         const rawResult = typeof savedVaultResult?.result === 'string' ? savedVaultResult.result : ''
         if (rawResult.trim()) {
           hasTheoryReport = true
-          const readableReport = cleanReportBody(rawResult)
-          const readableSummary = extractReadableSummary(rawResult)
-          fullReport = readableReport || stripMarkdownFormatting(rawResult)
-          summary = readableSummary || truncateAtSentenceBoundary(fullReport, 240)
+          const readableSnapshot = getReadableReportSnapshot(rawResult)
+          fullReport = readableSnapshot.fullReport
+          summary = readableSnapshot.summary
         }
       } catch (error) {
         console.error('[App] Failed to parse persisted vault result', error)
@@ -925,9 +1221,9 @@ function App() {
     } else if (nodes.length > 0) {
       const firstSummary = nodes.find((node) => typeof node.data?.summary === 'string' && node.data.summary.trim())?.data?.summary
       if (typeof firstSummary === 'string' && firstSummary.trim()) {
-        const readableReport = cleanReportBody(firstSummary)
-        summary = extractReadableSummary(firstSummary)
-        fullReport = readableReport || summary
+        const readableSnapshot = getReadableReportSnapshot(firstSummary)
+        summary = readableSnapshot.summary
+        fullReport = readableSnapshot.fullReport || summary
       }
     }
 
@@ -955,6 +1251,7 @@ function App() {
       evidenceByNodeId,
       hasTheoryReport,
       relationshipLabels,
+      hasRabbitHoleEvidence,
     }
   }, [boardWorkspaceRevision, currentInvestigationId, discoveriesByInvestigation, vaultResultsByInvestigation])
 
@@ -988,6 +1285,77 @@ function App() {
   const focusSpiderInput = useCallback(() => {
     crawlInputRef.current?.focus()
   }, [])
+
+  const clearInvestigationSwitchTimeout = useCallback(() => {
+    if (investigationSwitchOverlayTimeoutRef.current !== null) {
+      window.clearTimeout(investigationSwitchOverlayTimeoutRef.current)
+      investigationSwitchOverlayTimeoutRef.current = null
+    }
+  }, [])
+
+  const clearInvestigationSwitchOverlay = useCallback((expectedInvestigationId?: string, expectedStartedAt?: number) => {
+    const current = investigationSwitchOverlayRef.current
+    if (
+      expectedInvestigationId &&
+      (
+        !current ||
+        current.investigationId !== expectedInvestigationId ||
+        (typeof expectedStartedAt === 'number' && current.startedAt !== expectedStartedAt)
+      )
+    ) {
+      return
+    }
+
+    clearInvestigationSwitchTimeout()
+    investigationSwitchOverlayRef.current = null
+    setInvestigationSwitchOverlay(null)
+  }, [clearInvestigationSwitchTimeout])
+
+  const openInvestigationFromSidebar = useCallback((investigation: InvestigationRecord, source: 'sidebar' | 'collapsed-sidebar' = 'sidebar') => {
+    const nextReturnVaultId = investigation.kind === 'merged-child' ? investigation.primaryParentId : null
+
+    if (currentInvestigationId === investigation.id) {
+      setReturnVaultId(nextReturnVaultId)
+      return
+    }
+
+    const startedAt = getAppLoadNow()
+    const requestId = investigationSwitchRequestRef.current + 1
+    const title = investigation.displayTopic || investigation.topic || investigation.id
+    investigationSwitchRequestRef.current = requestId
+    clearInvestigationSwitchTimeout()
+
+    const nextOverlay: InvestigationSwitchOverlayState = {
+      investigationId: investigation.id,
+      title,
+      startedAt,
+      phase: 'switching',
+    }
+    investigationSwitchOverlayRef.current = nextOverlay
+    setInvestigationSwitchOverlay(nextOverlay)
+    console.info('[InvestigationSwitch] selected', {
+      investigationId: investigation.id,
+      title,
+      source,
+    })
+
+    investigationSwitchOverlayTimeoutRef.current = window.setTimeout(() => {
+      clearInvestigationSwitchOverlay(investigation.id, startedAt)
+    }, INVESTIGATION_SWITCH_OVERLAY_MAX_MS)
+
+    window.setTimeout(() => {
+      if (investigationSwitchRequestRef.current !== requestId) {
+        return
+      }
+
+      setReturnVaultId(nextReturnVaultId)
+      setCurrentInvestigationId(investigation.id)
+      console.info('[InvestigationSwitch] committed', {
+        investigationId: investigation.id,
+        durationMs: Math.max(0, Math.round(getAppLoadNow() - startedAt)),
+      })
+    }, 0)
+  }, [clearInvestigationSwitchOverlay, clearInvestigationSwitchTimeout, currentInvestigationId])
 
   const persistInvestigations = useCallback((nextInvestigations: InvestigationRecord[]) => {
     setInvestigations(nextInvestigations);
@@ -1184,7 +1552,7 @@ function App() {
       }
       if (data.length > 0) {
         setInvestigations(data)
-        setCurrentInvestigationId(data[0].id)
+        setCurrentInvestigationId(getMostRecentInvestigationId(data))
         const [discoveries, vaultResultEntries] = await Promise.all([
           loadDiscoveriesForInvestigations(data),
           Promise.all(data.map(async (investigation) => [
@@ -1287,6 +1655,48 @@ function App() {
               ...current,
               [report.investigationId!]: report,
             }))
+          }
+          return
+        }
+
+        if (msg.type === 'RABBIT_HOLE_GATEKEEPER') {
+          const gatekeeper = coerceRabbitHoleGatekeeperPayload(msg.payload)
+          if (gatekeeper) {
+            setRabbitHoleGatekeeper(gatekeeper)
+          }
+          return
+        }
+
+        if (msg.type === 'MEMORY_NODE_GATHERED') {
+          const payload = coerceMemoryNodeMessagePayload(msg.payload)
+          if (payload) {
+            void persistDurableRabbitMemoryNode(payload).catch((error) => {
+              console.warn('[App] Failed to persist Rabbit Hole node globally.', error)
+              setAutosaveWarning({
+                investigationId: payload.vaultId,
+                errorName: error && typeof error === 'object' && 'name' in error
+                  ? String((error as { name?: unknown }).name || 'UnknownError')
+                  : 'UnknownError',
+                timestamp: Date.now(),
+              })
+            })
+          }
+          return
+        }
+
+        if (msg.type === 'RABBIT_HOLE_NODE_UPDATE') {
+          const payload = coerceRabbitHoleNodeUpdatePayload(msg.payload)
+          if (payload) {
+            void persistDurableRabbitNodeUpdate(payload).catch((error) => {
+              console.warn('[App] Failed to persist Rabbit Hole node state globally.', error)
+              setAutosaveWarning({
+                investigationId: payload.vaultId,
+                errorName: error && typeof error === 'object' && 'name' in error
+                  ? String((error as { name?: unknown }).name || 'UnknownError')
+                  : 'UnknownError',
+                timestamp: Date.now(),
+              })
+            })
           }
           return
         }
@@ -1447,15 +1857,26 @@ function App() {
       : activePipelineRun.status === 'error' || activePipelineRun.status === 'cancelled'
         ? activePipelineRun.status
         : 'running'
+  const activePipelineMode = activePipelineRailStatus === 'running'
+    ? activePipelineRun?.mode
+    : null
   const promptLocalFilePaths = useMemo(
     () => (crawlMode === 'local' ? parseLocalCrawlPaths(prompt) : []),
     [crawlMode, prompt],
   )
   const spiderOperationMode: SpiderOperationMode = qaLocalIngestionDemoRequest
     ? 'local'
-    : activePipelineRun?.mode === 'local'
+    : activePipelineMode === 'local'
       ? 'local'
+      : activePipelineMode === 'rabbit-hole'
+        ? 'rabbit-hole'
       : crawlMode
+  const isRabbitContext =
+    isRabbitHoleInvestigation(currentInvestigation) ||
+    currentBoardSnapshot.hasRabbitHoleEvidence ||
+    activePipelineMode === 'rabbit-hole' ||
+    crawlMode === 'rabbit-hole' ||
+    spiderOperationMode === 'rabbit-hole'
   const visibleLocalIngestionPaths = useMemo(() => {
     if (qaLocalIngestionDemoRequest) {
       return qaLocalIngestionFilePaths
@@ -1613,7 +2034,7 @@ function App() {
       setCurrentInvestigationId(
         detail?.focusInvestigationId && nextInvestigations.some((investigation) => investigation.id === detail.focusInvestigationId)
           ? detail.focusInvestigationId
-          : (nextInvestigations[0]?.id || null),
+          : getMostRecentInvestigationId(nextInvestigations),
       )
       setReturnVaultId(null)
       setFocusedNodeId(null)
@@ -1630,7 +2051,7 @@ function App() {
       setCurrentInvestigationId((current) => (
         current && nextInvestigations.some((investigation) => investigation.id === current)
           ? current
-          : (nextInvestigations[0]?.id || null)
+          : getMostRecentInvestigationId(nextInvestigations)
       ))
       setReturnVaultId((current) => (
         current && nextInvestigations.some((investigation) => investigation.id === current)
@@ -1997,6 +2418,48 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const handleBoardRestoreComplete = (event: Event) => {
+      const detail = (event as CustomEvent<BoardRestoreCompleteDetail>).detail
+      const current = investigationSwitchOverlayRef.current
+      if (!current || !detail?.investigationId || detail.investigationId !== current.investigationId) {
+        return
+      }
+
+      const totalDurationMs = Math.max(0, Math.round(getAppLoadNow() - current.startedAt))
+      console.info('[InvestigationSwitch] board-ready', {
+        investigationId: current.investigationId,
+        switchDurationMs: totalDurationMs,
+        boardDurationMs: detail.durationMs,
+        source: detail.source,
+        nodeCount: detail.nodeCount,
+        edgeCount: detail.edgeCount,
+      })
+
+      const nextOverlay: InvestigationSwitchOverlayState = {
+        ...current,
+        phase: 'restoring',
+      }
+      investigationSwitchOverlayRef.current = nextOverlay
+      setInvestigationSwitchOverlay(nextOverlay)
+      clearInvestigationSwitchTimeout()
+
+      const hideDelayMs = Math.max(0, INVESTIGATION_SWITCH_OVERLAY_MIN_MS - totalDurationMs)
+      investigationSwitchOverlayTimeoutRef.current = window.setTimeout(() => {
+        clearInvestigationSwitchOverlay(current.investigationId, current.startedAt)
+      }, hideDelayMs)
+    }
+
+    window.addEventListener(BOARD_RESTORE_COMPLETE_EVENT, handleBoardRestoreComplete as EventListener)
+    return () => {
+      window.removeEventListener(BOARD_RESTORE_COMPLETE_EVENT, handleBoardRestoreComplete as EventListener)
+    }
+  }, [clearInvestigationSwitchOverlay, clearInvestigationSwitchTimeout])
+
+  useEffect(() => () => {
+    clearInvestigationSwitchTimeout()
+  }, [clearInvestigationSwitchTimeout])
+
+  useEffect(() => {
     if (!currentInvestigationId) {
       investigationHydrationRequestRef.current += 1
       return
@@ -2041,11 +2504,11 @@ function App() {
     return () => window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
   }, [])
 
-  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: 'web' | 'local') => {
+  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: SpiderOperationMode) => {
     const textToRun = customPrompt || prompt;
     const labelToUse = customLabel || textToRun;
     const modeToUse = overrideMode || crawlMode;
-    const shouldScrapeImages = modeToUse === 'web' && imageScrapingEnabled
+    const shouldScrapeImages = modeToUse !== 'local' && imageScrapingEnabled
     if (socketConfig.socket && socketConfig.ready && textToRun) {
       const id = `inv-${Date.now()}`
       const runId = createPipelineRunId()
@@ -2056,18 +2519,22 @@ function App() {
       if (modeToUse === 'local') {
         const primaryLocalLabel = localPaths[0] || labelToUse
         displayTopic = `Local: ${getLocalFileName(primaryLocalLabel)}`;
+      } else if (modeToUse === 'rabbit-hole') {
+        displayTopic = `Rabbit Hole: ${labelToUse}`;
       }
 
       const newInv = createRootInvestigation(id, displayTopic)
       const updated = [newInv, ...investigations]
       persistInvestigations(updated)
       setCurrentInvestigationId(id)
+      setRabbitHoleGatekeeper(null)
 
-      socketConfig.socket.send(JSON.stringify(
-        modeToUse === 'local'
-          ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
+      const crawlMessage = modeToUse === 'local'
+        ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
+        : modeToUse === 'rabbit-hole'
+          ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: rabbitHoleDescentMode }
           : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
-      ))
+      socketConfig.socket.send(JSON.stringify(crawlMessage))
       if (modeToUse === 'local') {
         setActiveLocalIngestionFilePaths(localPaths)
         setQaLocalIngestionDemoRequest(null)
@@ -2079,7 +2546,62 @@ function App() {
       alert("System not ready. Please check backend connection.");
       return null;
     }
-  }, [crawlMode, imageScrapingEnabled, investigations, persistInvestigations, prompt, socketConfig.ready, socketConfig.socket])
+  }, [crawlMode, imageScrapingEnabled, investigations, persistInvestigations, prompt, rabbitHoleDescentMode, socketConfig.ready, socketConfig.socket])
+
+  const continueRabbitHoleDescent = useCallback(() => {
+    if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
+      return
+    }
+    if (rabbitHoleGatekeeper.descentMode !== 'guided') {
+      return
+    }
+    const vaultId = rabbitHoleGatekeeper.vaultId || currentInvestigationId
+    if (!vaultId) {
+      return
+    }
+    const runId = createPipelineRunId()
+    const baseTopic = rabbitHoleGatekeeper.prompt || currentInvestigation?.topic || prompt || 'current investigation'
+    const continuationPass = rabbitHoleGatekeeper.pass + 1
+    const priorFindings = rabbitHoleGatekeeper.result
+      ? [`Pass ${rabbitHoleGatekeeper.pass} summary:\n${rabbitHoleGatekeeper.result}`]
+      : []
+
+    socketConfig.socket.send(JSON.stringify({
+      type: 'CRAWL_RABBIT_HOLE',
+      payload: baseTopic,
+      vaultId,
+      runId,
+      scrapeImages: imageScrapingEnabled,
+      descentMode: 'guided',
+      append: true,
+      continuationPass,
+      priorFindings,
+      suggestedQueries: rabbitHoleGatekeeper.suggestedQueries,
+    }))
+    setRabbitHoleGatekeeper(null)
+    setActiveTab('spider')
+  }, [currentInvestigation?.topic, currentInvestigationId, imageScrapingEnabled, prompt, rabbitHoleGatekeeper, socketConfig.ready, socketConfig.socket])
+
+  const finishRabbitHoleDescent = useCallback(() => {
+    if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
+      return
+    }
+    if (rabbitHoleGatekeeper.descentMode !== 'guided') {
+      return
+    }
+    const vaultId = rabbitHoleGatekeeper.vaultId || currentInvestigationId
+    if (!vaultId || !rabbitHoleGatekeeper.result) {
+      return
+    }
+    socketConfig.socket.send(JSON.stringify({
+      type: 'FINISH_RABBIT_HOLE',
+      vaultId,
+      runId: rabbitHoleGatekeeper.runId,
+      result: rabbitHoleGatekeeper.result,
+      prompt: rabbitHoleGatekeeper.prompt || currentInvestigation?.topic || prompt,
+    }))
+    setRabbitHoleGatekeeper(null)
+  }, [currentInvestigation?.topic, currentInvestigationId, prompt, rabbitHoleGatekeeper, socketConfig.ready, socketConfig.socket])
 
   const handleDeepDiveNode = useCallback((promptStr: string, titleStr: string, sourceNodeId: string) => {
     const newInvId = runSpider(`Deep Dive Research on: ${promptStr}`, `Deep Dive: ${titleStr.substring(0, 50)}${titleStr.length > 50 ? '...' : ''}`, 'web');
@@ -2264,7 +2786,7 @@ function App() {
     }
 
     if (currentInvestigationId && removal.removedIds.includes(currentInvestigationId)) {
-      setCurrentInvestigationId(removal.investigations[0]?.id || null)
+      setCurrentInvestigationId(getMostRecentInvestigationId(removal.investigations))
       setReturnVaultId(null)
     } else if (returnVaultId && removal.removedIds.includes(returnVaultId)) {
       const survivingCurrent = removal.investigations.find((investigation) => investigation.id === currentInvestigationId)
@@ -2276,8 +2798,8 @@ function App() {
     ? 'forensic-app-shell-header'
     : 'flex items-center justify-between border-b border-cyber-gray bg-cyber-black px-6 py-4 z-50'
   const appShellClassName = isForensicWorkspaceActive
-    ? 'forensic-app-shell flex h-screen w-screen flex-col overflow-hidden font-mono'
-    : 'flex h-screen w-screen flex-col overflow-hidden bg-cyber-black font-mono'
+    ? `forensic-app-shell ${isRabbitContext ? 'forensic-rabbit-context' : ''} flex h-screen w-screen flex-col overflow-hidden font-mono`
+    : `flex h-screen w-screen flex-col overflow-hidden bg-cyber-black font-mono ${isRabbitContext ? 'forensic-rabbit-context' : ''}`
   const brandClassName = isForensicWorkspaceActive
     ? 'forensic-app-brand text-2xl font-black tracking-tighter italic'
     : 'text-2xl font-black tracking-tighter italic text-cyber-green'
@@ -2345,7 +2867,7 @@ function App() {
   }, [expandedSidebarWidth, hasCustomSidebarWidth, isSidebarCollapsed])
 
   return (
-    <div className={appShellClassName}>
+    <div data-testid="app-shell" className={appShellClassName}>
       {/* Top Header */}
       <header className={headerClassName}>
         <h1 className={brandClassName}>
@@ -2463,8 +2985,7 @@ function App() {
                     aria-label={`Open ${investigation.displayTopic}`}
                     title={investigation.displayTopic}
                     onClick={() => {
-                      setCurrentInvestigationId(investigation.id);
-                      setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
+                      openInvestigationFromSidebar(investigation, 'collapsed-sidebar');
                     }}
                     className={`forensic-sidebar-collapsed-item ${currentInvestigationId === investigation.id ? 'forensic-sidebar-collapsed-item-active' : ''}`}
                   >
@@ -2537,8 +3058,7 @@ function App() {
                 >
                   <button
                     onClick={() => {
-                      setCurrentInvestigationId(investigation.id);
-                      setReturnVaultId(investigation.kind === 'merged-child' ? investigation.primaryParentId : null);
+                      openInvestigationFromSidebar(investigation);
                     }}
                     className="w-full text-left p-4 transition-colors"
                     style={{ paddingLeft: `${16 + (depth * 18)}px` }}
@@ -2666,6 +3186,7 @@ function App() {
               currentTheoryReport={currentBoardSnapshot.fullReport}
               hasTheoryReady={currentBoardSnapshot.hasTheoryReport}
               hasUnreadTheory={currentInvestigationId ? Boolean(unreadTheoryByInvestigation[currentInvestigationId]) : false}
+              isRabbitHoleInvestigation={isRabbitHoleInvestigation(currentInvestigation) || currentBoardSnapshot.hasRabbitHoleEvidence}
               onMarkTheoryRead={() => {
                 if (!currentInvestigationId) return
                 setUnreadTheoryByInvestigation(prev => ({
@@ -2716,7 +3237,7 @@ function App() {
                   >
                     <div className="forensic-spider-console-control-row">
                       <div className="forensic-spider-console-label">Scrape Images</div>
-                      {crawlMode === 'web' ? (
+                      {crawlMode !== 'local' ? (
                         <button
                           type="button"
                           role="switch"
@@ -2747,6 +3268,16 @@ function App() {
                         <button
                           type="button"
                           onClick={() => {
+                            setCrawlMode('rabbit-hole')
+                            setQaLocalIngestionDemoRequest(null)
+                          }}
+                          className={crawlMode === 'rabbit-hole' ? 'forensic-spider-mode-active' : ''}
+                        >
+                          RABBIT HOLE
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
                             setCrawlMode('local')
                             setQaLocalIngestionDemoRequest(null)
                           }}
@@ -2755,6 +3286,24 @@ function App() {
                           LOCAL
                         </button>
                       </div>
+                      {crawlMode === 'rabbit-hole' && (
+                        <div className="forensic-spider-mode-toggle forensic-spider-rabbit-descent-toggle" role="group" aria-label="Rabbit Hole descent">
+                          <button
+                            type="button"
+                            onClick={() => setRabbitHoleDescentMode('guided')}
+                            className={rabbitHoleDescentMode === 'guided' ? 'forensic-spider-mode-active' : ''}
+                          >
+                            GUIDED
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRabbitHoleDescentMode('max')}
+                            className={rabbitHoleDescentMode === 'max' ? 'forensic-spider-mode-active' : ''}
+                          >
+                            MAX DESCENT
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </section>
 
@@ -2772,7 +3321,13 @@ function App() {
                           }
                         }}
                         onKeyDown={(e) => e.key === 'Enter' && runSpider()}
-                        placeholder={crawlMode === 'web' ? "ENTER A TOPIC OR URL TO CRAWL THE WEB..." : "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."}
+                        placeholder={
+                          crawlMode === 'local'
+                            ? "ENTER ABSOLUTE OS PATHS (DELIMITED) OR CLICK BROWSE..."
+                            : crawlMode === 'rabbit-hole'
+                              ? "ENTER A TOPIC FOR RABBIT HOLE MODE..."
+                              : "ENTER A TOPIC OR URL TO CRAWL THE WEB..."
+                        }
                         className="forensic-spider-command-input"
                       />
 
@@ -2824,6 +3379,46 @@ function App() {
                         </button>
                       )}
                     </div>
+                    {rabbitHoleGatekeeper && (
+                      <div data-testid="rabbit-hole-gatekeeper-panel" className="forensic-rabbit-gatekeeper-panel">
+                        <div>
+                          <span>Gatekeeper</span>
+                          <strong>Pass {rabbitHoleGatekeeper.pass}</strong>
+                        </div>
+                        <p>{rabbitHoleGatekeeper.reason}</p>
+                        <div>
+                          <span>
+                            {rabbitHoleGatekeeper.descentMode === 'max' && rabbitHoleGatekeeper.continueRecommended
+                              ? 'Max descent continuing'
+                              : rabbitHoleGatekeeper.continueRecommended
+                                ? 'Continue recommended'
+                                : 'Trail exhausted'}
+                          </span>
+                          {typeof rabbitHoleGatekeeper.noveltyScore === 'number' && (
+                            <strong>{Math.round(rabbitHoleGatekeeper.noveltyScore * 100)}% novelty</strong>
+                          )}
+                        </div>
+                        {rabbitHoleGatekeeper.descentMode === 'guided' && rabbitHoleGatekeeper.continueRecommended && (
+                          <div className="forensic-rabbit-gatekeeper-actions">
+                            <button
+                              type="button"
+                              onClick={continueRabbitHoleDescent}
+                              className="forensic-rabbit-gatekeeper-action"
+                            >
+                              Continue Rabbit Hole Descent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={finishRabbitHoleDescent}
+                              disabled={!rabbitHoleGatekeeper.result}
+                              className="forensic-rabbit-gatekeeper-action forensic-rabbit-gatekeeper-action-secondary"
+                            >
+                              Finish Rabbit Hole
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </section>
                 </div>
               </div>
@@ -2883,6 +3478,27 @@ function App() {
               </Suspense>
             )}
           </div>
+          {investigationSwitchOverlay && (
+            <div
+              data-testid="investigation-switch-loading"
+              className="forensic-board-restore-loading pointer-events-none absolute inset-0 z-[60] flex items-center justify-center"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <div className="forensic-board-restore-loading-panel">
+                <div className="forensic-board-restore-loading-scan" />
+                <div className="forensic-board-restore-loading-title">
+                  Switching investigation
+                </div>
+                <div className="forensic-board-restore-loading-meta">
+                  {investigationSwitchOverlay.phase === 'restoring' ? 'Evidence map ready' : 'Preparing evidence map'}
+                </div>
+                <div className="forensic-board-restore-loading-meta forensic-investigation-switch-title">
+                  {investigationSwitchOverlay.title}
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 

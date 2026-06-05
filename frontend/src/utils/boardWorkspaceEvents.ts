@@ -1,6 +1,15 @@
 export const BOARD_TOGGLE_DISCOVERY_PANEL_EVENT = 'gorantula:board-toggle-discovery-panel'
 export const BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT = 'gorantula:board-toggle-synthesis-panel'
+export const BOARD_RESTORE_COMPLETE_EVENT = 'gorantula:board-restore-complete'
 export const BOARD_WORKSPACE_STATE_UPDATED_EVENT = 'gorantula:board-workspace-state-updated'
+
+export interface BoardRestoreCompleteDetail {
+  investigationId: string
+  source: string
+  durationMs: number
+  nodeCount: number
+  edgeCount: number
+}
 
 export const emitBoardWorkspaceEvent = (eventName: string) => {
   if (typeof window === 'undefined') {

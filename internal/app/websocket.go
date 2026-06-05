@@ -83,6 +83,54 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}
 					triggerCrawl(br, prompt, vaultID, false, extractScrapeImagesPreference(msg), pipeline.ExtractRunMetadata(msg, vaultID, "web"))
 				}
+			case "CRAWL_RABBIT_HOLE":
+				if prompt, ok := msg["payload"].(string); ok {
+					vaultID := ""
+					if rawVaultID, ok := msg["vaultId"].(string); ok {
+						vaultID = strings.TrimSpace(rawVaultID)
+					}
+					if vaultID == "" {
+						broadcast(models.WSMessage{Type: "ERROR", Payload: "Rabbit Hole crawl requires a target investigation."})
+						continue
+					}
+					appendToVault, _ := msg["append"].(bool)
+					triggerRabbitHoleCrawl(br, prompt, vaultID, appendToVault, extractScrapeImagesPreference(msg), extractRabbitHoleDescentMode(msg), extractRabbitHoleRunOptions(msg), pipeline.ExtractRunMetadata(msg, vaultID, "rabbit-hole"))
+				}
+			case "FINISH_RABBIT_HOLE":
+				vaultID := ""
+				if rawVaultID, ok := msg["vaultId"].(string); ok {
+					vaultID = strings.TrimSpace(rawVaultID)
+				}
+				result := ""
+				if rawResult, ok := msg["result"].(string); ok {
+					result = strings.TrimSpace(rawResult)
+				}
+				if vaultID == "" || result == "" {
+					broadcast(models.WSMessage{Type: "ERROR", Payload: "Rabbit Hole finish requires a vault and result."})
+					continue
+				}
+				runID := ""
+				if rawRunID, ok := msg["runId"].(string); ok {
+					runID = strings.TrimSpace(rawRunID)
+				}
+				prompt := ""
+				if rawPrompt, ok := msg["prompt"].(string); ok {
+					prompt = strings.TrimSpace(rawPrompt)
+				}
+				broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Done"})
+				broadcast(models.WSMessage{
+					Type: "SYNTHESIS_COMPLETE",
+					Payload: map[string]interface{}{
+						"result":    result,
+						"vaultPath": "",
+						"vaultId":   vaultID,
+						"append":    false,
+						"prompt":    prompt,
+						"runId":     runID,
+						"mode":      "rabbit-hole",
+						"detail":    "Rabbit Hole descent finished by operator.",
+					},
+				})
 			case "APPEND_CRAWL":
 				if prompt, ok := msg["payload"].(string); ok {
 					vaultID := ""

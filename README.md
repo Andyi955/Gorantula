@@ -11,13 +11,28 @@ Gorantula is a local-first intelligence research workspace. It crawls a topic, g
 ## What It Does
 
 - Runs concurrent web crawling with multiple worker legs.
+- Supports Web, Local, and Rabbit Hole crawl modes from Spider View.
 - Builds an interactive Detective Board from gathered evidence.
 - Extracts deterministic, board-derived events into the Timeline View.
 - Archives successful investigations into the local `abdomen_vault`.
 - Lets you interrogate archived evidence through Vault Chat.
 - Supports discovery review, relationship mapping, draggable graph labels, and source-linked evidence cards.
+- Adds a Rabbit Hole mode for deeper pass-based research, Gatekeeper review, optional image scraping, supporting evidence bands, and final relationship synthesis.
 - Uses configurable AI routing with DeepSeek as the default day-to-day provider.
 - Supports Gemini, OpenAI, Anthropic, Qwen, GLM, Kimi, MiniMax, Ollama, LM Studio, and compatible `/v1/chat/completions` providers.
+
+![Rabbit Hole Spider View Preview](./public/assets/rabbitholedashboard.png)
+
+## Rabbit Hole Mode
+
+Rabbit Hole is the deep-investigation crawl mode. It starts from Spider View, creates or continues an investigation, and runs agentic research passes that can combine fresh web searches, saved-vault echoes, timeline context, and optional image scraping.
+
+- `Guided` runs a pass, shows the Gatekeeper recommendation, then waits for the operator to continue or stop.
+- `Max Descent` continues automatically until the Gatekeeper stops or the hard pass cap is reached.
+- Rabbit Hole nodes are marked on the board and promoted after the descent finishes.
+- Relationship synthesis and board cleanup run once at the end, so the board does not churn after every pass.
+- Relevant unconnected Rabbit Hole evidence is kept in a compact Supporting Evidence layer instead of being hidden or deleted.
+- Rabbit Hole runs write detailed traces under `abdomen_vault/rabbit-hole-logs`.
 
 ## Tech Stack
 
@@ -163,13 +178,14 @@ On Windows, the first backend start may trigger a Windows Defender Firewall prom
 
 ## Workflow
 
-1. Open Spider View and enter a research topic.
+1. Open Spider View, pick `Web`, `Local`, or `Rabbit Hole`, and enter a research topic.
 2. Watch the worker legs gather sources and evidence.
-3. Open Detective Board to inspect evidence cards and relationships.
-4. Use Connect the Dots to synthesize relationships when the crawl is complete.
-5. Open Timeline View and generate or refresh the timeline from saved board evidence.
-6. Use Vault Chat to select archived evidence files and ask grounded questions.
-7. Review generated markdown reports in `abdomen_vault`.
+3. For Rabbit Hole, choose `Guided` or `Max Descent` and review Gatekeeper decisions as the run deepens.
+4. Open Detective Board to inspect evidence cards, supporting evidence, and relationships.
+5. Use Connect the Dots to synthesize relationships when a normal crawl is complete; Rabbit Hole runs trigger final synthesis automatically.
+6. Open Timeline View and generate or refresh the timeline from saved board evidence.
+7. Use Vault Chat to select archived evidence files and ask grounded questions.
+8. Review generated markdown reports in `abdomen_vault`.
 
 ## Project Notes
 
@@ -178,6 +194,7 @@ On Windows, the first backend start may trigger a Windows Defender Firewall prom
 - Browser persistence is used for fast local investigation switching.
 - Backend vault files provide durable markdown archives for completed investigations.
 - Discovery debug traces are written under `abdomen_vault/discovery_logs`.
+- Rabbit Hole debug traces are written under `abdomen_vault/rabbit-hole-logs`.
 
 ## Troubleshooting
 

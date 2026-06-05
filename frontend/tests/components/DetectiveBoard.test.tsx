@@ -2,12 +2,14 @@ import * as React from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import DetectiveBoard from '../../src/components/DetectiveBoard'
+import { getMiniMapNodeColor } from '../../src/components/detectiveBoardMinimap'
+import { layoutSupportingEvidenceNodes } from '../../src/components/supportingEvidenceLayer'
 import { IMAGE_SCRAPING_PREFERENCE_KEY } from '../../src/utils/searchPreferences'
 import {
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
   BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
 } from '../../src/utils/boardWorkspaceEvents'
-import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
+import { BROWSER_QA_ANIMATION_DEMO_EVENT, BROWSER_QA_DISCOVERY_DEMO_EVENT, BROWSER_QA_ERROR_EMPTY_DEMO_EVENT, BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, BROWSER_QA_PIPELINE_DEMO_EVENT, BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, BROWSER_QA_SPIDER_TELEMETRY_DEMO_EVENT, BROWSER_QA_SYNTHESIS_DEMO_EVENT, BROWSER_QA_TIMELINE_DEMO_EVENT } from '../../src/utils/browserQaSeed'
 
 const localStorage = window.localStorage
 
@@ -17,6 +19,7 @@ const getZoomMock = vi.fn(() => 0.82)
 let viewportMock = { x: -160, y: -90, zoom: 1 }
 let lastReactFlowProps: Record<string, unknown> | null = null
 type MockNodeComponent = React.ComponentType<Record<string, unknown>>
+type MockEdgeComponent = React.ComponentType<Record<string, unknown>>
 
 vi.mock('reactflow', () => {
   return {
@@ -24,14 +27,18 @@ vi.mock('reactflow', () => {
     default: (props: {
       children?: React.ReactNode
       nodes?: Array<{ id: string; type?: string; data?: Record<string, unknown>; position?: { x: number; y: number } }>
+      edges?: Array<{ id: string; source: string; target: string; type?: string; data?: Record<string, unknown> }>
       nodeTypes?: Record<string, MockNodeComponent>
+      edgeTypes?: Record<string, MockEdgeComponent>
       proOptions?: Record<string, unknown>
     }) => {
       lastReactFlowProps = props as Record<string, unknown>
       const {
         children,
         nodes = [],
+        edges = [],
         nodeTypes = {},
+        edgeTypes = {},
       } = props
 
       return (
@@ -66,6 +73,24 @@ vi.mock('reactflow', () => {
             }),
           )
         }),
+        edges.map((edge) => {
+          const EdgeComponent = edgeTypes[edge.type || 'default']
+          if (!EdgeComponent) {
+            return null
+          }
+
+          return React.createElement(EdgeComponent, {
+            key: edge.id,
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            sourceX: 0,
+            sourceY: 0,
+            targetX: 100,
+            targetY: 100,
+            data: edge.data,
+          })
+        }),
         children,
       )
       )
@@ -75,7 +100,24 @@ vi.mock('reactflow', () => {
     Controls: () => React.createElement('div', { 'data-testid': 'reactflow-controls' }),
     Handle: () => null,
     applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
-    applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
+    applyNodeChanges: (changes: Array<Record<string, unknown>>, nodes: Array<{ id: string; position?: { x: number; y: number } }>) =>
+      nodes.map((node) => {
+        const positionChange = changes.find((change) => (
+          change.type === 'position' &&
+          change.id === node.id &&
+          change.position &&
+          typeof change.position === 'object'
+        ))
+
+        if (!positionChange) {
+          return node
+        }
+
+        return {
+          ...node,
+          position: positionChange.position as { x: number; y: number },
+        }
+      }),
     addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
     reconnectEdge: (_oldEdge: unknown, _newConnection: unknown, edges: unknown[]) => edges,
     useReactFlow: () => ({
@@ -113,6 +155,14 @@ vi.mock('../../src/components/CustomNode', () => ({
       isLayoutChoreographyActive?: boolean
       isTimelineFocused?: boolean
       evidenceCount?: number
+      rabbitState?: string
+      evidenceRole?: string
+      supportCluster?: string
+      isSupportEvidenceCompact?: boolean
+      isSupportTetherSource?: boolean
+      isSupportTetherTarget?: boolean
+      onSupportHover?: (nodeId: string, active: boolean) => void
+      onExpand?: (nodeId: string, expanded: boolean) => void
       onSetEditing?: (id: string | null) => void
       onSave?: (nodeId: string, title: string, text: string, mode: 'save' | 'analyze-and-save') => void
       onAttachImage?: (nodeId: string, file: File) => Promise<void>
@@ -122,7 +172,11 @@ vi.mock('../../src/components/CustomNode', () => ({
   }) =>
     React.createElement(
       'div',
-      { 'data-testid': `mock-node-${id}` },
+      {
+        'data-testid': `mock-node-${id}`,
+        onMouseEnter: () => id && data?.onSupportHover?.(id, true),
+        onMouseLeave: () => id && data?.onSupportHover?.(id, false),
+      },
       data?.title ? React.createElement('span', null, data.title) : null,
       data?.summary ? React.createElement('span', null, data.summary) : null,
       data?.isRecentlyImported ? React.createElement('span', null, 'recent import') : null,
@@ -133,6 +187,13 @@ vi.mock('../../src/components/CustomNode', () => ({
       data?.isLayoutChoreographyActive ? React.createElement('span', null, 'layout choreography') : null,
       data?.isTimelineFocused ? React.createElement('span', null, 'timeline focus') : null,
       data?.evidenceCount && data.evidenceCount > 1 ? React.createElement('span', null, `merged evidence ${data.evidenceCount}`) : null,
+      data?.rabbitState ? React.createElement('span', null, `rabbit ${data.rabbitState}`) : null,
+      data?.evidenceRole ? React.createElement('span', null, `evidence role ${data.evidenceRole}`) : null,
+      data?.supportCluster ? React.createElement('span', null, `support cluster ${data.supportCluster}`) : null,
+      data?.isSupportEvidenceCompact ? React.createElement('span', null, 'compact support') : null,
+      data?.isSupportTetherSource ? React.createElement('span', null, 'support tether source') : null,
+      data?.isSupportTetherTarget ? React.createElement('span', null, 'support tether target') : null,
+      data?.expanded ? React.createElement('span', null, 'expanded node') : null,
       React.createElement(
         'button',
         {
@@ -197,7 +258,41 @@ vi.mock('../../src/components/CustomNode', () => ({
 
 vi.mock('../../src/components/CustomEdge', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({
+    data,
+    id,
+    source,
+    target,
+  }: {
+    data?: {
+      color?: string
+      onConnectionHover?: (payload: { edgeId?: string; source?: string; target?: string; color?: string; active?: boolean }) => void
+    }
+    id?: string
+    source?: string
+    target?: string
+  }) =>
+    React.createElement(
+      'div',
+      {
+        'data-testid': `mock-edge-label-${id}`,
+        onMouseEnter: () => data?.onConnectionHover?.({
+            edgeId: id,
+            source,
+            target,
+            color: data?.color,
+            active: true,
+        }),
+        onMouseLeave: () => data?.onConnectionHover?.({
+            edgeId: id,
+            source,
+            target,
+            color: data?.color,
+            active: false,
+        }),
+      },
+      'edge label',
+    ),
 }))
 
 vi.mock('../../src/utils/ExportUtils', () => ({
@@ -265,6 +360,7 @@ const seedExportableBoard = () => {
 
 describe('DetectiveBoard relationship legend', () => {
   beforeEach(() => {
+    delete (globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__
     localStorage.clear()
     lastReactFlowProps = null
     viewportMock = { x: -160, y: -90, zoom: 1 }
@@ -272,12 +368,15 @@ describe('DetectiveBoard relationship legend', () => {
     setCenterMock.mockReset()
     getZoomMock.mockReset()
     getZoomMock.mockReturnValue(0.82)
+    vi.spyOn(console, 'debug').mockImplementation(() => {})
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
   })
 
   afterEach(() => {
+    delete (globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__
     vi.restoreAllMocks()
   })
 
@@ -295,6 +394,795 @@ describe('DetectiveBoard relationship legend', () => {
 
     expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
     expect(localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY)).toBe('true')
+  })
+
+  it('shows a short restore veil and logs board load timing when switching investigations', async () => {
+    localStorage.setItem(
+      'inv_data_inv-load-metric',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-load-metric',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'node-load-metric',
+              title: 'Load Metric Node',
+              summary: 'A restored board used to verify load timing.',
+              fullText: 'A restored board used to verify load timing.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-load-metric')
+
+    expect(await screen.findByTestId('board-restore-loading')).toHaveTextContent('Restoring board')
+    await waitFor(() => {
+      expect(console.info).toHaveBeenCalledWith('[BoardLoad] restored', expect.objectContaining({
+        investigationId: 'inv-load-metric',
+        source: 'memory-cache',
+        nodeCount: 1,
+        edgeCount: 0,
+        durationMs: expect.any(Number),
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('board-restore-loading')).not.toBeInTheDocument()
+    })
+  })
+
+  it('keeps the restore veil above the hidden prefit layer for restored Rabbit Hole boards', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-prefit-loader',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-prefit-a',
+            type: 'custom',
+            position: { x: 1800, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-prefit-a',
+              title: 'Rabbit Prefit A',
+              summary: 'A restored Rabbit Hole node that should trigger initial viewport prefit.',
+              fullText: 'A restored Rabbit Hole node that should trigger initial viewport prefit.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-prefit-b',
+            type: 'custom',
+            position: { x: 2220, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-prefit-b',
+              title: 'Rabbit Prefit B',
+              summary: 'A second restored Rabbit Hole node for the slow-board loader regression.',
+              fullText: 'A second restored Rabbit Hole node for the slow-board loader regression.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'vault_search',
+              rabbitPass: 2,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-prefit-a-rabbit-prefit-b',
+            source: 'rabbit-prefit-a',
+            target: 'rabbit-prefit-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'RABBIT_PREFIT' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-prefit-loader')
+
+    const loader = await screen.findByTestId('board-restore-loading')
+    const boardFlow = document.getElementById('detective-board-flow')
+    expect(boardFlow).toHaveClass('forensic-board-restore-prefit')
+    expect(loader.closest('#detective-board-flow')).toBeNull()
+    expect(loader).toHaveTextContent('Restoring board')
+  })
+
+  it('releases the cached restore veil after a refreshed board settles', async () => {
+    localStorage.setItem(
+      'inv_data_inv-refresh-loader',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'refresh-loader-a',
+            type: 'custom',
+            position: { x: 1600, y: 1120 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'refresh-loader-a',
+              title: 'Refresh Loader A',
+              summary: 'A cached board node used to simulate a browser refresh restore.',
+              fullText: 'A cached board node used to simulate a browser refresh restore.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-refresh-loader')
+
+    expect(await screen.findByTestId('board-restore-loading')).toHaveTextContent('Restoring board')
+    expect(document.getElementById('detective-board-flow')).toHaveClass('forensic-board-restore-prefit')
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('board-restore-loading')).not.toBeInTheDocument()
+    })
+    expect(document.getElementById('detective-board-flow')).not.toHaveClass('forensic-board-restore-prefit')
+  })
+
+  it('promotes live Rabbit Hole provisional nodes from websocket updates', async () => {
+    const socket = new MockSocket()
+    renderBoard('inv-rabbit', socket as unknown as WebSocket)
+
+    act(() => {
+      socket.emit('MEMORY_NODE_GATHERED', {
+        vaultId: 'inv-rabbit',
+        append: false,
+        node: {
+          id: 'rabbit-node-1',
+          title: 'Rabbit Lead',
+          summary: 'A provisional lead from Rabbit Hole.',
+          fullText: 'A provisional lead from Rabbit Hole.',
+          sourceURL: 'rabbit://timeline-context',
+          origin: 'rabbit-hole',
+          rabbitState: 'provisional',
+          rabbitTool: 'timeline_context',
+          rabbitPass: 1,
+        },
+      })
+    })
+
+    expect(await screen.findByTestId('mock-node-rabbit-node-1')).toHaveTextContent('rabbit provisional')
+
+    act(() => {
+      socket.emit('RABBIT_HOLE_NODE_UPDATE', {
+        vaultId: 'inv-rabbit',
+        nodeIds: ['rabbit-node-1'],
+        rabbitState: 'promoted',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-node-rabbit-node-1')).toHaveTextContent('rabbit promoted')
+    })
+  })
+
+  it('waits for visible relationships before moving Rabbit Hole nodes into support', () => {
+    const nodes = [
+      {
+        id: 'rabbit-a',
+        type: 'custom',
+        position: { x: 96, y: 96 },
+        data: {
+          title: 'Rabbit lead A',
+          summary: 'A promoted Rabbit Hole lead before synthesis finishes.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'web_search',
+        },
+      },
+      {
+        id: 'rabbit-b',
+        type: 'custom',
+        position: { x: 528, y: 96 },
+        data: {
+          title: 'Rabbit lead B',
+          summary: 'A second promoted Rabbit Hole lead before synthesis finishes.',
+          origin: 'rabbit-hole',
+          rabbitState: 'promoted',
+          rabbitTool: 'timeline_context',
+        },
+      },
+    ]
+
+    const supportLayerState = layoutSupportingEvidenceNodes(nodes, [])
+
+    expect(supportLayerState.band).toBeNull()
+    expect(supportLayerState.nodes.every((node) => node.data?.evidenceRole === undefined)).toBe(true)
+    expect(supportLayerState.nodes.every((node) => node.data?.isSupportEvidenceCompact === undefined)).toBe(true)
+  })
+
+  it('places unconnected Rabbit Hole nodes into a supporting evidence band with visual tethers', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-support',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-primary-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-a',
+              title: 'Google Kairos Deal',
+              summary: 'Google and Kairos sign a nuclear power agreement.',
+              fullText: 'Google and Kairos sign a nuclear power agreement.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-primary-b',
+            type: 'custom',
+            position: { x: 528, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-b',
+              title: 'Microsoft Helion PPA',
+              summary: 'Microsoft and Helion announce a fusion power purchase agreement.',
+              fullText: 'Microsoft and Helion announce a fusion power purchase agreement.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-support-web',
+            type: 'custom',
+            position: { x: 960, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-support-web',
+              title: 'Google PPA Detail',
+              summary: 'Google Kairos agreement adds 500 MW for data centers.',
+              fullText: 'Google Kairos agreement adds 500 MW for data centers.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 2,
+            },
+          },
+          {
+            id: 'rabbit-support-timeline',
+            type: 'custom',
+            position: { x: 1296, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-support-timeline',
+              title: 'NRC Timeline Context',
+              summary: 'Timeline helper extracts nuclear permitting dates.',
+              fullText: 'Timeline helper extracts nuclear permitting dates.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'timeline_context',
+              rabbitPass: 2,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-primary-a-rabbit-primary-b',
+            source: 'rabbit-primary-a',
+            target: 'rabbit-primary-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'NUCLEAR_PPA' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-support')
+
+    expect(await screen.findByText('Supporting Evidence')).toBeInTheDocument()
+    expect(screen.getByText('Web 1')).toBeInTheDocument()
+    expect(screen.getByText('Timeline 1')).toBeInTheDocument()
+    expect(screen.getAllByText('evidence role primary')).toHaveLength(2)
+    expect(screen.getAllByText('evidence role supporting')).toHaveLength(2)
+    expect(screen.getAllByText('compact support')).toHaveLength(2)
+
+    fireEvent.mouseEnter(screen.getByTestId('mock-node-rabbit-support-web'))
+
+    expect(await screen.findByTestId('support-evidence-tether-overlay')).toBeInTheDocument()
+    expect(screen.getAllByTestId('support-evidence-tether-line').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('mock-node-rabbit-support-web')).toHaveTextContent('support tether source')
+    expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('support tether target')
+    expect(screen.getByTestId('board-navigator-support-tethers')).toBeInTheDocument()
+    expect(screen.getAllByTestId('board-navigator-support-tether').length).toBeGreaterThan(0)
+    expect(document.querySelector('[data-node-id="rabbit-support-web"]')).toHaveClass('forensic-board-navigator-node-support-source')
+    expect(document.querySelector('[data-node-id="rabbit-primary-a"]')).toHaveClass('forensic-board-navigator-node-support-target')
+
+    const renderedNodes = () => (lastReactFlowProps?.nodes || []) as Array<{ id: string; zIndex?: number; style?: { width?: number; height?: number } }>
+    expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.zIndex).toBe(600)
+    expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.style).toEqual(expect.objectContaining({ width: 288, height: 192 }))
+
+    act(() => {
+      const onNodesChange = lastReactFlowProps?.onNodesChange as ((changes: Array<Record<string, unknown>>) => void) | undefined
+      onNodesChange?.([
+        {
+          id: 'rabbit-support-web',
+          type: 'dimensions',
+          dimensions: { width: 528, height: 288 },
+          resizing: false,
+        },
+      ])
+    })
+
+    await waitFor(() => {
+      expect(renderedNodes().find((node) => node.id === 'rabbit-support-web')?.style).toEqual(expect.objectContaining({ width: 288, height: 192 }))
+    })
+  })
+
+  it('does not replay stale relationship recovery after restoring a board with visible edges', async () => {
+    const backendFlag = globalThis as typeof globalThis & {
+      __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean
+    }
+    backendFlag.__GORANTULA_BACKEND_PERSISTENCE_TEST__ = true
+
+    const restoredBoard = {
+      mode: 'strict-grid',
+      nodes: [
+        {
+          id: 'rabbit-primary-a',
+          type: 'custom',
+          position: { x: 96, y: 96 },
+          style: { width: 336, height: 216 },
+          data: {
+            id: 'rabbit-primary-a',
+            title: 'Rabbit primary A',
+            summary: 'A restored Rabbit Hole lead.',
+            fullText: 'A restored Rabbit Hole lead.',
+            origin: 'rabbit-hole',
+            rabbitTool: 'web_search',
+          },
+        },
+        {
+          id: 'rabbit-primary-b',
+          type: 'custom',
+          position: { x: 528, y: 96 },
+          style: { width: 336, height: 216 },
+          data: {
+            id: 'rabbit-primary-b',
+            title: 'Rabbit primary B',
+            summary: 'A second restored Rabbit Hole lead.',
+            fullText: 'A second restored Rabbit Hole lead.',
+            origin: 'rabbit-hole',
+            rabbitTool: 'timeline_context',
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'edge-rabbit-a-b',
+          source: 'rabbit-primary-a',
+          target: 'rabbit-primary-b',
+          sourceHandle: 'port-right-0',
+          targetHandle: 'port-left-0',
+          type: 'customEdge',
+          data: {
+            generatedBy: 'connectTheDots',
+            tag: 'RESTORED_LINK',
+            routePoints: [
+              { x: 432, y: 160 },
+              { x: 528, y: 160 },
+            ],
+          },
+        },
+      ],
+    }
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/board')) {
+        return { ok: true, json: async () => restoredBoard } as Response
+      }
+      if (url.endsWith('/relationships')) {
+        return {
+          ok: true,
+          json: async () => ({
+            vaultId: 'inv-restored-rabbit',
+            connections: [{ source: 'missing-node', target: 'rabbit-primary-a', tag: 'STALE' }],
+          }),
+        } as Response
+      }
+      return { ok: true, json: async () => ({}) } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      renderBoard('inv-restored-rabbit')
+
+      expect(await screen.findByText('Rabbit primary A')).toBeInTheDocument()
+
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      })
+
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/relationships'))).toBe(false)
+    } finally {
+      delete backendFlag.__GORANTULA_BACKEND_PERSISTENCE_TEST__
+    }
+  })
+
+  it('keeps relationship label hover highlighting connected nodes on Rabbit Hole boards', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-hover',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-primary-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-a',
+              title: 'Huawei Alternative',
+              summary: 'Huawei offers an AI chip alternative.',
+              fullText: 'Huawei offers an AI chip alternative.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-primary-b',
+            type: 'custom',
+            position: { x: 528, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-primary-b',
+              title: 'Nvidia Controls',
+              summary: 'Nvidia export controls create demand for alternatives.',
+              fullText: 'Nvidia export controls create demand for alternatives.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-support',
+            type: 'custom',
+            position: { x: 960, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-support',
+              title: 'Support Trail',
+              summary: 'Supporting trail should not block relationship hover.',
+              fullText: 'Supporting trail should not block relationship hover.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'timeline_context',
+              rabbitPass: 2,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-primary-a-rabbit-primary-b-HUAWEI_AS_NVIDIA_ALTERNATIVE',
+            source: 'rabbit-primary-a',
+            target: 'rabbit-primary-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'HUAWEI_AS_NVIDIA_ALTERNATIVE', color: '#ff5b78' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-hover')
+
+    await waitFor(() => {
+      const edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: { onConnectionHover?: unknown } }>)[0]
+      expect(edge?.data?.onConnectionHover).toEqual(expect.any(Function))
+    })
+
+    const edge = ((lastReactFlowProps?.edges || []) as Array<{
+      id: string
+      source: string
+      target: string
+      data?: { onConnectionHover?: (payload: { source?: string; target?: string; color?: string; active?: boolean }) => void }
+    }>)[0]
+    expect(edge.source).toBe('rabbit-primary-a')
+    expect(edge.target).toBe('rabbit-primary-b')
+    expect(edge.data?.onConnectionHover).toEqual(expect.any(Function))
+
+    fireEvent.mouseEnter(screen.getByTestId(`mock-edge-label-${edge.id}`))
+
+    await waitFor(() => {
+      const renderedNodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(renderedNodes.find((node) => node.id === 'rabbit-primary-a')?.data?.isConnectionHighlighted).toBe(true)
+      expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent('connection highlight')
+      expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent('connection highlight')
+      expect(screen.getByTestId('mock-node-rabbit-primary-a')).toHaveTextContent(/connection color #[0-9a-f]{6}/i)
+      expect(screen.getByTestId('mock-node-rabbit-primary-b')).toHaveTextContent(/connection color #[0-9a-f]{6}/i)
+    })
+  })
+
+  it('recenters restored Rabbit Hole boards after strict-grid support layout settles', async () => {
+    localStorage.setItem(
+      'inv_data_inv-rabbit-start',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'rabbit-center-a',
+            type: 'custom',
+            position: { x: 1800, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-center-a',
+              title: 'Rabbit Center A',
+              summary: 'Primary restored Rabbit Hole node.',
+              fullText: 'Primary restored Rabbit Hole node.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'rabbit-center-b',
+            type: 'custom',
+            position: { x: 2220, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-center-b',
+              title: 'Rabbit Center B',
+              summary: 'Connected restored Rabbit Hole node.',
+              fullText: 'Connected restored Rabbit Hole node.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'vault_search',
+              rabbitPass: 2,
+            },
+          },
+          {
+            id: 'rabbit-center-support',
+            type: 'custom',
+            position: { x: 2640, y: 1200 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'rabbit-center-support',
+              title: 'Rabbit Center Support',
+              summary: 'Unconnected support trail should not leave the viewport parked in empty space.',
+              fullText: 'Unconnected support trail should not leave the viewport parked in empty space.',
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'timeline_context',
+              rabbitPass: 3,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'e-rabbit-center-a-rabbit-center-b-RELATED',
+            source: 'rabbit-center-a',
+            target: 'rabbit-center-b',
+            type: 'customEdge',
+            data: { generatedBy: 'connectTheDots', tag: 'RELATED', color: '#8ee8ff' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('inv-rabbit-start')
+    const boardFlow = document.getElementById('detective-board-flow')
+    expect(boardFlow).toHaveClass('forensic-board-restore-prefit')
+
+    expect(await screen.findByText('Rabbit Center A')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(fitViewMock).toHaveBeenCalledWith({
+        duration: 0,
+        padding: 0.16,
+        minZoom: 0.72,
+        maxZoom: 1,
+      })
+    })
+    await waitFor(() => {
+      expect(boardFlow).not.toHaveClass('forensic-board-restore-prefit')
+    })
+  })
+
+  it('promotes expanded nodes above neighboring cards and restores normal stacking on collapse', async () => {
+    localStorage.setItem(
+      'inv_data_inv-expand-z',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-front-test-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'node-front-test-a',
+              title: 'Expanded Front Test',
+              summary: 'Short visible text',
+              fullText: 'Long expanded text '.repeat(80),
+              origin: 'rabbit-hole',
+              rabbitState: 'promoted',
+              rabbitTool: 'web_search',
+              rabbitPass: 1,
+            },
+          },
+          {
+            id: 'node-front-test-b',
+            type: 'custom',
+            position: { x: 360, y: 168 },
+            style: { width: 336, height: 216 },
+            data: {
+              id: 'node-front-test-b',
+              title: 'Neighbor Card',
+              summary: 'A nearby card that should sit behind the expanded node.',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-expand-z')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-front-test-a')).toBe(true)
+    })
+
+    const getNode = (id: string) =>
+      ((lastReactFlowProps?.nodes || []) as Array<{ id: string; zIndex?: number; data?: { onExpand?: (nodeId: string, expanded: boolean) => void; expanded?: boolean } }>).find((node) => node.id === id)
+
+    const baseZ = getNode('node-front-test-b')?.zIndex || 0
+
+    act(() => {
+      getNode('node-front-test-a')?.data?.onExpand?.('node-front-test-a', true)
+    })
+
+    await waitFor(() => {
+      expect(getNode('node-front-test-a')?.data?.expanded).toBe(true)
+      expect(getNode('node-front-test-a')?.zIndex || 0).toBeGreaterThan(baseZ)
+    })
+
+    act(() => {
+      getNode('node-front-test-a')?.data?.onExpand?.('node-front-test-a', false)
+    })
+
+    await waitFor(() => {
+      expect(getNode('node-front-test-a')?.data?.expanded).toBe(false)
+      expect(getNode('node-front-test-a')?.zIndex).toBe(baseZ)
+    })
+  })
+
+  it('opens a structured dossier brief with source material collapsed by default', async () => {
+    const user = userEvent.setup()
+
+    localStorage.setItem(
+      'inv_data_inv-dossier-reader',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          {
+            id: 'node-dossier-a',
+            type: 'custom',
+            position: { x: 96, y: 96 },
+            style: { width: 360, height: 240 },
+            data: {
+              id: 'node-dossier-a',
+              title: 'Data Center Water Filing',
+              summary: 'A regulator filing links [ORG:Fermi] data center cooling demand near [LOC:Amarillo] to new water restrictions.',
+              fullText: [
+                'Rabbit tool: vault_search',
+                'Query: data center water filing',
+                'Rationale: Search older vault context for matching water and grid pressure.',
+                '',
+                'INTELLIGENCE SUMMARY',
+                '',
+                'A regulator filing links [ORG:Fermi] data center cooling demand near [LOC:Amarillo] to new water restrictions.',
+                '',
+                'Source: https://example.com/dossier-water-filing',
+                '',
+                'The filing states that [PERSON:Toby Neugebauer] and higher compute load could change peak withdrawal limits during heat events.',
+                '',
+                '## Strategic Implications',
+                '',
+                'The filing reframes water demand as a public reliability problem.',
+                '',
+                '| Finding | Source | Date |',
+                '|---|---|---|',
+                '| [ORG:NERC] issued a reliability alert tied to peak load. | vault://inv-dossier-reader/node-dossier-a | [DATE:2026-05-27] |',
+                '',
+                '... | Amazon | Agility Robotics / Fauna Robotics | Acquisition signals dual industrial + consumer strategy. |',
+                '[Excerpt continues]',
+                '',
+                '### **4. Key Challenges and Vulnerabilities**',
+                '',
+                '- **Meta** - Water permit overlap remains unresolved.',
+                '- **NERC** - Alert timing creates a reliability pressure point.',
+                '',
+                '---',
+                '',
+                '* **Silicon Valley Blacklisting:** The policy note should render as a clean list item, not raw markdown.',
+              ].join('\n'),
+              sourceURL: 'vault://abdomen_vault/inv-old/dossier-water-filing.md',
+              origin: 'rabbit-hole',
+              rabbitTool: 'vault_search',
+              rabbitPass: 2,
+              evidenceRole: 'primary',
+            },
+          },
+        ],
+        edges: [],
+      }),
+    )
+
+    renderBoard('inv-dossier-reader')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-dossier-a')).toBe(true)
+    })
+
+    const restoredNode = ((lastReactFlowProps?.nodes || []) as Array<{
+      id: string
+      data?: { onReadFull?: () => void }
+    }>).find((node) => node.id === 'node-dossier-a')
+
+    act(() => {
+      restoredNode?.data?.onReadFull?.()
+    })
+
+    const overlay = screen.getByTestId('node-dossier-overlay')
+    const dossier = within(overlay)
+
+    expect(overlay).toHaveClass('z-[120]')
+    expect(screen.getByRole('dialog', { name: /data center water filing/i })).toBeInTheDocument()
+    expect(dossier.getByText('Intel Brief')).toBeInTheDocument()
+    expect(dossier.getByText('Key Signals')).toBeInTheDocument()
+    expect(dossier.getByText('Based on a vault source excerpt')).toBeInTheDocument()
+    expect(dossier.getByText('Rabbit Hole')).toBeInTheDocument()
+    expect(dossier.getByText('Vault Search')).toBeInTheDocument()
+    expect(dossier.getAllByText('Fermi').some((element) => element.classList.contains('forensic-dossier-entity-chip'))).toBe(true)
+    expect(dossier.getAllByText('Toby Neugebauer').some((element) => element.classList.contains('forensic-dossier-entity-person'))).toBe(true)
+    expect(dossier.getAllByText('Amarillo').some((element) => element.classList.contains('forensic-dossier-entity-loc'))).toBe(true)
+    expect(dossier.getAllByText('Meta').some((element) => element.classList.contains('forensic-dossier-strong'))).toBe(true)
+    expect(dossier.queryByText('Strategic Implications')).not.toBeInTheDocument()
+    expect(dossier.queryByText('Finding')).not.toBeInTheDocument()
+    expect(dossier.queryByText('Excerpt continues')).not.toBeInTheDocument()
+    expect(dossier.queryByText(/\[ORG:Fermi]/i)).not.toBeInTheDocument()
+    expect(dossier.queryByText(/\[PERSON:Toby Neugebauer]/i)).not.toBeInTheDocument()
+    expect(dossier.queryByText(/\*\*/)).not.toBeInTheDocument()
+    expect(dossier.queryByText(/###/)).not.toBeInTheDocument()
+    expect(dossier.queryByText('---')).not.toBeInTheDocument()
+    expect(dossier.getAllByRole('link', { name: /https:\/\/example\.com\/dossier-water-filing/i }).length).toBeGreaterThan(0)
+    const vaultReference = dossier.getByRole('button', { name: /vault:\/\/abdomen_vault\/inv-old\/dossier-water-filing\.md/i })
+    expect(vaultReference).toHaveClass('forensic-dossier-source-link-internal')
+    expect(dossier.queryByText('INTEL_REPORT_FULL')).not.toBeInTheDocument()
+
+    await user.click(vaultReference)
+
+    expect(dossier.getByText('Strategic Implications')).toHaveClass('forensic-dossier-body-heading')
+    expect(dossier.getByText('4. Key Challenges and Vulnerabilities')).toHaveClass('forensic-dossier-body-subheading')
+    expect(dossier.getByText('Finding').closest('table')).toHaveClass('forensic-dossier-body-table')
+    expect(dossier.getByText('Amazon').closest('td')).toBeInTheDocument()
+    expect(dossier.getAllByText('Excerpt continues').some((element) => element.classList.contains('forensic-dossier-excerpt-marker'))).toBe(true)
+    expect(dossier.getAllByText('Excerpt begins mid-source').some((element) => element.classList.contains('forensic-dossier-excerpt-marker'))).toBe(true)
+    expect(dossier.getAllByText('NERC').some((element) => element.classList.contains('forensic-dossier-entity-org'))).toBe(true)
+    expect(dossier.queryByRole('link', { name: /vault:\/\/inv-dossier-reader\/node-dossier-a/i })).not.toBeInTheDocument()
+    expect(dossier.getAllByText('vault://inv-dossier-reader/node-dossier-a').some((element) => element.classList.contains('forensic-dossier-internal-ref'))).toBe(true)
+    expect(dossier.getByText(/Water permit overlap remains unresolved/i).closest('ul')).toHaveClass('forensic-dossier-body-list')
   })
 
   it('restores the minimized legend when the saved preference is hidden', () => {
@@ -487,6 +1375,28 @@ describe('DetectiveBoard relationship legend', () => {
     expect(screen.getByRole('button', { name: /board controls/i })).toBeInTheDocument()
   })
 
+  it('colors Rabbit Hole supporting evidence differently in the minimap', () => {
+    const normalColor = getMiniMapNodeColor({
+      id: 'normal-node',
+      position: { x: 0, y: 0 },
+      data: { title: 'Normal', summary: 'Normal evidence' },
+    })
+    const supportColor = getMiniMapNodeColor({
+      id: 'rabbit-support',
+      position: { x: 0, y: 0 },
+      data: {
+        title: 'Support',
+        origin: 'rabbit-hole',
+        evidenceRole: 'supporting',
+        supportCluster: 'web',
+      },
+    })
+
+    expect(normalColor).toBe('#00f3ff')
+    expect(supportColor).toBe('#ff5b78')
+    expect(supportColor).not.toBe(normalColor)
+  })
+
   it('lets the append-search field use spare toolbar width without collapsing controls', () => {
     renderBoard()
 
@@ -595,6 +1505,117 @@ describe('DetectiveBoard relationship legend', () => {
       expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-a')).toBe(true)
     })
     expect(lastReactFlowProps?.snapToGrid).toBe(false)
+  })
+
+  it('repairs restored strict-grid routes that are missing endpoint geometry', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+          { id: 'node-b', type: 'custom', position: { x: 640, y: 320 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-STALE',
+            source: 'node-a',
+            target: 'node-b',
+            sourceHandle: 'port-right-0',
+            targetHandle: 'port-left-0',
+            type: 'customEdge',
+            label: 'STALE',
+            data: {
+              generatedBy: 'connectTheDots',
+              tag: 'STALE',
+              routePoints: [
+                { x: -320, y: -240 },
+                { x: -160, y: -240 },
+              ],
+            },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      const edge = ((lastReactFlowProps?.edges || []) as Array<{ id: string; data?: Record<string, unknown> }>).find((candidate) => candidate.id === 'e-node-a-node-b-STALE')
+      expect(edge?.data?.routeSourcePoint).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }))
+      expect(edge?.data?.routeTargetPoint).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }))
+      expect(edge?.data?.routePoints).not.toEqual([
+        { x: -320, y: -240 },
+        { x: -160, y: -240 },
+      ])
+    })
+  })
+
+  it('uses cheap strict-grid relationship previews until node drag stops', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+          { id: 'node-b', type: 'custom', position: { x: 480, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Existing line' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.edges || []) as Array<{ id: string }>).some((edge) => edge.id === 'e-node-a-node-b-RELATED')).toBe(true)
+    })
+
+    const initialEdge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+    const initialRoutePoints = JSON.stringify(initialEdge.data?.routePoints)
+    const initialRouteSourcePoint = JSON.stringify(initialEdge.data?.routeSourcePoint)
+    expect(initialEdge.data).toHaveProperty('routePoints')
+
+    const onNodeDragStart = lastReactFlowProps?.onNodeDragStart as (() => void) | undefined
+    const onNodesChange = lastReactFlowProps?.onNodesChange as ((changes: Array<Record<string, unknown>>) => void) | undefined
+    const onNodeDragStop = lastReactFlowProps?.onNodeDragStop as (() => void) | undefined
+
+    act(() => {
+      onNodeDragStart?.()
+      onNodesChange?.([
+        { type: 'position', id: 'node-a', position: { x: 72, y: 24 }, dragging: true },
+      ])
+    })
+
+    await act(async () => {
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+
+    let edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+    expect(JSON.stringify(edge.data?.routePoints)).toBe(initialRoutePoints)
+    expect(JSON.stringify(edge.data?.routeSourcePoint)).toBe(initialRouteSourcePoint)
+    expect(edge.data?.isDragPreview).toBe(true)
+    expect(JSON.stringify(edge.data?.dragPreviewSourcePoint)).not.toBe(initialRouteSourcePoint)
+    expect(edge.data?.dragPreviewTargetPoint).toEqual(edge.data?.routeTargetPoint)
+
+    act(() => {
+      onNodeDragStop?.()
+    })
+
+    await waitFor(() => {
+      edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+      expect(JSON.stringify(edge.data?.routeSourcePoint)).not.toBe(initialRouteSourcePoint)
+      expect(edge.data).not.toHaveProperty('isDragPreview')
+      expect(edge.data).not.toHaveProperty('dragPreviewSourcePoint')
+      expect(edge.data).not.toHaveProperty('dragPreviewTargetPoint')
+    })
   })
 
   it('keeps React Flow node and edge type objects stable across board renders', () => {
@@ -2510,6 +3531,53 @@ describe('DetectiveBoard relationship legend', () => {
         'PUBLIC_PRESSURE',
       ]))
       expect(edges.every((edge) => edge.data?.isConnectionRevealing === true)).toBe(true)
+      expect(socket.sentMessages).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('plays the Rabbit Hole trail QA demo with live promotion and no backend messages', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+
+    try {
+      renderBoard('investigation-1', socket as unknown as WebSocket)
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent(BROWSER_QA_RABBIT_HOLE_DEMO_EVENT, {
+          detail: { investigationId: 'investigation-1', requestId: 'qa-rabbit-test' },
+        }))
+      })
+
+      let nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+        'qa-rabbit-web-descent',
+        'qa-rabbit-vault-echo',
+        'qa-rabbit-timeline-rift',
+      ]))
+      expect(nodes.every((node) => node.data?.origin === 'rabbit-hole')).toBe(true)
+      expect(nodes.every((node) => node.data?.rabbitState === 'provisional')).toBe(true)
+      expect(nodes.map((node) => node.data?.rabbitTool)).toEqual(expect.arrayContaining([
+        'web_search',
+        'vault_search',
+        'timeline_context',
+      ]))
+      expect(screen.getAllByText('rabbit provisional')).toHaveLength(3)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500)
+      })
+
+      nodes = (lastReactFlowProps?.nodes || []) as Array<{ id: string; data?: Record<string, unknown> }>
+      expect(nodes.every((node) => node.data?.rabbitState === 'promoted')).toBe(true)
+      expect(screen.getAllByText('rabbit promoted')).toHaveLength(3)
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ label?: string; data?: Record<string, unknown> }>
+      expect(edges.map((edge) => edge.label)).toEqual(expect.arrayContaining([
+        'Hidden Connection',
+        'Timeline Lead',
+      ]))
+      expect(edges.every((edge) => edge.data?.generatedBy === 'qaRabbitHole')).toBe(true)
       expect(socket.sentMessages).toEqual([])
     } finally {
       vi.useRealTimers()
