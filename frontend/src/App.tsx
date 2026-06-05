@@ -2871,7 +2871,7 @@ function App() {
       {/* Top Header */}
       <header className={headerClassName}>
         <h1 className={brandClassName}>
-          GORANTULA <span className={`ml-2 text-sm not-italic font-normal ${isForensicWorkspaceActive ? 'forensic-app-brand-meta' : 'text-white opacity-50'}`}>v2.0 // ARCHITECT</span>
+          GORANTULA
         </h1>
 
         <div className="forensic-app-header-notice-slot">
