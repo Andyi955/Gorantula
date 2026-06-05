@@ -174,6 +174,15 @@ npm.cmd run test
 npm.cmd run build
 ```
 
+Smoke tests:
+
+```powershell
+cd frontend
+npm.cmd run test:smoke
+```
+
+The Playwright smoke suite runs Vite in test mode with a fake browser WebSocket and blocks non-local network requests, so it does not require the Go backend, API keys, Brave Search, or model calls. It covers normal web board creation, Rabbit Hole guided continuation, Rabbit Hole max promotion/support evidence, normal synthesis theming, board restore after refresh, backend error recovery, and Rabbit Hole-to-Web mode isolation.
+
 On Windows, the first backend start may trigger a Windows Defender Firewall prompt. Allowing private-network access is expected for local development.
 
 ## Workflow
