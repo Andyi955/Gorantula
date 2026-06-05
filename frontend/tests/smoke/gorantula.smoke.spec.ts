@@ -1,0 +1,380 @@
+import { expect, test } from '@playwright/test'
+import {
+  createSmokeNode,
+  emitBackendMessage,
+  expectNoExternalNetworkRequests,
+  openSmokeApp,
+  outboundTypeCount,
+  switchToBoard,
+  waitForBoardPersistence,
+  waitForOutboundMessage,
+} from './helpers'
+
+const crawlConsole = (page: import('@playwright/test').Page) =>
+  page.getByTestId('spider-crawl-console')
+
+const runWebInvestigation = async (page: import('@playwright/test').Page, topic = 'smoke grid reliability') => {
+  const console = crawlConsole(page)
+  const previousCount = await outboundTypeCount(page, 'CRAWL')
+  await console.getByRole('button', { name: 'WEB' }).click()
+  await console.getByPlaceholder(/enter a topic or url to crawl the web/i).fill(topic)
+  await console.getByRole('button', { name: /^execute$/i }).click()
+  return waitForOutboundMessage(page, 'CRAWL', previousCount)
+}
+
+const runRabbitHoleInvestigation = async (
+  page: import('@playwright/test').Page,
+  descentMode: 'guided' | 'max',
+) => {
+  const console = crawlConsole(page)
+  const previousCount = await outboundTypeCount(page, 'CRAWL_RABBIT_HOLE')
+  await console.getByRole('button', { name: 'RABBIT HOLE' }).click()
+  if (descentMode === 'max') {
+    await console.getByRole('button', { name: /max descent/i }).click()
+  } else {
+    await console.getByRole('button', { name: /^guided$/i }).click()
+  }
+  await console.getByPlaceholder(/enter a topic for rabbit hole mode/i).fill(`smoke rabbit ${descentMode}`)
+  await console.getByRole('button', { name: /^execute$/i }).click()
+  return waitForOutboundMessage(page, 'CRAWL_RABBIT_HOLE', previousCount)
+}
+
+const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: string, runId?: string) => {
+  await emitBackendMessage(page, {
+    type: 'MEMORY_NODE_GATHERED',
+    payload: {
+      vaultId,
+      node: createSmokeNode(
+        'smoke-grid-load',
+        'Smoke Grid Load Spike',
+        'A utility report flags a smoke-test load spike near clustered compute demand.',
+      ),
+    },
+  })
+  await expect(page.getByText('Smoke Grid Load Spike')).toBeVisible()
+
+  await emitBackendMessage(page, {
+    type: 'MEMORY_NODE_GATHERED',
+    payload: {
+      vaultId,
+      node: createSmokeNode(
+        'smoke-cooling-alert',
+        'Smoke Cooling Alert',
+        'A facilities note ties emergency cooling draw to the same smoke-test substation corridor.',
+      ),
+    },
+  })
+  await expect(page.getByText('Smoke Cooling Alert')).toBeVisible()
+
+  await emitBackendMessage(page, {
+    type: 'CONNECTIONS_FOUND',
+    payload: {
+      vaultId,
+      runId,
+      connections: [
+        {
+          source: 'smoke-grid-load',
+          target: 'smoke-cooling-alert',
+          tag: 'INFRASTRUCTURE_STRESS',
+          reasoning: 'The load spike and cooling alert point to the same infrastructure stress pattern.',
+          confidence: 0.86,
+        },
+      ],
+    },
+  })
+}
+
+test.describe('Gorantula smoke flows', () => {
+  test.beforeEach(async ({ page }) => {
+    await openSmokeApp(page)
+  })
+
+  test.afterEach(async ({ page }) => {
+    expectNoExternalNetworkRequests(page)
+  })
+
+  test('normal web investigation creates board nodes and relationships', async ({ page }) => {
+    const crawl = await runWebInvestigation(page)
+    expect(crawl.payload).toBe('smoke grid reliability')
+
+    const vaultId = String(crawl.vaultId)
+    await switchToBoard(page)
+    await emitNormalBoard(page, vaultId, String(crawl.runId || ''))
+
+    await expect(page.getByText('Smoke Grid Load Spike')).toBeVisible()
+    await expect(page.getByText('Smoke Cooling Alert')).toBeVisible()
+    await expect(page.locator('[data-testid^="edge-label-"]').filter({ hasText: /pressure point/i })).toBeVisible()
+  })
+
+  test('Rabbit Hole Guided pass continues with prior findings', async ({ page }) => {
+    const crawl = await runRabbitHoleInvestigation(page, 'guided')
+    expect(crawl.descentMode).toBe('guided')
+
+    await emitBackendMessage(page, {
+      type: 'RABBIT_HOLE_GATEKEEPER',
+      payload: {
+        runId: crawl.runId,
+        vaultId: crawl.vaultId,
+        pass: 1,
+        descentMode: 'guided',
+        prompt: crawl.payload,
+        result: 'Rabbit Hole pass one synthesis.',
+        decision: {
+          continue: true,
+          reason: 'Two credible open angles remain.',
+          noveltyScore: 0.81,
+          suggestedQueries: ['smoke query continuation'],
+        },
+      },
+    })
+
+    const gatekeeper = page.getByTestId('rabbit-hole-gatekeeper-panel')
+    await expect(gatekeeper).toContainText('Gatekeeper')
+    await expect(gatekeeper).toContainText('Pass 1')
+    await expect(gatekeeper).toContainText('Continue recommended')
+
+    const previousCount = await outboundTypeCount(page, 'CRAWL_RABBIT_HOLE')
+    await gatekeeper.getByRole('button', { name: /continue rabbit hole descent/i }).click()
+    const continuation = await waitForOutboundMessage(page, 'CRAWL_RABBIT_HOLE', previousCount)
+
+    expect(continuation.descentMode).toBe('guided')
+    expect(continuation.append).toBe(true)
+    expect(continuation.continuationPass).toBe(2)
+    expect(continuation.priorFindings).toEqual(['Pass 1 summary:\nRabbit Hole pass one synthesis.'])
+  })
+
+  test('Rabbit Hole Max promotes evidence and moves unconnected leads into support', async ({ page }) => {
+    const crawl = await runRabbitHoleInvestigation(page, 'max')
+    expect(crawl.descentMode).toBe('max')
+    const vaultId = String(crawl.vaultId)
+
+    await switchToBoard(page)
+    await emitBackendMessage(page, {
+      type: 'MEMORY_NODE_GATHERED',
+      payload: {
+        vaultId,
+        node: createSmokeNode(
+          'smoke-rabbit-web',
+          'Smoke Rabbit Web Lead',
+          'A Rabbit Hole web lead follows a live smoke-test evidence trail.',
+          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'web_search', rabbitPass: 1 },
+        ),
+      },
+    })
+    await emitBackendMessage(page, {
+      type: 'MEMORY_NODE_GATHERED',
+      payload: {
+        vaultId,
+        node: createSmokeNode(
+          'smoke-rabbit-vault',
+          'Smoke Rabbit Vault Echo',
+          'A Rabbit Hole vault echo finds a related older smoke-test case.',
+          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'vault_search', rabbitPass: 1 },
+        ),
+      },
+    })
+    await emitBackendMessage(page, {
+      type: 'MEMORY_NODE_GATHERED',
+      payload: {
+        vaultId,
+        node: createSmokeNode(
+          'smoke-rabbit-support',
+          'Smoke Rabbit Support Evidence',
+          'A Rabbit Hole support lead remains useful but unconnected after relationship synthesis.',
+          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'timeline_context', rabbitPass: 1 },
+        ),
+      },
+    })
+
+    await expect(page.getByText('Smoke Rabbit Web Lead')).toBeVisible()
+    await expect(page.getByText('Smoke Rabbit Vault Echo')).toBeVisible()
+
+    await emitBackendMessage(page, {
+      type: 'RABBIT_HOLE_NODE_UPDATE',
+      payload: {
+        vaultId,
+        nodeIds: ['smoke-rabbit-web', 'smoke-rabbit-vault', 'smoke-rabbit-support'],
+        rabbitState: 'promoted',
+      },
+    })
+    await emitBackendMessage(page, {
+      type: 'CONNECTIONS_FOUND',
+      payload: {
+        vaultId,
+        runId: crawl.runId,
+        connections: [
+          {
+            source: 'smoke-rabbit-web',
+            target: 'smoke-rabbit-vault',
+            tag: 'HIDDEN_CONNECTION',
+            reasoning: 'The web lead and vault echo share the same smoke-test trail.',
+            confidence: 0.82,
+          },
+        ],
+      },
+    })
+
+    await expect(page.locator('[data-testid^="edge-label-"]').filter({ hasText: /hidden connection/i })).toBeVisible()
+    await expect(page.getByTestId('supporting-evidence-layer')).toBeVisible()
+    await expect(page.getByTestId('supporting-evidence-layer')).toContainText(/Supporting Evidence\s*1/)
+    await expect(page.getByTestId('supporting-evidence-layer')).toContainText(/Timeline\s*1/)
+  })
+
+  test('normal synthesis exposes theory state without Rabbit Hole theme leakage', async ({ page }) => {
+    const crawl = await runWebInvestigation(page, 'smoke normal synthesis')
+    const vaultId = String(crawl.vaultId)
+
+    await switchToBoard(page)
+    await emitNormalBoard(page, vaultId, String(crawl.runId || ''))
+    await emitBackendMessage(page, {
+      type: 'SYNTHESIS_COMPLETE',
+      payload: {
+        vaultId,
+        runId: crawl.runId,
+        result: '# Grand Unified Theory\n\nNormal smoke unified theory stays in the standard investigation theme.',
+        append: false,
+      },
+    })
+    await expect(page.getByTestId('app-shell')).not.toHaveClass(/forensic-rabbit-context/)
+    await expect(page.getByRole('button', { name: /grand unified theory ready/i })).toBeVisible()
+  })
+
+  test('board restore after refresh keeps nodes and relationship visible inside the viewport', async ({ page }) => {
+    const crawl = await runWebInvestigation(page, 'smoke restore board')
+    const vaultId = String(crawl.vaultId)
+
+    await switchToBoard(page)
+    await emitNormalBoard(page, vaultId, String(crawl.runId || ''))
+    await expect(page.locator('[data-testid^="edge-label-"]').filter({ hasText: /pressure point/i })).toBeVisible()
+    await waitForBoardPersistence(page, vaultId, {
+      nodeIds: ['smoke-grid-load', 'smoke-cooling-alert'],
+      edgeCount: 1,
+    })
+
+    await page.reload()
+    await expect(page.getByTestId('app-shell')).toBeVisible()
+    await page.waitForFunction(() => {
+      const backend = (window as Window & {
+        __gorantulaSmokeBackend?: { openSocketCount: number }
+      }).__gorantulaSmokeBackend
+      return Boolean(backend && backend.openSocketCount > 0)
+    })
+    await switchToBoard(page)
+
+    await expect(page.getByTestId('board-restore-loading')).toBeHidden()
+    await expect(page.getByText('Smoke Grid Load Spike')).toBeVisible()
+    await expect(page.getByText('Smoke Cooling Alert')).toBeVisible()
+    await expect(page.locator('[data-testid^="edge-label-"]').filter({ hasText: /pressure point/i })).toBeVisible()
+
+    const boardBox = await page.locator('#detective-board-flow').boundingBox()
+    expect(boardBox).not.toBeNull()
+    const boardBounds = {
+      left: boardBox!.x,
+      right: boardBox!.x + boardBox!.width,
+      top: boardBox!.y,
+      bottom: boardBox!.y + boardBox!.height,
+    }
+    const nodeBoxes = await page.getByTestId('custom-node-shell').evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const rect = node.getBoundingClientRect()
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        }
+      }),
+    )
+
+    expect(nodeBoxes.length).toBeGreaterThanOrEqual(2)
+    for (const nodeBox of nodeBoxes.slice(0, 2)) {
+      expect(nodeBox.width).toBeGreaterThan(0)
+      expect(nodeBox.height).toBeGreaterThan(0)
+      expect(nodeBox.right).toBeGreaterThan(boardBounds.left)
+      expect(nodeBox.left).toBeLessThan(boardBounds.right)
+      expect(nodeBox.bottom).toBeGreaterThan(boardBounds.top)
+      expect(nodeBox.top).toBeLessThan(boardBounds.bottom)
+    }
+  })
+
+  test('backend error clears the active run and allows a new web investigation', async ({ page }) => {
+    const crawl = await runWebInvestigation(page, 'smoke backend error recovery')
+
+    await emitBackendMessage(page, {
+      type: 'PIPELINE_PROGRESS',
+      payload: {
+        runId: crawl.runId,
+        vaultId: crawl.vaultId,
+        mode: 'web',
+        stepId: 'crawl',
+        stepLabel: 'Discovery crawl',
+        status: 'running',
+        completedSteps: 1,
+        totalSteps: 4,
+        detail: 'Smoke backend crawl running.',
+      },
+    })
+
+    const pipelineChip = page.getByTestId('pipeline-progress-chip')
+    await expect(pipelineChip).toBeVisible()
+    await expect(pipelineChip).toContainText('Discovery crawl')
+    await expect(page.getByRole('button', { name: /stop current investigation/i })).toBeVisible()
+
+    await emitBackendMessage(page, {
+      type: 'PIPELINE_PROGRESS',
+      payload: {
+        runId: crawl.runId,
+        vaultId: crawl.vaultId,
+        mode: 'web',
+        stepId: 'crawl',
+        stepLabel: 'Discovery crawl',
+        status: 'error',
+        completedSteps: 1,
+        totalSteps: 4,
+        error: 'Smoke backend timeout',
+        steps: [
+          {
+            id: 'crawl',
+            label: 'Discovery crawl',
+            status: 'error',
+            error: 'Smoke backend timeout',
+          },
+        ],
+      },
+    })
+
+    await expect(pipelineChip).toHaveClass(/forensic-pipeline-chip-error/)
+    await expect(page.getByRole('button', { name: /stop current investigation/i })).toBeHidden()
+
+    const recovery = await runWebInvestigation(page, 'smoke recovery second pass')
+    expect(recovery.payload).toBe('smoke recovery second pass')
+    expect(recovery.type).toBe('CRAWL')
+    expect(recovery.runId).not.toBe(crawl.runId)
+  })
+
+  test('switching from Rabbit Hole back to Web sends normal crawl without Rabbit UI state', async ({ page }) => {
+    const rabbit = await runRabbitHoleInvestigation(page, 'guided')
+    expect(rabbit.descentMode).toBe('guided')
+    await expect(page.getByTestId('app-shell')).toHaveClass(/forensic-rabbit-context/)
+    await expect(page.getByTestId('rabbit-hole-entrance')).toBeVisible()
+
+    const rabbitCount = await outboundTypeCount(page, 'CRAWL_RABBIT_HOLE')
+    const web = await runWebInvestigation(page, 'smoke web after rabbit hole')
+
+    expect(web.type).toBe('CRAWL')
+    expect(web.payload).toBe('smoke web after rabbit hole')
+    expect(web.vaultId).not.toBe(rabbit.vaultId)
+    expect('descentMode' in web).toBe(false)
+    expect('continuationPass' in web).toBe(false)
+    expect(await outboundTypeCount(page, 'CRAWL_RABBIT_HOLE')).toBe(rabbitCount)
+
+    await expect(page.getByTestId('app-shell')).not.toHaveClass(/forensic-rabbit-context/)
+    await expect(page.getByTestId('rabbit-hole-entrance')).toBeHidden()
+    await expect(page.getByRole('button', { name: /^guided$/i })).toBeHidden()
+    await expect(page.getByRole('button', { name: /max descent/i })).toBeHidden()
+    await expect(page.getByTestId('rabbit-hole-gatekeeper-panel')).toBeHidden()
+  })
+
+})

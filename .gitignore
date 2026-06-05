@@ -20,6 +20,8 @@ Thumbs.db
 node_modules/
 dist/
 build/
+frontend/playwright-report/
+frontend/test-results/
 
 # Project Specific
 .superpowers/
