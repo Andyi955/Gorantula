@@ -152,10 +152,25 @@ const normalizeTheoryMarkdown = (report: string) => {
     return normalizedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 };
 
+const splitPlainTheoryReport = (report: string) => report
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
 const splitTheoryReport = (report: string) => normalizeTheoryMarkdown(report)
     .split(/\n{2,}/)
     .map((section) => section.trim())
     .filter(Boolean);
+
+const isRabbitHoleTheoryInvestigation = (investigation?: { topic?: string; displayTopic?: string } | null) => {
+    if (!investigation) {
+        return false;
+    }
+
+    const topic = `${investigation.displayTopic || ''} ${investigation.topic || ''}`.trim().toLowerCase();
+    return topic.startsWith('rabbit hole:') || topic.includes(' rabbit hole:');
+};
 
 type TheoryTableData = {
     headers: string[];
@@ -477,6 +492,7 @@ interface SynthesisPanelProps {
     hasTheoryReady?: boolean;
     hasUnreadTheory?: boolean;
     onMarkTheoryRead?: () => void;
+    isRabbitHoleInvestigation?: boolean;
 }
 
 export default function SynthesisPanel({
@@ -491,6 +507,7 @@ export default function SynthesisPanel({
     hasTheoryReady = false,
     hasUnreadTheory = false,
     onMarkTheoryRead,
+    isRabbitHoleInvestigation: isRabbitHoleInvestigationOverride,
 }: SynthesisPanelProps) {
     const [alertsByInvestigation, setAlertsByInvestigation] = useState<AlertBuckets>({});
     const [qaAlertsByInvestigation, setQaAlertsByInvestigation] = useState<AlertBuckets>({});
@@ -506,7 +523,19 @@ export default function SynthesisPanel({
     const currentAlerts = currentInvestigationId ? (alertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const currentQaAlerts = currentInvestigationId ? (qaAlertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const trimmedTheoryReport = (currentTheoryReport || '').trim();
-    const theorySections = useMemo(() => splitTheoryReport(trimmedTheoryReport), [trimmedTheoryReport]);
+    const selectedInvestigation = useMemo(
+        () => currentInvestigationId
+            ? investigations.find((investigation) => investigation.id === currentInvestigationId) || null
+            : null,
+        [currentInvestigationId, investigations],
+    );
+    const shouldUseRabbitTheoryReader = isRabbitHoleInvestigationOverride ?? isRabbitHoleTheoryInvestigation(selectedInvestigation);
+    const theorySections = useMemo(
+        () => shouldUseRabbitTheoryReader
+            ? splitTheoryReport(trimmedTheoryReport)
+            : splitPlainTheoryReport(trimmedTheoryReport),
+        [shouldUseRabbitTheoryReader, trimmedTheoryReport],
+    );
     const theoryLinkedInvestigationIds = useMemo(
         () => getTheoryLinkedInvestigationIds(trimmedTheoryReport, currentInvestigationId),
         [currentInvestigationId, trimmedTheoryReport],
@@ -1010,51 +1039,74 @@ export default function SynthesisPanel({
                         </div>
                         );
                     }) : trimmedTheoryReport ? (
-                        <div className="forensic-board-section forensic-synthesis-theory-reader rounded-[1.2rem] text-xs leading-relaxed text-[var(--forensic-text-muted)]">
-                            <div className="forensic-synthesis-theory-reader-header">
-                                <div className="flex items-center gap-2 text-[var(--forensic-accent)]">
+                        shouldUseRabbitTheoryReader ? (
+                            <div className="forensic-board-section forensic-synthesis-theory-reader rounded-[1.2rem] text-xs leading-relaxed text-[var(--forensic-text-muted)]">
+                                <div className="forensic-synthesis-theory-reader-header">
+                                    <div className="flex items-center gap-2 text-[var(--forensic-accent)]">
+                                        <Database size={12} />
+                                        <span className="text-[10px] font-black uppercase tracking-[0.18em]">Current Investigation Theory</span>
+                                    </div>
+                                    {theoryLinkedInvestigationIds.length > 0 && (
+                                        <div className="forensic-synthesis-theory-linked-cases" aria-label="Linked investigations">
+                                            {theoryLinkedInvestigationIds.map((caseId) => {
+                                                const investigation = investigations.find((inv) => inv.id === caseId);
+                                                const label = investigation?.displayTopic || investigation?.topic || caseId;
+                                                return (
+                                                    <button
+                                                        key={caseId}
+                                                        type="button"
+                                                        onClick={() => handleJump(caseId)}
+                                                        className="forensic-synthesis-theory-case-chip"
+                                                        title={`Open linked investigation ${caseId}`}
+                                                    >
+                                                        <Network size={10} />
+                                                        <span>{label}</span>
+                                                        <ArrowRightToLine size={10} />
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="forensic-synthesis-theory-scroll">
+                                    {theorySections.map((section, index) => (
+                                        <div
+                                            key={`${index}-${section.slice(0, 24)}`}
+                                            data-testid={`synthesis-theory-section-${index}`}
+                                            className={`forensic-synthesis-theory-markdown ${shouldRevealTheorySections ? 'forensic-synthesis-theory-section-reveal' : ''}`}
+                                            style={{
+                                                '--synthesis-theory-section-delay': `${index * THEORY_SECTION_STAGGER_MS}ms`,
+                                            } as CSSProperties}
+                                        >
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={theoryMarkdownComponents}>
+                                                {section}
+                                            </ReactMarkdown>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
+                                <div className="mb-3 flex items-center gap-2 text-[var(--forensic-accent)]">
                                     <Database size={12} />
                                     <span className="text-[10px] font-black uppercase tracking-[0.18em]">Current Investigation Theory</span>
                                 </div>
-                                {theoryLinkedInvestigationIds.length > 0 && (
-                                    <div className="forensic-synthesis-theory-linked-cases" aria-label="Linked investigations">
-                                        {theoryLinkedInvestigationIds.map((caseId) => {
-                                            const investigation = investigations.find((inv) => inv.id === caseId);
-                                            const label = investigation?.displayTopic || investigation?.topic || caseId;
-                                            return (
-                                                <button
-                                                    key={caseId}
-                                                    type="button"
-                                                    onClick={() => handleJump(caseId)}
-                                                    className="forensic-synthesis-theory-case-chip"
-                                                    title={`Open linked investigation ${caseId}`}
-                                                >
-                                                    <Network size={10} />
-                                                    <span>{label}</span>
-                                                    <ArrowRightToLine size={10} />
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                            <div className="forensic-synthesis-theory-scroll">
-                                {theorySections.map((section, index) => (
-                                    <div
-                                        key={`${index}-${section.slice(0, 24)}`}
-                                        data-testid={`synthesis-theory-section-${index}`}
-                                        className={`forensic-synthesis-theory-markdown ${shouldRevealTheorySections ? 'forensic-synthesis-theory-section-reveal' : ''}`}
-                                        style={{
-                                            '--synthesis-theory-section-delay': `${index * THEORY_SECTION_STAGGER_MS}ms`,
-                                        } as CSSProperties}
-                                    >
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={theoryMarkdownComponents}>
+                                <div className="max-h-[52vh] overflow-y-auto pr-1">
+                                    {theorySections.map((section, index) => (
+                                        <p
+                                            key={`${index}-${section.slice(0, 24)}`}
+                                            data-testid={`synthesis-theory-section-${index}`}
+                                            className={`whitespace-pre-wrap ${shouldRevealTheorySections ? 'forensic-synthesis-theory-section-reveal' : ''}`}
+                                            style={{
+                                                '--synthesis-theory-section-delay': `${index * THEORY_SECTION_STAGGER_MS}ms`,
+                                            } as CSSProperties}
+                                        >
                                             {section}
-                                        </ReactMarkdown>
-                                    </div>
-                                ))}
+                                        </p>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
+                        )
                     ) : (
                         <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
                             No cross-investigation overlaps yet for this investigation. Run <span className="font-black uppercase tracking-[0.16em] text-[var(--forensic-accent)]">Reconnect The Dots</span> to check for links against older cases.

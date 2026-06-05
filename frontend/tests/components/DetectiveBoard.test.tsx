@@ -100,7 +100,24 @@ vi.mock('reactflow', () => {
     Controls: () => React.createElement('div', { 'data-testid': 'reactflow-controls' }),
     Handle: () => null,
     applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
-    applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
+    applyNodeChanges: (changes: Array<Record<string, unknown>>, nodes: Array<{ id: string; position?: { x: number; y: number } }>) =>
+      nodes.map((node) => {
+        const positionChange = changes.find((change) => (
+          change.type === 'position' &&
+          change.id === node.id &&
+          change.position &&
+          typeof change.position === 'object'
+        ))
+
+        if (!positionChange) {
+          return node
+        }
+
+        return {
+          ...node,
+          position: positionChange.position as { x: number; y: number },
+        }
+      }),
     addEdge: (edge: unknown, edges: unknown[]) => [...edges, edge],
     reconnectEdge: (_oldEdge: unknown, _newConnection: unknown, edges: unknown[]) => edges,
     useReactFlow: () => ({
@@ -1488,6 +1505,117 @@ describe('DetectiveBoard relationship legend', () => {
       expect(((lastReactFlowProps?.nodes || []) as Array<{ id: string }>).some((node) => node.id === 'node-a')).toBe(true)
     })
     expect(lastReactFlowProps?.snapToGrid).toBe(false)
+  })
+
+  it('repairs restored strict-grid routes that are missing endpoint geometry', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+          { id: 'node-b', type: 'custom', position: { x: 640, y: 320 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-STALE',
+            source: 'node-a',
+            target: 'node-b',
+            sourceHandle: 'port-right-0',
+            targetHandle: 'port-left-0',
+            type: 'customEdge',
+            label: 'STALE',
+            data: {
+              generatedBy: 'connectTheDots',
+              tag: 'STALE',
+              routePoints: [
+                { x: -320, y: -240 },
+                { x: -160, y: -240 },
+              ],
+            },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      const edge = ((lastReactFlowProps?.edges || []) as Array<{ id: string; data?: Record<string, unknown> }>).find((candidate) => candidate.id === 'e-node-a-node-b-STALE')
+      expect(edge?.data?.routeSourcePoint).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }))
+      expect(edge?.data?.routeTargetPoint).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }))
+      expect(edge?.data?.routePoints).not.toEqual([
+        { x: -320, y: -240 },
+        { x: -160, y: -240 },
+      ])
+    })
+  })
+
+  it('uses cheap strict-grid relationship previews until node drag stops', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+          { id: 'node-b', type: 'custom', position: { x: 480, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Existing line' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.edges || []) as Array<{ id: string }>).some((edge) => edge.id === 'e-node-a-node-b-RELATED')).toBe(true)
+    })
+
+    const initialEdge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+    const initialRoutePoints = JSON.stringify(initialEdge.data?.routePoints)
+    const initialRouteSourcePoint = JSON.stringify(initialEdge.data?.routeSourcePoint)
+    expect(initialEdge.data).toHaveProperty('routePoints')
+
+    const onNodeDragStart = lastReactFlowProps?.onNodeDragStart as (() => void) | undefined
+    const onNodesChange = lastReactFlowProps?.onNodesChange as ((changes: Array<Record<string, unknown>>) => void) | undefined
+    const onNodeDragStop = lastReactFlowProps?.onNodeDragStop as (() => void) | undefined
+
+    act(() => {
+      onNodeDragStart?.()
+      onNodesChange?.([
+        { type: 'position', id: 'node-a', position: { x: 72, y: 24 }, dragging: true },
+      ])
+    })
+
+    await act(async () => {
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+
+    let edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+    expect(JSON.stringify(edge.data?.routePoints)).toBe(initialRoutePoints)
+    expect(JSON.stringify(edge.data?.routeSourcePoint)).toBe(initialRouteSourcePoint)
+    expect(edge.data?.isDragPreview).toBe(true)
+    expect(JSON.stringify(edge.data?.dragPreviewSourcePoint)).not.toBe(initialRouteSourcePoint)
+    expect(edge.data?.dragPreviewTargetPoint).toEqual(edge.data?.routeTargetPoint)
+
+    act(() => {
+      onNodeDragStop?.()
+    })
+
+    await waitFor(() => {
+      edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+      expect(JSON.stringify(edge.data?.routeSourcePoint)).not.toBe(initialRouteSourcePoint)
+      expect(edge.data).not.toHaveProperty('isDragPreview')
+      expect(edge.data).not.toHaveProperty('dragPreviewSourcePoint')
+      expect(edge.data).not.toHaveProperty('dragPreviewTargetPoint')
+    })
   })
 
   it('keeps React Flow node and edge type objects stable across board renders', () => {

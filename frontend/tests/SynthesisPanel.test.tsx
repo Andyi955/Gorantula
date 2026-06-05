@@ -164,6 +164,31 @@ describe('SynthesisPanel', () => {
     expect(screen.queryByText(/No cross-investigation overlaps yet/i)).not.toBeInTheDocument()
   })
 
+  it('keeps normal investigation theory reports in the legacy plain-text reader', () => {
+    render(
+      <SynthesisPanel
+        sharedSocket={null}
+        currentInvestigationId="inv-a"
+        returnVaultId={null}
+        investigations={[
+          { id: 'inv-a', topic: 'Investigation A' },
+        ]}
+        currentTheoryReport={[
+          '## Normal Theory',
+          '',
+          '| Finding | Source |',
+          '|---------|--------|',
+          '| Plain table text | Normal source |',
+        ].join('\n')}
+      />,
+    )
+
+    expect(screen.queryByRole('heading', { name: /normal theory/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.getByTestId('synthesis-theory-section-1')).toHaveTextContent('| Finding | Source |')
+    expect(screen.getByTestId('synthesis-theory-section-1')).toHaveClass('whitespace-pre-wrap')
+  })
+
   it('rehydrates synthesis alerts from persisted board state on investigation load', async () => {
     localStorage.setItem('inv_data_inv-a', JSON.stringify({
       mode: 'strict-grid',

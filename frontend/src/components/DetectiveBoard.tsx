@@ -25,7 +25,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode, { type NodeData, type NodeSaveMode, type PersonaInsight } from './CustomNode';
 import CustomEdge from './CustomEdge';
-import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
+import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeCenter, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
@@ -930,16 +930,32 @@ const isVisibleBoardRelationshipEdge = (edge: Edge) =>
 const hasVisibleBoardRelationshipEdges = (edges: Edge[]) =>
     edges.some(isVisibleBoardRelationshipEdge);
 
-const hasPersistedStrictGridRoute = (edge: Edge) =>
-    !isVisibleBoardRelationshipEdge(edge) ||
-    (
+const isPersistedStrictGridPoint = (point: unknown): point is { x: number; y: number } => (
+    !!point &&
+    typeof point === 'object' &&
+    Number.isFinite((point as { x?: unknown }).x) &&
+    Number.isFinite((point as { y?: unknown }).y)
+);
+
+const hasPersistedStrictGridRoute = (edge: Edge) => {
+    if (!isVisibleBoardRelationshipEdge(edge)) {
+        return true;
+    }
+
+    const routePoints = edge.data?.routePoints;
+
+    return (
         typeof edge.sourceHandle === 'string' &&
         edge.sourceHandle.trim().length > 0 &&
         typeof edge.targetHandle === 'string' &&
         edge.targetHandle.trim().length > 0 &&
-        Array.isArray(edge.data?.routePoints) &&
-        edge.data.routePoints.length >= 2
+        Array.isArray(routePoints) &&
+        routePoints.length >= 2 &&
+        routePoints.every(isPersistedStrictGridPoint) &&
+        isPersistedStrictGridPoint(edge.data?.routeSourcePoint) &&
+        isPersistedStrictGridPoint(edge.data?.routeTargetPoint)
     );
+};
 
 const attachRestoredActivePorts = (nodes: Node[], edges: Edge[]) => {
     const activePortIdsByNode = new Map<string, Set<string>>();
@@ -1637,6 +1653,9 @@ const stripTransientEdgeData = (edge: Edge): Edge => {
         isConnectionRevealing: _isConnectionRevealing,
         connectionRevealStartedAt: _connectionRevealStartedAt,
         onConnectionHover: _onConnectionHover,
+        isDragPreview: _isDragPreview,
+        dragPreviewSourcePoint: _dragPreviewSourcePoint,
+        dragPreviewTargetPoint: _dragPreviewTargetPoint,
         ...stableEdgeData
     } = edge.data || {};
 
@@ -1647,6 +1666,28 @@ const stripTransientEdgeData = (edge: Edge): Edge => {
 };
 
 const sanitizeEdgesForPersistence = (edges: Edge[]) => edges.map(stripTransientEdgeData);
+
+const clearEdgeDragPreview = (edge: Edge): Edge => {
+    const {
+        isDragPreview: _isDragPreview,
+        dragPreviewSourcePoint: _dragPreviewSourcePoint,
+        dragPreviewTargetPoint: _dragPreviewTargetPoint,
+        ...stableEdgeData
+    } = edge.data || {};
+
+    if (
+        _isDragPreview === undefined &&
+        _dragPreviewSourcePoint === undefined &&
+        _dragPreviewTargetPoint === undefined
+    ) {
+        return edge;
+    }
+
+    return {
+        ...edge,
+        data: stableEdgeData,
+    };
+};
 
 type BoardNavigatorInteraction = 'click' | 'drag';
 
@@ -2026,7 +2067,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const stoppedPipelineRunIdsRef = useRef<Set<string>>(new Set());
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
-    const dragRouteFrameRef = useRef<number | null>(null);
+    const dragPreviewFrameRef = useRef<number | null>(null);
     const persistTimerRef = useRef<number | null>(null);
     const marqueePointerIdRef = useRef<number | null>(null);
     const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
@@ -2897,15 +2938,16 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const assignments = assignStrictGridPorts(nextEdges, nextNodes);
 
         return nextEdges.map((edge) => {
-            const sourceNode = nodeMap.get(edge.source);
-            const targetNode = nodeMap.get(edge.target);
+            const stableEdge = clearEdgeDragPreview(edge);
+            const sourceNode = nodeMap.get(stableEdge.source);
+            const targetNode = nodeMap.get(stableEdge.target);
 
             if (!sourceNode || !targetNode) {
                 return {
-                    ...edge,
+                    ...stableEdge,
                     zIndex: STRICT_GRID_EDGE_Z_INDEX,
                     data: {
-                        ...edge.data,
+                        ...stableEdge.data,
                         boardMode: 'strict-grid' as BoardMode,
                         onConnectionHover: handleConnectionHover,
                         snapEnabled: snapConnectionLabels,
@@ -2916,19 +2958,19 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             const route = assignments.get(edge.id)?.route || buildStrictGridRoute(
                 sourceNode,
                 targetNode,
-                edge.sourceHandle,
-                edge.targetHandle
+                stableEdge.sourceHandle,
+                stableEdge.targetHandle
             );
             const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
             const routeTargetPoint = getPortById(targetNode, route.targetPortId);
 
             if (import.meta.env.DEV) {
                 console.debug('[StrictGridRoute]', {
-                    edgeId: edge.id,
-                    source: edge.source,
-                    target: edge.target,
-                    sourceHandleIn: edge.sourceHandle,
-                    targetHandleIn: edge.targetHandle,
+                    edgeId: stableEdge.id,
+                    source: stableEdge.source,
+                    target: stableEdge.target,
+                    sourceHandleIn: stableEdge.sourceHandle,
+                    targetHandleIn: stableEdge.targetHandle,
                     sourceHandleOut: route.sourcePortId,
                     targetHandleOut: route.targetPortId,
                     routePoints: route.points,
@@ -2938,13 +2980,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             }
 
             return {
-                ...edge,
+                ...stableEdge,
                 sourceHandle: route.sourcePortId,
                 targetHandle: route.targetPortId,
                 type: 'customEdge',
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 data: {
-                    ...edge.data,
+                    ...stableEdge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
                     routeStrategy: route.strategy,
@@ -3039,21 +3081,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const affectedEdges = nextEdges.filter((edge) => changedNodeIdSet.has(edge.source) || changedNodeIdSet.has(edge.target));
         const affectedAssignments = assignStrictGridPorts(affectedEdges, normalizedNodes);
         const updatedEdges = nextEdges.map((edge) => {
+            const stableEdge = clearEdgeDragPreview(edge);
             const route = affectedAssignments.get(edge.id)?.route;
             if (!route) {
-                return edge;
+                return stableEdge;
             }
-            const sourceNode = normalizedNodeMap.get(edge.source);
-            const targetNode = normalizedNodeMap.get(edge.target);
+            const sourceNode = normalizedNodeMap.get(stableEdge.source);
+            const targetNode = normalizedNodeMap.get(stableEdge.target);
 
             return {
-                ...edge,
+                ...stableEdge,
                 sourceHandle: route.sourcePortId,
                 targetHandle: route.targetPortId,
                 type: 'customEdge',
                 zIndex: STRICT_GRID_EDGE_Z_INDEX,
                 data: {
-                    ...edge.data,
+                    ...stableEdge.data,
                     boardMode: 'strict-grid' as BoardMode,
                     routePoints: route.points,
                     routeStrategy: route.strategy,
@@ -3109,7 +3152,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setEdges(updatedEdges);
     }, [snapConnectionLabels]);
 
-    const updateStrictGridDragRoutes = useCallback((
+    const updateStrictGridDragPreview = useCallback((
         changedNodeIds: string[],
         nextNodes: Node[]
     ) => {
@@ -3119,51 +3162,32 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }
 
         const nodeMap = new Map(nextNodes.map((node) => [node.id, node]));
-        setEdges((currentEdges) => {
-            const assignments = assignStrictGridPorts(currentEdges, nextNodes);
 
-            return currentEdges.map((edge) => {
-                if (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target)) {
-                    return edge;
-                }
+        setEdges((currentEdges) => currentEdges.map((edge) => {
+            if (
+                !isVisibleBoardRelationshipEdge(edge) ||
+                (!changedNodeIdSet.has(edge.source) && !changedNodeIdSet.has(edge.target))
+            ) {
+                return edge;
+            }
 
-                const sourceNode = nodeMap.get(edge.source);
-                const targetNode = nodeMap.get(edge.target);
-                if (!sourceNode || !targetNode) {
-                    return edge;
-                }
+            const sourceNode = nodeMap.get(edge.source);
+            const targetNode = nodeMap.get(edge.target);
+            if (!sourceNode || !targetNode) {
+                return edge;
+            }
 
-                const route = assignments.get(edge.id)?.route || buildStrictGridRoute(
-                    sourceNode,
-                    targetNode,
-                    edge.sourceHandle,
-                    edge.targetHandle
-                );
-                const routeSourcePoint = getPortById(sourceNode, route.sourcePortId);
-                const routeTargetPoint = getPortById(targetNode, route.targetPortId);
-
-                return {
-                    ...edge,
-                    sourceHandle: route.sourcePortId,
-                    targetHandle: route.targetPortId,
-                    type: 'customEdge',
-                    zIndex: STRICT_GRID_EDGE_Z_INDEX,
-                    data: {
-                        ...edge.data,
-                        boardMode: 'strict-grid' as BoardMode,
-                        routePoints: route.points,
-                        routeStrategy: route.strategy,
-                        routeLabelPoint: route.labelPoint,
-                        routeSourcePoint,
-                        routeTargetPoint,
-                        sourcePortSide: route.sourceSide,
-                        targetPortSide: route.targetSide,
-                        snapEnabled: snapConnectionLabels,
-                    }
-                };
-            });
-        });
-    }, [snapConnectionLabels]);
+            return {
+                ...edge,
+                data: {
+                    ...edge.data,
+                    isDragPreview: true,
+                    dragPreviewSourcePoint: getPortById(sourceNode, edge.sourceHandle) || getNodeCenter(sourceNode),
+                    dragPreviewTargetPoint: getPortById(targetNode, edge.targetHandle) || getNodeCenter(targetNode),
+                },
+            };
+        }));
+    }, []);
 
     const openRelationshipEditor = useCallback((draft: RelationshipDraft) => {
         setRelationshipDraft(draft);
@@ -4243,6 +4267,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
             boardRestoreWatchdogTimeoutRef.current = null;
         }
+        if (dragPreviewFrameRef.current !== null) {
+            window.cancelAnimationFrame(dragPreviewFrameRef.current);
+            dragPreviewFrameRef.current = null;
+        }
     }, []);
 
     const onNodesChange: OnNodesChange = useCallback(
@@ -4314,13 +4342,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     }
                 });
 
-                if (dragRouteFrameRef.current) {
-                    window.cancelAnimationFrame(dragRouteFrameRef.current);
+                if (dragPreviewFrameRef.current) {
+                    window.cancelAnimationFrame(dragPreviewFrameRef.current);
                 }
 
-                dragRouteFrameRef.current = window.requestAnimationFrame(() => {
-                    dragRouteFrameRef.current = null;
-                    updateStrictGridDragRoutes(
+                dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
+                    dragPreviewFrameRef.current = null;
+                    updateStrictGridDragPreview(
                         Array.from(draggingNodeIdsRef.current),
                         nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current
                     );
@@ -4347,7 +4375,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }
             }
         },
-        [boardMode, marquee, syncStrictGridEdgesToNodes, updateStrictGridDragRoutes]
+        [boardMode, marquee, syncStrictGridEdgesToNodes, updateStrictGridDragPreview]
     );
     const onEdgesChange: OnEdgesChange = useCallback(
         (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
@@ -4472,10 +4500,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const onNodeDragStart = useCallback(() => {
         isDraggingNodeRef.current = true;
         draggingNodeIdsRef.current.clear();
-        if (dragRouteFrameRef.current) {
-            window.cancelAnimationFrame(dragRouteFrameRef.current);
-            dragRouteFrameRef.current = null;
+        if (dragPreviewFrameRef.current) {
+            window.cancelAnimationFrame(dragPreviewFrameRef.current);
+            dragPreviewFrameRef.current = null;
         }
+        setEdges((currentEdges) => currentEdges.map(clearEdgeDragPreview));
         if (persistTimerRef.current) {
             window.clearTimeout(persistTimerRef.current);
             persistTimerRef.current = null;
@@ -4483,9 +4512,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, []);
     const onNodeDragStop = useCallback(() => {
         isDraggingNodeRef.current = false;
-        if (dragRouteFrameRef.current) {
-            window.cancelAnimationFrame(dragRouteFrameRef.current);
-            dragRouteFrameRef.current = null;
+        if (dragPreviewFrameRef.current) {
+            window.cancelAnimationFrame(dragPreviewFrameRef.current);
+            dragPreviewFrameRef.current = null;
         }
         if (boardMode === 'strict-grid') {
             const changedNodeIds = Array.from(draggingNodeIdsRef.current);

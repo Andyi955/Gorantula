@@ -3186,6 +3186,7 @@ function App() {
               currentTheoryReport={currentBoardSnapshot.fullReport}
               hasTheoryReady={currentBoardSnapshot.hasTheoryReport}
               hasUnreadTheory={currentInvestigationId ? Boolean(unreadTheoryByInvestigation[currentInvestigationId]) : false}
+              isRabbitHoleInvestigation={isRabbitHoleInvestigation(currentInvestigation) || currentBoardSnapshot.hasRabbitHoleEvidence}
               onMarkTheoryRead={() => {
                 if (!currentInvestigationId) return
                 setUnreadTheoryByInvestigation(prev => ({
