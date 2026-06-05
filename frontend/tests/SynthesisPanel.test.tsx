@@ -586,12 +586,18 @@ describe('SynthesisPanel', () => {
   })
 
   it('formats Rabbit Hole theory markdown tables instead of showing raw pipe text', () => {
+    const onNavigateVault = vi.fn()
+
     render(
       <SynthesisPanel
         sharedSocket={null}
         currentInvestigationId="inv-rabbit"
+        onNavigateVault={onNavigateVault}
         returnVaultId={null}
-        investigations={[{ id: 'inv-rabbit', topic: 'Rabbit Hole: AI ecosystem' }]}
+        investigations={[
+          { id: 'inv-rabbit', topic: 'Rabbit Hole: AI ecosystem' },
+          { id: 'inv-linked', topic: 'AI chip export overlap' },
+        ]}
         currentTheoryReport={[
           '## Key Findings',
           '',
@@ -599,7 +605,7 @@ describe('SynthesisPanel', () => {
           '',
           '|---------|------------------|-------------------|',
           '',
-          '| OpenAI Deployment Co. formed | CRN | June 2026 - services consolidation |',
+          '| OpenAI Deployment Co. formed | vault://abdomen_vault/inv-linked/crawl.md | June 2026 - services consolidation |',
           '',
           '| Huawei Ascend 920 mass production | Reuters | Hardware export control bypass |',
           '',
@@ -610,6 +616,9 @@ describe('SynthesisPanel', () => {
       />,
     )
 
+    expect(screen.getByText('Current Investigation Theory').closest('.forensic-synthesis-theory-reader')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /ai chip export overlap/i }))
+    expect(onNavigateVault).toHaveBeenCalledWith('inv-linked', undefined)
     expect(screen.getByRole('heading', { name: /key findings/i })).toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: /source grounding/i })).toBeInTheDocument()
@@ -617,6 +626,7 @@ describe('SynthesisPanel', () => {
     expect(screen.getAllByText(/openai deployment co\. formed/i).some((element) =>
       element.closest('.forensic-synthesis-theory-table-card-row'),
     )).toBe(true)
+    expect(screen.getAllByTitle(/open linked investigation inv-linked/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/which firms received h200 clearance/i)).toBeInTheDocument()
   })
 

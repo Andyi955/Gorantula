@@ -2070,6 +2070,73 @@ body {
   animation-delay: var(--synthesis-theory-section-delay, 0ms);
 }
 
+.forensic-synthesis-theory-reader {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 1rem;
+}
+
+.forensic-synthesis-theory-reader-header {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.7rem;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.1);
+  padding-bottom: 0.82rem;
+}
+
+.forensic-synthesis-theory-linked-cases {
+  display: flex;
+  max-width: 100%;
+  gap: 0.42rem;
+  overflow-x: auto;
+  padding-bottom: 0.12rem;
+  scrollbar-width: thin;
+}
+
+.forensic-synthesis-theory-case-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.38rem;
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(129, 227, 255, 0.07);
+  color: var(--forensic-accent-strong);
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  padding: 0.42rem 0.52rem;
+  text-transform: uppercase;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.forensic-synthesis-theory-case-chip span {
+  display: block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-synthesis-theory-case-chip:hover {
+  border-color: rgba(129, 227, 255, 0.46);
+  background: var(--forensic-accent);
+  color: #041014;
+}
+
+.forensic-synthesis-theory-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.92rem 0.28rem 0.12rem 0;
+}
+
 .forensic-synthesis-theory-markdown {
   color: var(--forensic-text-muted);
   font-size: 0.78rem;
@@ -2113,6 +2180,48 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.forensic-synthesis-theory-inline-link,
+.forensic-synthesis-theory-inline-ref,
+.forensic-synthesis-theory-inline-case {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: baseline;
+  border-radius: 0.36rem;
+  font: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.forensic-synthesis-theory-inline-link {
+  color: var(--forensic-accent-strong);
+  text-decoration: underline;
+  text-decoration-color: rgba(129, 227, 255, 0.42);
+  text-underline-offset: 0.16rem;
+}
+
+.forensic-synthesis-theory-inline-link:hover {
+  color: var(--forensic-accent);
+}
+
+.forensic-synthesis-theory-inline-case {
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  background: rgba(129, 227, 255, 0.07);
+  color: var(--forensic-accent-strong);
+  cursor: pointer;
+  padding: 0.02rem 0.22rem;
+}
+
+.forensic-synthesis-theory-inline-case:hover {
+  border-color: rgba(129, 227, 255, 0.42);
+  background: rgba(129, 227, 255, 0.18);
+  color: #effcff;
+}
+
+.forensic-synthesis-theory-inline-ref {
+  color: rgba(129, 227, 255, 0.72);
 }
 
 .forensic-synthesis-theory-markdown ul,
@@ -2206,8 +2315,8 @@ body {
 
 .forensic-synthesis-theory-table-card-cell {
   display: grid;
-  grid-template-columns: minmax(5.5rem, 0.35fr) minmax(0, 1fr);
-  gap: 0.68rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.2rem;
   border-top: 1px solid rgba(129, 227, 255, 0.075);
   padding-top: 0.38rem;
 }
@@ -2232,13 +2341,6 @@ body {
   font-size: 0.72rem;
   line-height: 1.58;
   overflow-wrap: anywhere;
-}
-
-@media (max-width: 640px) {
-  .forensic-synthesis-theory-table-card-cell {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.2rem;
-  }
 }
 
 @keyframes forensicDiscoveryUnreadPulse {

@@ -127,6 +127,9 @@ const normalizeAlert = (alert: SynthesisAlert): SynthesisAlert => ({
 });
 
 const THEORY_TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
+const THEORY_REFERENCE_TOKEN_PATTERN = /\b(?:https?:\/\/|(?:vault|timeline|rabbit):\/\/)[^\s),;]+|\binv-[A-Za-z0-9_-]+/gi;
+const THEORY_VAULT_ID_PATTERN = /\binv-[A-Za-z0-9_-]+/i;
+const THEORY_TRAILING_PUNCTUATION_PATTERN = /[.,;:)\]]+$/;
 
 const normalizeTheoryMarkdown = (report: string) => {
     const lines = report.replace(/\r\n/g, '\n').split('\n');
@@ -218,7 +221,93 @@ const getTheoryTableData = (children: ReactNode): TheoryTableData => {
     return { headers, rows };
 };
 
-const TheoryMarkdownTable = ({ children }: { children?: ReactNode }) => {
+const getTheoryReferenceVaultId = (reference: string) => reference.match(THEORY_VAULT_ID_PATTERN)?.[0] || null;
+
+const stripTheoryReferencePunctuation = (reference: string) => {
+    const trailing = reference.match(THEORY_TRAILING_PUNCTUATION_PATTERN)?.[0] || '';
+    return {
+        cleanReference: trailing ? reference.slice(0, -trailing.length) : reference,
+        trailing,
+    };
+};
+
+const getTheoryLinkedInvestigationIds = (report: string, currentInvestigationId: string | null) => {
+    const seen = new Set<string>();
+    const matches = report.match(new RegExp(THEORY_VAULT_ID_PATTERN.source, 'gi')) || [];
+    matches.forEach((match) => {
+        if (match && match !== currentInvestigationId) {
+            seen.add(match);
+        }
+    });
+    return Array.from(seen).slice(0, 8);
+};
+
+const renderTheoryLinkedText = (text: string, onNavigateReference?: (reference: string) => void): ReactNode => {
+    const parts: ReactNode[] = [];
+    let lastIndex = 0;
+    const pattern = new RegExp(THEORY_REFERENCE_TOKEN_PATTERN.source, 'gi');
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) !== null) {
+        const token = match[0];
+        const tokenIndex = match.index;
+        if (tokenIndex > lastIndex) {
+            parts.push(text.slice(lastIndex, tokenIndex));
+        }
+
+        const { cleanReference, trailing } = stripTheoryReferencePunctuation(token);
+        const vaultId = getTheoryReferenceVaultId(cleanReference);
+        if (/^https?:\/\//i.test(cleanReference)) {
+            parts.push(
+                <a
+                    key={`${tokenIndex}-${cleanReference}`}
+                    href={cleanReference}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="forensic-synthesis-theory-inline-link"
+                >
+                    {cleanReference}
+                </a>,
+            );
+        } else if (vaultId && onNavigateReference) {
+            parts.push(
+                <button
+                    key={`${tokenIndex}-${cleanReference}`}
+                    type="button"
+                    onClick={() => onNavigateReference(cleanReference)}
+                    className="forensic-synthesis-theory-inline-case"
+                    title={`Open linked investigation ${vaultId}`}
+                >
+                    {vaultId}
+                </button>,
+            );
+        } else {
+            parts.push(
+                <span key={`${tokenIndex}-${cleanReference}`} className="forensic-synthesis-theory-inline-ref">
+                    {cleanReference}
+                </span>,
+            );
+        }
+
+        if (trailing) {
+            parts.push(trailing);
+        }
+        lastIndex = tokenIndex + token.length;
+    }
+
+    if (lastIndex < text.length) {
+        parts.push(text.slice(lastIndex));
+    }
+    return parts.length > 0 ? parts : text;
+};
+
+const TheoryMarkdownTable = ({
+    children,
+    onNavigateReference,
+}: {
+    children?: ReactNode;
+    onNavigateReference?: (reference: string) => void;
+}) => {
     const tableData = getTheoryTableData(children);
     const hasCardRows = tableData.headers.length > 0 && tableData.rows.length > 0;
 
@@ -242,7 +331,7 @@ const TheoryMarkdownTable = ({ children }: { children?: ReactNode }) => {
                                             {tableData.headers[cellIndex] || `Field ${cellIndex + 1}`}
                                         </span>
                                         <span className="forensic-synthesis-theory-table-card-value">
-                                            {cell}
+                                            {renderTheoryLinkedText(cell, onNavigateReference)}
                                         </span>
                                     </div>
                                 );
@@ -253,10 +342,6 @@ const TheoryMarkdownTable = ({ children }: { children?: ReactNode }) => {
             )}
         </div>
     );
-};
-
-const theoryMarkdownComponents = {
-    table: TheoryMarkdownTable,
 };
 
 const upsertAlertBucket = (alerts: SynthesisAlert[], incomingAlert: SynthesisAlert): SynthesisAlert[] => {
@@ -422,6 +507,10 @@ export default function SynthesisPanel({
     const currentQaAlerts = currentInvestigationId ? (qaAlertsByInvestigation[currentInvestigationId] ?? EMPTY_ALERTS) : EMPTY_ALERTS;
     const trimmedTheoryReport = (currentTheoryReport || '').trim();
     const theorySections = useMemo(() => splitTheoryReport(trimmedTheoryReport), [trimmedTheoryReport]);
+    const theoryLinkedInvestigationIds = useMemo(
+        () => getTheoryLinkedInvestigationIds(trimmedTheoryReport, currentInvestigationId),
+        [currentInvestigationId, trimmedTheoryReport],
+    );
     const currentTheoryKey = currentInvestigationId && trimmedTheoryReport
         ? `${currentInvestigationId}::${trimmedTheoryReport}`
         : null;
@@ -723,6 +812,19 @@ export default function SynthesisPanel({
         if (onNavigateVault) onNavigateVault(vaultId, nodeId);
     };
 
+    const handleTheoryReferenceJump = useCallback((reference: string) => {
+        const vaultId = getTheoryReferenceVaultId(reference);
+        if (vaultId && onNavigateVault) {
+            onNavigateVault(vaultId);
+        }
+    }, [onNavigateVault]);
+
+    const theoryMarkdownComponents = useMemo(() => ({
+        table: ({ children }: { children?: ReactNode }) => (
+            <TheoryMarkdownTable children={children} onNavigateReference={handleTheoryReferenceJump} />
+        ),
+    }), [handleTheoryReferenceJump]);
+
     const handleReturn = () => {
         if (returnVaultId && onNavigateVault) {
             onNavigateVault(returnVaultId);
@@ -786,7 +888,7 @@ export default function SynthesisPanel({
                     )}
                 </div>
 
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    <div className={`flex-1 min-h-0 p-4 ${hasPanelAlerts ? 'overflow-y-auto space-y-4' : 'overflow-hidden'}`}>
                     {hasPanelAlerts ? displayedAlerts.map((alert, idx) => {
                         const alertKey = alert.alertKey || buildAlertKey(alert);
                         const isRevealing = revealingAlertKeys.has(alertKey);
@@ -908,12 +1010,35 @@ export default function SynthesisPanel({
                         </div>
                         );
                     }) : trimmedTheoryReport ? (
-                        <div className="forensic-board-section rounded-[1.2rem] p-4 text-xs leading-relaxed text-[var(--forensic-text-muted)]">
-                            <div className="mb-3 flex items-center gap-2 text-[var(--forensic-accent)]">
-                                <Database size={12} />
-                                <span className="text-[10px] font-black uppercase tracking-[0.18em]">Current Investigation Theory</span>
+                        <div className="forensic-board-section forensic-synthesis-theory-reader rounded-[1.2rem] text-xs leading-relaxed text-[var(--forensic-text-muted)]">
+                            <div className="forensic-synthesis-theory-reader-header">
+                                <div className="flex items-center gap-2 text-[var(--forensic-accent)]">
+                                    <Database size={12} />
+                                    <span className="text-[10px] font-black uppercase tracking-[0.18em]">Current Investigation Theory</span>
+                                </div>
+                                {theoryLinkedInvestigationIds.length > 0 && (
+                                    <div className="forensic-synthesis-theory-linked-cases" aria-label="Linked investigations">
+                                        {theoryLinkedInvestigationIds.map((caseId) => {
+                                            const investigation = investigations.find((inv) => inv.id === caseId);
+                                            const label = investigation?.displayTopic || investigation?.topic || caseId;
+                                            return (
+                                                <button
+                                                    key={caseId}
+                                                    type="button"
+                                                    onClick={() => handleJump(caseId)}
+                                                    className="forensic-synthesis-theory-case-chip"
+                                                    title={`Open linked investigation ${caseId}`}
+                                                >
+                                                    <Network size={10} />
+                                                    <span>{label}</span>
+                                                    <ArrowRightToLine size={10} />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
-                            <div className="max-h-[52vh] overflow-y-auto pr-1">
+                            <div className="forensic-synthesis-theory-scroll">
                                 {theorySections.map((section, index) => (
                                     <div
                                         key={`${index}-${section.slice(0, 24)}`}
