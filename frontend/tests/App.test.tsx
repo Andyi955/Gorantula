@@ -217,6 +217,62 @@ describe('App', () => {
     expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
   })
 
+  it('persists rabbit hole nodes globally while the spider tab is active', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-rabbit', topic: 'Rabbit Hole: Quantum test' }]),
+    )
+
+    render(<App />)
+
+    await user.click(screen.getByText('Spider View'))
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+    await waitFor(() => expect(WebSocketMock.instances.length).toBeGreaterThan(0))
+    act(() => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+    await waitFor(() => expect(WebSocketMock.instances[0]?.addEventListener).toHaveBeenCalledWith('message', expect.any(Function)))
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('MEMORY_NODE_GATHERED', {
+        vaultId: 'inv-rabbit',
+        append: true,
+        node: {
+          id: 'node-rabbit-missed',
+          title: 'Missed Rabbit Node',
+          summary: 'Rabbit evidence gathered while the board is unmounted.',
+          fullText: 'Rabbit evidence gathered while the board is unmounted and should persist for later relationship replay.',
+          sourceURL: 'https://example.com/rabbit-node',
+          origin: 'rabbit-hole',
+          rabbitState: 'provisional',
+          rabbitTool: 'web_search',
+          rabbitPass: 2,
+        },
+      })
+    })
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('inv_data_inv-rabbit') || '{}')
+      expect(saved.nodes?.some((node: { id?: string }) => node.id === 'node-rabbit-missed')).toBe(true)
+      expect(saved.pendingIntegrationNodeIds).toContain('node-rabbit-missed')
+    })
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('RABBIT_HOLE_NODE_UPDATE', {
+        vaultId: 'inv-rabbit',
+        nodeIds: ['node-rabbit-missed'],
+        rabbitState: 'promoted',
+      })
+    })
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('inv_data_inv-rabbit') || '{}')
+      const savedNode = saved.nodes?.find((node: { id?: string }) => node.id === 'node-rabbit-missed')
+      expect(savedNode?.data?.rabbitState).toBe('promoted')
+    })
+  })
+
   it('hides floating synthesis and discovery handles on settings view', async () => {
     const user = userEvent.setup()
     render(<App />)

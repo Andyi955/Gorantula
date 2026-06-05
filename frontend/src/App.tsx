@@ -56,6 +56,9 @@ import {
   type VaultResultPayload,
 } from './utils/investigationPersistence'
 import type { LocalIngestionFile, SpiderOperationMode } from './components/SpiderVisualizer'
+import { calculateNodeFrame } from './components/boardGeometry'
+import { STRICT_GRID_NODE_Z_INDEX } from './components/detectiveBoardStrictGridLayout'
+import { nodeHasImages, type NodeImageAsset } from './components/nodeImages'
 
 const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
 const DetectiveBoard = lazy(() => import('./components/DetectiveBoard'))
@@ -644,6 +647,181 @@ const getRelationshipSynthesisPayloadNodes = (boardState: { nodes?: unknown[] } 
       }
     })
     .filter((node): node is Record<string, unknown> => Boolean(node))
+}
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value))
+
+const getStringField = (value: unknown) =>
+  typeof value === 'string' ? value.trim() : ''
+
+const getNumberField = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const isRabbitHoleMemoryNode = (node: Record<string, unknown>) =>
+  getStringField(node.origin) === 'rabbit-hole' ||
+  Boolean(getStringField(node.rabbitState)) ||
+  Boolean(getStringField(node.rabbitTool)) ||
+  getNumberField(node.rabbitPass) !== undefined
+
+const coerceMemoryNodeMessagePayload = (payload: unknown) => {
+  if (!isRecordValue(payload) || !isRecordValue(payload.node)) {
+    return null
+  }
+
+  const vaultId = getStringField(payload.vaultId)
+  const nodeId = getStringField(payload.node.id)
+  if (!vaultId || !nodeId || !isRabbitHoleMemoryNode(payload.node)) {
+    return null
+  }
+
+  return {
+    vaultId,
+    append: payload.append === true,
+    node: {
+      ...payload.node,
+      id: nodeId,
+    },
+  }
+}
+
+const coerceRabbitHoleNodeUpdatePayload = (payload: unknown) => {
+  if (!isRecordValue(payload)) {
+    return null
+  }
+
+  const vaultId = getStringField(payload.vaultId)
+  const rabbitState = getStringField(payload.rabbitState)
+  const nodeIds = Array.isArray(payload.nodeIds)
+    ? payload.nodeIds.map(getStringField).filter(Boolean)
+    : []
+
+  if (!vaultId || !rabbitState || nodeIds.length === 0) {
+    return null
+  }
+
+  return { vaultId, rabbitState, nodeIds }
+}
+
+const getDurableRabbitNodePosition = (nodeIndex: number) => {
+  const column = nodeIndex % 4
+  const row = Math.floor(nodeIndex / 4)
+  return {
+    x: 144 + column * 432,
+    y: 144 + row * 288,
+  }
+}
+
+const createDurableRabbitNode = (
+  node: Record<string, unknown> & { id: string },
+  nodeIndex: number,
+): PersistedBoardState['nodes'][number] => {
+  const summary = getStringField(node.summary)
+  const fullText = getStringField(node.fullText)
+  const images = Array.isArray(node.images) ? node.images as NodeImageAsset[] : undefined
+  const frame = calculateNodeFrame(summary, fullText, false, nodeHasImages(images))
+
+  return {
+    id: node.id,
+    type: 'custom',
+    zIndex: STRICT_GRID_NODE_Z_INDEX,
+    style: frame,
+    position: getDurableRabbitNodePosition(nodeIndex),
+    data: {
+      ...node,
+      id: node.id,
+      expanded: false,
+      origin: getStringField(node.origin) || 'rabbit-hole',
+      boardMode: 'strict-grid',
+    },
+  }
+}
+
+const persistDurableRabbitMemoryNode = async (
+  payload: ReturnType<typeof coerceMemoryNodeMessagePayload>,
+) => {
+  if (!payload) {
+    return
+  }
+
+  const incomingNode = payload.node as Record<string, unknown> & { id: string }
+  const existingState = getCachedBoardStateForInvestigation(payload.vaultId)
+    || await loadBoardStateForInvestigation(payload.vaultId)
+    || { mode: 'strict-grid', nodes: [], edges: [], pendingIntegrationNodeIds: [] }
+  const existingNodeIndex = existingState.nodes.findIndex((node) => node.id === incomingNode.id)
+  const nextNodes = existingNodeIndex >= 0
+    ? existingState.nodes.map((node, index) => (
+      index === existingNodeIndex
+        ? {
+          ...node,
+          data: {
+            ...node.data,
+            ...incomingNode,
+            id: incomingNode.id,
+            origin: getStringField(incomingNode.origin) || node.data?.origin || 'rabbit-hole',
+          },
+        }
+        : node
+    ))
+    : [
+      ...existingState.nodes,
+      createDurableRabbitNode(incomingNode, existingState.nodes.length),
+    ]
+
+  const pendingIntegrationNodeIds = payload.append
+    ? Array.from(new Set([...(existingState.pendingIntegrationNodeIds || []), incomingNode.id]))
+    : existingState.pendingIntegrationNodeIds || []
+
+  await saveBoardStateForInvestigation(payload.vaultId, {
+    ...existingState,
+    mode: existingState.mode || 'strict-grid',
+    nodes: nextNodes,
+    edges: existingState.edges || [],
+    pendingIntegrationNodeIds,
+    synthesisAlerts: existingState.synthesisAlerts || [],
+  })
+}
+
+const persistDurableRabbitNodeUpdate = async (
+  payload: ReturnType<typeof coerceRabbitHoleNodeUpdatePayload>,
+) => {
+  if (!payload) {
+    return
+  }
+
+  const existingState = getCachedBoardStateForInvestigation(payload.vaultId)
+    || await loadBoardStateForInvestigation(payload.vaultId)
+  if (!existingState) {
+    return
+  }
+
+  const nodeIdSet = new Set(payload.nodeIds)
+  let changed = false
+  const nextNodes = existingState.nodes.map((node) => {
+    if (!nodeIdSet.has(node.id)) {
+      return node
+    }
+    changed = true
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        rabbitState: payload.rabbitState,
+      },
+    }
+  })
+
+  if (!changed) {
+    return
+  }
+
+  await saveBoardStateForInvestigation(payload.vaultId, {
+    ...existingState,
+    nodes: nextNodes,
+    edges: existingState.edges || [],
+    pendingIntegrationNodeIds: existingState.pendingIntegrationNodeIds || [],
+    synthesisAlerts: existingState.synthesisAlerts || [],
+  })
 }
 
 const formatSidebarActivity = (investigationId: string) => {
@@ -1485,6 +1663,40 @@ function App() {
           const gatekeeper = coerceRabbitHoleGatekeeperPayload(msg.payload)
           if (gatekeeper) {
             setRabbitHoleGatekeeper(gatekeeper)
+          }
+          return
+        }
+
+        if (msg.type === 'MEMORY_NODE_GATHERED') {
+          const payload = coerceMemoryNodeMessagePayload(msg.payload)
+          if (payload) {
+            void persistDurableRabbitMemoryNode(payload).catch((error) => {
+              console.warn('[App] Failed to persist Rabbit Hole node globally.', error)
+              setAutosaveWarning({
+                investigationId: payload.vaultId,
+                errorName: error && typeof error === 'object' && 'name' in error
+                  ? String((error as { name?: unknown }).name || 'UnknownError')
+                  : 'UnknownError',
+                timestamp: Date.now(),
+              })
+            })
+          }
+          return
+        }
+
+        if (msg.type === 'RABBIT_HOLE_NODE_UPDATE') {
+          const payload = coerceRabbitHoleNodeUpdatePayload(msg.payload)
+          if (payload) {
+            void persistDurableRabbitNodeUpdate(payload).catch((error) => {
+              console.warn('[App] Failed to persist Rabbit Hole node state globally.', error)
+              setAutosaveWarning({
+                investigationId: payload.vaultId,
+                errorName: error && typeof error === 'object' && 'name' in error
+                  ? String((error as { name?: unknown }).name || 'UnknownError')
+                  : 'UnknownError',
+                timestamp: Date.now(),
+              })
+            })
           }
           return
         }
