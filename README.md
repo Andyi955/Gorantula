@@ -1,4 +1,4 @@
-# Gorantula v2.0 // Architect
+# Gorantula
 
 Gorantula is a local-first intelligence research workspace. It crawls a topic, gathers evidence, synthesizes it with configurable AI providers, and turns the result into a forensic board, timeline, and searchable vault.
 
