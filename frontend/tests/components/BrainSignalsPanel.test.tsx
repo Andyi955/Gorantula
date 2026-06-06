@@ -215,8 +215,12 @@ describe('BrainSignalsPanel', () => {
     const groupedOlderCards = visibleCards.filter((card) => card.textContent?.includes('Older Substation Case'))
     expect(groupedOlderCards).toHaveLength(1)
     expect(groupedOlderCards[0]).toHaveTextContent('+1 related firing')
+    expect(groupedOlderCards[0]).toHaveTextContent('92%')
+    expect(groupedOlderCards[0]).toHaveTextContent('Hot')
+    expect(groupedOlderCards[0]).toHaveTextContent('Why it fired')
+    expect(groupedOlderCards[0]).toHaveTextContent('Northgate Substation A-17, operator.example')
     expect(within(groupedOlderCards[0]).getAllByText('Entity/Date')).toHaveLength(1)
-    expect(within(groupedOlderCards[0]).getAllByText('Source Domain')).toHaveLength(1)
+    expect(within(groupedOlderCards[0]).getAllByText('Source Domain x2')).toHaveLength(1)
     expect(screen.queryByText('Weak Domain Case')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /show lower-priority signals \(3\)/i }))

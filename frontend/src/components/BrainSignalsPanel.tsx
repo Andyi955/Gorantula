@@ -45,6 +45,16 @@ const formatGateway = (gateway: BrainGateway) =>
 
 const formatScore = (score: number) => `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`
 
+const getScoreTier = (score: number) => {
+  if (score >= 0.75) {
+    return 'Hot'
+  }
+  if (score >= LOW_PRIORITY_SCORE_THRESHOLD) {
+    return 'Warm'
+  }
+  return 'Weak'
+}
+
 const sortByScore = <T extends { score: number; createdAt?: string }>(items: T[]) =>
   [...items].sort((left, right) => {
     if (right.score !== left.score) {
@@ -133,6 +143,46 @@ const getRelatedFiringText = (count: number) => {
     return null
   }
   return `+${relatedCount} related firing${relatedCount === 1 ? '' : 's'}`
+}
+
+const getGatewayCounts = (group: BrainSignalGroup) =>
+  group.gateways.map((gateway) => {
+    const reasonCount = group.reasons.filter((reason) => reason.gateway === gateway).length
+    const signalGatewayCount = group.signals.filter((signal) => signal.gateways.includes(gateway)).length
+
+    return {
+      gateway,
+      count: Math.max(1, reasonCount || signalGatewayCount),
+    }
+  })
+
+const formatGatewayCount = ({ gateway, count }: { gateway: BrainGateway; count: number }) =>
+  count > 1 ? `${formatGateway(gateway)} x${count}` : formatGateway(gateway)
+
+const buildSignalSummary = (group: BrainSignalGroup) => {
+  const labels: string[] = []
+  const seen = new Set<string>()
+
+  group.reasons.forEach((reason) => {
+    const label = (reason.label || reason.value || '').trim()
+    if (!label) {
+      return
+    }
+    const key = label.toLocaleLowerCase()
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    labels.push(label)
+  })
+
+  if (labels.length === 0) {
+    return group.primary.suggestedAction
+  }
+
+  const visibleLabels = labels.slice(0, 3)
+  const hiddenCount = labels.length - visibleLabels.length
+  return `${visibleLabels.join(', ')}${hiddenCount > 0 ? ` +${hiddenCount} more` : ''}`
 }
 
 export default function BrainSignalsPanel({
@@ -253,6 +303,9 @@ export default function BrainSignalsPanel({
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
     const signal = group.primary
+    const scoreTier = getScoreTier(group.score)
+    const gatewayCounts = getGatewayCounts(group)
+    const signalSummary = buildSignalSummary(group)
 
     return (
       <article
@@ -270,18 +323,26 @@ export default function BrainSignalsPanel({
               <span className="forensic-brain-card-group-count">{relatedFiringText}</span>
             )}
           </div>
-          <strong>{formatScore(group.score)}</strong>
+          <strong className={`forensic-brain-score forensic-brain-score-${scoreTier.toLocaleLowerCase()}`}>
+            <span>{formatScore(group.score)}</span>
+            <em>{scoreTier}</em>
+          </strong>
         </div>
 
         <div className="forensic-brain-chip-row" aria-label="Signal gateways">
-          {group.gateways.map((gateway) => (
+          {gatewayCounts.map(({ gateway, count }) => (
             <span
               key={`${group.key}:${gateway}`}
               className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
             >
-              {formatGateway(gateway)}
+              {formatGatewayCount({ gateway, count })}
             </span>
           ))}
+        </div>
+
+        <div className="forensic-brain-signal-summary">
+          <span>Why it fired</span>
+          <strong>{signalSummary}</strong>
         </div>
 
         <div className="forensic-brain-reason-stack">
