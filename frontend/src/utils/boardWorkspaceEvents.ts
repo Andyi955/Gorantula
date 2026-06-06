@@ -3,6 +3,15 @@ export const BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT = 'gorantula:board-toggle-synthe
 export const BOARD_RESTORE_COMPLETE_EVENT = 'gorantula:board-restore-complete'
 export const BOARD_WORKSPACE_STATE_UPDATED_EVENT = 'gorantula:board-workspace-state-updated'
 
+export interface BoardWorkspaceStateUpdatedDetail {
+  investigationId?: string
+  persisted?: boolean
+  source?: 'memory-cache' | 'backend' | 'browser-local' | 'browser-shadow'
+  nodeCount?: number
+  edgeCount?: number
+  contentSignature?: string
+}
+
 export interface BoardRestoreCompleteDetail {
   investigationId: string
   source: string
@@ -11,10 +20,13 @@ export interface BoardRestoreCompleteDetail {
   edgeCount: number
 }
 
-export const emitBoardWorkspaceEvent = (eventName: string) => {
+export const emitBoardWorkspaceEvent = (
+  eventName: string,
+  detail?: BoardWorkspaceStateUpdatedDetail,
+) => {
   if (typeof window === 'undefined') {
     return
   }
 
-  window.dispatchEvent(new CustomEvent(eventName))
+  window.dispatchEvent(new CustomEvent(eventName, detail ? { detail } : undefined))
 }

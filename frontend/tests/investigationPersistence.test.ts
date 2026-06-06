@@ -7,6 +7,10 @@ import {
   saveBoardStateForInvestigation,
 } from '../src/utils/investigationPersistence'
 import { BOARD_PERSIST_FAILED_EVENT, type PersistedBoardState } from '../src/utils/hierarchicalCanvas'
+import {
+  BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+  type BoardWorkspaceStateUpdatedDetail,
+} from '../src/utils/boardWorkspaceEvents'
 
 const backendFlag = globalThis as typeof globalThis & {
   __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean
@@ -192,6 +196,37 @@ describe('investigation persistence', () => {
 
     expect(cached?.nodes).toHaveLength(1)
     expect(cached?.nodes[0]?.data?.title).toBe('Persisted lead')
+  })
+
+  it('emits a persisted board update detail after backend board save completes', async () => {
+    const boardState = buildBoardState()
+    const updates: BoardWorkspaceStateUpdatedDetail[] = []
+    window.addEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, (event) => {
+      updates.push((event as CustomEvent<BoardWorkspaceStateUpdatedDetail>).detail)
+    })
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => ({}) } as Response
+    }))
+
+    await saveBoardStateForInvestigation('inv-brain-refresh', boardState)
+
+    expect(updates).toHaveLength(2)
+    expect(updates[0]).toMatchObject({
+      investigationId: 'inv-brain-refresh',
+      persisted: false,
+      source: 'memory-cache',
+      nodeCount: 1,
+      edgeCount: 0,
+    })
+    expect(updates[1]).toMatchObject({
+      investigationId: 'inv-brain-refresh',
+      persisted: true,
+      source: 'backend',
+      nodeCount: 1,
+      edgeCount: 0,
+    })
+    expect(updates[1]?.contentSignature).toContain('Persisted lead')
   })
 
   it('keeps the cached board object when backend hydration matches memory cache', async () => {

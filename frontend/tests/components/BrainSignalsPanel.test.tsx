@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type { BrainSignal, MemoryLink } from '../../src/utils/brainMemory'
+import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 
 const signal: BrainSignal = {
   id: 'brain-signal-alpha',
@@ -219,6 +220,47 @@ describe('BrainSignalsPanel', () => {
     const linkedMemory = await screen.findByTestId('brain-link-card')
     expect(linkedMemory).toHaveTextContent('Auto Linked Case')
     expect(linkedMemory).toHaveTextContent('Auto Memory')
+  })
+
+  it('refreshes after the active board persists new content while Brain is open', async () => {
+    let linkAvailable = false
+    const autoLink = {
+      ...makeLink({ id: 'brain-link-after-board-save', toTitle: 'Fresh Persisted Case', score: 0.9 }),
+      promotionType: 'auto',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse([]) as Response
+      }
+
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(linkAvailable ? [autoLink] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    expect(await screen.findByTestId('brain-links-empty-state')).toHaveTextContent(/No memory links promoted/i)
+
+    linkAvailable = true
+    window.dispatchEvent(new CustomEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT, {
+      detail: {
+        investigationId: 'inv-current',
+        persisted: true,
+        contentSignature: 'nodes:2|edges:1|fresh-content',
+      },
+    }))
+
+    await waitFor(() => {
+      const linkedMemory = screen.getByTestId('brain-link-card')
+      expect(linkedMemory).toHaveTextContent('Fresh Persisted Case')
+      expect(linkedMemory).toHaveTextContent('Auto Memory')
+    })
   })
 
   it('keeps linked memory scannable when promoted links grow', async () => {

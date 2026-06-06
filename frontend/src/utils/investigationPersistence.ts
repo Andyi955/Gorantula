@@ -5,7 +5,10 @@ import {
   parsePersistedBoardState,
   type PersistedBoardState,
 } from './hierarchicalCanvas'
-import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from './boardWorkspaceEvents'
+import {
+  BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+  type BoardWorkspaceStateUpdatedDetail,
+} from './boardWorkspaceEvents'
 
 const API_BASE = 'http://localhost:8080/api/investigations'
 const DISCOVERIES_STORAGE_KEY = 'gorantula_discoveries_by_investigation'
@@ -44,11 +47,45 @@ const safeJSONStringify = (value: unknown) => {
   }
 }
 
-const emitBoardUpdate = () => {
+const buildBoardContentSignature = (state: PersistedBoardState) => {
+  const nodes = (state.nodes || []).map((node) => ({
+    id: String(node.id || ''),
+    title: String(node.data?.title || ''),
+    summary: String(node.data?.summary || ''),
+    fullText: String(node.data?.fullText || ''),
+    sourceURL: String(node.data?.sourceURL || ''),
+    sourceURLs: Array.isArray(node.data?.sourceURLs) ? node.data.sourceURLs.map(String).sort() : [],
+  })).sort((left, right) => left.id.localeCompare(right.id))
+
+  const edges = (state.edges || []).map((edge) => ({
+    id: String(edge.id || ''),
+    source: String(edge.source || ''),
+    target: String(edge.target || ''),
+    label: String(edge.label || edge.data?.displayLabel || edge.data?.tag || ''),
+  })).sort((left, right) => left.id.localeCompare(right.id))
+
+  return safeJSONStringify({ nodes, edges }) || `nodes:${nodes.length}|edges:${edges.length}`
+}
+
+const buildBoardUpdateDetail = (
+  investigationId: string,
+  state: PersistedBoardState,
+  persisted: boolean,
+  source: BoardWorkspaceStateUpdatedDetail['source'],
+): BoardWorkspaceStateUpdatedDetail => ({
+  investigationId,
+  persisted,
+  source,
+  nodeCount: state.nodes?.length || 0,
+  edgeCount: state.edges?.length || 0,
+  contentSignature: buildBoardContentSignature(state),
+})
+
+const emitBoardUpdate = (detail?: BoardWorkspaceStateUpdatedDetail) => {
   if (!isBrowser()) {
     return
   }
-  window.dispatchEvent(new CustomEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT))
+  window.dispatchEvent(new CustomEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT, detail ? { detail } : undefined))
 }
 
 const emitPersistFailure = (investigationId: string, error: unknown) => {
@@ -507,11 +544,12 @@ export const saveBoardStateForInvestigation = async (
   const stateToPersist = preserveExistingTimelineSnapshot(investigationId, state)
 
   boardStateCache.set(investigationId, stateToPersist)
-  emitBoardUpdate()
+  emitBoardUpdate(buildBoardUpdateDetail(investigationId, stateToPersist, false, 'memory-cache'))
 
   if (!shouldUseBackendPersistence()) {
     if (!options.skipFallback) {
       localSet(`inv_data_${investigationId}`, stateToPersist, investigationId)
+      emitBoardUpdate(buildBoardUpdateDetail(investigationId, stateToPersist, true, 'browser-local'))
     }
     return true
   }
@@ -519,6 +557,7 @@ export const saveBoardStateForInvestigation = async (
   try {
     await putJSON(`${API_BASE}/${encodeURIComponent(investigationId)}/board`, stateToPersist)
     void writeIndexedBoardShadowStateForInvestigation(investigationId, stateToPersist)
+    emitBoardUpdate(buildBoardUpdateDetail(investigationId, stateToPersist, true, 'backend'))
     return true
   } catch (error) {
     const wroteShadowState = await writeIndexedBoardShadowStateForInvestigation(investigationId, stateToPersist)
@@ -526,6 +565,7 @@ export const saveBoardStateForInvestigation = async (
       if (import.meta.env.DEV) {
         console.debug('[InvestigationPersistence] Backend board save unavailable; saved browser shadow copy instead.', error)
       }
+      emitBoardUpdate(buildBoardUpdateDetail(investigationId, stateToPersist, true, 'browser-shadow'))
       return true
     }
 

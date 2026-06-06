@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brain, ChevronDown, ChevronUp, ExternalLink, Link2, RefreshCw, Trash2, X } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
+  BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+  type BoardWorkspaceStateUpdatedDetail,
+} from '../utils/boardWorkspaceEvents'
+import {
   dismissBrainSignal,
   fetchBrainLinks,
   fetchBrainSignals,
@@ -33,6 +37,7 @@ const gatewayClassNames: Record<string, string> = {
 const PRIORITY_SIGNAL_LIMIT = 10
 const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
+const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 
 type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
 type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
@@ -407,6 +412,8 @@ export default function BrainSignalsPanel({
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const requestIdRef = useRef(0)
+  const boardRefreshTimerRef = useRef<number | null>(null)
+  const latestBoardRefreshSignatureRef = useRef<string | null>(null)
 
   const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
     if (!currentInvestigationId) {
@@ -460,6 +467,52 @@ export default function BrainSignalsPanel({
   useEffect(() => {
     void loadBrainMemory()
   }, [loadBrainMemory])
+
+  useEffect(() => {
+    if (!currentInvestigationId || typeof window === 'undefined') {
+      return undefined
+    }
+
+    const clearScheduledRefresh = () => {
+      if (boardRefreshTimerRef.current !== null) {
+        window.clearTimeout(boardRefreshTimerRef.current)
+        boardRefreshTimerRef.current = null
+      }
+    }
+
+    const handleBoardWorkspaceUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<BoardWorkspaceStateUpdatedDetail>).detail
+      if (!detail?.persisted || detail.source === 'memory-cache') {
+        return
+      }
+      if (detail.investigationId && detail.investigationId !== currentInvestigationId) {
+        return
+      }
+
+      const signature = detail.contentSignature || [
+        detail.investigationId || currentInvestigationId,
+        detail.nodeCount ?? 0,
+        detail.edgeCount ?? 0,
+        detail.source || 'persisted',
+      ].join(':')
+      if (latestBoardRefreshSignatureRef.current === signature) {
+        return
+      }
+      latestBoardRefreshSignatureRef.current = signature
+
+      clearScheduledRefresh()
+      boardRefreshTimerRef.current = window.setTimeout(() => {
+        boardRefreshTimerRef.current = null
+        void loadBrainMemory(true)
+      }, BOARD_MEMORY_REFRESH_DEBOUNCE_MS)
+    }
+
+    window.addEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardWorkspaceUpdate)
+    return () => {
+      window.removeEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardWorkspaceUpdate)
+      clearScheduledRefresh()
+    }
+  }, [currentInvestigationId, loadBrainMemory])
 
   const rankedSignals = useMemo(() => sortByScore(signals), [signals])
   const allSignalGroups = useMemo(() => groupSignalsByOlderCase(rankedSignals), [rankedSignals])
