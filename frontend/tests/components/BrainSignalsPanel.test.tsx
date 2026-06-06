@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type { BrainSignal, MemoryLink } from '../../src/utils/brainMemory'
+import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 
 const signal: BrainSignal = {
   id: 'brain-signal-alpha',
@@ -135,6 +136,9 @@ const installBrainFetch = ({
     if (method === 'PUT' && url.endsWith('/link')) {
       return Promise.resolve(jsonResponse(promoteLink) as Response)
     }
+    if (method === 'PUT' && url.endsWith('/forget')) {
+      return Promise.resolve(jsonResponse(links[0] || link) as Response)
+    }
 
     return Promise.resolve(jsonResponse({}, 404) as Response)
   })
@@ -188,6 +192,77 @@ describe('BrainSignalsPanel', () => {
     expect(linkedMemory).toHaveTextContent('Entity/Date')
   })
 
+  it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
+    let signalGenerationComplete = false
+    const autoLink = {
+      ...makeLink({ id: 'brain-link-auto-first-scan', toTitle: 'Auto Linked Case', score: 0.9 }),
+      promotionType: 'auto',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        await Promise.resolve()
+        signalGenerationComplete = true
+        return jsonResponse([]) as Response
+      }
+
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(signalGenerationComplete ? [autoLink] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const linkedMemory = await screen.findByTestId('brain-link-card')
+    expect(linkedMemory).toHaveTextContent('Auto Linked Case')
+    expect(linkedMemory).toHaveTextContent('Auto Memory')
+  })
+
+  it('refreshes after the active board persists new content while Brain is open', async () => {
+    let linkAvailable = false
+    const autoLink = {
+      ...makeLink({ id: 'brain-link-after-board-save', toTitle: 'Fresh Persisted Case', score: 0.9 }),
+      promotionType: 'auto',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse([]) as Response
+      }
+
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(linkAvailable ? [autoLink] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    expect(await screen.findByTestId('brain-links-empty-state')).toHaveTextContent(/No memory links promoted/i)
+
+    linkAvailable = true
+    window.dispatchEvent(new CustomEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT, {
+      detail: {
+        investigationId: 'inv-current',
+        persisted: true,
+        contentSignature: 'nodes:2|edges:1|fresh-content',
+      },
+    }))
+
+    await waitFor(() => {
+      const linkedMemory = screen.getByTestId('brain-link-card')
+      expect(linkedMemory).toHaveTextContent('Fresh Persisted Case')
+      expect(linkedMemory).toHaveTextContent('Auto Memory')
+    })
+  })
+
   it('keeps linked memory scannable when promoted links grow', async () => {
     const user = userEvent.setup()
     const links = Array.from({ length: 7 }, (_, index) => makeLink({
@@ -229,6 +304,216 @@ describe('BrainSignalsPanel', () => {
     const card = await screen.findByTestId('brain-link-card')
     expect(card).toHaveTextContent('Auto Memory')
     expect(card).toHaveTextContent('4 activations')
+  })
+
+  it('compresses duplicate linked memories by older case title', async () => {
+    const duplicateLinks = [
+      {
+        ...makeLink({
+          id: 'brain-link-duplicate-a',
+          toInvestigationId: 'inv-duplicate-a',
+          toTitle: 'Repeated AI Case',
+          score: 0.86,
+          gateways: ['entity-date'],
+          reasons: [signal.reasons[0]],
+        }),
+        activationCount: 2,
+      },
+      {
+        ...makeLink({
+          id: 'brain-link-duplicate-b',
+          toInvestigationId: 'inv-duplicate-b',
+          toTitle: 'Repeated AI Case',
+          score: 0.72,
+          gateways: ['source-domain'],
+          reasons: [signal.reasons[1]],
+        }),
+        activationCount: 3,
+      },
+    ]
+    installBrainFetch({ signals: [], links: duplicateLinks })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const card = await screen.findByTestId('brain-link-card')
+    expect(screen.getAllByTestId('brain-link-card')).toHaveLength(1)
+    expect(card).toHaveTextContent('Repeated AI Case')
+    expect(card).toHaveTextContent('+1 related memory')
+    expect(card).toHaveTextContent('5 activations')
+    expect(card).toHaveTextContent('Entity/Date')
+    expect(card).toHaveTextContent('Source Domain')
+  })
+
+  it('filters active signals and linked memories by gateway and strength', async () => {
+    const user = userEvent.setup()
+    const entitySignal = makeSignal({
+      id: 'brain-signal-entity-filter',
+      targetInvestigationId: 'inv-entity-filter',
+      targetTitle: 'Entity Filter Case',
+      score: 0.82,
+      gateways: ['entity-date'],
+      reasons: [signal.reasons[0]],
+    })
+    const sourceSignal = makeSignal({
+      id: 'brain-signal-source-filter',
+      targetInvestigationId: 'inv-source-filter',
+      targetTitle: 'Source Filter Case',
+      score: 0.52,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+      suggestedAction: 'Compare source domain',
+    })
+    const entityLink = makeLink({
+      id: 'brain-link-entity-filter',
+      toInvestigationId: 'inv-link-entity-filter',
+      toTitle: 'Entity Linked Memory',
+      score: 0.82,
+      gateways: ['entity-date'],
+      reasons: [signal.reasons[0]],
+    })
+    const sourceLink = makeLink({
+      id: 'brain-link-source-filter',
+      toInvestigationId: 'inv-link-source-filter',
+      toTitle: 'Source Linked Memory',
+      score: 0.52,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+    })
+    installBrainFetch({ signals: [entitySignal, sourceSignal], links: [entityLink, sourceLink] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    expect(await screen.findByText('Entity Filter Case')).toBeInTheDocument()
+    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
+    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
+    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /source domain filter/i }))
+
+    expect(screen.queryByText('Entity Filter Case')).not.toBeInTheDocument()
+    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
+    expect(screen.queryByText('Entity Linked Memory')).not.toBeInTheDocument()
+    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /hot filter/i }))
+
+    expect(screen.queryByText('Source Filter Case')).not.toBeInTheDocument()
+    expect(screen.queryByText('Source Linked Memory')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /all gateways filter/i }))
+
+    expect(screen.getByText('Entity Filter Case')).toBeInTheDocument()
+    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
+  })
+
+  it('summarizes brain memory health across active and linked memory', async () => {
+    const sourceSignal = makeSignal({
+      id: 'brain-signal-health-source',
+      targetInvestigationId: 'inv-health-source',
+      targetTitle: 'Health Source Case',
+      score: 0.52,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+      suggestedAction: 'Compare source domain',
+    })
+    const autoLink = {
+      ...makeLink({
+        id: 'brain-link-health-auto',
+        toInvestigationId: 'inv-health-auto',
+        toTitle: 'Health Auto Memory',
+        score: 0.88,
+        gateways: ['entity-date', 'source-domain'],
+        reasons: signal.reasons,
+      }),
+      promotionType: 'auto',
+      activationCount: 3,
+    }
+    installBrainFetch({ signals: [signal, sourceSignal], links: [autoLink, link] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const health = await screen.findByTestId('brain-health-summary')
+    expect(health).toHaveTextContent('2 firing cases')
+    expect(health).toHaveTextContent('2 memory groups')
+    expect(health).toHaveTextContent('1 auto')
+    expect(health).toHaveTextContent('92%')
+    expect(health).toHaveTextContent('Entity/Date')
+  })
+
+  it('opens a linked memory detail view with evidence and matched node ids', async () => {
+    const user = userEvent.setup()
+    const onOpenInvestigation = vi.fn()
+    const detailedLink = {
+      ...makeLink({
+        id: 'brain-link-detail',
+        toTitle: 'Older Substation Case',
+        score: 0.92,
+        gateways: ['entity-date', 'source-domain'],
+        reasons: signal.reasons,
+      }),
+      promotionType: 'auto',
+      activationCount: 4,
+      createdAt: '2026-06-05T12:00:00Z',
+      updatedAt: '2026-06-06T08:30:00Z',
+      lastFiredAt: '2026-06-06T09:00:00Z',
+    }
+    installBrainFetch({ signals: [], links: [detailedLink] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onOpenInvestigation={onOpenInvestigation}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
+
+    const detail = await screen.findByTestId('brain-link-detail')
+    expect(detail).toHaveTextContent('Current Grid Case')
+    expect(detail).toHaveTextContent('Older Substation Case')
+    expect(detail).toHaveTextContent('92%')
+    expect(detail).toHaveTextContent('Auto Memory')
+    expect(detail).toHaveTextContent('4 activations')
+    expect(detail).toHaveTextContent('First fired')
+    expect(detail).toHaveTextContent('2026-06-05')
+    expect(detail).toHaveTextContent('Last fired')
+    expect(detail).toHaveTextContent('2026-06-06')
+    expect(detail).toHaveTextContent('Entity/Date')
+    expect(detail).toHaveTextContent('Source Domain')
+    expect(detail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+    expect(detail).toHaveTextContent('node-current')
+    expect(detail).toHaveTextContent('node-older')
+
+    await user.click(within(detail).getByRole('button', { name: /open memory link older substation case/i }))
+    expect(onOpenInvestigation).toHaveBeenCalledWith('inv-older')
+  })
+
+  it('forgets a linked memory from the detail view', async () => {
+    const user = userEvent.setup()
+    const detailedLink = makeLink({
+      id: 'brain-link-detail',
+      toTitle: 'Older Substation Case',
+      score: 0.92,
+      gateways: ['entity-date', 'source-domain'],
+      reasons: signal.reasons,
+    })
+    const fetchMock = installBrainFetch({ signals: [], links: [detailedLink] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
+    const detail = await screen.findByTestId('brain-link-detail')
+    await user.click(within(detail).getByRole('button', { name: /forget memory link older substation case/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('brain-link-detail')).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/links/brain-link-detail/forget',
+      expect.objectContaining({ method: 'PUT' }),
+    )
   })
 
   it('groups duplicate older cases and collapses weak or overflow signals', async () => {

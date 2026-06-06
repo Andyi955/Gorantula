@@ -21,7 +21,10 @@ import {
     saveBoardStateForInvestigation,
 } from '../utils/investigationPersistence';
 import type { PersistedBoardState, PersistedTimelineEvent, PersistedTimelineSnapshot } from '../utils/hierarchicalCanvas';
-import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../utils/boardWorkspaceEvents';
+import {
+    BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+    type BoardWorkspaceStateUpdatedDetail,
+} from '../utils/boardWorkspaceEvents';
 import {
     buildTimelineSnapshotFromNodes,
     computeTimelineSourceFingerprint,
@@ -327,7 +330,14 @@ const TimelineView: React.FC<TimelineViewProps> = ({
         if (!investigationId) {
             return undefined;
         }
-        const handleBoardUpdate = () => {
+        const handleBoardUpdate = (event: Event) => {
+            const detail = (event as CustomEvent<BoardWorkspaceStateUpdatedDetail>).detail;
+            if (detail?.investigationId && detail.investigationId !== investigationId) {
+                return;
+            }
+            if (detail && (!detail.persisted || detail.source === 'memory-cache')) {
+                return;
+            }
             window.setTimeout(() => {
                 void loadTimelineState();
             }, 0);

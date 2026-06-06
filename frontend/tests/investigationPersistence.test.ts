@@ -7,6 +7,10 @@ import {
   saveBoardStateForInvestigation,
 } from '../src/utils/investigationPersistence'
 import { BOARD_PERSIST_FAILED_EVENT, type PersistedBoardState } from '../src/utils/hierarchicalCanvas'
+import {
+  BOARD_WORKSPACE_STATE_UPDATED_EVENT,
+  type BoardWorkspaceStateUpdatedDetail,
+} from '../src/utils/boardWorkspaceEvents'
 
 const backendFlag = globalThis as typeof globalThis & {
   __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean
@@ -26,6 +30,69 @@ const buildBoardState = (): PersistedBoardState => ({
   pendingIntegrationNodeIds: ['node-1'],
   synthesisAlerts: [],
 })
+
+const installIndexedBoardShadowMock = () => {
+  const records = new Map<string, unknown>()
+  const objectStore = {
+    put: vi.fn((record: { investigationId: string }) => {
+      const request = {} as IDBRequest<boolean>
+      queueMicrotask(() => {
+        records.set(record.investigationId, record)
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+    get: vi.fn((investigationId: string) => {
+      const request = {} as IDBRequest<unknown>
+      queueMicrotask(() => {
+        Object.defineProperty(request, 'result', {
+          configurable: true,
+          value: records.get(investigationId),
+        })
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+    delete: vi.fn((investigationId: string) => {
+      const request = {} as IDBRequest<boolean>
+      queueMicrotask(() => {
+        records.delete(investigationId)
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+  }
+  const database = {
+    objectStoreNames: {
+      contains: () => true,
+    },
+    createObjectStore: vi.fn(),
+    close: vi.fn(),
+    transaction: vi.fn(() => ({
+      objectStore: () => objectStore,
+    })),
+  }
+  const indexedDB = {
+    open: vi.fn(() => {
+      const request = {} as IDBOpenDBRequest
+      queueMicrotask(() => {
+        Object.defineProperty(request, 'result', {
+          configurable: true,
+          value: database,
+        })
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+  }
+
+  Object.defineProperty(window, 'indexedDB', {
+    configurable: true,
+    value: indexedDB,
+  })
+
+  return { records, objectStore }
+}
 
 describe('investigation persistence', () => {
   beforeEach(() => {
@@ -95,9 +162,10 @@ describe('investigation persistence', () => {
     expect(localStorage.getItem('gorantula_discoveries_by_investigation')).toBeNull()
   })
 
-  it('does not write browser board fallback when backend save fails', async () => {
+  it('saves a board shadow without warning when backend board save is offline', async () => {
     const boardState = buildBoardState()
     const failedEvents: Event[] = []
+    const shadow = installIndexedBoardShadowMock()
     window.addEventListener(BOARD_PERSIST_FAILED_EVENT, (event) => failedEvents.push(event))
 
     vi.stubGlobal('fetch', vi.fn(async () => {
@@ -106,10 +174,14 @@ describe('investigation persistence', () => {
 
     const saved = await saveBoardStateForInvestigation('inv-fallback', boardState)
 
-    expect(saved).toBe(false)
+    expect(saved).toBe(true)
     expect(localStorage.getItem('inv_data_inv-fallback')).toBeNull()
-    expect(localStorage.getItem('gorantula_board_shadow_inv-fallback')).toBeNull()
-    expect(failedEvents).toHaveLength(1)
+    expect(shadow.objectStore.put).toHaveBeenCalled()
+    expect(shadow.records.get('inv-fallback')).toMatchObject({
+      investigationId: 'inv-fallback',
+      state: boardState,
+    })
+    expect(failedEvents).toHaveLength(0)
   })
 
   it('serves a backend-mode board from the in-memory cache before backend hydration', async () => {
@@ -124,6 +196,37 @@ describe('investigation persistence', () => {
 
     expect(cached?.nodes).toHaveLength(1)
     expect(cached?.nodes[0]?.data?.title).toBe('Persisted lead')
+  })
+
+  it('emits a persisted board update detail after backend board save completes', async () => {
+    const boardState = buildBoardState()
+    const updates: BoardWorkspaceStateUpdatedDetail[] = []
+    window.addEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, (event) => {
+      updates.push((event as CustomEvent<BoardWorkspaceStateUpdatedDetail>).detail)
+    })
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return { ok: true, json: async () => ({}) } as Response
+    }))
+
+    await saveBoardStateForInvestigation('inv-brain-refresh', boardState)
+
+    expect(updates).toHaveLength(2)
+    expect(updates[0]).toMatchObject({
+      investigationId: 'inv-brain-refresh',
+      persisted: false,
+      source: 'memory-cache',
+      nodeCount: 1,
+      edgeCount: 0,
+    })
+    expect(updates[1]).toMatchObject({
+      investigationId: 'inv-brain-refresh',
+      persisted: true,
+      source: 'backend',
+      nodeCount: 1,
+      edgeCount: 0,
+    })
+    expect(updates[1]?.contentSignature).toContain('Persisted lead')
   })
 
   it('keeps the cached board object when backend hydration matches memory cache', async () => {
