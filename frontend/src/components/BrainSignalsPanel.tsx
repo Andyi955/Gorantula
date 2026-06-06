@@ -34,6 +34,23 @@ const PRIORITY_SIGNAL_LIMIT = 10
 const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
 
+type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
+type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
+
+const gatewayFilterOptions: Array<{ value: GatewayFilter; label: string }> = [
+  { value: 'all', label: 'All Gateways' },
+  { value: 'entity-date', label: 'Entity/Date' },
+  { value: 'source-domain', label: 'Source Domain' },
+  { value: 'relationship-tag', label: 'Relationship' },
+]
+
+const strengthFilterOptions: Array<{ value: StrengthFilter; label: string }> = [
+  { value: 'all', label: 'All Strengths' },
+  { value: 'hot', label: 'Hot' },
+  { value: 'warm', label: 'Warm' },
+  { value: 'weak', label: 'Weak' },
+]
+
 interface BrainSignalGroup {
   key: string
   primary: BrainSignal
@@ -95,6 +112,8 @@ const getScoreTier = (score: number) => {
   return 'Weak'
 }
 
+const getScoreTierKey = (score: number): StrengthFilter => getScoreTier(score).toLocaleLowerCase() as StrengthFilter
+
 const sortByScore = <T extends { score: number; createdAt?: string }>(items: T[]) =>
   [...items].sort((left, right) => {
     if (right.score !== left.score) {
@@ -110,6 +129,23 @@ const getSignalGroupKey = (signal: BrainSignal) =>
 
 const getMemoryLinkGroupKey = (link: MemoryLink) =>
   normalizeSignalGroupTitle(link.toTitle) || link.toInvestigationId
+
+const hasGateway = (gateways: BrainGateway[], reasons: Array<{ gateway: BrainGateway }>, gateway: GatewayFilter) => {
+  if (gateway === 'all') {
+    return true
+  }
+  return gateways.includes(gateway) || reasons.some((reason) => reason.gateway === gateway)
+}
+
+const matchesBrainFilters = (
+  item: { score: number; gateways: BrainGateway[]; reasons: Array<{ gateway: BrainGateway }> },
+  gatewayFilter: GatewayFilter,
+  strengthFilter: StrengthFilter,
+) => {
+  const matchesGateway = hasGateway(item.gateways, item.reasons, gatewayFilter)
+  const matchesStrength = strengthFilter === 'all' || getScoreTierKey(item.score) === strengthFilter
+  return matchesGateway && matchesStrength
+}
 
 const uniqueReasons = (signals: BrainSignal[]) => {
   const seen = new Set<string>()
@@ -332,6 +368,8 @@ export default function BrainSignalsPanel({
   const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
   const [showOlderMemoryLinks, setShowOlderMemoryLinks] = useState(false)
   const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
+  const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
+  const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const requestIdRef = useRef(0)
 
   const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
@@ -390,7 +428,11 @@ export default function BrainSignalsPanel({
   }, [loadBrainMemory])
 
   const rankedSignals = useMemo(() => sortByScore(signals), [signals])
-  const signalGroups = useMemo(() => groupSignalsByOlderCase(rankedSignals), [rankedSignals])
+  const filteredSignals = useMemo(
+    () => rankedSignals.filter((signal) => matchesBrainFilters(signal, gatewayFilter, strengthFilter)),
+    [rankedSignals, gatewayFilter, strengthFilter],
+  )
+  const signalGroups = useMemo(() => groupSignalsByOlderCase(filteredSignals), [filteredSignals])
   const { prioritySignalGroups, lowerPrioritySignalGroups } = useMemo(() => {
     const priority: BrainSignalGroup[] = []
     const lowerPriority: BrainSignalGroup[] = []
@@ -409,7 +451,11 @@ export default function BrainSignalsPanel({
     }
   }, [signalGroups])
   const rankedLinks = useMemo(() => sortByScore(links), [links])
-  const linkGroups = useMemo(() => groupMemoryLinksByOlderCase(rankedLinks), [rankedLinks])
+  const filteredLinks = useMemo(
+    () => rankedLinks.filter((link) => matchesBrainFilters(link, gatewayFilter, strengthFilter)),
+    [rankedLinks, gatewayFilter, strengthFilter],
+  )
+  const linkGroups = useMemo(() => groupMemoryLinksByOlderCase(filteredLinks), [filteredLinks])
   const priorityLinkGroups = useMemo(() => linkGroups.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
   const olderLinkGroups = useMemo(() => linkGroups.slice(LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
   const selectedMemoryLinkGroup = useMemo(
@@ -776,6 +822,37 @@ export default function BrainSignalsPanel({
           </button>
         </div>
       </header>
+
+      <div className="forensic-brain-filter-bar" aria-label="Brain memory filters">
+        <div className="forensic-brain-filter-group" role="group" aria-label="Gateway filters">
+          {gatewayFilterOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-label={`${option.label} filter`}
+              aria-pressed={gatewayFilter === option.value}
+              className={gatewayFilter === option.value ? 'is-active' : ''}
+              onClick={() => setGatewayFilter(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="forensic-brain-filter-group" role="group" aria-label="Strength filters">
+          {strengthFilterOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-label={`${option.label} filter`}
+              aria-pressed={strengthFilter === option.value}
+              className={strengthFilter === option.value ? 'is-active' : ''}
+              onClick={() => setStrengthFilter(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="forensic-brain-workspace">
         <section className="forensic-brain-panel forensic-brain-panel-signals">

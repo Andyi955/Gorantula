@@ -272,6 +272,68 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('Source Domain')
   })
 
+  it('filters active signals and linked memories by gateway and strength', async () => {
+    const user = userEvent.setup()
+    const entitySignal = makeSignal({
+      id: 'brain-signal-entity-filter',
+      targetInvestigationId: 'inv-entity-filter',
+      targetTitle: 'Entity Filter Case',
+      score: 0.82,
+      gateways: ['entity-date'],
+      reasons: [signal.reasons[0]],
+    })
+    const sourceSignal = makeSignal({
+      id: 'brain-signal-source-filter',
+      targetInvestigationId: 'inv-source-filter',
+      targetTitle: 'Source Filter Case',
+      score: 0.52,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+      suggestedAction: 'Compare source domain',
+    })
+    const entityLink = makeLink({
+      id: 'brain-link-entity-filter',
+      toInvestigationId: 'inv-link-entity-filter',
+      toTitle: 'Entity Linked Memory',
+      score: 0.82,
+      gateways: ['entity-date'],
+      reasons: [signal.reasons[0]],
+    })
+    const sourceLink = makeLink({
+      id: 'brain-link-source-filter',
+      toInvestigationId: 'inv-link-source-filter',
+      toTitle: 'Source Linked Memory',
+      score: 0.52,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+    })
+    installBrainFetch({ signals: [entitySignal, sourceSignal], links: [entityLink, sourceLink] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    expect(await screen.findByText('Entity Filter Case')).toBeInTheDocument()
+    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
+    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
+    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /source domain filter/i }))
+
+    expect(screen.queryByText('Entity Filter Case')).not.toBeInTheDocument()
+    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
+    expect(screen.queryByText('Entity Linked Memory')).not.toBeInTheDocument()
+    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /hot filter/i }))
+
+    expect(screen.queryByText('Source Filter Case')).not.toBeInTheDocument()
+    expect(screen.queryByText('Source Linked Memory')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /all gateways filter/i }))
+
+    expect(screen.getByText('Entity Filter Case')).toBeInTheDocument()
+    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
+  })
+
   it('opens a linked memory detail view with evidence and matched node ids', async () => {
     const user = userEvent.setup()
     const onOpenInvestigation = vi.fn()
