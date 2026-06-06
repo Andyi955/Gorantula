@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type { BrainSignal, MemoryLink } from '../../src/utils/brainMemory'
@@ -155,6 +155,7 @@ describe('BrainSignalsPanel', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('renders loading and empty states', async () => {
@@ -232,6 +233,47 @@ describe('BrainSignalsPanel', () => {
     const linkedMemory = await screen.findByTestId('brain-link-card')
     expect(linkedMemory).toHaveTextContent('Auto Linked Case')
     expect(linkedMemory).toHaveTextContent('Auto Memory')
+  })
+
+  it('keeps checking briefly so delayed auto-promoted links appear without manual refresh', async () => {
+    const user = userEvent.setup()
+    let linkAvailable = false
+    const delayedLink = {
+      ...makeLink({ id: 'brain-link-delayed-auto', toTitle: 'Delayed Auto Memory', score: 0.9 }),
+      promotionType: 'auto',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse([]) as Response
+      }
+
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(linkAvailable ? [delayedLink] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
+
+    expect(await screen.findByTestId('brain-links-empty-state')).toHaveTextContent(/No memory links promoted/i)
+
+    linkAvailable = true
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1250))
+    })
+
+    await waitFor(() => {
+      const linkedMemory = screen.getByTestId('brain-link-card')
+      expect(linkedMemory).toHaveTextContent('Delayed Auto Memory')
+      expect(linkedMemory).toHaveTextContent('Auto Memory')
+    }, { timeout: 2500 })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/links?')).length)
+      .toBeGreaterThanOrEqual(2)
   })
 
   it('refreshes after the active board persists new content while Brain is open', async () => {

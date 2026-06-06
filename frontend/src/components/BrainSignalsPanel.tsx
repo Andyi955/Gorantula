@@ -39,6 +39,8 @@ const PRIORITY_SIGNAL_LIMIT = 10
 const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
+const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
+const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
 type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
 type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
@@ -415,11 +417,16 @@ export default function BrainSignalsPanel({
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
+  const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
   const requestIdRef = useRef(0)
   const boardRefreshTimerRef = useRef<number | null>(null)
   const latestBoardRefreshSignatureRef = useRef<string | null>(null)
 
-  const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
+  const startBrainMemoryFollowup = useCallback(() => {
+    setBrainMemoryFollowupRunId((current) => current + 1)
+  }, [])
+
+  const loadBrainMemory = useCallback(async (isManualRefresh = false, isBackgroundRefresh = false) => {
     if (!currentInvestigationId) {
       setSignals([])
       setLinks([])
@@ -438,7 +445,7 @@ export default function BrainSignalsPanel({
     setError(null)
     if (isManualRefresh) {
       setIsRefreshing(true)
-    } else {
+    } else if (!isBackgroundRefresh) {
       setIsLoading(true)
     }
 
@@ -463,7 +470,9 @@ export default function BrainSignalsPanel({
       }
     } finally {
       if (requestIdRef.current === requestId) {
-        setIsLoading(false)
+        if (!isBackgroundRefresh) {
+          setIsLoading(false)
+        }
         setIsRefreshing(false)
       }
     }
@@ -471,7 +480,25 @@ export default function BrainSignalsPanel({
 
   useEffect(() => {
     void loadBrainMemory()
-  }, [loadBrainMemory])
+    startBrainMemoryFollowup()
+  }, [loadBrainMemory, startBrainMemoryFollowup])
+
+  useEffect(() => {
+    if (!currentInvestigationId || brainMemoryFollowupRunId === 0 || typeof window === 'undefined') {
+      return undefined
+    }
+
+    let attempts = 0
+    const intervalId = window.setInterval(() => {
+      attempts += 1
+      void loadBrainMemory(false, true)
+      if (attempts >= BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS) {
+        window.clearInterval(intervalId)
+      }
+    }, BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [brainMemoryFollowupRunId, currentInvestigationId, loadBrainMemory])
 
   useEffect(() => {
     if (!currentInvestigationId || typeof window === 'undefined') {
@@ -509,6 +536,7 @@ export default function BrainSignalsPanel({
       boardRefreshTimerRef.current = window.setTimeout(() => {
         boardRefreshTimerRef.current = null
         void loadBrainMemory(true)
+        startBrainMemoryFollowup()
       }, BOARD_MEMORY_REFRESH_DEBOUNCE_MS)
     }
 
@@ -517,7 +545,7 @@ export default function BrainSignalsPanel({
       window.removeEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardWorkspaceUpdate)
       clearScheduledRefresh()
     }
-  }, [currentInvestigationId, loadBrainMemory])
+  }, [currentInvestigationId, loadBrainMemory, startBrainMemoryFollowup])
 
   const rankedSignals = useMemo(() => sortByScore(signals), [signals])
   const allSignalGroups = useMemo(() => groupSignalsByOlderCase(rankedSignals), [rankedSignals])
@@ -1308,7 +1336,10 @@ export default function BrainSignalsPanel({
           <button
             type="button"
             aria-label="Refresh brain signals"
-            onClick={() => void loadBrainMemory(true)}
+            onClick={() => {
+              void loadBrainMemory(true)
+              startBrainMemoryFollowup()
+            }}
             disabled={!currentInvestigationId || isLoading || isRefreshing}
             className="forensic-brain-refresh"
           >
