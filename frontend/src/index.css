@@ -6253,6 +6253,28 @@ body {
   font-weight: 950;
 }
 
+.forensic-brain-link-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  margin-top: 0.55rem;
+}
+
+.forensic-brain-link-meta span {
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(129, 227, 255, 0.055);
+  padding: 0.22rem 0.42rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.58rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.forensic-brain-link-meta-auto {
+  border-color: rgba(0, 255, 65, 0.22) !important;
+  color: #a9ffc0 !important;
+}
+
 .forensic-brain-link-card p {
   margin-top: 0.62rem;
 }

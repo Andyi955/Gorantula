@@ -50,6 +50,62 @@ func TestServiceGeneratesRecallBundleSignals(t *testing.T) {
 				"sourceURL":"https://intel.example.com/current"
 			}
 		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Grid Memory"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"title":"Older Grid Lead",
+				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"fullText":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"sourceURL":"https://intel.example.com/archive"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("expected one signal, got %d: %#v", len(signals), signals)
+	}
+
+	signal := signals[0]
+	if signal.TargetInvestigationID != "inv-old" {
+		t.Fatalf("expected target inv-old, got %q", signal.TargetInvestigationID)
+	}
+	if signal.Score < 0.65 {
+		t.Fatalf("expected useful recall score, got %.2f", signal.Score)
+	}
+	for _, gateway := range []string{GatewayEntityDate, GatewaySourceDomain} {
+		if !signal.HasGateway(gateway) {
+			t.Fatalf("expected gateway %s in %#v", gateway, signal.Gateways)
+		}
+	}
+	if signal.SuggestedAction == "" {
+		t.Fatal("expected suggested action text")
+	}
+	if !strings.Contains(strings.Join(signal.ReasonTexts(), " "), "Acme Grid") {
+		t.Fatalf("expected explainable entity reason, got %#v", signal.Reasons)
+	}
+}
+
+func TestServiceAutoPromotesStrongMultiGatewaySignals(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"summary":"[ORG:Acme Grid] appears during [DATE:2026-05-20].",
+				"sourceURL":"https://intel.example.com/current"
+			}
+		}],
 		"edges":[{
 			"source":"current-node",
 			"target":"current-node",
@@ -64,9 +120,7 @@ func TestServiceGeneratesRecallBundleSignals(t *testing.T) {
 		"nodes":[{
 			"id":"old-node",
 			"data":{
-				"title":"Older Grid Lead",
-				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
-				"fullText":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20].",
 				"sourceURL":"https://intel.example.com/archive"
 			}
 		}],
@@ -85,28 +139,126 @@ func TestServiceGeneratesRecallBundleSignals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateSignals failed: %v", err)
 	}
-	if len(signals) != 1 {
-		t.Fatalf("expected one signal, got %d: %#v", len(signals), signals)
+	if len(signals) != 0 {
+		t.Fatalf("strong multi-gateway signal should auto-promote instead of remaining active, got %#v", signals)
 	}
 
-	signal := signals[0]
-	if signal.TargetInvestigationID != "inv-old" {
-		t.Fatalf("expected target inv-old, got %q", signal.TargetInvestigationID)
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation failed: %v", err)
 	}
-	if signal.Score < 0.75 {
-		t.Fatalf("expected strong recall score, got %.2f", signal.Score)
+	if len(links) != 1 {
+		t.Fatalf("expected one auto-promoted memory link, got %#v", links)
+	}
+	link := links[0]
+	if link.Score < 0.85 {
+		t.Fatalf("expected strong link score, got %.2f", link.Score)
 	}
 	for _, gateway := range []string{GatewayEntityDate, GatewaySourceDomain, GatewayRelationshipTag} {
-		if !signal.HasGateway(gateway) {
-			t.Fatalf("expected gateway %s in %#v", gateway, signal.Gateways)
+		found := false
+		for _, candidate := range link.Gateways {
+			if candidate == gateway {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected gateway %s in %#v", gateway, link.Gateways)
 		}
 	}
-	if signal.SuggestedAction == "" {
-		t.Fatal("expected suggested action text")
+	linkJSON := memoryLinkJSON(t, link)
+	if linkJSON["promotionType"] != "auto" {
+		t.Fatalf("expected auto promotion type, got %#v", linkJSON["promotionType"])
 	}
-	if !strings.Contains(strings.Join(signal.ReasonTexts(), " "), "Acme Grid") {
-		t.Fatalf("expected explainable entity reason, got %#v", signal.Reasons)
+	if linkJSON["activationCount"] != float64(1) {
+		t.Fatalf("expected activationCount 1, got %#v", linkJSON["activationCount"])
 	}
+	if strings.TrimSpace(linkJSON["lastFiredAt"].(string)) == "" {
+		t.Fatalf("expected lastFiredAt to be set in %#v", linkJSON)
+	}
+}
+
+func TestServiceReinforcesExistingMemoryLinkWithNewSignalEvidence(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{"summary":"[ORG:Acme Grid] appears.","sourceURL":"https://current.example.com/report"}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Old Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{"summary":"[ORG:Acme Grid] appeared before.","sourceURL":"https://old.example.com/archive"}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil || len(signals) != 1 {
+		t.Fatalf("expected initial manual signal, got signals=%#v err=%v", signals, err)
+	}
+	if _, err := service.PromoteSignal(signals[0].ID); err != nil {
+		t.Fatalf("PromoteSignal failed: %v", err)
+	}
+
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{"summary":"[ORG:Acme Grid] appears.","sourceURL":"https://intel.example.com/current"}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Old Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{"summary":"[ORG:Acme Grid] appeared before.","sourceURL":"https://intel.example.com/archive"}}],
+		"edges":[]
+	}`, "")
+
+	signals, err = service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals after new evidence failed: %v", err)
+	}
+	if len(signals) != 0 {
+		t.Fatalf("existing memory link should absorb duplicate pair evidence, got active signals %#v", signals)
+	}
+
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation failed: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("expected one reinforced memory link, got %#v", links)
+	}
+	link := links[0]
+	linkJSON := memoryLinkJSON(t, link)
+	if linkJSON["promotionType"] != "manual" {
+		t.Fatalf("expected original manual promotion type to remain, got %#v", linkJSON["promotionType"])
+	}
+	if linkJSON["activationCount"] != float64(2) {
+		t.Fatalf("expected activationCount 2, got %#v", linkJSON["activationCount"])
+	}
+	if len(link.Reasons) != 2 {
+		t.Fatalf("expected new source-domain evidence to merge into existing link, got %#v", link.Reasons)
+	}
+	foundSourceGateway := false
+	for _, gateway := range link.Gateways {
+		if gateway == GatewaySourceDomain {
+			foundSourceGateway = true
+		}
+	}
+	if !foundSourceGateway {
+		t.Fatalf("expected reinforced link to include source-domain gateway, got %#v", link.Gateways)
+	}
+}
+
+func memoryLinkJSON(t *testing.T, link MemoryLink) map[string]interface{} {
+	t.Helper()
+	data, err := json.Marshal(link)
+	if err != nil {
+		t.Fatalf("marshal MemoryLink failed: %v", err)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("unmarshal MemoryLink failed: %v", err)
+	}
+	return result
 }
 
 func TestServiceDoesNotGenerateSelfSignals(t *testing.T) {

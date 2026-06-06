@@ -26,6 +26,13 @@ const (
 	brainDirectoryName = "brain"
 	signalsFilename    = "signals.json"
 	linksFilename      = "links.json"
+
+	promotionTypeManual = "manual"
+	promotionTypeAuto   = "auto"
+
+	autoPromotionScoreThreshold      = 0.85
+	repeatedPromotionScoreThreshold  = 0.75
+	repeatedPromotionActivationCount = 2
 )
 
 var (
@@ -59,6 +66,8 @@ type BrainSignal struct {
 	Dismissed             bool           `json:"dismissed"`
 	Linked                bool           `json:"linked"`
 	LinkID                string         `json:"linkId,omitempty"`
+	ActivationCount       int            `json:"activationCount,omitempty"`
+	LastFiredAt           string         `json:"lastFiredAt,omitempty"`
 }
 
 func (s BrainSignal) HasGateway(gateway string) bool {
@@ -92,6 +101,10 @@ type MemoryLink struct {
 	Reasons             []SignalReason `json:"reasons"`
 	SuggestedAction     string         `json:"suggestedAction"`
 	CreatedAt           string         `json:"createdAt"`
+	UpdatedAt           string         `json:"updatedAt"`
+	LastFiredAt         string         `json:"lastFiredAt"`
+	ActivationCount     int            `json:"activationCount"`
+	PromotionType       string         `json:"promotionType"`
 }
 
 type Service struct {
@@ -187,6 +200,11 @@ func (s *Service) GenerateSignals(investigationID string) ([]BrainSignal, error)
 	if err != nil {
 		return nil, err
 	}
+	links, err := s.loadLinks()
+	if err != nil {
+		return nil, err
+	}
+	linksChanged := false
 	nextSignals := make(map[string]BrainSignal, len(existingSignals)+len(records))
 	for id, signal := range existingSignals {
 		if signal.InvestigationID != investigationID || signal.Dismissed || signal.Linked {
@@ -212,17 +230,63 @@ func (s *Service) GenerateSignals(investigationID string) ([]BrainSignal, error)
 			signal.Dismissed = existing.Dismissed
 			signal.Linked = existing.Linked
 			signal.LinkID = existing.LinkID
+			signal.ActivationCount = existing.ActivationCount
+			signal.LastFiredAt = existing.LastFiredAt
 			if signal.CreatedAt == "" {
 				signal.CreatedAt = now
 			}
 		}
+		if signal.Dismissed {
+			nextSignals[signal.ID] = signal
+			continue
+		}
+		if signal.ActivationCount < 1 {
+			signal.ActivationCount = 1
+		} else {
+			signal.ActivationCount++
+		}
+		signal.LastFiredAt = now
+
+		linkID := memoryPairLinkID(signal.InvestigationID, signal.TargetInvestigationID)
+		if existingLink, exists := links[linkID]; exists {
+			links[linkID] = reinforceMemoryLink(existingLink, signal, now, true, "")
+			linksChanged = true
+			signal.Linked = true
+			signal.LinkID = linkID
+			signal.UpdatedAt = now
+			nextSignals[signal.ID] = signal
+			continue
+		}
+		if signal.Linked && signal.LinkID != "" {
+			if existingLink, exists := links[signal.LinkID]; exists {
+				links[signal.LinkID] = reinforceMemoryLink(existingLink, signal, now, true, "")
+				linksChanged = true
+				nextSignals[signal.ID] = signal
+				continue
+			}
+		}
+		if shouldAutoPromoteSignal(signal) {
+			link := newMemoryLink(signal, now, promotionTypeAuto)
+			links[link.ID] = link
+			linksChanged = true
+			signal.Linked = true
+			signal.LinkID = link.ID
+			signal.UpdatedAt = now
+			nextSignals[signal.ID] = signal
+			continue
+		}
 		nextSignals[signal.ID] = signal
-		if !signal.Dismissed && !signal.Linked {
+		if !signal.Linked {
 			activeSignals = append(activeSignals, signal)
 		}
 	}
 
 	sortSignals(activeSignals)
+	if linksChanged {
+		if err := s.saveLinks(links); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.saveSignals(nextSignals); err != nil {
 		return nil, err
 	}
@@ -263,33 +327,32 @@ func (s *Service) PromoteSignal(signalID string) (MemoryLink, error) {
 	if err != nil {
 		return MemoryLink{}, err
 	}
-	linkID := deterministicID("brain-link", signal.InvestigationID, signal.TargetInvestigationID, signal.ID)
+	now := time.Now().UTC().Format(time.RFC3339)
+	linkID := memoryPairLinkID(signal.InvestigationID, signal.TargetInvestigationID)
 	if existing, exists := links[linkID]; exists {
+		existing = reinforceMemoryLink(existing, signal, now, false, promotionTypeManual)
+		links[linkID] = existing
 		signal.Linked = true
 		signal.LinkID = existing.ID
-		signal.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		signal.UpdatedAt = now
 		signals[signal.ID] = signal
-		_ = s.saveSignals(signals)
+		if err := s.saveLinks(links); err != nil {
+			return MemoryLink{}, err
+		}
+		if err := s.saveSignals(signals); err != nil {
+			return MemoryLink{}, err
+		}
 		return existing, nil
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	link := MemoryLink{
-		ID:                  linkID,
-		SignalID:            signal.ID,
-		FromInvestigationID: signal.InvestigationID,
-		FromTitle:           signal.InvestigationTitle,
-		ToInvestigationID:   signal.TargetInvestigationID,
-		ToTitle:             signal.TargetTitle,
-		Score:               signal.Score,
-		Gateways:            append([]string(nil), signal.Gateways...),
-		Reasons:             append([]SignalReason(nil), signal.Reasons...),
-		SuggestedAction:     "Promoted memory link",
-		CreatedAt:           now,
-	}
+	link := newMemoryLink(signal, now, promotionTypeManual)
 	links[link.ID] = link
 	signal.Linked = true
 	signal.LinkID = link.ID
+	if signal.ActivationCount < 1 {
+		signal.ActivationCount = 1
+	}
+	signal.LastFiredAt = now
 	signal.UpdatedAt = now
 	signals[signal.ID] = signal
 
@@ -560,6 +623,154 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string) 
 	}
 	signal.ID = deterministicID("brain-signal", signal.InvestigationID, signal.TargetInvestigationID, reasonSignature(reasons))
 	return signal, true
+}
+
+func shouldAutoPromoteSignal(signal BrainSignal) bool {
+	if signal.Dismissed || signal.Linked || len(signal.Gateways) < 2 {
+		return false
+	}
+	if signal.Score >= autoPromotionScoreThreshold {
+		return true
+	}
+	return signal.ActivationCount >= repeatedPromotionActivationCount && signal.Score >= repeatedPromotionScoreThreshold
+}
+
+func newMemoryLink(signal BrainSignal, timestamp string, promotionType string) MemoryLink {
+	activationCount := signal.ActivationCount
+	if activationCount < 1 {
+		activationCount = 1
+	}
+	if strings.TrimSpace(promotionType) == "" {
+		promotionType = promotionTypeManual
+	}
+	return MemoryLink{
+		ID:                  memoryPairLinkID(signal.InvestigationID, signal.TargetInvestigationID),
+		SignalID:            signal.ID,
+		FromInvestigationID: signal.InvestigationID,
+		FromTitle:           signal.InvestigationTitle,
+		ToInvestigationID:   signal.TargetInvestigationID,
+		ToTitle:             signal.TargetTitle,
+		Score:               signal.Score,
+		Gateways:            uniqueSortedGateways(signal.Gateways),
+		Reasons:             uniqueSignalReasons(signal.Reasons),
+		SuggestedAction:     suggestedMemoryLinkAction(promotionType),
+		CreatedAt:           timestamp,
+		UpdatedAt:           timestamp,
+		LastFiredAt:         timestamp,
+		ActivationCount:     activationCount,
+		PromotionType:       promotionType,
+	}
+}
+
+func reinforceMemoryLink(link MemoryLink, signal BrainSignal, timestamp string, incrementActivation bool, promotionType string) MemoryLink {
+	if strings.TrimSpace(link.ID) == "" {
+		link.ID = memoryPairLinkID(signal.InvestigationID, signal.TargetInvestigationID)
+	}
+	if strings.TrimSpace(link.SignalID) == "" {
+		link.SignalID = signal.ID
+	}
+	if strings.TrimSpace(link.FromInvestigationID) == "" {
+		link.FromInvestigationID = signal.InvestigationID
+		link.FromTitle = signal.InvestigationTitle
+	}
+	if strings.TrimSpace(link.ToInvestigationID) == "" {
+		link.ToInvestigationID = signal.TargetInvestigationID
+		link.ToTitle = signal.TargetTitle
+	}
+	if strings.TrimSpace(link.CreatedAt) == "" {
+		link.CreatedAt = timestamp
+	}
+	if signal.Score > link.Score {
+		link.Score = signal.Score
+	}
+	link.Gateways = uniqueSortedGateways(append(link.Gateways, signal.Gateways...))
+	link.Reasons = uniqueSignalReasons(append(link.Reasons, signal.Reasons...))
+	link.UpdatedAt = timestamp
+	link.LastFiredAt = timestamp
+	if link.ActivationCount < 1 {
+		link.ActivationCount = 1
+	}
+	if incrementActivation {
+		link.ActivationCount++
+	}
+	link.PromotionType = mergedPromotionType(link.PromotionType, promotionType)
+	link.SuggestedAction = suggestedMemoryLinkAction(link.PromotionType)
+	return link
+}
+
+func suggestedMemoryLinkAction(promotionType string) string {
+	if promotionType == promotionTypeAuto {
+		return "Auto-promoted memory link"
+	}
+	return "Promoted memory link"
+}
+
+func mergedPromotionType(existing string, incoming string) string {
+	existing = strings.TrimSpace(existing)
+	incoming = strings.TrimSpace(incoming)
+	if existing == promotionTypeManual || incoming == promotionTypeManual {
+		return promotionTypeManual
+	}
+	if existing == promotionTypeAuto || incoming == promotionTypeAuto {
+		return promotionTypeAuto
+	}
+	return promotionTypeManual
+}
+
+func memoryPairLinkID(leftID string, rightID string) string {
+	ids := []string{strings.TrimSpace(leftID), strings.TrimSpace(rightID)}
+	sort.Strings(ids)
+	return deterministicID("brain-link", ids[0], ids[1])
+}
+
+func uniqueSortedGateways(gateways []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(gateways))
+	for _, gateway := range gateways {
+		gateway = strings.TrimSpace(gateway)
+		if gateway == "" || seen[gateway] {
+			continue
+		}
+		seen[gateway] = true
+		result = append(result, gateway)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if gatewayRank(result[i]) == gatewayRank(result[j]) {
+			return result[i] < result[j]
+		}
+		return gatewayRank(result[i]) < gatewayRank(result[j])
+	})
+	return result
+}
+
+func uniqueSignalReasons(reasons []SignalReason) []SignalReason {
+	seen := make(map[string]bool)
+	result := make([]SignalReason, 0, len(reasons))
+	for _, reason := range reasons {
+		key := signalReasonKey(reason)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, reason)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Gateway == result[j].Gateway {
+			return result[i].Value < result[j].Value
+		}
+		return gatewayRank(result[i].Gateway) < gatewayRank(result[j].Gateway)
+	})
+	return result
+}
+
+func signalReasonKey(reason SignalReason) string {
+	return strings.Join([]string{
+		reason.Gateway,
+		reason.Value,
+		reason.Detail,
+		strings.Join(cleanStringSet(reason.CurrentNodeIDs), ","),
+		strings.Join(cleanStringSet(reason.TargetNodeIDs), ","),
+	}, ":")
 }
 
 func matchingEntityReasons(current memoryProfile, target memoryProfile) []SignalReason {

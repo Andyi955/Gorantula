@@ -215,6 +215,22 @@ describe('BrainSignalsPanel', () => {
     expect(screen.getByText('Linked Memory Case 6')).toBeInTheDocument()
   })
 
+  it('shows auto-promoted memory strength on linked cards', async () => {
+    const autoLink = {
+      ...makeLink({ id: 'brain-link-auto', toTitle: 'Auto Linked Case', score: 0.9 }),
+      promotionType: 'auto',
+      activationCount: 4,
+      lastFiredAt: '2026-06-06T09:00:00Z',
+    }
+    installBrainFetch({ signals: [], links: [autoLink] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const card = await screen.findByTestId('brain-link-card')
+    expect(card).toHaveTextContent('Auto Memory')
+    expect(card).toHaveTextContent('4 activations')
+  })
+
   it('groups duplicate older cases and collapses weak or overflow signals', async () => {
     const user = userEvent.setup()
     const duplicateSignal = makeSignal({

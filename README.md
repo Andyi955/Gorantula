@@ -43,6 +43,7 @@ Brain Signals is the first durable memory layer for Gorantula. Open the `Brain` 
 - Active signals are grouped by older case, capped to a top-priority list, and lower-priority matches are collapsed by default.
 - Each signal shows why the older case fired, the strongest suggested action, score strength, gateway counts, and actions to open, dismiss, or promote it.
 - Promoting a signal creates a durable Memory Link under the backend Brain vault state.
+- Strong multi-gateway signals can auto-promote into Memory Links, and repeated future firings reinforce the existing link with activation counts instead of creating duplicate cards.
 - V1 does not mutate board content, start autonomous agents, use personas, call models, or run embeddings.
 
 ## Tech Stack

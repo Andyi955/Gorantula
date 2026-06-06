@@ -47,6 +47,14 @@ const formatGateway = (gateway: BrainGateway) =>
 
 const formatScore = (score: number) => `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`
 
+const formatActivationCount = (activationCount?: number) => {
+  const count = Math.max(1, Math.round(activationCount || 1))
+  return `${count} activation${count === 1 ? '' : 's'}`
+}
+
+const formatMemoryLinkType = (promotionType?: string) =>
+  promotionType === 'auto' ? 'Auto Memory' : 'Manual Memory'
+
 const getScoreTier = (score: number) => {
   if (score >= 0.75) {
     return 'Hot'
@@ -436,6 +444,12 @@ export default function BrainSignalsPanel({
         <Link2 size={14} />
         <strong>{link.toTitle}</strong>
         <span>{formatScore(link.score)}</span>
+      </div>
+      <div className="forensic-brain-link-meta">
+        <span className={link.promotionType === 'auto' ? 'forensic-brain-link-meta-auto' : ''}>
+          {formatMemoryLinkType(link.promotionType)}
+        </span>
+        <span>{formatActivationCount(link.activationCount)}</span>
       </div>
       <p>{link.reasons[0]?.detail || link.suggestedAction}</p>
       <div className="forensic-brain-chip-row">

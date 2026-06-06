@@ -26,6 +26,8 @@ export interface BrainSignal {
   dismissed: boolean
   linked: boolean
   linkId?: string
+  activationCount?: number
+  lastFiredAt?: string
 }
 
 export interface MemoryLink {
@@ -40,6 +42,10 @@ export interface MemoryLink {
   reasons: BrainSignalReason[]
   suggestedAction: string
   createdAt: string
+  updatedAt?: string
+  lastFiredAt?: string
+  activationCount?: number
+  promotionType?: 'manual' | 'auto' | string
 }
 
 const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> => {
