@@ -6425,6 +6425,17 @@ body {
   color: var(--forensic-text);
 }
 
+.forensic-brain-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.72rem;
+}
+
+.forensic-brain-detail-actions .forensic-brain-action {
+  min-height: 2.35rem;
+}
+
 .forensic-brain-detail-reasons {
   display: grid;
   gap: 0.55rem;

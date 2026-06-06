@@ -80,3 +80,8 @@ export const promoteBrainSignal = (signalId: string) =>
   requestJSON<MemoryLink>(`${API_BASE}/signals/${encodeURIComponent(signalId)}/link`, {
     method: 'PUT',
   })
+
+export const forgetBrainLink = (linkId: string) =>
+  requestJSON<MemoryLink>(`${API_BASE}/links/${encodeURIComponent(linkId)}/forget`, {
+    method: 'PUT',
+  })

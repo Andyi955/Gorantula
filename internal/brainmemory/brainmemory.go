@@ -37,6 +37,7 @@ const (
 
 var (
 	ErrSignalNotFound = errors.New("brain signal not found")
+	ErrLinkNotFound   = errors.New("brain memory link not found")
 
 	taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
 	spacePattern        = regexp.MustCompile(`\s+`)
@@ -365,6 +366,45 @@ func (s *Service) PromoteSignal(signalID string) (MemoryLink, error) {
 	return link, nil
 }
 
+func (s *Service) ForgetLink(linkID string) (MemoryLink, error) {
+	linkID = strings.TrimSpace(linkID)
+	links, err := s.loadLinks()
+	if err != nil {
+		return MemoryLink{}, err
+	}
+	link, ok := links[linkID]
+	if !ok {
+		return MemoryLink{}, ErrLinkNotFound
+	}
+	delete(links, linkID)
+
+	signals, err := s.loadSignals()
+	if err != nil {
+		return MemoryLink{}, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for signalID, signal := range signals {
+		isLinkedSignal := signal.LinkID == link.ID
+		isPairSignal := memoryPairLinkID(signal.InvestigationID, signal.TargetInvestigationID) == link.ID
+		if !isLinkedSignal && !isPairSignal {
+			continue
+		}
+		signal.Linked = false
+		signal.LinkID = ""
+		signal.Dismissed = true
+		signal.UpdatedAt = now
+		signals[signalID] = signal
+	}
+
+	if err := s.saveLinks(links); err != nil {
+		return MemoryLink{}, err
+	}
+	if err := s.saveSignals(signals); err != nil {
+		return MemoryLink{}, err
+	}
+	return link, nil
+}
+
 func (s *Service) LinksForInvestigation(investigationID string) ([]MemoryLink, error) {
 	investigationID = strings.TrimSpace(investigationID)
 	if !models.ValidInvestigationID(investigationID) {
@@ -422,6 +462,20 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "links" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		switch parts[4] {
+		case "forget":
+			link, err := service.ForgetLink(parts[3])
+			writeAPIResult(w, link, err)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
 	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "signals" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -452,6 +506,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "investigation not found", http.StatusNotFound)
 		case errors.Is(err, ErrSignalNotFound):
 			http.Error(w, "signal not found", http.StatusNotFound)
+		case errors.Is(err, ErrLinkNotFound):
+			http.Error(w, "memory link not found", http.StatusNotFound)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

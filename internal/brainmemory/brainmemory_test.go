@@ -343,6 +343,48 @@ func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	}
 }
 
+func TestForgetMemoryLinkRemovesLinkAndDismissesExistingSignal(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{"summary":"[ORG:Acme Grid] appears.","sourceURL":"https://intel.example.com/current"}}],
+		"edges":[{"source":"current-node","target":"current-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Old Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{"summary":"[ORG:Acme Grid] appeared before.","sourceURL":"https://intel.example.com/archive"}}],
+		"edges":[{"source":"old-node","target":"old-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil || len(signals) != 0 {
+		t.Fatalf("expected strong signal to auto-promote, got signals=%#v err=%v", signals, err)
+	}
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil || len(links) != 1 {
+		t.Fatalf("expected one memory link, got links=%#v err=%v", links, err)
+	}
+
+	if _, err := service.ForgetLink(links[0].ID); err != nil {
+		t.Fatalf("ForgetLink failed: %v", err)
+	}
+	links, err = service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation after forget failed: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("forgotten link should not remain visible, got %#v", links)
+	}
+	signals, err = service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals after forget failed: %v", err)
+	}
+	if len(signals) != 0 {
+		t.Fatalf("forgotten memory should not immediately regenerate active signal, got %#v", signals)
+	}
+}
+
 func TestDismissPersistsAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{

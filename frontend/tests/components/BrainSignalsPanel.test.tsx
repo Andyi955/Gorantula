@@ -135,6 +135,9 @@ const installBrainFetch = ({
     if (method === 'PUT' && url.endsWith('/link')) {
       return Promise.resolve(jsonResponse(promoteLink) as Response)
     }
+    if (method === 'PUT' && url.endsWith('/forget')) {
+      return Promise.resolve(jsonResponse(links[0] || link) as Response)
+    }
 
     return Promise.resolve(jsonResponse({}, 404) as Response)
   })
@@ -233,6 +236,7 @@ describe('BrainSignalsPanel', () => {
 
   it('opens a linked memory detail view with evidence and matched node ids', async () => {
     const user = userEvent.setup()
+    const onOpenInvestigation = vi.fn()
     const detailedLink = {
       ...makeLink({
         id: 'brain-link-detail',
@@ -249,7 +253,13 @@ describe('BrainSignalsPanel', () => {
     }
     installBrainFetch({ signals: [], links: [detailedLink] })
 
-    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onOpenInvestigation={onOpenInvestigation}
+      />,
+    )
 
     await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
 
@@ -268,6 +278,36 @@ describe('BrainSignalsPanel', () => {
     expect(detail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
     expect(detail).toHaveTextContent('node-current')
     expect(detail).toHaveTextContent('node-older')
+
+    await user.click(within(detail).getByRole('button', { name: /open memory link older substation case/i }))
+    expect(onOpenInvestigation).toHaveBeenCalledWith('inv-older')
+  })
+
+  it('forgets a linked memory from the detail view', async () => {
+    const user = userEvent.setup()
+    const detailedLink = makeLink({
+      id: 'brain-link-detail',
+      toTitle: 'Older Substation Case',
+      score: 0.92,
+      gateways: ['entity-date', 'source-domain'],
+      reasons: signal.reasons,
+    })
+    const fetchMock = installBrainFetch({ signals: [], links: [detailedLink] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
+    const detail = await screen.findByTestId('brain-link-detail')
+    await user.click(within(detail).getByRole('button', { name: /forget memory link older substation case/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('brain-link-detail')).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/links/brain-link-detail/forget',
+      expect.objectContaining({ method: 'PUT' }),
+    )
   })
 
   it('groups duplicate older cases and collapses weak or overflow signals', async () => {

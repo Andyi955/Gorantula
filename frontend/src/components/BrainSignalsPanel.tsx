@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, ChevronDown, ChevronUp, ExternalLink, Link2, RefreshCw, X } from 'lucide-react'
+import { Brain, ChevronDown, ChevronUp, ExternalLink, Link2, RefreshCw, Trash2, X } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
   dismissBrainSignal,
   fetchBrainLinks,
   fetchBrainSignals,
+  forgetBrainLink,
   promoteBrainSignal,
   type BrainGateway,
   type BrainSignal,
@@ -339,6 +340,20 @@ export default function BrainSignalsPanel({
     }
   }
 
+  const handleForgetLink = async (link: MemoryLink) => {
+    setBusyAction(`forget:${link.id}`)
+    setError(null)
+    try {
+      await forgetBrainLink(link.id)
+      setLinks((current) => current.filter((candidate) => candidate.id !== link.id))
+      setSelectedMemoryLinkId((current) => (current === link.id ? null : current))
+    } catch {
+      setError('Brain memory forget failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
 
   const renderSignalGroup = (group: BrainSignalGroup) => {
@@ -539,6 +554,27 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-detail-section">
         <span>Connected Investigations</span>
         <p><strong>{link.fromTitle}</strong> connects to <strong>{link.toTitle}</strong>.</p>
+        <div className="forensic-brain-detail-actions">
+          <button
+            type="button"
+            aria-label={`Open memory link ${link.toTitle}`}
+            className="forensic-brain-action"
+            onClick={() => onOpenInvestigation?.(link.toInvestigationId)}
+          >
+            <ExternalLink size={13} />
+            Open Older Case
+          </button>
+          <button
+            type="button"
+            aria-label={`Forget memory link ${link.toTitle}`}
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={busyAction === `forget:${link.id}`}
+            onClick={() => void handleForgetLink(link)}
+          >
+            <Trash2 size={13} />
+            Forget Link
+          </button>
+        </div>
       </div>
 
       <div className="forensic-brain-detail-timestamps">
