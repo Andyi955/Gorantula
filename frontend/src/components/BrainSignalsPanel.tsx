@@ -981,6 +981,9 @@ export default function BrainSignalsPanel({
     }
 
     const node = selectedBrainMapNode
+    const targetInvestigationId = node.targetInvestigationId
+    const linkId = node.linkId
+    const signalId = node.signalId
 
     return (
       <section data-testid="brain-map-selected-node" className="forensic-brain-map-selected">
@@ -1008,34 +1011,34 @@ export default function BrainSignalsPanel({
 
         {node.kind !== 'current' && (
           <div className="forensic-brain-map-selected-actions">
-            {node.targetInvestigationId && (
+            {targetInvestigationId && (
               <button
                 type="button"
                 aria-label={`Open radar memory ${node.title}`}
                 className="forensic-brain-action"
-                onClick={() => onOpenInvestigation?.(node.targetInvestigationId)}
+                onClick={() => onOpenInvestigation?.(targetInvestigationId)}
               >
                 <ExternalLink size={13} />
                 Open Case
               </button>
             )}
-            {node.linkId && (
+            {linkId && (
               <button
                 type="button"
                 aria-label={`Inspect radar memory ${node.title}`}
                 className="forensic-brain-action forensic-brain-action-primary"
-                onClick={() => setSelectedMemoryLinkId(node.linkId || null)}
+                onClick={() => setSelectedMemoryLinkId(linkId)}
               >
                 <Link2 size={13} />
                 Inspect Link
               </button>
             )}
-            {node.signalId && (
+            {signalId && (
               <button
                 type="button"
                 aria-label={`Promote radar signal ${node.title}`}
                 className="forensic-brain-action forensic-brain-action-primary"
-                disabled={busyAction === `promote-map:${node.signalId}`}
+                disabled={busyAction === `promote-map:${signalId}`}
                 onClick={() => void handlePromoteBrainMapSignal(node)}
               >
                 <Link2 size={13} />
