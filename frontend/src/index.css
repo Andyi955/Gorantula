@@ -5649,7 +5649,8 @@ body {
   height: 100%;
   min-width: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background:
     radial-gradient(circle at top left, rgba(129, 227, 255, 0.08), transparent 24rem),
     linear-gradient(180deg, rgba(5, 10, 15, 0.98), rgba(2, 5, 8, 0.98));
