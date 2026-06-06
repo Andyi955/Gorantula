@@ -223,6 +223,10 @@ const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: s
     },
   })
   await expect(page.getByText('Smoke Grid Load Spike')).toBeVisible()
+  await waitForRenderedBoardNodes(page, ['smoke-grid-load'])
+  await waitForBoardPersistence(page, vaultId, {
+    nodeIds: ['smoke-grid-load'],
+  })
 
   await emitBackendMessage(page, {
     type: 'MEMORY_NODE_GATHERED',
@@ -236,6 +240,10 @@ const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: s
     },
   })
   await expect(page.getByText('Smoke Cooling Alert')).toBeVisible()
+  await waitForRenderedBoardNodes(page, ['smoke-grid-load', 'smoke-cooling-alert'])
+  await waitForBoardPersistence(page, vaultId, {
+    nodeIds: ['smoke-grid-load', 'smoke-cooling-alert'],
+  })
 
   await emitBackendMessage(page, {
     type: 'CONNECTIONS_FOUND',
@@ -252,6 +260,10 @@ const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: s
         },
       ],
     },
+  })
+  await waitForBoardPersistence(page, vaultId, {
+    nodeIds: ['smoke-grid-load', 'smoke-cooling-alert'],
+    edgeCount: 1,
   })
 }
 
