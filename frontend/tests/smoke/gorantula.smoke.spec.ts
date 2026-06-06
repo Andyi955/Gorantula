@@ -479,7 +479,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
     const radar = page.getByTestId('brain-map-radar')
     await expect(radar).toBeVisible()
-    await expect(radar).toContainText('Memory radar')
+    await expect(radar).toContainText('Memory map')
     await expect(radar).toContainText('QA: Imported Target')
     await expect(radar).toContainText('QA: Source Case')
     await expect(radar.getByTestId('brain-map-node')).toHaveCount(2)

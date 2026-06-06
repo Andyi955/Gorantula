@@ -948,6 +948,7 @@ export default function BrainSignalsPanel({
   const renderBrainMapNode = (node: BrainMapNode) => {
     const isSelected = selectedBrainMapNode?.id === node.id
     const nodeTypeLabel = node.kind === 'current' ? 'focus' : node.kind
+    const gatewayLabel = node.gateways[0] ? formatGateway(node.gateways[0]) : node.kind === 'current' ? 'Live focus' : 'Memory'
 
     return (
       <button
@@ -965,11 +966,18 @@ export default function BrainSignalsPanel({
         ].filter(Boolean).join(' ')}
         onClick={() => setSelectedBrainMapNodeId(node.id)}
       >
-        <span className="forensic-brain-map-node-orb" aria-hidden="true" />
+        <span className="forensic-brain-map-node-orb" aria-hidden="true">
+          <span />
+        </span>
         <span className="forensic-brain-map-node-copy">
-          <span>{node.kind === 'current' ? 'Current focus' : node.tier}</span>
+          <span>{node.kind === 'current' ? 'Current focus' : gatewayLabel}</span>
           <strong>{node.kind === 'current' ? node.subtitle : node.title}</strong>
-          <em>{node.kind === 'current' ? 'Now scanning' : node.scoreLabel}</em>
+          <em>{node.kind === 'current' ? 'Now scanning' : `${node.scoreLabel} ${node.tier}`}</em>
+        </span>
+        <span className="forensic-brain-map-node-badges" aria-hidden="true">
+          {node.badges.slice(0, 2).map((badge) => (
+            <span key={`${node.id}:${badge}`}>{badge}</span>
+          ))}
         </span>
       </button>
     )
@@ -1052,13 +1060,15 @@ export default function BrainSignalsPanel({
   }
 
   const renderBrainMap = () => (
-    <section data-testid="brain-map-radar" className="forensic-brain-map-radar" aria-label="Brain memory radar">
+    <section data-testid="brain-map-radar" className="forensic-brain-map-radar" aria-label="Brain memory map">
       <div className="forensic-brain-map-header">
         <div>
-          <span className="forensic-brain-panel-kicker">Memory radar</span>
-          <h3>Active memory map</h3>
+          <span className="forensic-brain-panel-kicker">Memory map</span>
+          <h3>Active recall deck</h3>
         </div>
         <div className="forensic-brain-map-summary">
+          <span>{brainMapModel.summary.linkedMemoryCount} saved</span>
+          <span>{brainMapModel.summary.activeSignalCount} firing</span>
           <span>{brainMapModel.summary.visibleCount} visible</span>
           {brainMapModel.hiddenCount > 0 && <span>{brainMapModel.hiddenCount} folded</span>}
           <strong>{brainMapModel.summary.strongestScore}</strong>
@@ -1067,31 +1077,13 @@ export default function BrainSignalsPanel({
 
       <div className="forensic-brain-map-shell">
         <div className="forensic-brain-map-canvas" aria-label="Current investigation and related memories">
-          <div className="forensic-brain-map-rings" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+          <div className="forensic-brain-map-bus" aria-hidden="true">
+            <span>Active Recall</span>
+            <strong>{brainMapModel.summary.strongestScore}</strong>
           </div>
-          <div className="forensic-brain-map-edge-layer" aria-hidden="true">
-            {brainMapModel.edges.map((edge) => {
-              const targetNode = brainMapModel.nodes.find((node) => node.id === edge.to)
-              if (!targetNode) {
-                return null
-              }
-
-              return (
-                <span
-                  key={edge.id}
-                  className={[
-                    'forensic-brain-map-edge',
-                    `forensic-brain-map-edge-${targetNode.slot}`,
-                    `forensic-brain-map-edge-${edge.strength}`,
-                  ].join(' ')}
-                />
-              )
-            })}
+          <div className="forensic-brain-map-node-stack">
+            {brainMapModel.nodes.map(renderBrainMapNode)}
           </div>
-          {brainMapModel.nodes.map(renderBrainMapNode)}
         </div>
 
         <aside className="forensic-brain-map-side">
@@ -1252,8 +1244,8 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-panel forensic-brain-panel-links">
           <div className="forensic-brain-panel-header">
             <div>
-              <span className="forensic-brain-panel-kicker">Promoted memory</span>
-              <h3>Linked Memory</h3>
+              <span className="forensic-brain-panel-kicker">Saved memory archive</span>
+              <h3>Durable Linked Memory</h3>
             </div>
           </div>
 

@@ -477,7 +477,7 @@ describe('BrainSignalsPanel', () => {
     )
 
     const radar = await screen.findByTestId('brain-map-radar')
-    expect(radar).toHaveTextContent('Memory radar')
+    expect(radar).toHaveTextContent('Memory map')
     expect(radar).toHaveTextContent('Current Grid Case')
     expect(radar).toHaveTextContent('Auto Linked Case')
     expect(radar).toHaveTextContent('Source Domain Case')
