@@ -52,6 +52,10 @@ type MemoryLinkPayload = {
   reasons: BrainSignalReason[]
   suggestedAction: string
   createdAt: string
+  updatedAt?: string
+  lastFiredAt?: string
+  activationCount?: number
+  promotionType?: string
 }
 
 const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
@@ -108,9 +112,14 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
     reasons: signal.reasons,
     suggestedAction: signal.suggestedAction,
     createdAt: '2026-06-05T12:01:00Z',
+    updatedAt: '2026-06-05T12:01:00Z',
+    lastFiredAt: '2026-06-05T12:01:00Z',
+    activationCount: 1,
+    promotionType: 'manual',
   }
 
   let promoted = false
+  let forgotten = false
 
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
     const request = route.request()
@@ -121,7 +130,7 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(investigationId === signal.investigationId && !promoted ? [signal] : []),
+        body: JSON.stringify(investigationId === signal.investigationId && !promoted && !forgotten ? [signal] : []),
       })
       return
     }
@@ -131,13 +140,24 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(investigationId === signal.investigationId && promoted ? [link] : []),
+        body: JSON.stringify(investigationId === signal.investigationId && promoted && !forgotten ? [link] : []),
       })
       return
     }
 
     if (request.method() === 'PUT' && url.pathname.endsWith(`/${signal.id}/link`)) {
       promoted = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(link),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith(`/${link.id}/forget`)) {
+      promoted = false
+      forgotten = true
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -457,6 +477,7 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
 
     const signalCard = page.getByTestId('brain-signal-card').filter({ hasText: 'QA: Source Case' })
     await expect(signalCard).toContainText('Grid reliability signal')
@@ -469,6 +490,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+    await expect(page.getByTestId('brain-health-summary')).toContainText('1 memory group')
 
     await page.reload()
     await expect(page.getByTestId('app-shell')).toBeVisible()
@@ -484,6 +506,19 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+
+    await page.getByRole('button', { name: /source domain filter/i }).click()
+    await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
+    await page.getByRole('button', { name: /relationship filter/i }).click()
+    await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
+
+    await page.getByRole('button', { name: /inspect memory link qa: source case/i }).click()
+    const detail = page.getByTestId('brain-link-detail')
+    await expect(detail).toContainText('qa-target-existing')
+    await expect(detail).toContainText('qa-source-lead')
+
+    await detail.getByRole('button', { name: /forget memory link qa: source case/i }).click()
+    await expect(page.getByTestId('brain-link-card')).toHaveCount(0)
   })
 
   test('backend error clears the active run and allows a new web investigation', async ({ page }) => {
