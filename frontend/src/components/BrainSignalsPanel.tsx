@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brain, ChevronDown, ChevronUp, ExternalLink, Link2, RefreshCw, X } from 'lucide-react'
+import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
   dismissBrainSignal,
   fetchBrainLinks,
@@ -321,79 +322,109 @@ export default function BrainSignalsPanel({
         data-signal-group={group.key}
         className="forensic-brain-signal-card"
       >
-        <div className="forensic-brain-card-topline">
-          <div>
-            <span className="forensic-brain-card-label">Older case fired</span>
-            <h4>{signal.targetTitle}</h4>
-            {relatedFiringText && (
-              <span className="forensic-brain-card-group-count">{relatedFiringText}</span>
-            )}
+        <div className="forensic-brain-card-rail" aria-hidden="true">
+          <div className="forensic-brain-rail-scope">
+            <img src={brainRadarEmblem} alt="" />
           </div>
-          <strong className={`forensic-brain-score forensic-brain-score-${scoreTier.toLocaleLowerCase()}`}>
+          <div className="forensic-brain-rail-label">
+            <span>Signal</span>
+            <span>Strength</span>
+          </div>
+          <strong className={`forensic-brain-rail-score forensic-brain-score-${scoreTier.toLocaleLowerCase()}`}>
             <span>{formatScore(group.score)}</span>
             <em>{scoreTier}</em>
           </strong>
+          <div className="forensic-brain-rail-bars">
+            {Array.from({ length: 8 }, (_, index) => (
+              <span
+                key={`${group.key}:bar:${index}`}
+                className={index < Math.max(1, Math.round(group.score * 8)) ? 'is-active' : ''}
+              />
+            ))}
+          </div>
         </div>
 
-        <div className="forensic-brain-chip-row" aria-label="Signal gateways">
-          {gatewayCounts.map(({ gateway, count }) => (
-            <span
-              key={`${group.key}:${gateway}`}
-              className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
-            >
-              {formatGatewayCount({ gateway, count })}
-            </span>
-          ))}
-        </div>
+        <div className="forensic-brain-card-main">
+          <div className="forensic-brain-card-topline">
+            <div className="forensic-brain-card-identity">
+              <span className="forensic-brain-card-label">Older case fired</span>
+              <h4>{signal.targetTitle}</h4>
+              {relatedFiringText && (
+                <span className="forensic-brain-card-group-count">{relatedFiringText}</span>
+              )}
+            </div>
 
-        <div className="forensic-brain-signal-summary">
-          <span>Why it fired</span>
-          <strong>{signalSummary}</strong>
-        </div>
+            <div className="forensic-brain-card-gateways">
+              <span>Firing gateways</span>
+              <div className="forensic-brain-chip-row" aria-label="Signal gateways">
+                {gatewayCounts.map(({ gateway, count }) => (
+                  <span
+                    key={`${group.key}:${gateway}`}
+                    className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
+                  >
+                    {formatGatewayCount({ gateway, count })}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
 
-        <div className="forensic-brain-reason-stack">
-          {group.reasons.slice(0, 3).map((reason, index) => (
-            <p key={`${group.key}:detail:${reason.gateway}:${reason.value}:${index}`}>
-              {reason.detail || reason.label}
-            </p>
-          ))}
-        </div>
+          <div className="forensic-brain-card-body">
+            <div className="forensic-brain-evidence-panel">
+              <div className="forensic-brain-signal-summary">
+                <span>Why it fired</span>
+                <strong>{signalSummary}</strong>
+              </div>
 
-        <div className="forensic-brain-suggested-action">
-          <span>Suggested action</span>
-          <strong>{signal.suggestedAction}</strong>
-        </div>
+              <div className="forensic-brain-reason-stack">
+                {group.reasons.slice(0, 3).map((reason, index) => (
+                  <p key={`${group.key}:detail:${reason.gateway}:${reason.value}:${index}`}>
+                    <span>{formatGateway(reason.gateway)}</span>
+                    {reason.detail || reason.label}
+                  </p>
+                ))}
+              </div>
+            </div>
 
-        <div className="forensic-brain-card-actions">
-          <button
-            type="button"
-            aria-label={`Open investigation ${signal.targetTitle}`}
-            onClick={() => onOpenInvestigation?.(signal.targetInvestigationId)}
-            className="forensic-brain-action"
-          >
-            <ExternalLink size={13} />
-            Open
-          </button>
-          <button
-            type="button"
-            aria-label={`Dismiss signal for ${signal.targetTitle}`}
-            onClick={() => void handleDismiss(group)}
-            disabled={busyAction === `dismiss:${group.key}`}
-            className="forensic-brain-action forensic-brain-action-secondary"
-          >
-            <X size={13} />
-            Dismiss
-          </button>
-          <button
-            type="button"
-            aria-label={`Promote signal for ${signal.targetTitle}`}
-            onClick={() => void handlePromote(group)}
-            disabled={busyAction === `promote:${group.key}`}
-            className="forensic-brain-action forensic-brain-action-primary"
-          >
-            <Link2 size={13} />
-            Promote Link
-          </button>
+            <aside className="forensic-brain-action-panel">
+              <div className="forensic-brain-suggested-action">
+                <span>Suggested action</span>
+                <strong>{signal.suggestedAction}</strong>
+              </div>
+
+              <div className="forensic-brain-card-actions">
+                <button
+                  type="button"
+                  aria-label={`Promote signal for ${signal.targetTitle}`}
+                  onClick={() => void handlePromote(group)}
+                  disabled={busyAction === `promote:${group.key}`}
+                  className="forensic-brain-action forensic-brain-action-primary"
+                >
+                  <Link2 size={13} />
+                  Promote Link
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Open investigation ${signal.targetTitle}`}
+                  onClick={() => onOpenInvestigation?.(signal.targetInvestigationId)}
+                  className="forensic-brain-action"
+                >
+                  <ExternalLink size={13} />
+                  Open
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Dismiss signal for ${signal.targetTitle}`}
+                  onClick={() => void handleDismiss(group)}
+                  disabled={busyAction === `dismiss:${group.key}`}
+                  className="forensic-brain-action forensic-brain-action-secondary"
+                >
+                  <X size={13} />
+                  Dismiss
+                </button>
+              </div>
+            </aside>
+          </div>
         </div>
       </article>
     )
