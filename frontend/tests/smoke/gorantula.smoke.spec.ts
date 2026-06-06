@@ -334,6 +334,7 @@ test.describe('Gorantula smoke flows', () => {
         },
       })
       await waitForRenderedBoardNodes(page, [id])
+      await page.waitForTimeout(100)
     }
 
     await emitRabbitNodeAndWait(
