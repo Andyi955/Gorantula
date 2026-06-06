@@ -5997,7 +5997,7 @@ body {
   position: relative;
   overflow: hidden;
   display: grid;
-  grid-template-columns: minmax(6rem, 0.14fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
   min-height: 0;
   background:
@@ -6009,13 +6009,7 @@ body {
 }
 
 .forensic-brain-map-bus {
-  display: grid;
-  align-content: space-between;
-  border-right: 1px solid rgba(129, 227, 255, 0.14);
-  background:
-    linear-gradient(180deg, rgba(255, 78, 129, 0.13), transparent 42%),
-    rgba(1, 4, 7, 0.74);
-  padding: 0.56rem;
+  display: none;
 }
 
 .forensic-brain-map-bus span,
@@ -6041,8 +6035,11 @@ body {
   align-content: start;
   gap: 0.38rem;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: 0.5rem;
+  scrollbar-color: rgba(129, 227, 255, 0.36) rgba(1, 5, 8, 0.68);
+  scrollbar-width: thin;
 }
 
 .forensic-brain-map-node {
@@ -6404,7 +6401,8 @@ body {
 
 .forensic-brain-signal-list,
 .forensic-brain-link-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 0;
   gap: 0.62rem;
   min-height: 0;
@@ -6425,6 +6423,7 @@ body {
 
 .forensic-brain-signal-list::-webkit-scrollbar,
 .forensic-brain-link-list::-webkit-scrollbar,
+.forensic-brain-map-node-stack::-webkit-scrollbar,
 .forensic-brain-map-digest::-webkit-scrollbar,
 .forensic-brain-map-selected::-webkit-scrollbar,
 .forensic-brain-link-detail::-webkit-scrollbar {
@@ -6433,6 +6432,7 @@ body {
 
 .forensic-brain-signal-list::-webkit-scrollbar-track,
 .forensic-brain-link-list::-webkit-scrollbar-track,
+.forensic-brain-map-node-stack::-webkit-scrollbar-track,
 .forensic-brain-map-digest::-webkit-scrollbar-track,
 .forensic-brain-map-selected::-webkit-scrollbar-track,
 .forensic-brain-link-detail::-webkit-scrollbar-track {
@@ -6441,6 +6441,7 @@ body {
 
 .forensic-brain-signal-list::-webkit-scrollbar-thumb,
 .forensic-brain-link-list::-webkit-scrollbar-thumb,
+.forensic-brain-map-node-stack::-webkit-scrollbar-thumb,
 .forensic-brain-map-digest::-webkit-scrollbar-thumb,
 .forensic-brain-map-selected::-webkit-scrollbar-thumb,
 .forensic-brain-link-detail::-webkit-scrollbar-thumb {
@@ -6465,6 +6466,7 @@ body {
 }
 
 .forensic-brain-link-card {
+  flex: 0 0 auto;
   transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }
 
@@ -6478,9 +6480,11 @@ body {
 }
 
 .forensic-brain-signal-card {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(8.4rem, 0.18fr) minmax(0, 1fr);
   gap: 0;
+  min-height: 15rem;
   overflow: hidden;
   border-color: rgba(129, 227, 255, 0.26);
   background:
@@ -6862,7 +6866,8 @@ body {
 }
 
 .forensic-brain-lower-priority-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.72rem;
 }
 
@@ -9598,11 +9603,7 @@ body {
   }
 
   .forensic-brain-map-bus {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-right: 0;
-    border-bottom: 1px solid rgba(129, 227, 255, 0.14);
+    display: none;
   }
 
   .forensic-brain-map-bus span,
