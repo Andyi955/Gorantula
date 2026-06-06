@@ -30,6 +30,7 @@ const gatewayClassNames: Record<string, string> = {
 
 const PRIORITY_SIGNAL_LIMIT = 10
 const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
+const LINKED_MEMORY_PRIORITY_LIMIT = 5
 
 interface BrainSignalGroup {
   key: string
@@ -197,6 +198,7 @@ export default function BrainSignalsPanel({
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
+  const [showOlderMemoryLinks, setShowOlderMemoryLinks] = useState(false)
   const requestIdRef = useRef(0)
 
   const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
@@ -207,6 +209,7 @@ export default function BrainSignalsPanel({
       setIsLoading(false)
       setIsRefreshing(false)
       setShowLowerPrioritySignals(false)
+      setShowOlderMemoryLinks(false)
       return
     }
 
@@ -232,6 +235,7 @@ export default function BrainSignalsPanel({
       setSignals(sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked)))
       setLinks(sortByScore(nextLinks))
       setShowLowerPrioritySignals(false)
+      setShowOlderMemoryLinks(false)
     } catch {
       if (requestIdRef.current === requestId) {
         setError('Brain signals unavailable')
@@ -268,6 +272,8 @@ export default function BrainSignalsPanel({
     }
   }, [signalGroups])
   const rankedLinks = useMemo(() => sortByScore(links), [links])
+  const priorityLinks = useMemo(() => rankedLinks.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [rankedLinks])
+  const olderLinks = useMemo(() => rankedLinks.slice(LINKED_MEMORY_PRIORITY_LIMIT), [rankedLinks])
 
   const handleDismiss = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
@@ -393,6 +399,27 @@ export default function BrainSignalsPanel({
     )
   }
 
+  const renderMemoryLink = (link: MemoryLink) => (
+    <article key={link.id} data-testid="brain-link-card" className="forensic-brain-link-card">
+      <div className="forensic-brain-link-header">
+        <Link2 size={14} />
+        <strong>{link.toTitle}</strong>
+        <span>{formatScore(link.score)}</span>
+      </div>
+      <p>{link.reasons[0]?.detail || link.suggestedAction}</p>
+      <div className="forensic-brain-chip-row">
+        {link.gateways.map((gateway) => (
+          <span
+            key={`${link.id}:${gateway}`}
+            className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
+          >
+            {formatGateway(gateway)}
+          </span>
+        ))}
+      </div>
+    </article>
+  )
+
   return (
     <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals">
       <div className="forensic-brain-grid-bg" aria-hidden="true" />
@@ -485,26 +512,27 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <div className="forensic-brain-link-list">
-              {rankedLinks.map((link) => (
-                <article key={link.id} data-testid="brain-link-card" className="forensic-brain-link-card">
-                  <div className="forensic-brain-link-header">
-                    <Link2 size={14} />
-                    <strong>{link.toTitle}</strong>
-                    <span>{formatScore(link.score)}</span>
-                  </div>
-                  <p>{link.reasons[0]?.detail || link.suggestedAction}</p>
-                  <div className="forensic-brain-chip-row">
-                    {link.gateways.map((gateway) => (
-                      <span
-                        key={`${link.id}:${gateway}`}
-                        className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
-                      >
-                        {formatGateway(gateway)}
-                      </span>
-                    ))}
-                  </div>
-                </article>
-              ))}
+              {priorityLinks.map(renderMemoryLink)}
+
+              {olderLinks.length > 0 && (
+                <div data-testid="brain-older-links-section" className="forensic-brain-lower-priority">
+                  <button
+                    type="button"
+                    className="forensic-brain-lower-priority-toggle"
+                    aria-expanded={showOlderMemoryLinks}
+                    onClick={() => setShowOlderMemoryLinks((current) => !current)}
+                  >
+                    {showOlderMemoryLinks ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {showOlderMemoryLinks ? 'Hide' : 'Show'} older memory links ({olderLinks.length})
+                  </button>
+
+                  {showOlderMemoryLinks && (
+                    <div className="forensic-brain-lower-priority-list">
+                      {olderLinks.map(renderMemoryLink)}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </aside>

@@ -50,6 +50,27 @@ const link: MemoryLink = {
   createdAt: '2026-06-05T12:00:00Z',
 }
 
+const makeLink = (overrides: Partial<MemoryLink> = {}): MemoryLink => {
+  const toInvestigationId = overrides.toInvestigationId || 'inv-older'
+  const toTitle = overrides.toTitle || 'Older Substation Case'
+  const score = overrides.score ?? 0.72
+
+  return {
+    ...link,
+    id: overrides.id || `brain-link-${toInvestigationId}`,
+    signalId: overrides.signalId || `brain-signal-${toInvestigationId}`,
+    toInvestigationId,
+    toTitle,
+    score,
+    gateways: overrides.gateways || link.gateways,
+    reasons: overrides.reasons || link.reasons,
+    suggestedAction: overrides.suggestedAction || link.suggestedAction,
+    createdAt: overrides.createdAt || link.createdAt,
+    fromInvestigationId: overrides.fromInvestigationId || link.fromInvestigationId,
+    fromTitle: overrides.fromTitle || link.fromTitle,
+  }
+}
+
 const makeSignal = (overrides: Partial<BrainSignal> = {}): BrainSignal => {
   const id = overrides.id || `brain-signal-${overrides.targetInvestigationId || 'case'}`
   const targetInvestigationId = overrides.targetInvestigationId || 'inv-older'
@@ -165,6 +186,33 @@ describe('BrainSignalsPanel', () => {
     const linkedMemory = await screen.findByTestId('brain-link-card')
     expect(linkedMemory).toHaveTextContent('Older Substation Case')
     expect(linkedMemory).toHaveTextContent('Entity/Date')
+  })
+
+  it('keeps linked memory scannable when promoted links grow', async () => {
+    const user = userEvent.setup()
+    const links = Array.from({ length: 7 }, (_, index) => makeLink({
+      id: `brain-link-${index}`,
+      signalId: `brain-signal-link-${index}`,
+      toInvestigationId: `inv-linked-${index}`,
+      toTitle: `Linked Memory Case ${index}`,
+      score: 0.9 - index * 0.04,
+      createdAt: `2026-06-05T12:0${index}:00Z`,
+    }))
+
+    installBrainFetch({ signals: [], links })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('brain-link-card')).toHaveLength(5)
+    })
+    expect(screen.queryByText('Linked Memory Case 5')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show older memory links \(2\)/i }))
+
+    expect(screen.getAllByTestId('brain-link-card')).toHaveLength(7)
+    expect(screen.getByText('Linked Memory Case 5')).toBeInTheDocument()
+    expect(screen.getByText('Linked Memory Case 6')).toBeInTheDocument()
   })
 
   it('groups duplicate older cases and collapses weak or overflow signals', async () => {
