@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+
 export default defineConfig({
   testDir: './tests/smoke',
   fullyParallel: false,
@@ -22,7 +24,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm.cmd run dev:test',
+    command: `${npmCommand} run dev:test`,
     url: 'http://127.0.0.1:5174',
     reuseExistingServer: false,
     timeout: 120_000,
