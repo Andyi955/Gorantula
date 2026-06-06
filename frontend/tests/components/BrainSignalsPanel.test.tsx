@@ -191,6 +191,36 @@ describe('BrainSignalsPanel', () => {
     expect(linkedMemory).toHaveTextContent('Entity/Date')
   })
 
+  it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
+    let signalGenerationComplete = false
+    const autoLink = {
+      ...makeLink({ id: 'brain-link-auto-first-scan', toTitle: 'Auto Linked Case', score: 0.9 }),
+      promotionType: 'auto',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        await Promise.resolve()
+        signalGenerationComplete = true
+        return jsonResponse([]) as Response
+      }
+
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(signalGenerationComplete ? [autoLink] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const linkedMemory = await screen.findByTestId('brain-link-card')
+    expect(linkedMemory).toHaveTextContent('Auto Linked Case')
+    expect(linkedMemory).toHaveTextContent('Auto Memory')
+  })
+
   it('keeps linked memory scannable when promoted links grow', async () => {
     const user = userEvent.setup()
     const links = Array.from({ length: 7 }, (_, index) => makeLink({

@@ -431,10 +431,8 @@ export default function BrainSignalsPanel({
     }
 
     try {
-      const [nextSignals, nextLinks] = await Promise.all([
-        fetchBrainSignals(currentInvestigationId),
-        fetchBrainLinks(currentInvestigationId),
-      ])
+      const nextSignals = await fetchBrainSignals(currentInvestigationId)
+      const nextLinks = await fetchBrainLinks(currentInvestigationId)
 
       if (requestIdRef.current !== requestId) {
         return
