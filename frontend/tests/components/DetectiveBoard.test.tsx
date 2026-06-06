@@ -1335,6 +1335,39 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('keeps relationship updates alive when tag-style storage hits quota', async () => {
+    const user = userEvent.setup()
+    const originalSetItem = window.localStorage.setItem.bind(window.localStorage)
+    vi.spyOn(window.localStorage, 'setItem').mockImplementation((key: string, value: string) => {
+      if (key === 'board_tag_styles') {
+        throw new DOMException('Quota exceeded', 'QuotaExceededError')
+      }
+      return originalSetItem(key, value)
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'legacy',
+        nodes: [],
+        edges: [{ id: 'edge-1', source: 'a', target: 'b', label: 'RELATED', data: {} }],
+      }),
+    )
+
+    renderBoard()
+
+    await user.click(await screen.findByText('Hidden Connection'))
+    await user.click(screen.getByRole('button', { name: 'staggered' }))
+    await user.click(screen.getByRole('button', { name: 'dash-dot' }))
+
+    expect(screen.getByText('RELATIONSHIPS')).toBeInTheDocument()
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to persist relationship tag styles'),
+      expect.any(DOMException),
+    )
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('shows and clears a ctrl-drag marquee on empty pane space', async () => {
     renderBoard()
 
@@ -1551,6 +1584,54 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('repairs restored strict-grid routes whose persisted endpoints no longer match node geometry', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+          { id: 'node-b', type: 'custom', position: { x: 640, y: 320 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-STALE-ENDPOINTS',
+            source: 'node-a',
+            target: 'node-b',
+            sourceHandle: 'port-right-0',
+            targetHandle: 'port-left-0',
+            type: 'customEdge',
+            label: 'STALE',
+            data: {
+              generatedBy: 'connectTheDots',
+              tag: 'STALE',
+              routePoints: [
+                { x: -320, y: -240 },
+                { x: -160, y: -240 },
+              ],
+              routeSourcePoint: { x: -320, y: -240 },
+              routeTargetPoint: { x: -160, y: -240 },
+            },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      const edge = ((lastReactFlowProps?.edges || []) as Array<{ id: string; data?: Record<string, unknown> }>).find((candidate) => candidate.id === 'e-node-a-node-b-STALE-ENDPOINTS')
+      expect(edge?.data?.routeSourcePoint).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }))
+      expect(edge?.data?.routeTargetPoint).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }))
+      expect(edge?.data?.routeSourcePoint).not.toEqual({ x: -320, y: -240 })
+      expect(edge?.data?.routeTargetPoint).not.toEqual({ x: -160, y: -240 })
+      expect(edge?.data?.routePoints).not.toEqual([
+        { x: -320, y: -240 },
+        { x: -160, y: -240 },
+      ])
+    })
+  })
+
   it('uses cheap strict-grid relationship previews until node drag stops', async () => {
     localStorage.setItem(
       'inv_data_investigation-1',
@@ -1615,6 +1696,59 @@ describe('DetectiveBoard relationship legend', () => {
       expect(edge.data).not.toHaveProperty('isDragPreview')
       expect(edge.data).not.toHaveProperty('dragPreviewSourcePoint')
       expect(edge.data).not.toHaveProperty('dragPreviewTargetPoint')
+    })
+  })
+
+  it('reroutes strict-grid edges after React Flow reports settled node dimensions', async () => {
+    localStorage.setItem(
+      'inv_data_investigation-1',
+      JSON.stringify({
+        mode: 'strict-grid',
+        nodes: [
+          { id: 'node-a', type: 'custom', position: { x: 0, y: 0 }, data: { title: 'A', summary: 'A', fullText: 'A' }, style: { width: 336, height: 240 } },
+          { id: 'node-b', type: 'custom', position: { x: 640, y: 0 }, data: { title: 'B', summary: 'B', fullText: 'B' }, style: { width: 336, height: 240 } },
+        ],
+        edges: [
+          {
+            id: 'e-node-a-node-b-RELATED',
+            source: 'node-a',
+            target: 'node-b',
+            label: 'RELATED',
+            data: { generatedBy: 'connectTheDots', reasoning: 'Existing line' },
+          },
+        ],
+      }),
+    )
+
+    renderBoard('investigation-1')
+
+    await waitFor(() => {
+      expect(((lastReactFlowProps?.edges || []) as Array<{ id: string }>).some((edge) => edge.id === 'e-node-a-node-b-RELATED')).toBe(true)
+    })
+
+    const initialEdge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+    const initialRouteSourcePoint = JSON.stringify(initialEdge.data?.routeSourcePoint)
+    const onNodesChange = lastReactFlowProps?.onNodesChange as ((changes: Array<Record<string, unknown>>) => void) | undefined
+
+    act(() => {
+      onNodesChange?.([
+        {
+          type: 'dimensions',
+          id: 'node-a',
+          dimensions: { width: 576, height: 384 },
+          resizing: false,
+        },
+      ])
+    })
+
+    await act(async () => {
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+
+    await waitFor(() => {
+      const edge = ((lastReactFlowProps?.edges || []) as Array<{ data?: Record<string, unknown> }>)[0]
+      expect(JSON.stringify(edge.data?.routeSourcePoint)).not.toBe(initialRouteSourcePoint)
+      expect(edge.data?.routeSourcePoint).toEqual(expect.objectContaining({ x: 576 }))
     })
   })
 

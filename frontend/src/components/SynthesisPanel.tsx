@@ -45,6 +45,7 @@ const LEGACY_ALERTS_KEY = 'gorantula_synthesis_alerts';
 const ALERT_BUCKETS_KEY = 'gorantula_synthesis_alerts_by_investigation';
 const MAX_ALERTS_PER_INVESTIGATION = 20;
 const MAX_TOTAL_ALERTS = 80;
+let hasWarnedAlertBucketPersistenceFailure = false;
 const MAX_ANALYSIS_LENGTH = 700;
 const MAX_NODE_SUMMARY_LENGTH = 220;
 const SYNTHESIS_REVEAL_DURATION_MS = 1700;
@@ -403,9 +404,18 @@ const persistAlertBuckets = (buckets: AlertBuckets): AlertBuckets => {
     const pruned = pruneBucketsForStorage(buckets);
     try {
         localStorage.setItem(ALERT_BUCKETS_KEY, JSON.stringify(pruned));
+        hasWarnedAlertBucketPersistenceFailure = false;
         return pruned;
     } catch (error) {
-        console.warn('[SynthesisPanel] Failed to persist synthesis alert cache; continuing in-memory only.', error);
+        if (!hasWarnedAlertBucketPersistenceFailure) {
+            console.warn('[SynthesisPanel] Failed to persist synthesis alert cache; continuing in-memory only.', error);
+            hasWarnedAlertBucketPersistenceFailure = true;
+        }
+        try {
+            localStorage.removeItem(ALERT_BUCKETS_KEY);
+        } catch {
+            // Storage may be unavailable; the in-memory alert bucket still remains usable.
+        }
         return pruned;
     }
 };

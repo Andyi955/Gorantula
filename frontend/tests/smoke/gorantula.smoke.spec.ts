@@ -8,10 +8,160 @@ import {
   switchToBoard,
   waitForBoardPersistence,
   waitForOutboundMessage,
+  seedBrowserQaData,
 } from './helpers'
 
 const crawlConsole = (page: import('@playwright/test').Page) =>
   page.getByTestId('spider-crawl-console')
+
+type BrainSignalReason = {
+  gateway: string
+  value: string
+  label: string
+  detail: string
+  currentNodeIds: string[]
+  targetNodeIds: string[]
+}
+
+type BrainSignalPayload = {
+  id: string
+  investigationId: string
+  investigationTitle: string
+  targetInvestigationId: string
+  targetTitle: string
+  score: number
+  gateways: string[]
+  reasons: BrainSignalReason[]
+  suggestedAction: string
+  createdAt: string
+  updatedAt: string
+  dismissed: boolean
+  linked: boolean
+  linkId?: string
+}
+
+type MemoryLinkPayload = {
+  id: string
+  signalId: string
+  fromInvestigationId: string
+  fromTitle: string
+  toInvestigationId: string
+  toTitle: string
+  score: number
+  gateways: string[]
+  reasons: BrainSignalReason[]
+  suggestedAction: string
+  createdAt: string
+}
+
+const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
+  const signal: BrainSignalPayload = {
+    id: 'brain-signal-smoke-qa',
+    investigationId: 'qa-browser-target',
+    investigationTitle: 'QA: Imported Target',
+    targetInvestigationId: 'qa-browser-source',
+    targetTitle: 'QA: Source Case',
+    score: 0.88,
+    gateways: ['entity-date', 'source-domain', 'relationship-tag'],
+    reasons: [
+      {
+        gateway: 'entity-date',
+        value: 'grid reliability signal',
+        label: 'Grid reliability signal',
+        detail: 'Grid reliability signal appears in QA: Imported Target and QA: Source Case.',
+        currentNodeIds: ['qa-target-existing'],
+        targetNodeIds: ['qa-source-lead'],
+      },
+      {
+        gateway: 'source-domain',
+        value: 'example.com',
+        label: 'example.com',
+        detail: 'Both investigations cite example.com evidence.',
+        currentNodeIds: ['qa-target-existing'],
+        targetNodeIds: ['qa-source-lead'],
+      },
+      {
+        gateway: 'relationship-tag',
+        value: 'SUPPORTS',
+        label: 'SUPPORTS',
+        detail: 'A repeated SUPPORTS relationship appears across the QA memory cases.',
+        currentNodeIds: ['qa-target-existing'],
+        targetNodeIds: ['qa-source-lead'],
+      },
+    ],
+    suggestedAction: 'Review older case',
+    createdAt: '2026-06-05T12:00:00Z',
+    updatedAt: '2026-06-05T12:00:00Z',
+    dismissed: false,
+    linked: false,
+  }
+
+  const link: MemoryLinkPayload = {
+    id: 'brain-link-smoke-qa',
+    signalId: signal.id,
+    fromInvestigationId: signal.investigationId,
+    fromTitle: signal.investigationTitle,
+    toInvestigationId: signal.targetInvestigationId,
+    toTitle: signal.targetTitle,
+    score: signal.score,
+    gateways: signal.gateways,
+    reasons: signal.reasons,
+    suggestedAction: signal.suggestedAction,
+    createdAt: '2026-06-05T12:01:00Z',
+  }
+
+  let promoted = false
+
+  await page.route('http://localhost:8080/api/brain/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+
+    if (request.method() === 'GET' && url.pathname.endsWith('/signals')) {
+      const investigationId = url.searchParams.get('investigationId')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(investigationId === signal.investigationId && !promoted ? [signal] : []),
+      })
+      return
+    }
+
+    if (request.method() === 'GET' && url.pathname.endsWith('/links')) {
+      const investigationId = url.searchParams.get('investigationId')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(investigationId === signal.investigationId && promoted ? [link] : []),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith(`/${signal.id}/link`)) {
+      promoted = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(link),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith(`/${signal.id}/dismiss`)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...signal, dismissed: true }),
+      })
+      return
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'unexpected brain smoke route' }),
+    })
+  })
+}
 
 const runWebInvestigation = async (page: import('@playwright/test').Page, topic = 'smoke grid reliability') => {
   const console = crawlConsole(page)
@@ -297,6 +447,41 @@ test.describe('Gorantula smoke flows', () => {
       expect(nodeBox.bottom).toBeGreaterThan(boardBounds.top)
       expect(nodeBox.top).toBeLessThan(boardBounds.bottom)
     }
+  })
+
+  test('Brain Signals promote into a memory link that remains after reload', async ({ page }) => {
+    await installBrainMemoryApi(page)
+    await seedBrowserQaData(page)
+
+    await page.getByRole('button', { name: /^brain$/i }).click()
+    await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+
+    const signalCard = page.getByTestId('brain-signal-card').filter({ hasText: 'QA: Source Case' })
+    await expect(signalCard).toContainText('Grid reliability signal')
+    await expect(signalCard).toContainText('Entity/Date')
+    await expect(signalCard).toContainText('Source Domain')
+    await expect(signalCard).toContainText('Relationship')
+
+    await signalCard.getByRole('button', { name: /promote signal for qa: source case/i }).click()
+
+    await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
+    await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
+    await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+
+    await page.reload()
+    await expect(page.getByTestId('app-shell')).toBeVisible()
+    await page.waitForFunction(() => {
+      const backend = (window as Window & {
+        __gorantulaSmokeBackend?: { openSocketCount: number }
+      }).__gorantulaSmokeBackend
+      return Boolean(backend && backend.openSocketCount > 0)
+    })
+
+    await page.getByRole('button', { name: /^brain$/i }).click()
+    await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
+    await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
+    await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
   })
 
   test('backend error clears the active run and allows a new web investigation', async ({ page }) => {

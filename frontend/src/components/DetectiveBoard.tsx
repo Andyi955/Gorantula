@@ -930,61 +930,6 @@ const isVisibleBoardRelationshipEdge = (edge: Edge) =>
 const hasVisibleBoardRelationshipEdges = (edges: Edge[]) =>
     edges.some(isVisibleBoardRelationshipEdge);
 
-const isPersistedStrictGridPoint = (point: unknown): point is { x: number; y: number } => (
-    !!point &&
-    typeof point === 'object' &&
-    Number.isFinite((point as { x?: unknown }).x) &&
-    Number.isFinite((point as { y?: unknown }).y)
-);
-
-const hasPersistedStrictGridRoute = (edge: Edge) => {
-    if (!isVisibleBoardRelationshipEdge(edge)) {
-        return true;
-    }
-
-    const routePoints = edge.data?.routePoints;
-
-    return (
-        typeof edge.sourceHandle === 'string' &&
-        edge.sourceHandle.trim().length > 0 &&
-        typeof edge.targetHandle === 'string' &&
-        edge.targetHandle.trim().length > 0 &&
-        Array.isArray(routePoints) &&
-        routePoints.length >= 2 &&
-        routePoints.every(isPersistedStrictGridPoint) &&
-        isPersistedStrictGridPoint(edge.data?.routeSourcePoint) &&
-        isPersistedStrictGridPoint(edge.data?.routeTargetPoint)
-    );
-};
-
-const attachRestoredActivePorts = (nodes: Node[], edges: Edge[]) => {
-    const activePortIdsByNode = new Map<string, Set<string>>();
-
-    edges.filter(isVisibleBoardRelationshipEdge).forEach((edge) => {
-        if (edge.sourceHandle) {
-            if (!activePortIdsByNode.has(edge.source)) {
-                activePortIdsByNode.set(edge.source, new Set<string>());
-            }
-            activePortIdsByNode.get(edge.source)?.add(edge.sourceHandle);
-        }
-
-        if (edge.targetHandle) {
-            if (!activePortIdsByNode.has(edge.target)) {
-                activePortIdsByNode.set(edge.target, new Set<string>());
-            }
-            activePortIdsByNode.get(edge.target)?.add(edge.targetHandle);
-        }
-    });
-
-    return nodes.map((node) => ({
-        ...node,
-        data: {
-            ...node.data,
-            activePortIds: Array.from(activePortIdsByNode.get(node.id) || []),
-        },
-    }));
-};
-
 interface DetectiveBoardProps {
     investigationId: string | null;
     returnVaultId?: string | null;
@@ -2028,6 +1973,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [hasConnectedDots, setHasConnectedDots] = useState(false);
     const [autoConnectRequest, setAutoConnectRequest] = useState<{ vaultId: string; runId: string; requestedAt: number } | null>(null);
     const [tagStyles, setTagStyles] = useState<Record<string, TagStyle>>({});
+    const hasWarnedTagStylePersistenceFailureRef = useRef(false);
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [relationshipDraft, setRelationshipDraft] = useState<RelationshipDraft | null>(null);
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
@@ -2353,7 +2299,20 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
-        localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+        try {
+            localStorage.setItem('board_tag_styles', JSON.stringify(nextStyles));
+            hasWarnedTagStylePersistenceFailureRef.current = false;
+        } catch (error) {
+            if (!hasWarnedTagStylePersistenceFailureRef.current) {
+                console.warn('[DetectiveBoard] Failed to persist relationship tag styles; continuing in-memory only.', error);
+                hasWarnedTagStylePersistenceFailureRef.current = true;
+            }
+            try {
+                localStorage.removeItem('board_tag_styles');
+            } catch {
+                // Storage may be unavailable; in-memory relationship styles still apply.
+            }
+        }
     }, []);
 
     const clearMarqueeSelection = useCallback(() => {
@@ -4082,16 +4041,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
                 setBoardMode(savedMode);
                 if (savedMode === 'strict-grid') {
-                    if (restoredEdges.every(hasPersistedStrictGridRoute)) {
-                        const supportLayerState = layoutSupportingEvidenceNodes(
-                            attachRestoredActivePorts(restoredNodes, restoredEdges),
-                            restoredEdges
-                        );
-                        setNodes(supportLayerState.nodes);
-                        setEdges(restoredEdges);
-                    } else {
-                        syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
-                    }
+                    syncStrictGridEdgesToNodes(restoredEdges, restoredNodes);
                 } else {
                     const { edges: finalEdges, handledNodes } = distributeEdges(restoredEdges, restoredNodes);
                     const supportLayerState = layoutSupportingEvidenceNodes(handledNodes, finalEdges);
@@ -4364,11 +4314,12 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                     logResizePipelineDebug('onNodesChange:resize-preview', {
                         resizedNodeIds: dimensionChanges.map((change) => change.id),
                     });
-                } else if (dimensionChanges.length > 0) {
-                    logResizePipelineDebug('onNodesChange:awaiting-commit', {
-                        resizedNodeIds: dimensionChanges.map((change) => change.id),
-                    });
                 } else {
+                    if (dimensionChanges.length > 0) {
+                        logResizePipelineDebug('onNodesChange:dimensions-settled', {
+                            resizedNodeIds: dimensionChanges.map((change) => change.id),
+                        });
+                    }
                     window.requestAnimationFrame(() => {
                         syncStrictGridEdgesToNodes(edgesRef.current, nextNodesSnapshot.length > 0 ? nextNodesSnapshot : nodesRef.current);
                     });

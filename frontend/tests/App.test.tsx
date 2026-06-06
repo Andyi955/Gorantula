@@ -146,6 +146,27 @@ vi.mock('../src/components/DiscoveryPanel', () => ({
   ),
 }))
 
+vi.mock('../src/components/BrainSignalsPanel', () => ({
+  default: ({
+    currentInvestigationId,
+    currentInvestigationTitle,
+    onOpenInvestigation,
+  }: {
+    currentInvestigationId?: string | null
+    currentInvestigationTitle?: string | null
+    onOpenInvestigation?: (investigationId: string) => void
+  }) => (
+    <div data-testid="mock-brain-panel">
+      BrainSignalsPanel
+      <span data-testid="mock-brain-current-id">{currentInvestigationId || 'none'}</span>
+      <span data-testid="mock-brain-current-title">{currentInvestigationTitle || 'untitled'}</span>
+      <button type="button" onClick={() => onOpenInvestigation?.('inv-1770000000000')}>
+        Open mock brain target
+      </button>
+    </div>
+  ),
+}))
+
 class WebSocketMock {
   static instances: WebSocketMock[] = []
 
@@ -300,6 +321,34 @@ describe('App', () => {
     await user.click(screen.getByText('Vault Chat'))
 
     expect(await screen.findByText('VaultChatbot')).toBeInTheDocument()
+  })
+
+  it('opens the Brain tab and routes signal targets through investigation switching', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([
+        { id: 'inv-1770000000000', topic: 'Older Memory Case' },
+        { id: 'inv-1880000000000', topic: 'Current Memory Case' },
+      ]),
+    )
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /^brain$/i }))
+
+    expect(await screen.findByTestId('mock-brain-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-brain-current-id')).toHaveTextContent('inv-1880000000000')
+    expect(screen.getByTestId('mock-brain-current-title')).toHaveTextContent('Current Memory Case')
+    expect(screen.queryByText('SynthesisPanel Handle')).not.toBeInTheDocument()
+    expect(screen.queryByText('DiscoveryPanel Handle')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open mock brain target/i }))
+
+    expect(await screen.findByText('DetectiveBoard')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-board-investigation-id')).toHaveTextContent('inv-1770000000000')
+    })
   })
 
   it('unmounts the spider visualizer when switching to detective board', async () => {
