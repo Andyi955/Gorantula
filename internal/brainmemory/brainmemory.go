@@ -32,7 +32,7 @@ const (
 
 	autoPromotionScoreThreshold      = 0.85
 	repeatedPromotionScoreThreshold  = 0.75
-	repeatedPromotionActivationCount = 2
+	repeatedPromotionActivationCount = 3
 )
 
 var (
@@ -685,10 +685,27 @@ func shouldAutoPromoteSignal(signal BrainSignal) bool {
 	if signal.Dismissed || signal.Linked || len(signal.Gateways) < 2 {
 		return false
 	}
+	if !hasMeaningfulAutoPromotionEvidence(signal) {
+		return false
+	}
 	if signal.Score >= autoPromotionScoreThreshold {
 		return true
 	}
 	return signal.ActivationCount >= repeatedPromotionActivationCount && signal.Score >= repeatedPromotionScoreThreshold
+}
+
+func hasMeaningfulAutoPromotionEvidence(signal BrainSignal) bool {
+	for _, reason := range signal.Reasons {
+		switch reason.Gateway {
+		case GatewayRelationshipTag:
+			return true
+		case GatewayEntityDate:
+			if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(reason.Value)), "DATE|") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func newMemoryLink(signal BrainSignal, timestamp string, promotionType string) MemoryLink {

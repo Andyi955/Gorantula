@@ -178,6 +178,96 @@ func TestServiceAutoPromotesStrongMultiGatewaySignals(t *testing.T) {
 	}
 }
 
+func TestServiceKeepsNoisyDateSourceSignalsManual(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Date Sweep"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[DATE:2026-05-20], [DATE:2026-05-21], [DATE:2026-05-22], and [DATE:2030] appear in a broad market scan.",
+			"sourceURL":"https://wire.example.com/current",
+			"sourceURLs":["https://archive.example.com/current","https://press.example.com/current"]
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Date Sweep"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{
+			"summary":"[DATE:2026-05-20], [DATE:2026-05-21], [DATE:2026-05-22], and [DATE:2030] appeared in prior broad coverage.",
+			"sourceURL":"https://wire.example.com/old",
+			"sourceURLs":["https://archive.example.com/old","https://press.example.com/old"]
+		}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("expected noisy date/source overlap to stay active for manual review, got %#v", signals)
+	}
+	if signals[0].Score < autoPromotionScoreThreshold {
+		t.Fatalf("test needs a hot noisy signal, got %.2f", signals[0].Score)
+	}
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation failed: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("noisy date/source overlap should not auto-promote, got %#v", links)
+	}
+}
+
+func TestServiceAutoPromotesRepeatedMeaningfulWarmSignals(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Warm Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[ORG:Acme Grid] appears with [DATE:2026-05-20], [DATE:2026-05-21], and [DATE:2026-05-22].",
+			"sourceURL":"https://intel.example.com/current"
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Warm Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{
+			"summary":"[ORG:Acme Grid] appeared with [DATE:2026-05-20], [DATE:2026-05-21], and [DATE:2026-05-22].",
+			"sourceURL":"https://intel.example.com/archive"
+		}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	for pass := 1; pass < repeatedPromotionActivationCount; pass++ {
+		signals, err := service.GenerateSignals("inv-current")
+		if err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", pass, err)
+		}
+		if len(signals) != 1 {
+			t.Fatalf("expected warm signal to remain active before repeat threshold, got %#v", signals)
+		}
+	}
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals at repeat threshold failed: %v", err)
+	}
+	if len(signals) != 0 {
+		t.Fatalf("expected repeated meaningful warm signal to auto-promote, got %#v", signals)
+	}
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation failed: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("expected repeated warm memory link, got %#v", links)
+	}
+	linkJSON := memoryLinkJSON(t, links[0])
+	if linkJSON["promotionType"] != "auto" {
+		t.Fatalf("expected auto promotion type, got %#v", linkJSON["promotionType"])
+	}
+}
+
 func TestServiceReinforcesExistingMemoryLinkWithNewSignalEvidence(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
