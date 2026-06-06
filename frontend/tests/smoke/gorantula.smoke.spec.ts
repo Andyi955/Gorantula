@@ -7,6 +7,7 @@ import {
   outboundTypeCount,
   switchToBoard,
   waitForBoardPersistence,
+  waitForRenderedBoardNodes,
   waitForOutboundMessage,
   seedBrowserQaData,
 } from './helpers'
@@ -222,6 +223,10 @@ const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: s
     },
   })
   await expect(page.getByText('Smoke Grid Load Spike')).toBeVisible()
+  await waitForRenderedBoardNodes(page, ['smoke-grid-load'])
+  await waitForBoardPersistence(page, vaultId, {
+    nodeIds: ['smoke-grid-load'],
+  })
 
   await emitBackendMessage(page, {
     type: 'MEMORY_NODE_GATHERED',
@@ -235,6 +240,10 @@ const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: s
     },
   })
   await expect(page.getByText('Smoke Cooling Alert')).toBeVisible()
+  await waitForRenderedBoardNodes(page, ['smoke-grid-load', 'smoke-cooling-alert'])
+  await waitForBoardPersistence(page, vaultId, {
+    nodeIds: ['smoke-grid-load', 'smoke-cooling-alert'],
+  })
 
   await emitBackendMessage(page, {
     type: 'CONNECTIONS_FOUND',
@@ -251,6 +260,10 @@ const emitNormalBoard = async (page: import('@playwright/test').Page, vaultId: s
         },
       ],
     },
+  })
+  await waitForBoardPersistence(page, vaultId, {
+    nodeIds: ['smoke-grid-load', 'smoke-cooling-alert'],
+    edgeCount: 1,
   })
 }
 
@@ -319,47 +332,45 @@ test.describe('Gorantula smoke flows', () => {
     const vaultId = String(crawl.vaultId)
 
     await switchToBoard(page)
-    await emitBackendMessage(page, {
-      type: 'MEMORY_NODE_GATHERED',
-      payload: {
-        vaultId,
-        node: createSmokeNode(
-          'smoke-rabbit-web',
-          'Smoke Rabbit Web Lead',
-          'A Rabbit Hole web lead follows a live smoke-test evidence trail.',
-          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'web_search', rabbitPass: 1 },
-        ),
-      },
-    })
-    await expect(page.getByText('Smoke Rabbit Web Lead')).toBeVisible()
+    const emitRabbitNodeAndWait = async (
+      id: string,
+      title: string,
+      summary: string,
+      extra: Record<string, unknown>,
+    ) => {
+      await emitBackendMessage(page, {
+        type: 'MEMORY_NODE_GATHERED',
+        payload: {
+          vaultId,
+          node: createSmokeNode(id, title, summary, extra),
+        },
+      })
+      await waitForRenderedBoardNodes(page, [id])
+      await page.waitForTimeout(100)
+    }
 
-    await emitBackendMessage(page, {
-      type: 'MEMORY_NODE_GATHERED',
-      payload: {
-        vaultId,
-        node: createSmokeNode(
-          'smoke-rabbit-vault',
-          'Smoke Rabbit Vault Echo',
-          'A Rabbit Hole vault echo finds a related older smoke-test case.',
-          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'vault_search', rabbitPass: 1 },
-        ),
-      },
+    await emitRabbitNodeAndWait(
+      'smoke-rabbit-web',
+      'Smoke Rabbit Web Lead',
+      'A Rabbit Hole web lead follows a live smoke-test evidence trail.',
+      { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'web_search', rabbitPass: 1 },
+    )
+    await emitRabbitNodeAndWait(
+      'smoke-rabbit-vault',
+      'Smoke Rabbit Vault Echo',
+      'A Rabbit Hole vault echo finds a related older smoke-test case.',
+      { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'vault_search', rabbitPass: 1 },
+    )
+    await emitRabbitNodeAndWait(
+      'smoke-rabbit-support',
+      'Smoke Rabbit Support Evidence',
+      'A Rabbit Hole support lead remains useful but unconnected after relationship synthesis.',
+      { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'timeline_context', rabbitPass: 1 },
+    )
+    await waitForBoardPersistence(page, vaultId, {
+      nodeIds: ['smoke-rabbit-web', 'smoke-rabbit-vault', 'smoke-rabbit-support'],
     })
-    await expect(page.getByText('Smoke Rabbit Vault Echo')).toBeVisible()
-
-    await emitBackendMessage(page, {
-      type: 'MEMORY_NODE_GATHERED',
-      payload: {
-        vaultId,
-        node: createSmokeNode(
-          'smoke-rabbit-support',
-          'Smoke Rabbit Support Evidence',
-          'A Rabbit Hole support lead remains useful but unconnected after relationship synthesis.',
-          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'timeline_context', rabbitPass: 1 },
-        ),
-      },
-    })
-    await expect(page.getByText('Smoke Rabbit Support Evidence')).toBeVisible()
+    await waitForRenderedBoardNodes(page, ['smoke-rabbit-web', 'smoke-rabbit-vault', 'smoke-rabbit-support'])
 
     await emitBackendMessage(page, {
       type: 'RABBIT_HOLE_NODE_UPDATE',
@@ -478,19 +489,36 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
+    const radar = page.getByTestId('brain-map-radar')
+    await expect(radar).toBeVisible()
+    await expect(radar).toContainText('Memory map')
+    await expect(radar).toContainText('QA: Imported Target')
+    await expect(radar).toContainText('QA: Source Case')
+    await expect(radar.getByTestId('brain-map-node')).toHaveCount(2)
+    await expect(radar.getByTestId('brain-map-digest')).toContainText('Signal fired')
 
+    await radar.getByRole('button', { name: /select signal qa: source case/i }).click()
+    await expect(radar.getByTestId('brain-map-selected-node')).toContainText('Grid reliability signal')
+
+    await page.getByRole('button', { name: /active signals view/i }).click()
     const signalCard = page.getByTestId('brain-signal-card').filter({ hasText: 'QA: Source Case' })
     await expect(signalCard).toContainText('Grid reliability signal')
     await expect(signalCard).toContainText('Entity/Date')
     await expect(signalCard).toContainText('Source Domain')
     await expect(signalCard).toContainText('Relationship')
 
-    await signalCard.getByRole('button', { name: /promote signal for qa: source case/i }).click()
+    await page.getByRole('button', { name: /memory map view/i }).click()
+    await radar
+      .getByTestId('brain-map-selected-node')
+      .getByRole('button', { name: /promote radar signal qa: source case/i })
+      .click()
 
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+    await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 memory group')
+    await expect(radar.getByRole('button', { name: /select memory qa: source case/i })).toBeVisible()
 
     await page.reload()
     await expect(page.getByTestId('app-shell')).toBeVisible()
@@ -504,15 +532,23 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
+    await page.getByRole('button', { name: /memory links view/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+    await page.getByRole('button', { name: /memory map view/i }).click()
+    const restoredRadar = page.getByTestId('brain-map-radar')
+    await expect(restoredRadar).toContainText('QA: Source Case')
+    await expect(restoredRadar.getByRole('button', { name: /select memory qa: source case/i })).toBeVisible()
 
+    await page.getByRole('button', { name: /memory links view/i }).click()
     await page.getByRole('button', { name: /source domain filter/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await page.getByRole('button', { name: /relationship filter/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
 
-    await page.getByRole('button', { name: /inspect memory link qa: source case/i }).click()
+    await page.getByRole('button', { name: /memory map view/i }).click()
+    await restoredRadar.getByRole('button', { name: /select memory qa: source case/i }).click()
+    await restoredRadar.getByRole('button', { name: /inspect radar memory qa: source case/i }).click()
     const detail = page.getByTestId('brain-link-detail')
     await expect(detail).toContainText('qa-target-existing')
     await expect(detail).toContainText('qa-source-lead')

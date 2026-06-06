@@ -15,6 +15,7 @@ import {
   type BrainSignal,
   type MemoryLink,
 } from '../utils/brainMemory'
+import { buildBrainMapModel, type BrainMapNode } from '../utils/brainMap'
 
 interface BrainSignalsPanelProps {
   currentInvestigationId: string | null
@@ -38,9 +39,12 @@ const PRIORITY_SIGNAL_LIMIT = 10
 const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
+const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
+const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
 type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
 type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
+type BrainView = 'map' | 'signals' | 'links'
 
 const gatewayFilterOptions: Array<{ value: GatewayFilter; label: string }> = [
   { value: 'all', label: 'All Gateways' },
@@ -409,13 +413,20 @@ export default function BrainSignalsPanel({
   const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
   const [showOlderMemoryLinks, setShowOlderMemoryLinks] = useState(false)
   const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
+  const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
+  const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
+  const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
   const requestIdRef = useRef(0)
   const boardRefreshTimerRef = useRef<number | null>(null)
   const latestBoardRefreshSignatureRef = useRef<string | null>(null)
 
-  const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
+  const startBrainMemoryFollowup = useCallback(() => {
+    setBrainMemoryFollowupRunId((current) => current + 1)
+  }, [])
+
+  const loadBrainMemory = useCallback(async (isManualRefresh = false, isBackgroundRefresh = false) => {
     if (!currentInvestigationId) {
       setSignals([])
       setLinks([])
@@ -425,6 +436,7 @@ export default function BrainSignalsPanel({
       setShowLowerPrioritySignals(false)
       setShowOlderMemoryLinks(false)
       setSelectedMemoryLinkId(null)
+      setSelectedBrainMapNodeId(null)
       return
     }
 
@@ -433,7 +445,7 @@ export default function BrainSignalsPanel({
     setError(null)
     if (isManualRefresh) {
       setIsRefreshing(true)
-    } else {
+    } else if (!isBackgroundRefresh) {
       setIsLoading(true)
     }
 
@@ -458,7 +470,9 @@ export default function BrainSignalsPanel({
       }
     } finally {
       if (requestIdRef.current === requestId) {
-        setIsLoading(false)
+        if (!isBackgroundRefresh) {
+          setIsLoading(false)
+        }
         setIsRefreshing(false)
       }
     }
@@ -466,7 +480,25 @@ export default function BrainSignalsPanel({
 
   useEffect(() => {
     void loadBrainMemory()
-  }, [loadBrainMemory])
+    startBrainMemoryFollowup()
+  }, [loadBrainMemory, startBrainMemoryFollowup])
+
+  useEffect(() => {
+    if (!currentInvestigationId || brainMemoryFollowupRunId === 0 || typeof window === 'undefined') {
+      return undefined
+    }
+
+    let attempts = 0
+    const intervalId = window.setInterval(() => {
+      attempts += 1
+      void loadBrainMemory(false, true)
+      if (attempts >= BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS) {
+        window.clearInterval(intervalId)
+      }
+    }, BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [brainMemoryFollowupRunId, currentInvestigationId, loadBrainMemory])
 
   useEffect(() => {
     if (!currentInvestigationId || typeof window === 'undefined') {
@@ -504,6 +536,7 @@ export default function BrainSignalsPanel({
       boardRefreshTimerRef.current = window.setTimeout(() => {
         boardRefreshTimerRef.current = null
         void loadBrainMemory(true)
+        startBrainMemoryFollowup()
       }, BOARD_MEMORY_REFRESH_DEBOUNCE_MS)
     }
 
@@ -512,7 +545,7 @@ export default function BrainSignalsPanel({
       window.removeEventListener(BOARD_WORKSPACE_STATE_UPDATED_EVENT, handleBoardWorkspaceUpdate)
       clearScheduledRefresh()
     }
-  }, [currentInvestigationId, loadBrainMemory])
+  }, [currentInvestigationId, loadBrainMemory, startBrainMemoryFollowup])
 
   const rankedSignals = useMemo(() => sortByScore(signals), [signals])
   const allSignalGroups = useMemo(() => groupSignalsByOlderCase(rankedSignals), [rankedSignals])
@@ -547,9 +580,26 @@ export default function BrainSignalsPanel({
   const linkGroups = useMemo(() => groupMemoryLinksByOlderCase(filteredLinks), [filteredLinks])
   const priorityLinkGroups = useMemo(() => linkGroups.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
   const olderLinkGroups = useMemo(() => linkGroups.slice(LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
+  const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
+  const brainMapModel = useMemo(
+    () => buildBrainMapModel({
+      currentInvestigationId: currentInvestigationId || undefined,
+      currentInvestigationTitle: activeTitle,
+      signals: rankedSignals,
+      links: rankedLinks,
+    }),
+    [activeTitle, currentInvestigationId, rankedSignals, rankedLinks],
+  )
+  const selectedBrainMapNode = useMemo(
+    () =>
+      brainMapModel.nodes.find((node) => node.id === selectedBrainMapNodeId) ||
+      brainMapModel.nodes[0] ||
+      null,
+    [brainMapModel.nodes, selectedBrainMapNodeId],
+  )
   const selectedMemoryLinkGroup = useMemo(
-    () => linkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
-    [linkGroups, selectedMemoryLinkId],
+    () => allLinkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
+    [allLinkGroups, selectedMemoryLinkId],
   )
   const brainHealth = useMemo(() => {
     const scores = [
@@ -567,6 +617,16 @@ export default function BrainSignalsPanel({
       dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
     }
   }, [allSignalGroups, allLinkGroups, rankedLinks])
+
+  useEffect(() => {
+    if (!selectedBrainMapNodeId) {
+      return
+    }
+
+    if (!brainMapModel.nodes.some((node) => node.id === selectedBrainMapNodeId)) {
+      setSelectedBrainMapNodeId(null)
+    }
+  }, [brainMapModel.nodes, selectedBrainMapNodeId])
 
   const handleDismiss = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
@@ -590,6 +650,8 @@ export default function BrainSignalsPanel({
       const link = await promoteBrainSignal(group.primary.id)
       setSignals((current) => current.filter((signal) => !signalIds.includes(signal.id)))
       setLinks((current) => sortByScore([link, ...current.filter((candidate) => candidate.id !== link.id)]))
+      setSelectedMemoryLinkId(link.id)
+      setActiveBrainView('links')
     } catch {
       setError('Brain memory link failed')
     } finally {
@@ -612,7 +674,26 @@ export default function BrainSignalsPanel({
     }
   }
 
-  const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
+  const handlePromoteBrainMapSignal = async (node: BrainMapNode) => {
+    if (!node.signalId) {
+      return
+    }
+
+    setBusyAction(`promote-map:${node.signalId}`)
+    setError(null)
+    try {
+      const link = await promoteBrainSignal(node.signalId)
+      setSignals((current) => current.filter((signal) => signal.id !== node.signalId))
+      setLinks((current) => sortByScore([link, ...current.filter((candidate) => candidate.id !== link.id)]))
+      setSelectedMemoryLinkId(link.id)
+      setSelectedBrainMapNodeId(`brain-map-link-${link.id}`)
+      setActiveBrainView('links')
+    } catch {
+      setError('Brain memory link failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
 
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
@@ -898,91 +979,237 @@ export default function BrainSignalsPanel({
     )
   }
 
-  return (
-    <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals">
-      <div className="forensic-brain-grid-bg" aria-hidden="true" />
-      <header className="forensic-brain-command">
-        <div className="forensic-brain-title-block">
-          <span className="forensic-brain-kicker">Memory activation</span>
-          <h2>
-            <Brain size={20} />
-            Brain Signals
-          </h2>
-          <div className="forensic-brain-title-rule" />
-          <p>{activeTitle}</p>
+  const renderBrainMapNode = (node: BrainMapNode) => {
+    const isSelected = selectedBrainMapNode?.id === node.id
+    const nodeTypeLabel = node.kind === 'current' ? 'focus' : node.kind
+    const gatewayLabel = node.gateways[0] ? formatGateway(node.gateways[0]) : node.kind === 'current' ? 'Live focus' : 'Memory'
+
+    return (
+      <button
+        key={node.id}
+        type="button"
+        data-testid="brain-map-node"
+        aria-label={`Select ${nodeTypeLabel} ${node.kind === 'current' ? node.subtitle : node.title}`}
+        aria-pressed={isSelected}
+        className={[
+          'forensic-brain-map-node',
+          `forensic-brain-map-node-${node.kind}`,
+          `forensic-brain-map-slot-${node.slot}`,
+          `forensic-brain-map-tier-${node.tier.toLocaleLowerCase()}`,
+          isSelected ? 'is-selected' : '',
+        ].filter(Boolean).join(' ')}
+        onClick={() => setSelectedBrainMapNodeId(node.id)}
+      >
+        <span className="forensic-brain-map-node-orb" aria-hidden="true">
+          <span />
+        </span>
+        <span className="forensic-brain-map-node-copy">
+          <span>{node.kind === 'current' ? 'Current focus' : gatewayLabel}</span>
+          <strong>{node.kind === 'current' ? node.subtitle : node.title}</strong>
+          <em>{node.kind === 'current' ? 'Now scanning' : `${node.scoreLabel} ${node.tier}`}</em>
+        </span>
+        <span className="forensic-brain-map-node-badges" aria-hidden="true">
+          {node.badges.slice(0, 2).map((badge) => (
+            <span key={`${node.id}:${badge}`}>{badge}</span>
+          ))}
+        </span>
+      </button>
+    )
+  }
+
+  const renderBrainMapSelectedDetail = () => {
+    if (!selectedBrainMapNode) {
+      return null
+    }
+
+    const node = selectedBrainMapNode
+    const targetInvestigationId = node.targetInvestigationId
+    const linkId = node.linkId
+    const signalId = node.signalId
+
+    return (
+      <section data-testid="brain-map-selected-node" className="forensic-brain-map-selected">
+        <span>{node.kind === 'current' ? 'Current scan' : node.kind === 'memory' ? 'Linked memory' : 'Active signal'}</span>
+        <h4>{node.kind === 'current' ? node.subtitle : node.title}</h4>
+        <div className="forensic-brain-map-selected-badges">
+          {node.badges.map((badge) => (
+            <span key={`${node.id}:${badge}`}>{badge}</span>
+          ))}
+          {node.kind !== 'current' && <span>{node.scoreLabel}</span>}
         </div>
-        <div className="forensic-brain-command-actions">
-          <span className="forensic-brain-status">
-            {signalGroups.length} active / {rankedLinks.length} linked
-          </span>
+
+        {node.reasons.length > 0 ? (
+          <div className="forensic-brain-map-selected-reasons">
+            {node.reasons.slice(0, 3).map((reason, index) => (
+              <p key={`${node.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
+                <strong>{formatGateway(reason.gateway)}</strong>
+                {reason.detail || reason.label}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="forensic-brain-map-selected-empty">This investigation is the current memory focus.</p>
+        )}
+
+        {node.kind !== 'current' && (
+          <div className="forensic-brain-map-selected-actions">
+            {targetInvestigationId && (
+              <button
+                type="button"
+                aria-label={`Open radar memory ${node.title}`}
+                className="forensic-brain-action"
+                onClick={() => onOpenInvestigation?.(targetInvestigationId)}
+              >
+                <ExternalLink size={13} />
+                Open Case
+              </button>
+            )}
+            {linkId && (
+              <button
+                type="button"
+                aria-label={`Inspect radar memory ${node.title}`}
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => {
+                  setSelectedMemoryLinkId(linkId)
+                  setActiveBrainView('links')
+                }}
+              >
+                <Link2 size={13} />
+                Inspect Link
+              </button>
+            )}
+            {signalId && (
+              <button
+                type="button"
+                aria-label={`Promote radar signal ${node.title}`}
+                className="forensic-brain-action forensic-brain-action-primary"
+                disabled={busyAction === `promote-map:${signalId}`}
+                onClick={() => void handlePromoteBrainMapSignal(node)}
+              >
+                <Link2 size={13} />
+                Promote Link
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    )
+  }
+
+  const renderBrainMap = () => (
+    <section data-testid="brain-map-radar" className="forensic-brain-map-radar" aria-label="Brain memory map">
+      <div className="forensic-brain-map-header">
+        <div>
+          <span className="forensic-brain-panel-kicker">Memory map</span>
+          <h3>Active recall deck</h3>
+        </div>
+        <div className="forensic-brain-map-summary">
+          <span>{brainMapModel.summary.linkedMemoryCount} saved</span>
+          <span>{brainMapModel.summary.activeSignalCount} firing</span>
+          <span>{brainMapModel.summary.visibleCount} visible</span>
+          {brainMapModel.hiddenCount > 0 && <span>{brainMapModel.hiddenCount} folded</span>}
+          <strong>{brainMapModel.summary.strongestScore}</strong>
+        </div>
+      </div>
+
+      <div className="forensic-brain-map-shell">
+        <div className="forensic-brain-map-canvas" aria-label="Current investigation and related memories">
+          <div className="forensic-brain-map-bus" aria-hidden="true">
+            <span>Active Recall</span>
+            <strong>{brainMapModel.summary.strongestScore}</strong>
+          </div>
+          <div className="forensic-brain-map-node-stack">
+            {brainMapModel.nodes.map(renderBrainMapNode)}
+          </div>
+        </div>
+
+        <aside className="forensic-brain-map-side">
+          <div data-testid="brain-map-digest" className="forensic-brain-map-digest">
+            <span className="forensic-brain-panel-kicker">What changed</span>
+            {brainMapModel.digest.length > 0 ? (
+              brainMapModel.digest.map((item) => (
+                <article key={item.id} className={`forensic-brain-map-digest-item forensic-brain-map-digest-${item.tone}`}>
+                  <strong>{item.title}</strong>
+                  <p>{item.detail}</p>
+                </article>
+              ))
+            ) : (
+              <p>No new memory movement yet.</p>
+            )}
+          </div>
+
+          {renderBrainMapSelectedDetail()}
+        </aside>
+      </div>
+    </section>
+  )
+
+  const renderBrainFilters = () => (
+    <div className="forensic-brain-filter-bar" aria-label="Brain memory filters">
+      <div className="forensic-brain-filter-group" role="group" aria-label="Gateway filters">
+        {gatewayFilterOptions.map((option) => (
           <button
+            key={option.value}
             type="button"
-            aria-label="Refresh brain signals"
-            onClick={() => void loadBrainMemory(true)}
-            disabled={!currentInvestigationId || isLoading || isRefreshing}
-            className="forensic-brain-refresh"
+            aria-label={`${option.label} filter`}
+            aria-pressed={gatewayFilter === option.value}
+            className={gatewayFilter === option.value ? 'is-active' : ''}
+            onClick={() => setGatewayFilter(option.value)}
           >
-            <RefreshCw size={14} className={isRefreshing ? 'forensic-brain-refresh-spin' : ''} />
-            Refresh
+            {option.label}
           </button>
-        </div>
-      </header>
-
-      <div className="forensic-brain-filter-bar" aria-label="Brain memory filters">
-        <div className="forensic-brain-filter-group" role="group" aria-label="Gateway filters">
-          {gatewayFilterOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              aria-label={`${option.label} filter`}
-              aria-pressed={gatewayFilter === option.value}
-              className={gatewayFilter === option.value ? 'is-active' : ''}
-              onClick={() => setGatewayFilter(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        <div className="forensic-brain-filter-group" role="group" aria-label="Strength filters">
-          {strengthFilterOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              aria-label={`${option.label} filter`}
-              aria-pressed={strengthFilter === option.value}
-              className={strengthFilter === option.value ? 'is-active' : ''}
-              onClick={() => setStrengthFilter(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
-
-      <div data-testid="brain-health-summary" className="forensic-brain-health-strip" aria-label="Brain memory health">
-        <div>
-          <span>Firing Cases</span>
-          <strong>{brainHealth.firingCases}</strong>
-        </div>
-        <div>
-          <span>Memory Groups</span>
-          <strong>{brainHealth.memoryGroups}</strong>
-        </div>
-        <div>
-          <span>Auto Memory</span>
-          <strong>{brainHealth.autoMemory}</strong>
-        </div>
-        <div>
-          <span>Strongest</span>
-          <strong>{brainHealth.strongestScore}</strong>
-        </div>
-        <div>
-          <span>Dominant Gateway</span>
-          <strong>{brainHealth.dominantGateway}</strong>
-        </div>
+      <div className="forensic-brain-filter-group" role="group" aria-label="Strength filters">
+        {strengthFilterOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-label={`${option.label} filter`}
+            aria-pressed={strengthFilter === option.value}
+            className={strengthFilter === option.value ? 'is-active' : ''}
+            onClick={() => setStrengthFilter(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
+    </div>
+  )
 
-      <div className="forensic-brain-workspace">
+  const renderBrainHealth = () => (
+    <div data-testid="brain-health-summary" className="forensic-brain-health-strip" aria-label="Brain memory health">
+      <div>
+        <span>Firing Cases</span>
+        <strong>{brainHealth.firingCases}</strong>
+      </div>
+      <div>
+        <span>Memory Groups</span>
+        <strong>{brainHealth.memoryGroups}</strong>
+      </div>
+      <div>
+        <span>Auto Memory</span>
+        <strong>{brainHealth.autoMemory}</strong>
+      </div>
+      <div>
+        <span>Strongest</span>
+        <strong>{brainHealth.strongestScore}</strong>
+      </div>
+      <div>
+        <span>Dominant Gateway</span>
+        <strong>{brainHealth.dominantGateway}</strong>
+      </div>
+    </div>
+  )
+
+  const renderSignalsView = () => {
+    const emptyMessage = rankedSignals.length === 0
+      ? 'No brain signals fired for this investigation.'
+      : 'No active signals match these filters.'
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-signals">
+        {renderBrainFilters()}
         <section className="forensic-brain-panel forensic-brain-panel-signals">
           <div className="forensic-brain-panel-header">
             <div>
@@ -1001,7 +1228,7 @@ export default function BrainSignalsPanel({
             </div>
           ) : signalGroups.length === 0 ? (
             <div data-testid="brain-empty-state" className="forensic-brain-empty">
-              No brain signals fired for this investigation.
+              {emptyMessage}
             </div>
           ) : (
             <div className="forensic-brain-signal-list">
@@ -1029,18 +1256,29 @@ export default function BrainSignalsPanel({
             </div>
           )}
         </section>
+      </div>
+    )
+  }
 
+  const renderLinksView = () => {
+    const emptyMessage = rankedLinks.length === 0
+      ? 'No memory links promoted yet.'
+      : 'No memory links match these filters.'
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-links">
+        {renderBrainFilters()}
         <aside className="forensic-brain-panel forensic-brain-panel-links">
           <div className="forensic-brain-panel-header">
             <div>
-              <span className="forensic-brain-panel-kicker">Promoted memory</span>
-              <h3>Linked Memory</h3>
+              <span className="forensic-brain-panel-kicker">Saved memory archive</span>
+              <h3>Durable Linked Memory</h3>
             </div>
           </div>
 
-          {rankedLinks.length === 0 ? (
+          {linkGroups.length === 0 ? (
             <div data-testid="brain-links-empty-state" className="forensic-brain-empty forensic-brain-empty-compact">
-              No memory links promoted yet.
+              {emptyMessage}
             </div>
           ) : (
             <div className="forensic-brain-link-list">
@@ -1069,8 +1307,76 @@ export default function BrainSignalsPanel({
           )}
         </aside>
       </div>
+    )
+  }
 
-      {selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
+  const brainViewOptions: Array<{ view: BrainView; label: string; detail: string }> = [
+    { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
+    { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
+    { view: 'links', label: 'Memory Links', detail: `${allLinkGroups.length} saved` },
+  ]
+
+  return (
+    <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals">
+      <div className="forensic-brain-grid-bg" aria-hidden="true" />
+      <header className="forensic-brain-command">
+        <div className="forensic-brain-title-block">
+          <span className="forensic-brain-kicker">Memory activation</span>
+          <h2>
+            <Brain size={20} />
+            Brain Signals
+          </h2>
+          <div className="forensic-brain-title-rule" />
+          <p>{activeTitle}</p>
+        </div>
+        <div className="forensic-brain-command-actions">
+          <span className="forensic-brain-status">
+            {allSignalGroups.length} active / {allLinkGroups.length} linked
+          </span>
+          <button
+            type="button"
+            aria-label="Refresh brain signals"
+            onClick={() => {
+              void loadBrainMemory(true)
+              startBrainMemoryFollowup()
+            }}
+            disabled={!currentInvestigationId || isLoading || isRefreshing}
+            className="forensic-brain-refresh"
+          >
+            <RefreshCw size={14} className={isRefreshing ? 'forensic-brain-refresh-spin' : ''} />
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <nav data-testid="brain-subnav" className="forensic-brain-subnav" aria-label="Brain sections">
+        {brainViewOptions.map((option) => (
+          <button
+            key={option.view}
+            type="button"
+            aria-label={`${option.label} view`}
+            aria-pressed={activeBrainView === option.view}
+            className={activeBrainView === option.view ? 'is-active' : ''}
+            onClick={() => setActiveBrainView(option.view)}
+          >
+            <span>{option.label}</span>
+            <strong>{option.detail}</strong>
+          </button>
+        ))}
+      </nav>
+
+      <div className="forensic-brain-active-view">
+        {activeBrainView === 'map' && (
+          <div className="forensic-brain-view forensic-brain-view-map">
+            {renderBrainHealth()}
+            {renderBrainMap()}
+          </div>
+        )}
+        {activeBrainView === 'signals' && renderSignalsView()}
+        {activeBrainView === 'links' && renderLinksView()}
+      </div>
+
+      {activeBrainView === 'links' && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
 
       {error && (
         <div data-testid="brain-error-state" role="alert" className="forensic-brain-error">

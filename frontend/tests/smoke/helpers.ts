@@ -172,11 +172,11 @@ export const installFakeBackend = async (page: Page) => {
         },
         emit(message: WireMessage) {
           const openSockets = state.sockets.filter((socket) => socket.readyState === FakeWebSocket.OPEN)
-          const socket = openSockets[openSockets.length - 1] || state.sockets[state.sockets.length - 1]
-          if (!socket) {
+          const targetSockets = openSockets.length > 0 ? openSockets : state.sockets.slice(-1)
+          if (targetSockets.length === 0) {
             throw new Error('No fake WebSocket is available')
           }
-          socket.__emit(message)
+          targetSockets.forEach((socket) => socket.__emit(message))
         },
       },
     })
@@ -284,6 +284,12 @@ export const waitForBoardPersistence = async (
       edgeCount: expectation.edgeCount,
     },
   )
+}
+
+export const waitForRenderedBoardNodes = async (page: Page, nodeIds: string[]) => {
+  await page.waitForFunction((ids) => {
+    return ids.every((nodeId) => document.querySelector(`[data-node-id="${nodeId}"]`))
+  }, nodeIds)
 }
 
 export const createSmokeNode = (

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type { BrainSignal, MemoryLink } from '../../src/utils/brainMemory'
@@ -147,13 +147,19 @@ const installBrainFetch = ({
   return fetchMock
 }
 
+const openBrainView = async (user: ReturnType<typeof userEvent.setup>, name: RegExp) => {
+  await user.click(screen.getByRole('button', { name }))
+}
+
 describe('BrainSignalsPanel', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('renders loading and empty states', async () => {
+    const user = userEvent.setup()
     let resolveSignals: (response: Response) => void = () => {}
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       if (String(input).includes('/api/brain/signals?')) {
@@ -166,6 +172,7 @@ describe('BrainSignalsPanel', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
 
     expect(screen.getByTestId('brain-loading-state')).toHaveTextContent(/Scanning memory gateways/i)
 
@@ -175,9 +182,11 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('renders ranked signals, reason chips, and existing links', async () => {
+    const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
 
     const card = await screen.findByTestId('brain-signal-card')
     expect(card).toHaveTextContent('Older Substation Case')
@@ -187,12 +196,15 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent(/Northgate Substation A-17 appears in both investigations/i)
     expect(card).toHaveTextContent('Review older case')
 
+    await openBrainView(user, /memory links view/i)
+
     const linkedMemory = await screen.findByTestId('brain-link-card')
     expect(linkedMemory).toHaveTextContent('Older Substation Case')
     expect(linkedMemory).toHaveTextContent('Entity/Date')
   })
 
   it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
+    const user = userEvent.setup()
     let signalGenerationComplete = false
     const autoLink = {
       ...makeLink({ id: 'brain-link-auto-first-scan', toTitle: 'Auto Linked Case', score: 0.9 }),
@@ -216,13 +228,56 @@ describe('BrainSignalsPanel', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
 
     const linkedMemory = await screen.findByTestId('brain-link-card')
     expect(linkedMemory).toHaveTextContent('Auto Linked Case')
     expect(linkedMemory).toHaveTextContent('Auto Memory')
   })
 
+  it('keeps checking briefly so delayed auto-promoted links appear without manual refresh', async () => {
+    const user = userEvent.setup()
+    let linkAvailable = false
+    const delayedLink = {
+      ...makeLink({ id: 'brain-link-delayed-auto', toTitle: 'Delayed Auto Memory', score: 0.9 }),
+      promotionType: 'auto',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse([]) as Response
+      }
+
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(linkAvailable ? [delayedLink] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
+
+    expect(await screen.findByTestId('brain-links-empty-state')).toHaveTextContent(/No memory links promoted/i)
+
+    linkAvailable = true
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1250))
+    })
+
+    await waitFor(() => {
+      const linkedMemory = screen.getByTestId('brain-link-card')
+      expect(linkedMemory).toHaveTextContent('Delayed Auto Memory')
+      expect(linkedMemory).toHaveTextContent('Auto Memory')
+    }, { timeout: 2500 })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/links?')).length)
+      .toBeGreaterThanOrEqual(2)
+  })
+
   it('refreshes after the active board persists new content while Brain is open', async () => {
+    const user = userEvent.setup()
     let linkAvailable = false
     const autoLink = {
       ...makeLink({ id: 'brain-link-after-board-save', toTitle: 'Fresh Persisted Case', score: 0.9 }),
@@ -244,6 +299,7 @@ describe('BrainSignalsPanel', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
 
     expect(await screen.findByTestId('brain-links-empty-state')).toHaveTextContent(/No memory links promoted/i)
 
@@ -277,6 +333,7 @@ describe('BrainSignalsPanel', () => {
     installBrainFetch({ signals: [], links })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
 
     await waitFor(() => {
       expect(screen.getAllByTestId('brain-link-card')).toHaveLength(5)
@@ -291,6 +348,7 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('shows auto-promoted memory strength on linked cards', async () => {
+    const user = userEvent.setup()
     const autoLink = {
       ...makeLink({ id: 'brain-link-auto', toTitle: 'Auto Linked Case', score: 0.9 }),
       promotionType: 'auto',
@@ -300,6 +358,7 @@ describe('BrainSignalsPanel', () => {
     installBrainFetch({ signals: [], links: [autoLink] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
 
     const card = await screen.findByTestId('brain-link-card')
     expect(card).toHaveTextContent('Auto Memory')
@@ -307,6 +366,7 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('compresses duplicate linked memories by older case title', async () => {
+    const user = userEvent.setup()
     const duplicateLinks = [
       {
         ...makeLink({
@@ -334,6 +394,7 @@ describe('BrainSignalsPanel', () => {
     installBrainFetch({ signals: [], links: duplicateLinks })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
 
     const card = await screen.findByTestId('brain-link-card')
     expect(screen.getAllByTestId('brain-link-card')).toHaveLength(1)
@@ -382,28 +443,41 @@ describe('BrainSignalsPanel', () => {
     installBrainFetch({ signals: [entitySignal, sourceSignal], links: [entityLink, sourceLink] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
 
-    expect(await screen.findByText('Entity Filter Case')).toBeInTheDocument()
-    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
-    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
-    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getAllByTestId('brain-signal-card')).toHaveLength(2)
+    })
+    expect(screen.getAllByText('Source Filter Case').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Entity Linked Memory')).not.toBeInTheDocument()
 
+    await openBrainView(user, /memory links view/i)
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('brain-link-card')).toHaveLength(2)
+    })
+    expect(screen.getAllByText('Entity Linked Memory').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Source Linked Memory').length).toBeGreaterThan(0)
+
+    await openBrainView(user, /active signals view/i)
     await user.click(screen.getByRole('button', { name: /source domain filter/i }))
 
     expect(screen.queryByText('Entity Filter Case')).not.toBeInTheDocument()
-    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
+    expect(screen.getAllByText('Source Filter Case').length).toBeGreaterThan(0)
+    await openBrainView(user, /memory links view/i)
     expect(screen.queryByText('Entity Linked Memory')).not.toBeInTheDocument()
-    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+    expect(screen.getAllByText('Source Linked Memory').length).toBeGreaterThan(0)
 
     await user.click(screen.getByRole('button', { name: /hot filter/i }))
 
-    expect(screen.queryByText('Source Filter Case')).not.toBeInTheDocument()
     expect(screen.queryByText('Source Linked Memory')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /all gateways filter/i }))
 
-    expect(screen.getByText('Entity Filter Case')).toBeInTheDocument()
-    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
+    expect(screen.getAllByText('Entity Linked Memory').length).toBeGreaterThan(0)
+    await openBrainView(user, /active signals view/i)
+    expect(screen.getAllByText('Entity Filter Case').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Source Filter Case')).not.toBeInTheDocument()
   })
 
   it('summarizes brain memory health across active and linked memory', async () => {
@@ -440,6 +514,84 @@ describe('BrainSignalsPanel', () => {
     expect(health).toHaveTextContent('Entity/Date')
   })
 
+  it('renders a readable brain map with digest and selected memory detail', async () => {
+    const user = userEvent.setup()
+    const onOpenInvestigation = vi.fn()
+    const autoLink = {
+      ...makeLink({
+        id: 'brain-link-map-auto',
+        toInvestigationId: 'inv-map-auto',
+        toTitle: 'Auto Linked Case',
+        score: 0.88,
+        gateways: ['entity-date'],
+        reasons: [signal.reasons[0]],
+      }),
+      promotionType: 'auto',
+      activationCount: 3,
+    }
+    const sourceSignal = makeSignal({
+      id: 'brain-signal-map-source',
+      targetInvestigationId: 'inv-map-source',
+      targetTitle: 'Source Domain Case',
+      score: 0.76,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+      lastFiredAt: '2026-06-06T09:00:00Z',
+    })
+    installBrainFetch({ signals: [sourceSignal], links: [autoLink] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onOpenInvestigation={onOpenInvestigation}
+      />,
+    )
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    expect(radar).toHaveTextContent('Memory map')
+    expect(radar).toHaveTextContent('Current Grid Case')
+    expect(radar).toHaveTextContent('Auto Linked Case')
+    expect(radar).toHaveTextContent('Source Domain Case')
+    expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(3)
+
+    const digest = within(radar).getByTestId('brain-map-digest')
+    expect(digest).toHaveTextContent('Auto memory created')
+    expect(digest).toHaveTextContent('Signal fired')
+
+    await user.click(within(radar).getByRole('button', { name: /select memory auto linked case/i }))
+
+    const detail = within(radar).getByTestId('brain-map-selected-node')
+    expect(detail).toHaveTextContent('Auto Linked Case')
+    expect(detail).toHaveTextContent('Auto')
+    expect(detail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+
+    await user.click(within(detail).getByRole('button', { name: /open radar memory auto linked case/i }))
+    expect(onOpenInvestigation).toHaveBeenCalledWith('inv-map-auto')
+  })
+
+  it('separates the Brain map, active signal feed, and linked-memory archive into sub-tabs', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [link] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    expect(await screen.findByTestId('brain-map-radar')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /memory map view/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+
+    await openBrainView(user, /active signals view/i)
+    expect(await screen.findByTestId('brain-signal-card')).toHaveTextContent('Older Substation Case')
+    expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+
+    await openBrainView(user, /memory links view/i)
+    expect(await screen.findByTestId('brain-link-card')).toHaveTextContent('Older Substation Case')
+    expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
+  })
+
   it('opens a linked memory detail view with evidence and matched node ids', async () => {
     const user = userEvent.setup()
     const onOpenInvestigation = vi.fn()
@@ -466,6 +618,7 @@ describe('BrainSignalsPanel', () => {
         onOpenInvestigation={onOpenInvestigation}
       />,
     )
+    await openBrainView(user, /memory links view/i)
 
     await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
 
@@ -501,6 +654,7 @@ describe('BrainSignalsPanel', () => {
     const fetchMock = installBrainFetch({ signals: [], links: [detailedLink] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory links view/i)
 
     await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
     const detail = await screen.findByTestId('brain-link-detail')
@@ -555,6 +709,7 @@ describe('BrainSignalsPanel', () => {
     installBrainFetch({ signals: [signal, duplicateSignal, ...highSignals, weakSignal], links: [] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
 
     await waitFor(() => {
       expect(screen.getAllByTestId('brain-signal-card')).toHaveLength(10)
@@ -590,6 +745,7 @@ describe('BrainSignalsPanel', () => {
     const fetchMock = installBrainFetch({ signals: [signal, duplicateSignal], links: [] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
 
     const card = await screen.findByTestId('brain-signal-card')
     await user.click(within(card).getByRole('button', { name: /dismiss signal for older substation case/i }))
@@ -619,6 +775,7 @@ describe('BrainSignalsPanel', () => {
         onOpenInvestigation={onOpenInvestigation}
       />,
     )
+    await openBrainView(user, /active signals view/i)
 
     const card = await screen.findByTestId('brain-signal-card')
     await user.click(within(card).getByRole('button', { name: /open investigation older substation case/i }))
@@ -633,6 +790,7 @@ describe('BrainSignalsPanel', () => {
       expect.objectContaining({ method: 'PUT' }),
     )
 
+    cleanup()
     installBrainFetch({ signals: [signal], links: [], promoteLink: link })
     render(
       <BrainSignalsPanel
@@ -640,6 +798,7 @@ describe('BrainSignalsPanel', () => {
         currentInvestigationTitle="Current Grid Case"
       />,
     )
+    await openBrainView(user, /active signals view/i)
 
     const nextCard = await screen.findByTestId('brain-signal-card')
     await user.click(within(nextCard).getByRole('button', { name: /promote signal for older substation case/i }))
