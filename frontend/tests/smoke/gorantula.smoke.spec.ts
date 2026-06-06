@@ -488,12 +488,14 @@ test.describe('Gorantula smoke flows', () => {
     await radar.getByRole('button', { name: /select signal qa: source case/i }).click()
     await expect(radar.getByTestId('brain-map-selected-node')).toContainText('Grid reliability signal')
 
+    await page.getByRole('button', { name: /active signals view/i }).click()
     const signalCard = page.getByTestId('brain-signal-card').filter({ hasText: 'QA: Source Case' })
     await expect(signalCard).toContainText('Grid reliability signal')
     await expect(signalCard).toContainText('Entity/Date')
     await expect(signalCard).toContainText('Source Domain')
     await expect(signalCard).toContainText('Relationship')
 
+    await page.getByRole('button', { name: /memory map view/i }).click()
     await radar
       .getByTestId('brain-map-selected-node')
       .getByRole('button', { name: /promote radar signal qa: source case/i })
@@ -502,6 +504,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+    await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 memory group')
     await expect(radar.getByRole('button', { name: /select memory qa: source case/i })).toBeVisible()
 
@@ -517,17 +520,21 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
+    await page.getByRole('button', { name: /memory links view/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
+    await page.getByRole('button', { name: /memory map view/i }).click()
     const restoredRadar = page.getByTestId('brain-map-radar')
     await expect(restoredRadar).toContainText('QA: Source Case')
     await expect(restoredRadar.getByRole('button', { name: /select memory qa: source case/i })).toBeVisible()
 
+    await page.getByRole('button', { name: /memory links view/i }).click()
     await page.getByRole('button', { name: /source domain filter/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await page.getByRole('button', { name: /relationship filter/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
 
+    await page.getByRole('button', { name: /memory map view/i }).click()
     await restoredRadar.getByRole('button', { name: /select memory qa: source case/i }).click()
     await restoredRadar.getByRole('button', { name: /inspect radar memory qa: source case/i }).click()
     const detail = page.getByTestId('brain-link-detail')

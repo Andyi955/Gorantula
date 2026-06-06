@@ -5742,6 +5742,109 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-subnav {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.12);
+  background:
+    linear-gradient(90deg, rgba(255, 78, 129, 0.055), transparent 36%),
+    rgba(2, 6, 10, 0.88);
+  padding: 0.58rem 0.95rem;
+}
+
+.forensic-brain-subnav button {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(1, 5, 8, 0.72);
+  padding: 0.62rem 0.72rem;
+  color: var(--forensic-text-muted);
+  text-align: left;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.forensic-brain-subnav button:hover,
+.forensic-brain-subnav button.is-active {
+  border-color: rgba(129, 227, 255, 0.46);
+  background:
+    linear-gradient(90deg, rgba(129, 227, 255, 0.11), transparent 58%),
+    rgba(3, 10, 14, 0.94);
+  color: #ffffff;
+}
+
+.forensic-brain-subnav button.is-active {
+  box-shadow: inset 3px 0 0 var(--forensic-accent), 0 0 24px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-brain-subnav span,
+.forensic-brain-subnav strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-brain-subnav span {
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-subnav strong {
+  flex: 0 0 auto;
+  color: var(--forensic-text-faint);
+  font-size: 0.56rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-subnav button.is-active strong {
+  color: var(--forensic-accent);
+}
+
+.forensic-brain-active-view {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.forensic-brain-view {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.forensic-brain-view-map,
+.forensic-brain-view-signals,
+.forensic-brain-view-links {
+  display: flex;
+  flex-direction: column;
+}
+
+.forensic-brain-view-map .forensic-brain-map-radar,
+.forensic-brain-view-signals .forensic-brain-panel,
+.forensic-brain-view-links .forensic-brain-panel {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.forensic-brain-view-map .forensic-brain-map-radar {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 0;
+}
+
+.forensic-brain-view-map .forensic-brain-map-shell {
+  flex: 1 1 0;
+  height: auto;
+}
+
 .forensic-brain-filter-bar {
   flex: 0 0 auto;
   display: flex;
