@@ -55,6 +55,23 @@ const formatActivationCount = (activationCount?: number) => {
 const formatMemoryLinkType = (promotionType?: string) =>
   promotionType === 'auto' ? 'Auto Memory' : 'Manual Memory'
 
+const formatTimestamp = (timestamp?: string) => {
+  if (!timestamp) {
+    return 'Not recorded'
+  }
+  const cleaned = timestamp.replace(/\.\d+Z$/, 'Z')
+  const match = cleaned.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/)
+  if (match) {
+    return `${match[1]} ${match[2]} UTC`
+  }
+  return timestamp
+}
+
+const formatNodeIds = (ids: string[]) => {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+  return uniqueIds.length > 0 ? uniqueIds.join(', ') : 'No matched nodes recorded'
+}
+
 const getScoreTier = (score: number) => {
   if (score >= 0.75) {
     return 'Hot'
@@ -208,6 +225,7 @@ export default function BrainSignalsPanel({
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
   const [showOlderMemoryLinks, setShowOlderMemoryLinks] = useState(false)
+  const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
   const requestIdRef = useRef(0)
 
   const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
@@ -219,6 +237,7 @@ export default function BrainSignalsPanel({
       setIsRefreshing(false)
       setShowLowerPrioritySignals(false)
       setShowOlderMemoryLinks(false)
+      setSelectedMemoryLinkId(null)
       return
     }
 
@@ -245,6 +264,9 @@ export default function BrainSignalsPanel({
       setLinks(sortByScore(nextLinks))
       setShowLowerPrioritySignals(false)
       setShowOlderMemoryLinks(false)
+      setSelectedMemoryLinkId((current) =>
+        current && nextLinks.some((link) => link.id === current) ? current : null,
+      )
     } catch {
       if (requestIdRef.current === requestId) {
         setError('Brain signals unavailable')
@@ -283,6 +305,10 @@ export default function BrainSignalsPanel({
   const rankedLinks = useMemo(() => sortByScore(links), [links])
   const priorityLinks = useMemo(() => rankedLinks.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [rankedLinks])
   const olderLinks = useMemo(() => rankedLinks.slice(LINKED_MEMORY_PRIORITY_LIMIT), [rankedLinks])
+  const selectedMemoryLink = useMemo(
+    () => rankedLinks.find((link) => link.id === selectedMemoryLinkId) || null,
+    [rankedLinks, selectedMemoryLinkId],
+  )
 
   const handleDismiss = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
@@ -440,18 +466,26 @@ export default function BrainSignalsPanel({
 
   const renderMemoryLink = (link: MemoryLink) => (
     <article key={link.id} data-testid="brain-link-card" className="forensic-brain-link-card">
-      <div className="forensic-brain-link-header">
-        <Link2 size={14} />
-        <strong>{link.toTitle}</strong>
-        <span>{formatScore(link.score)}</span>
-      </div>
-      <div className="forensic-brain-link-meta">
-        <span className={link.promotionType === 'auto' ? 'forensic-brain-link-meta-auto' : ''}>
-          {formatMemoryLinkType(link.promotionType)}
+      <button
+        type="button"
+        className="forensic-brain-link-open"
+        aria-label={`Inspect memory link ${link.toTitle}`}
+        aria-expanded={selectedMemoryLinkId === link.id}
+        onClick={() => setSelectedMemoryLinkId(link.id)}
+      >
+        <span className="forensic-brain-link-header">
+          <Link2 size={14} />
+          <strong>{link.toTitle}</strong>
+          <span>{formatScore(link.score)}</span>
         </span>
-        <span>{formatActivationCount(link.activationCount)}</span>
-      </div>
-      <p>{link.reasons[0]?.detail || link.suggestedAction}</p>
+        <span className="forensic-brain-link-meta">
+          <span className={link.promotionType === 'auto' ? 'forensic-brain-link-meta-auto' : ''}>
+            {formatMemoryLinkType(link.promotionType)}
+          </span>
+          <span>{formatActivationCount(link.activationCount)}</span>
+        </span>
+        <span className="forensic-brain-link-preview">{link.reasons[0]?.detail || link.suggestedAction}</span>
+      </button>
       <div className="forensic-brain-chip-row">
         {link.gateways.map((gateway) => (
           <span
@@ -463,6 +497,97 @@ export default function BrainSignalsPanel({
         ))}
       </div>
     </article>
+  )
+
+  const renderMemoryLinkDetail = (link: MemoryLink) => (
+    <aside
+      data-testid="brain-link-detail"
+      role="dialog"
+      aria-label={`Memory link detail for ${link.toTitle}`}
+      className="forensic-brain-link-detail"
+    >
+      <header className="forensic-brain-link-detail-header">
+        <div>
+          <span className="forensic-brain-panel-kicker">Memory link detail</span>
+          <h3>{link.toTitle}</h3>
+        </div>
+        <button
+          type="button"
+          aria-label="Close memory link detail"
+          className="forensic-brain-detail-close"
+          onClick={() => setSelectedMemoryLinkId(null)}
+        >
+          <X size={14} />
+        </button>
+      </header>
+
+      <div className="forensic-brain-detail-metrics">
+        <div>
+          <span>Score</span>
+          <strong>{formatScore(link.score)}</strong>
+        </div>
+        <div>
+          <span>Memory Type</span>
+          <strong>{formatMemoryLinkType(link.promotionType)}</strong>
+        </div>
+        <div>
+          <span>Activation Count</span>
+          <strong>{formatActivationCount(link.activationCount)}</strong>
+        </div>
+      </div>
+
+      <div className="forensic-brain-detail-section">
+        <span>Connected Investigations</span>
+        <p><strong>{link.fromTitle}</strong> connects to <strong>{link.toTitle}</strong>.</p>
+      </div>
+
+      <div className="forensic-brain-detail-timestamps">
+        <div>
+          <span>First fired</span>
+          <strong>{formatTimestamp(link.createdAt)}</strong>
+        </div>
+        <div>
+          <span>Last fired</span>
+          <strong>{formatTimestamp(link.lastFiredAt || link.updatedAt || link.createdAt)}</strong>
+        </div>
+      </div>
+
+      <div className="forensic-brain-detail-section">
+        <span>Gateways</span>
+        <div className="forensic-brain-chip-row">
+          {link.gateways.map((gateway) => (
+            <span
+              key={`${link.id}:detail:${gateway}`}
+              className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
+            >
+              {formatGateway(gateway)}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="forensic-brain-detail-section">
+        <span>Evidence Reasons</span>
+        <div className="forensic-brain-detail-reasons">
+          {link.reasons.map((reason, index) => (
+            <article key={`${link.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
+              <strong>{formatGateway(reason.gateway)}</strong>
+              <p>{reason.detail || reason.label}</p>
+              <dl>
+                <div>
+                  <dt>Current nodes</dt>
+                  <dd>{formatNodeIds(reason.currentNodeIds)}</dd>
+                </div>
+                <div>
+                  <dt>Older nodes</dt>
+                  <dd>{formatNodeIds(reason.targetNodeIds)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      </div>
+    </aside>
   )
 
   return (
@@ -582,6 +707,8 @@ export default function BrainSignalsPanel({
           )}
         </aside>
       </div>
+
+      {selectedMemoryLink && renderMemoryLinkDetail(selectedMemoryLink)}
 
       {error && (
         <div data-testid="brain-error-state" role="alert" className="forensic-brain-error">

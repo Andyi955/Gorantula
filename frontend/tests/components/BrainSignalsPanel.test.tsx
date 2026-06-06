@@ -231,6 +231,45 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('4 activations')
   })
 
+  it('opens a linked memory detail view with evidence and matched node ids', async () => {
+    const user = userEvent.setup()
+    const detailedLink = {
+      ...makeLink({
+        id: 'brain-link-detail',
+        toTitle: 'Older Substation Case',
+        score: 0.92,
+        gateways: ['entity-date', 'source-domain'],
+        reasons: signal.reasons,
+      }),
+      promotionType: 'auto',
+      activationCount: 4,
+      createdAt: '2026-06-05T12:00:00Z',
+      updatedAt: '2026-06-06T08:30:00Z',
+      lastFiredAt: '2026-06-06T09:00:00Z',
+    }
+    installBrainFetch({ signals: [], links: [detailedLink] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await user.click(await screen.findByRole('button', { name: /inspect memory link older substation case/i }))
+
+    const detail = await screen.findByTestId('brain-link-detail')
+    expect(detail).toHaveTextContent('Current Grid Case')
+    expect(detail).toHaveTextContent('Older Substation Case')
+    expect(detail).toHaveTextContent('92%')
+    expect(detail).toHaveTextContent('Auto Memory')
+    expect(detail).toHaveTextContent('4 activations')
+    expect(detail).toHaveTextContent('First fired')
+    expect(detail).toHaveTextContent('2026-06-05')
+    expect(detail).toHaveTextContent('Last fired')
+    expect(detail).toHaveTextContent('2026-06-06')
+    expect(detail).toHaveTextContent('Entity/Date')
+    expect(detail).toHaveTextContent('Source Domain')
+    expect(detail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+    expect(detail).toHaveTextContent('node-current')
+    expect(detail).toHaveTextContent('node-older')
+  })
+
   it('groups duplicate older cases and collapses weak or overflow signals', async () => {
     const user = userEvent.setup()
     const duplicateSignal = makeSignal({
