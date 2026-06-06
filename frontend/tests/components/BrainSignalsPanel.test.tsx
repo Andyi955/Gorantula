@@ -50,6 +50,39 @@ const link: MemoryLink = {
   createdAt: '2026-06-05T12:00:00Z',
 }
 
+const makeSignal = (overrides: Partial<BrainSignal> = {}): BrainSignal => {
+  const id = overrides.id || `brain-signal-${overrides.targetInvestigationId || 'case'}`
+  const targetInvestigationId = overrides.targetInvestigationId || 'inv-older'
+  const targetTitle = overrides.targetTitle || 'Older Substation Case'
+  const score = overrides.score ?? 0.72
+  const createdAt = overrides.createdAt || '2026-06-05T12:00:00Z'
+
+  return {
+    ...signal,
+    id,
+    targetInvestigationId,
+    targetTitle,
+    score,
+    createdAt,
+    updatedAt: overrides.updatedAt || createdAt,
+    reasons: overrides.reasons || [
+      {
+        ...signal.reasons[0],
+        value: `${targetInvestigationId}:entity`,
+        label: targetTitle,
+        detail: `${targetTitle} overlaps with this investigation.`,
+      },
+    ],
+    suggestedAction: overrides.suggestedAction || signal.suggestedAction,
+    gateways: overrides.gateways || signal.gateways,
+    dismissed: overrides.dismissed ?? false,
+    linked: overrides.linked ?? false,
+    linkId: overrides.linkId,
+    investigationId: overrides.investigationId || signal.investigationId,
+    investigationTitle: overrides.investigationTitle || signal.investigationTitle,
+  }
+}
+
 const jsonResponse = (payload: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
@@ -132,6 +165,92 @@ describe('BrainSignalsPanel', () => {
     const linkedMemory = await screen.findByTestId('brain-link-card')
     expect(linkedMemory).toHaveTextContent('Older Substation Case')
     expect(linkedMemory).toHaveTextContent('Entity/Date')
+  })
+
+  it('groups duplicate older cases and collapses weak or overflow signals', async () => {
+    const user = userEvent.setup()
+    const duplicateSignal = makeSignal({
+      id: 'brain-signal-alpha-duplicate',
+      targetInvestigationId: 'inv-older-copy',
+      targetTitle: 'Older Substation Case',
+      score: 0.74,
+      suggestedAction: 'Compare source domain',
+      reasons: [
+        {
+          ...signal.reasons[1],
+          detail: 'Both duplicate investigations cite operator.example.',
+        },
+      ],
+    })
+    const highSignals = Array.from({ length: 11 }, (_, index) => makeSignal({
+      id: `brain-signal-high-${index}`,
+      targetInvestigationId: `inv-high-${index}`,
+      targetTitle: `High Priority Case ${index}`,
+      score: 0.91 - index * 0.01,
+    }))
+    const weakSignal = makeSignal({
+      id: 'brain-signal-weak-domain',
+      targetInvestigationId: 'inv-weak-domain',
+      targetTitle: 'Weak Domain Case',
+      score: 0.24,
+      gateways: ['source-domain'],
+      reasons: [
+        {
+          ...signal.reasons[1],
+          detail: 'Source domain "example.com" appears in both investigations.',
+        },
+      ],
+      suggestedAction: 'Compare source domain',
+    })
+
+    installBrainFetch({ signals: [signal, duplicateSignal, ...highSignals, weakSignal], links: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('brain-signal-card')).toHaveLength(10)
+    })
+
+    const visibleCards = screen.getAllByTestId('brain-signal-card')
+    const groupedOlderCards = visibleCards.filter((card) => card.textContent?.includes('Older Substation Case'))
+    expect(groupedOlderCards).toHaveLength(1)
+    expect(groupedOlderCards[0]).toHaveTextContent('+1 related firing')
+    expect(within(groupedOlderCards[0]).getAllByText('Entity/Date')).toHaveLength(1)
+    expect(within(groupedOlderCards[0]).getAllByText('Source Domain')).toHaveLength(1)
+    expect(screen.queryByText('Weak Domain Case')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show lower-priority signals \(3\)/i }))
+
+    expect(screen.getByText('Weak Domain Case')).toBeInTheDocument()
+    expect(screen.getAllByTestId('brain-signal-card')).toHaveLength(13)
+  })
+
+  it('dismisses every signal in a grouped older case', async () => {
+    const user = userEvent.setup()
+    const duplicateSignal = makeSignal({
+      id: 'brain-signal-alpha-duplicate',
+      targetInvestigationId: 'inv-older-copy',
+      targetTitle: 'Older Substation Case',
+      score: 0.74,
+    })
+    const fetchMock = installBrainFetch({ signals: [signal, duplicateSignal], links: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const card = await screen.findByTestId('brain-signal-card')
+    await user.click(within(card).getByRole('button', { name: /dismiss signal for older substation case/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/signals/brain-signal-alpha/dismiss',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/signals/brain-signal-alpha-duplicate/dismiss',
+      expect.objectContaining({ method: 'PUT' }),
+    )
   })
 
   it('opens, dismisses, and promotes signals through the expected actions', async () => {

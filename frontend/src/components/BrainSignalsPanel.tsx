@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, ExternalLink, Link2, RefreshCw, X } from 'lucide-react'
+import { Brain, ChevronDown, ChevronUp, ExternalLink, Link2, RefreshCw, X } from 'lucide-react'
 import {
   dismissBrainSignal,
   fetchBrainLinks,
@@ -28,6 +28,18 @@ const gatewayClassNames: Record<string, string> = {
   'relationship-tag': 'forensic-brain-chip-relationship',
 }
 
+const PRIORITY_SIGNAL_LIMIT = 10
+const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
+
+interface BrainSignalGroup {
+  key: string
+  primary: BrainSignal
+  signals: BrainSignal[]
+  score: number
+  reasons: BrainSignal['reasons']
+  gateways: BrainGateway[]
+}
+
 const formatGateway = (gateway: BrainGateway) =>
   gatewayLabels[gateway] || String(gateway).replace(/[-_]+/g, ' ')
 
@@ -41,6 +53,88 @@ const sortByScore = <T extends { score: number; createdAt?: string }>(items: T[]
     return String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
   })
 
+const normalizeSignalGroupTitle = (title: string) => title.trim().toLocaleLowerCase().replace(/\s+/g, ' ')
+
+const getSignalGroupKey = (signal: BrainSignal) =>
+  normalizeSignalGroupTitle(signal.targetTitle) || signal.targetInvestigationId
+
+const uniqueReasons = (signals: BrainSignal[]) => {
+  const seen = new Set<string>()
+  const reasons: BrainSignal['reasons'] = []
+
+  signals.forEach((signal) => {
+    signal.reasons.forEach((reason) => {
+      const key = `${reason.gateway}:${reason.value}:${reason.detail || reason.label}`
+      if (seen.has(key)) {
+        return
+      }
+      seen.add(key)
+      reasons.push(reason)
+    })
+  })
+
+  return reasons
+}
+
+const uniqueGateways = (signals: BrainSignal[]) => {
+  const seen = new Set<string>()
+  const gateways: BrainGateway[] = []
+
+  signals.forEach((signal) => {
+    const signalGateways = signal.reasons.length > 0
+      ? signal.reasons.map((reason) => reason.gateway)
+      : signal.gateways
+
+    signalGateways.forEach((gateway) => {
+      if (seen.has(gateway)) {
+        return
+      }
+      seen.add(gateway)
+      gateways.push(gateway)
+    })
+  })
+
+  return gateways
+}
+
+const groupSignalsByOlderCase = (signals: BrainSignal[]): BrainSignalGroup[] => {
+  const grouped = new Map<string, BrainSignal[]>()
+
+  sortByScore(signals).forEach((signal) => {
+    const key = getSignalGroupKey(signal)
+    grouped.set(key, [...(grouped.get(key) || []), signal])
+  })
+
+  return Array.from(grouped.entries())
+    .map(([key, groupSignals]) => {
+      const rankedGroupSignals = sortByScore(groupSignals)
+      const primary = rankedGroupSignals[0]
+
+      return {
+        key,
+        primary,
+        signals: rankedGroupSignals,
+        score: primary.score,
+        reasons: uniqueReasons(rankedGroupSignals),
+        gateways: uniqueGateways(rankedGroupSignals),
+      }
+    })
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+      return left.primary.targetTitle.localeCompare(right.primary.targetTitle)
+    })
+}
+
+const getRelatedFiringText = (count: number) => {
+  const relatedCount = count - 1
+  if (relatedCount <= 0) {
+    return null
+  }
+  return `+${relatedCount} related firing${relatedCount === 1 ? '' : 's'}`
+}
+
 export default function BrainSignalsPanel({
   currentInvestigationId,
   currentInvestigationTitle,
@@ -52,6 +146,7 @@ export default function BrainSignalsPanel({
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
   const requestIdRef = useRef(0)
 
   const loadBrainMemory = useCallback(async (isManualRefresh = false) => {
@@ -61,6 +156,7 @@ export default function BrainSignalsPanel({
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
+      setShowLowerPrioritySignals(false)
       return
     }
 
@@ -85,6 +181,7 @@ export default function BrainSignalsPanel({
 
       setSignals(sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked)))
       setLinks(sortByScore(nextLinks))
+      setShowLowerPrioritySignals(false)
     } catch {
       if (requestIdRef.current === requestId) {
         setError('Brain signals unavailable')
@@ -102,14 +199,33 @@ export default function BrainSignalsPanel({
   }, [loadBrainMemory])
 
   const rankedSignals = useMemo(() => sortByScore(signals), [signals])
+  const signalGroups = useMemo(() => groupSignalsByOlderCase(rankedSignals), [rankedSignals])
+  const { prioritySignalGroups, lowerPrioritySignalGroups } = useMemo(() => {
+    const priority: BrainSignalGroup[] = []
+    const lowerPriority: BrainSignalGroup[] = []
+
+    signalGroups.forEach((group) => {
+      if (group.score >= LOW_PRIORITY_SCORE_THRESHOLD && priority.length < PRIORITY_SIGNAL_LIMIT) {
+        priority.push(group)
+      } else {
+        lowerPriority.push(group)
+      }
+    })
+
+    return {
+      prioritySignalGroups: priority,
+      lowerPrioritySignalGroups: lowerPriority,
+    }
+  }, [signalGroups])
   const rankedLinks = useMemo(() => sortByScore(links), [links])
 
-  const handleDismiss = async (signalId: string) => {
-    setBusyAction(`dismiss:${signalId}`)
+  const handleDismiss = async (group: BrainSignalGroup) => {
+    const signalIds = group.signals.map((signal) => signal.id)
+    setBusyAction(`dismiss:${group.key}`)
     setError(null)
     try {
-      await dismissBrainSignal(signalId)
-      setSignals((current) => current.filter((signal) => signal.id !== signalId))
+      await Promise.all(signalIds.map((signalId) => dismissBrainSignal(signalId)))
+      setSignals((current) => current.filter((signal) => !signalIds.includes(signal.id)))
     } catch {
       setError('Brain signal dismiss failed')
     } finally {
@@ -117,12 +233,13 @@ export default function BrainSignalsPanel({
     }
   }
 
-  const handlePromote = async (signalId: string) => {
-    setBusyAction(`promote:${signalId}`)
+  const handlePromote = async (group: BrainSignalGroup) => {
+    const signalIds = group.signals.map((signal) => signal.id)
+    setBusyAction(`promote:${group.key}`)
     setError(null)
     try {
-      const link = await promoteBrainSignal(signalId)
-      setSignals((current) => current.filter((signal) => signal.id !== signalId))
+      const link = await promoteBrainSignal(group.primary.id)
+      setSignals((current) => current.filter((signal) => !signalIds.includes(signal.id)))
       setLinks((current) => sortByScore([link, ...current.filter((candidate) => candidate.id !== link.id)]))
     } catch {
       setError('Brain memory link failed')
@@ -132,6 +249,88 @@ export default function BrainSignalsPanel({
   }
 
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
+
+  const renderSignalGroup = (group: BrainSignalGroup) => {
+    const relatedFiringText = getRelatedFiringText(group.signals.length)
+    const signal = group.primary
+
+    return (
+      <article
+        key={group.key}
+        data-testid="brain-signal-card"
+        data-signal-id={signal.id}
+        data-signal-group={group.key}
+        className="forensic-brain-signal-card"
+      >
+        <div className="forensic-brain-card-topline">
+          <div>
+            <span className="forensic-brain-card-label">Older case fired</span>
+            <h4>{signal.targetTitle}</h4>
+            {relatedFiringText && (
+              <span className="forensic-brain-card-group-count">{relatedFiringText}</span>
+            )}
+          </div>
+          <strong>{formatScore(group.score)}</strong>
+        </div>
+
+        <div className="forensic-brain-chip-row" aria-label="Signal gateways">
+          {group.gateways.map((gateway) => (
+            <span
+              key={`${group.key}:${gateway}`}
+              className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
+            >
+              {formatGateway(gateway)}
+            </span>
+          ))}
+        </div>
+
+        <div className="forensic-brain-reason-stack">
+          {group.reasons.slice(0, 3).map((reason, index) => (
+            <p key={`${group.key}:detail:${reason.gateway}:${reason.value}:${index}`}>
+              {reason.detail || reason.label}
+            </p>
+          ))}
+        </div>
+
+        <div className="forensic-brain-suggested-action">
+          <span>Suggested action</span>
+          <strong>{signal.suggestedAction}</strong>
+        </div>
+
+        <div className="forensic-brain-card-actions">
+          <button
+            type="button"
+            aria-label={`Open investigation ${signal.targetTitle}`}
+            onClick={() => onOpenInvestigation?.(signal.targetInvestigationId)}
+            className="forensic-brain-action"
+          >
+            <ExternalLink size={13} />
+            Open
+          </button>
+          <button
+            type="button"
+            aria-label={`Dismiss signal for ${signal.targetTitle}`}
+            onClick={() => void handleDismiss(group)}
+            disabled={busyAction === `dismiss:${group.key}`}
+            className="forensic-brain-action forensic-brain-action-secondary"
+          >
+            <X size={13} />
+            Dismiss
+          </button>
+          <button
+            type="button"
+            aria-label={`Promote signal for ${signal.targetTitle}`}
+            onClick={() => void handlePromote(group)}
+            disabled={busyAction === `promote:${group.key}`}
+            className="forensic-brain-action forensic-brain-action-primary"
+          >
+            <Link2 size={13} />
+            Promote Link
+          </button>
+        </div>
+      </article>
+    )
+  }
 
   return (
     <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals">
@@ -148,7 +347,7 @@ export default function BrainSignalsPanel({
         </div>
         <div className="forensic-brain-command-actions">
           <span className="forensic-brain-status">
-            {rankedSignals.length} active / {rankedLinks.length} linked
+            {signalGroups.length} active / {rankedLinks.length} linked
           </span>
           <button
             type="button"
@@ -180,85 +379,33 @@ export default function BrainSignalsPanel({
             <div data-testid="brain-loading-state" className="forensic-brain-empty">
               Scanning memory gateways...
             </div>
-          ) : rankedSignals.length === 0 ? (
+          ) : signalGroups.length === 0 ? (
             <div data-testid="brain-empty-state" className="forensic-brain-empty">
               No brain signals fired for this investigation.
             </div>
           ) : (
             <div className="forensic-brain-signal-list">
-              {rankedSignals.map((signal) => (
-                <article
-                  key={signal.id}
-                  data-testid="brain-signal-card"
-                  data-signal-id={signal.id}
-                  className="forensic-brain-signal-card"
-                >
-                  <div className="forensic-brain-card-topline">
-                    <div>
-                      <span className="forensic-brain-card-label">Older case fired</span>
-                      <h4>{signal.targetTitle}</h4>
+              {prioritySignalGroups.map(renderSignalGroup)}
+
+              {lowerPrioritySignalGroups.length > 0 && (
+                <div data-testid="brain-lower-priority-section" className="forensic-brain-lower-priority">
+                  <button
+                    type="button"
+                    className="forensic-brain-lower-priority-toggle"
+                    aria-expanded={showLowerPrioritySignals}
+                    onClick={() => setShowLowerPrioritySignals((current) => !current)}
+                  >
+                    {showLowerPrioritySignals ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {showLowerPrioritySignals ? 'Hide' : 'Show'} lower-priority signals ({lowerPrioritySignalGroups.length})
+                  </button>
+
+                  {showLowerPrioritySignals && (
+                    <div className="forensic-brain-lower-priority-list">
+                      {lowerPrioritySignalGroups.map(renderSignalGroup)}
                     </div>
-                    <strong>{formatScore(signal.score)}</strong>
-                  </div>
-
-                  <div className="forensic-brain-chip-row" aria-label="Signal reasons">
-                    {signal.reasons.map((reason) => (
-                      <span
-                        key={`${signal.id}:${reason.gateway}:${reason.value}`}
-                        className={`forensic-brain-chip ${gatewayClassNames[reason.gateway] || ''}`}
-                        title={reason.detail}
-                      >
-                        {formatGateway(reason.gateway)}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div className="forensic-brain-reason-stack">
-                    {signal.reasons.slice(0, 3).map((reason) => (
-                      <p key={`${signal.id}:detail:${reason.gateway}:${reason.value}`}>
-                        {reason.detail || reason.label}
-                      </p>
-                    ))}
-                  </div>
-
-                  <div className="forensic-brain-suggested-action">
-                    <span>Suggested action</span>
-                    <strong>{signal.suggestedAction}</strong>
-                  </div>
-
-                  <div className="forensic-brain-card-actions">
-                    <button
-                      type="button"
-                      aria-label={`Open investigation ${signal.targetTitle}`}
-                      onClick={() => onOpenInvestigation?.(signal.targetInvestigationId)}
-                      className="forensic-brain-action"
-                    >
-                      <ExternalLink size={13} />
-                      Open
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Dismiss signal for ${signal.targetTitle}`}
-                      onClick={() => void handleDismiss(signal.id)}
-                      disabled={busyAction === `dismiss:${signal.id}`}
-                      className="forensic-brain-action forensic-brain-action-secondary"
-                    >
-                      <X size={13} />
-                      Dismiss
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Promote signal for ${signal.targetTitle}`}
-                      onClick={() => void handlePromote(signal.id)}
-                      disabled={busyAction === `promote:${signal.id}`}
-                      className="forensic-brain-action forensic-brain-action-primary"
-                    >
-                      <Link2 size={13} />
-                      Promote Link
-                    </button>
-                  </div>
-                </article>
-              ))}
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>

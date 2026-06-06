@@ -311,6 +311,8 @@ test.describe('Gorantula smoke flows', () => {
         ),
       },
     })
+    await expect(page.getByText('Smoke Rabbit Web Lead')).toBeVisible()
+
     await emitBackendMessage(page, {
       type: 'MEMORY_NODE_GATHERED',
       payload: {
@@ -323,6 +325,8 @@ test.describe('Gorantula smoke flows', () => {
         ),
       },
     })
+    await expect(page.getByText('Smoke Rabbit Vault Echo')).toBeVisible()
+
     await emitBackendMessage(page, {
       type: 'MEMORY_NODE_GATHERED',
       payload: {
@@ -335,9 +339,7 @@ test.describe('Gorantula smoke flows', () => {
         ),
       },
     })
-
-    await expect(page.getByText('Smoke Rabbit Web Lead')).toBeVisible()
-    await expect(page.getByText('Smoke Rabbit Vault Echo')).toBeVisible()
+    await expect(page.getByText('Smoke Rabbit Support Evidence')).toBeVisible()
 
     await emitBackendMessage(page, {
       type: 'RABBIT_HOLE_NODE_UPDATE',
