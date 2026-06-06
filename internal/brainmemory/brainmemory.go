@@ -26,6 +26,7 @@ const (
 	brainDirectoryName = "brain"
 	signalsFilename    = "signals.json"
 	linksFilename      = "links.json"
+	clustersFilename   = "clusters.json"
 
 	promotionTypeManual = "manual"
 	promotionTypeAuto   = "auto"
@@ -36,8 +37,9 @@ const (
 )
 
 var (
-	ErrSignalNotFound = errors.New("brain signal not found")
-	ErrLinkNotFound   = errors.New("brain memory link not found")
+	ErrSignalNotFound  = errors.New("brain signal not found")
+	ErrLinkNotFound    = errors.New("brain memory link not found")
+	ErrClusterNotFound = errors.New("brain memory cluster not found")
 
 	taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
 	spacePattern        = regexp.MustCompile(`\s+`)
@@ -108,6 +110,32 @@ type MemoryLink struct {
 	PromotionType       string         `json:"promotionType"`
 }
 
+type MemoryClusterMember struct {
+	InvestigationID string `json:"investigationId"`
+	Title           string `json:"title"`
+	Role            string `json:"role"`
+}
+
+type MemoryCluster struct {
+	ID                     string                `json:"id"`
+	Label                  string                `json:"label"`
+	Summary                string                `json:"summary"`
+	Score                  float64               `json:"score"`
+	Status                 string                `json:"status"`
+	DominantGateway        string                `json:"dominantGateway"`
+	GatewayCounts          map[string]int        `json:"gatewayCounts"`
+	MemberInvestigationIDs []string              `json:"memberInvestigationIds"`
+	Members                []MemoryClusterMember `json:"members"`
+	SignalIDs              []string              `json:"signalIds"`
+	MemoryLinkIDs          []string              `json:"memoryLinkIds"`
+	ReasonSamples          []SignalReason        `json:"reasonSamples"`
+	Pinned                 bool                  `json:"pinned"`
+	Hidden                 bool                  `json:"hidden"`
+	CreatedAt              string                `json:"createdAt"`
+	UpdatedAt              string                `json:"updatedAt"`
+	LastActivatedAt        string                `json:"lastActivatedAt"`
+}
+
 type Service struct {
 	vaultRoot string
 	store     *models.InvestigationStore
@@ -169,6 +197,22 @@ type persistedBoardEdgeData struct {
 	Tag          string `json:"tag"`
 	DisplayLabel string `json:"displayLabel"`
 	Label        string `json:"label"`
+}
+
+type clusterEvidence struct {
+	InvestigationID string
+	Title           string
+	Label           string
+	Kind            string
+	NodeIDs         []string
+}
+
+type clusterSeed struct {
+	Gateway string
+	Value   string
+	Label   string
+	Kind    string
+	Members map[string]clusterEvidence
 }
 
 func (s *Service) GenerateSignals(investigationID string) ([]BrainSignal, error) {
@@ -426,6 +470,399 @@ func (s *Service) LinksForInvestigation(investigationID string) ([]MemoryLink, e
 	return result, nil
 }
 
+func (s *Service) ClustersForInvestigation(investigationID string) ([]MemoryCluster, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return nil, models.ErrInvalidInvestigationID
+	}
+
+	records, err := s.store.List()
+	if err != nil {
+		return nil, err
+	}
+	currentExists := false
+	profiles := make([]memoryProfile, 0, len(records))
+	for _, record := range records {
+		if record.ID == investigationID {
+			currentExists = true
+		}
+		profile, err := s.buildProfile(record)
+		if err != nil {
+			continue
+		}
+		profiles = append(profiles, profile)
+	}
+	if !currentExists {
+		return nil, models.ErrInvestigationNotFound
+	}
+
+	existingClusters, err := s.loadClusters()
+	if err != nil {
+		return nil, err
+	}
+	signals, err := s.loadSignals()
+	if err != nil {
+		return nil, err
+	}
+	links, err := s.loadLinks()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	recomputed := buildMemoryClusters(investigationID, profiles, signals, links, existingClusters, now)
+	nextClusters := make(map[string]MemoryCluster, len(existingClusters)+len(recomputed))
+	for id, cluster := range existingClusters {
+		if containsString(cluster.MemberInvestigationIDs, investigationID) {
+			continue
+		}
+		nextClusters[id] = cluster
+	}
+	for _, cluster := range recomputed {
+		nextClusters[cluster.ID] = cluster
+	}
+	if err := s.saveClusters(nextClusters); err != nil {
+		return nil, err
+	}
+	sortClusters(recomputed)
+	return recomputed, nil
+}
+
+func (s *Service) ToggleClusterPin(clusterID string) (MemoryCluster, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return MemoryCluster{}, err
+	}
+	cluster, ok := clusters[clusterID]
+	if !ok {
+		return MemoryCluster{}, ErrClusterNotFound
+	}
+	cluster.Pinned = !cluster.Pinned
+	cluster.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	clusters[clusterID] = cluster
+	if err := s.saveClusters(clusters); err != nil {
+		return MemoryCluster{}, err
+	}
+	return cluster, nil
+}
+
+func (s *Service) HideCluster(clusterID string) (MemoryCluster, error) {
+	return s.setClusterHidden(clusterID, true)
+}
+
+func (s *Service) UnhideCluster(clusterID string) (MemoryCluster, error) {
+	return s.setClusterHidden(clusterID, false)
+}
+
+func (s *Service) setClusterHidden(clusterID string, hidden bool) (MemoryCluster, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return MemoryCluster{}, err
+	}
+	cluster, ok := clusters[clusterID]
+	if !ok {
+		return MemoryCluster{}, ErrClusterNotFound
+	}
+	cluster.Hidden = hidden
+	cluster.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	clusters[clusterID] = cluster
+	if err := s.saveClusters(clusters); err != nil {
+		return MemoryCluster{}, err
+	}
+	return cluster, nil
+}
+
+func buildMemoryClusters(
+	currentInvestigationID string,
+	profiles []memoryProfile,
+	signals map[string]BrainSignal,
+	links map[string]MemoryLink,
+	existing map[string]MemoryCluster,
+	timestamp string,
+) []MemoryCluster {
+	seeds := collectClusterSeeds(profiles)
+	clusters := make([]MemoryCluster, 0, len(seeds))
+	for _, seed := range seeds {
+		currentEvidence, hasCurrent := seed.Members[currentInvestigationID]
+		if !hasCurrent || len(seed.Members) < 2 {
+			continue
+		}
+
+		memberIDs := make([]string, 0, len(seed.Members))
+		members := make([]MemoryClusterMember, 0, len(seed.Members))
+		for investigationID, evidence := range seed.Members {
+			memberIDs = append(memberIDs, investigationID)
+			role := "memory"
+			if investigationID == currentInvestigationID {
+				role = "current"
+			}
+			members = append(members, MemoryClusterMember{
+				InvestigationID: investigationID,
+				Title:           evidence.Title,
+				Role:            role,
+			})
+		}
+		sort.Strings(memberIDs)
+		sort.SliceStable(members, func(i, j int) bool {
+			if members[i].Role == members[j].Role {
+				return members[i].Title < members[j].Title
+			}
+			return members[i].Role == "current"
+		})
+
+		reasons := clusterReasonSamples(seed, currentEvidence, currentInvestigationID)
+		signalIDs := matchingClusterSignalIDs(signals, seed.Gateway, seed.Value, currentInvestigationID, seed.Members)
+		linkIDs := matchingClusterLinkIDs(links, seed.Gateway, seed.Value, seed.Members)
+		score := scoreCluster(seed.Gateway, len(seed.Members), len(signalIDs), len(linkIDs))
+		cluster := MemoryCluster{
+			ID:                     deterministicID("brain-cluster", seed.Gateway, seed.Value),
+			Label:                  seed.Label,
+			Summary:                clusterSummary(seed, len(seed.Members), len(signalIDs), len(linkIDs)),
+			Score:                  score,
+			Status:                 clusterStatus(score),
+			DominantGateway:        seed.Gateway,
+			GatewayCounts:          map[string]int{seed.Gateway: len(seed.Members)},
+			MemberInvestigationIDs: memberIDs,
+			Members:                members,
+			SignalIDs:              signalIDs,
+			MemoryLinkIDs:          linkIDs,
+			ReasonSamples:          reasons,
+			CreatedAt:              timestamp,
+			UpdatedAt:              timestamp,
+			LastActivatedAt:        timestamp,
+		}
+		if previous, ok := existing[cluster.ID]; ok {
+			cluster.CreatedAt = previous.CreatedAt
+			if cluster.CreatedAt == "" {
+				cluster.CreatedAt = timestamp
+			}
+			cluster.Pinned = previous.Pinned
+			cluster.Hidden = previous.Hidden
+		}
+		clusters = append(clusters, cluster)
+	}
+	sortClusters(clusters)
+	return clusters
+}
+
+func collectClusterSeeds(profiles []memoryProfile) map[string]clusterSeed {
+	seeds := make(map[string]clusterSeed)
+	for _, profile := range profiles {
+		for value, evidence := range profile.Entities {
+			addClusterEvidence(seeds, GatewayEntityDate, value, profile, evidence)
+		}
+		for value, evidence := range profile.SourceDomains {
+			addClusterEvidence(seeds, GatewaySourceDomain, value, profile, evidence)
+		}
+		for value, evidence := range profile.RelationshipTags {
+			addClusterEvidence(seeds, GatewayRelationshipTag, value, profile, evidence)
+		}
+	}
+	return seeds
+}
+
+func addClusterEvidence(seeds map[string]clusterSeed, gateway string, value string, profile memoryProfile, evidence signalEvidence) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	key := gateway + "\x00" + value
+	seed, ok := seeds[key]
+	if !ok {
+		seed = clusterSeed{
+			Gateway: gateway,
+			Value:   value,
+			Label:   evidence.Label,
+			Kind:    evidence.Kind,
+			Members: make(map[string]clusterEvidence),
+		}
+	}
+	if seed.Label == "" {
+		seed.Label = evidence.Label
+	}
+	if seed.Kind == "" {
+		seed.Kind = evidence.Kind
+	}
+	seed.Members[profile.ID] = clusterEvidence{
+		InvestigationID: profile.ID,
+		Title:           profile.Title,
+		Label:           evidence.Label,
+		Kind:            evidence.Kind,
+		NodeIDs:         evidence.NodeIDs,
+	}
+	seeds[key] = seed
+}
+
+func clusterReasonSamples(seed clusterSeed, current clusterEvidence, currentInvestigationID string) []SignalReason {
+	reasons := make([]SignalReason, 0, len(seed.Members)-1)
+	targetIDs := make([]string, 0, len(seed.Members))
+	for investigationID := range seed.Members {
+		if investigationID != currentInvestigationID {
+			targetIDs = append(targetIDs, investigationID)
+		}
+	}
+	sort.Strings(targetIDs)
+	for _, investigationID := range targetIDs {
+		target := seed.Members[investigationID]
+		reasons = append(reasons, SignalReason{
+			Gateway:        seed.Gateway,
+			Value:          seed.Value,
+			Label:          seed.Label,
+			Detail:         clusterReasonDetail(seed, target.Title),
+			CurrentNodeIDs: cleanStringSet(current.NodeIDs),
+			TargetNodeIDs:  cleanStringSet(target.NodeIDs),
+		})
+		if len(reasons) == 3 {
+			break
+		}
+	}
+	return reasons
+}
+
+func clusterReasonDetail(seed clusterSeed, targetTitle string) string {
+	switch seed.Gateway {
+	case GatewayEntityDate:
+		kind := strings.TrimSpace(seed.Kind)
+		if kind == "" {
+			kind = "tag"
+		}
+		return fmt.Sprintf("Shared %s %q appears in %s.", kind, seed.Label, targetTitle)
+	case GatewaySourceDomain:
+		return fmt.Sprintf("Source domain %q recurs in %s.", seed.Label, targetTitle)
+	case GatewayRelationshipTag:
+		return fmt.Sprintf("Relationship pattern %q recurs in %s.", seed.Label, targetTitle)
+	default:
+		return fmt.Sprintf("Memory evidence %q recurs in %s.", seed.Label, targetTitle)
+	}
+}
+
+func matchingClusterSignalIDs(
+	signals map[string]BrainSignal,
+	gateway string,
+	value string,
+	currentInvestigationID string,
+	members map[string]clusterEvidence,
+) []string {
+	ids := make([]string, 0)
+	for _, signal := range signals {
+		if signal.Dismissed {
+			continue
+		}
+		if signal.InvestigationID != currentInvestigationID && signal.TargetInvestigationID != currentInvestigationID {
+			continue
+		}
+		if _, ok := members[signal.InvestigationID]; !ok {
+			continue
+		}
+		if _, ok := members[signal.TargetInvestigationID]; !ok {
+			continue
+		}
+		if reasonsContainGatewayValue(signal.Reasons, gateway, value) {
+			ids = append(ids, signal.ID)
+		}
+	}
+	return cleanStringSet(ids)
+}
+
+func matchingClusterLinkIDs(links map[string]MemoryLink, gateway string, value string, members map[string]clusterEvidence) []string {
+	ids := make([]string, 0)
+	for _, link := range links {
+		if _, ok := members[link.FromInvestigationID]; !ok {
+			continue
+		}
+		if _, ok := members[link.ToInvestigationID]; !ok {
+			continue
+		}
+		if reasonsContainGatewayValue(link.Reasons, gateway, value) {
+			ids = append(ids, link.ID)
+		}
+	}
+	return cleanStringSet(ids)
+}
+
+func reasonsContainGatewayValue(reasons []SignalReason, gateway string, value string) bool {
+	for _, reason := range reasons {
+		if reason.Gateway == gateway && reason.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func scoreCluster(gateway string, memberCount int, signalCount int, linkCount int) float64 {
+	score := 0.0
+	switch gateway {
+	case GatewayEntityDate:
+		score = 0.58
+	case GatewayRelationshipTag:
+		score = 0.52
+	case GatewaySourceDomain:
+		score = 0.45
+	default:
+		score = 0.40
+	}
+	if memberCount > 2 {
+		score += minFloat(0.24, float64(memberCount-2)*0.08)
+	}
+	score += minFloat(0.12, float64(signalCount)*0.04)
+	score += minFloat(0.16, float64(linkCount)*0.08)
+	if score > 0.98 {
+		return 0.98
+	}
+	return score
+}
+
+func clusterStatus(score float64) string {
+	if score >= 0.75 {
+		return "active"
+	}
+	if score >= 0.50 {
+		return "warm"
+	}
+	return "dormant"
+}
+
+func clusterSummary(seed clusterSeed, memberCount int, signalCount int, linkCount int) string {
+	return fmt.Sprintf(
+		"%s links %d investigations through %s recall with %d active signals and %d durable memory links.",
+		seed.Label,
+		memberCount,
+		formatGatewayName(seed.Gateway),
+		signalCount,
+		linkCount,
+	)
+}
+
+func formatGatewayName(gateway string) string {
+	switch gateway {
+	case GatewayEntityDate:
+		return "entity/date"
+	case GatewaySourceDomain:
+		return "source-domain"
+	case GatewayRelationshipTag:
+		return "relationship-pattern"
+	default:
+		return "memory"
+	}
+}
+
+func sortClusters(clusters []MemoryCluster) {
+	sort.SliceStable(clusters, func(i, j int) bool {
+		if clusters[i].Pinned != clusters[j].Pinned {
+			return clusters[i].Pinned
+		}
+		if clusters[i].Hidden != clusters[j].Hidden {
+			return !clusters[i].Hidden
+		}
+		if clusters[i].Score == clusters[j].Score {
+			return clusters[i].Label < clusters[j].Label
+		}
+		return clusters[i].Score > clusters[j].Score
+	})
+}
+
 func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 	if service == nil {
 		service = NewService("abdomen_vault")
@@ -460,8 +897,37 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, links, err)
 		return
 	}
+	if path == "api/brain/clusters" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		clusters, err := service.ClustersForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, clusters, err)
+		return
+	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "clusters" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		switch parts[4] {
+		case "pin":
+			cluster, err := service.ToggleClusterPin(parts[3])
+			writeAPIResult(w, cluster, err)
+		case "hide":
+			cluster, err := service.HideCluster(parts[3])
+			writeAPIResult(w, cluster, err)
+		case "unhide":
+			cluster, err := service.UnhideCluster(parts[3])
+			writeAPIResult(w, cluster, err)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
 	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "links" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -508,6 +974,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "signal not found", http.StatusNotFound)
 		case errors.Is(err, ErrLinkNotFound):
 			http.Error(w, "memory link not found", http.StatusNotFound)
+		case errors.Is(err, ErrClusterNotFound):
+			http.Error(w, "memory cluster not found", http.StatusNotFound)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -1071,6 +1539,22 @@ func cleanStringSet(values []string) []string {
 	return cleaned
 }
 
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func minFloat(left float64, right float64) float64 {
+	if left < right {
+		return left
+	}
+	return right
+}
+
 func deterministicID(prefix string, parts ...string) string {
 	hash := sha1.Sum([]byte(strings.Join(parts, "|")))
 	return prefix + "-" + hex.EncodeToString(hash[:])[:16]
@@ -1126,6 +1610,29 @@ func (s *Service) saveLinks(links map[string]MemoryLink) error {
 		return list[i].CreatedAt > list[j].CreatedAt
 	})
 	return s.saveBrainJSON(linksFilename, list)
+}
+
+func (s *Service) loadClusters() (map[string]MemoryCluster, error) {
+	clusters := []MemoryCluster{}
+	if err := s.loadBrainJSON(clustersFilename, &clusters); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]MemoryCluster, len(clusters))
+	for _, cluster := range clusters {
+		if strings.TrimSpace(cluster.ID) != "" {
+			byID[cluster.ID] = cluster
+		}
+	}
+	return byID, nil
+}
+
+func (s *Service) saveClusters(clusters map[string]MemoryCluster) error {
+	list := make([]MemoryCluster, 0, len(clusters))
+	for _, cluster := range clusters {
+		list = append(list, cluster)
+	}
+	sortClusters(list)
+	return s.saveBrainJSON(clustersFilename, list)
 }
 
 func (s *Service) loadBrainJSON(filename string, target interface{}) error {

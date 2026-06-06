@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
-import type { BrainSignal, MemoryLink } from '../../src/utils/brainMemory'
+import type { BrainSignal, MemoryCluster, MemoryLink } from '../../src/utils/brainMemory'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 
 const signal: BrainSignal = {
@@ -49,6 +49,32 @@ const link: MemoryLink = {
   reasons: [signal.reasons[0]],
   suggestedAction: 'Review older case',
   createdAt: '2026-06-05T12:00:00Z',
+}
+
+const cluster: MemoryCluster = {
+  id: 'brain-cluster-acme',
+  label: 'Acme Grid',
+  summary: 'Acme Grid links 3 investigations through entity/date recall with 1 active signal and 1 durable memory link.',
+  score: 0.86,
+  status: 'active',
+  dominantGateway: 'entity-date',
+  gatewayCounts: {
+    'entity-date': 3,
+  },
+  memberInvestigationIds: ['inv-current', 'inv-older', 'inv-third'],
+  members: [
+    { investigationId: 'inv-current', title: 'Current Grid Case', role: 'current' },
+    { investigationId: 'inv-older', title: 'Older Substation Case', role: 'memory' },
+    { investigationId: 'inv-third', title: 'Third Grid Case', role: 'memory' },
+  ],
+  signalIds: [signal.id],
+  memoryLinkIds: [link.id],
+  reasonSamples: [signal.reasons[0]],
+  pinned: false,
+  hidden: false,
+  createdAt: '2026-06-05T12:00:00Z',
+  updatedAt: '2026-06-05T12:00:00Z',
+  lastActivatedAt: '2026-06-06T09:00:00Z',
 }
 
 const makeLink = (overrides: Partial<MemoryLink> = {}): MemoryLink => {
@@ -105,6 +131,17 @@ const makeSignal = (overrides: Partial<BrainSignal> = {}): BrainSignal => {
   }
 }
 
+const makeCluster = (overrides: Partial<MemoryCluster> = {}): MemoryCluster => ({
+  ...cluster,
+  ...overrides,
+  gatewayCounts: overrides.gatewayCounts || cluster.gatewayCounts,
+  memberInvestigationIds: overrides.memberInvestigationIds || cluster.memberInvestigationIds,
+  members: overrides.members || cluster.members,
+  signalIds: overrides.signalIds || cluster.signalIds,
+  memoryLinkIds: overrides.memoryLinkIds || cluster.memoryLinkIds,
+  reasonSamples: overrides.reasonSamples || cluster.reasonSamples,
+})
+
 const jsonResponse = (payload: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
@@ -114,10 +151,12 @@ const jsonResponse = (payload: unknown, status = 200) => ({
 const installBrainFetch = ({
   signals = [],
   links = [],
+  clusters = [],
   promoteLink = link,
 }: {
   signals?: BrainSignal[]
   links?: MemoryLink[]
+  clusters?: MemoryCluster[]
   promoteLink?: MemoryLink
 } = {}) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -130,6 +169,9 @@ const installBrainFetch = ({
     if (url.includes('/api/brain/links?')) {
       return Promise.resolve(jsonResponse(links) as Response)
     }
+    if (url.includes('/api/brain/clusters?')) {
+      return Promise.resolve(jsonResponse(clusters) as Response)
+    }
     if (method === 'PUT' && url.endsWith('/dismiss')) {
       return Promise.resolve(jsonResponse({ ...signal, dismissed: true }) as Response)
     }
@@ -138,6 +180,18 @@ const installBrainFetch = ({
     }
     if (method === 'PUT' && url.endsWith('/forget')) {
       return Promise.resolve(jsonResponse(links[0] || link) as Response)
+    }
+    if (method === 'PUT' && url.includes('/api/brain/clusters/') && url.endsWith('/pin')) {
+      const target = clusters.find((candidate) => url.includes(candidate.id)) || cluster
+      return Promise.resolve(jsonResponse({ ...target, pinned: !target.pinned }) as Response)
+    }
+    if (method === 'PUT' && url.includes('/api/brain/clusters/') && url.endsWith('/hide')) {
+      const target = clusters.find((candidate) => url.includes(candidate.id)) || cluster
+      return Promise.resolve(jsonResponse({ ...target, hidden: true }) as Response)
+    }
+    if (method === 'PUT' && url.includes('/api/brain/clusters/') && url.endsWith('/unhide')) {
+      const target = clusters.find((candidate) => url.includes(candidate.id)) || cluster
+      return Promise.resolve(jsonResponse({ ...target, hidden: false }) as Response)
     }
 
     return Promise.resolve(jsonResponse({}, 404) as Response)
@@ -222,6 +276,9 @@ describe('BrainSignalsPanel', () => {
       if (url.includes('/api/brain/links?')) {
         return jsonResponse(signalGenerationComplete ? [autoLink] : []) as Response
       }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
 
       return jsonResponse({}, 404) as Response
     })
@@ -251,6 +308,9 @@ describe('BrainSignalsPanel', () => {
 
       if (url.includes('/api/brain/links?')) {
         return jsonResponse(linkAvailable ? [delayedLink] : []) as Response
+      }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
       }
 
       return jsonResponse({}, 404) as Response
@@ -292,6 +352,9 @@ describe('BrainSignalsPanel', () => {
 
       if (url.includes('/api/brain/links?')) {
         return jsonResponse(linkAvailable ? [autoLink] : []) as Response
+      }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
       }
 
       return jsonResponse({}, 404) as Response
@@ -570,9 +633,9 @@ describe('BrainSignalsPanel', () => {
     expect(onOpenInvestigation).toHaveBeenCalledWith('inv-map-auto')
   })
 
-  it('separates the Brain map, active signal feed, and linked-memory archive into sub-tabs', async () => {
+  it('separates the Brain map, active signal feed, linked-memory archive, and clusters into sub-tabs', async () => {
     const user = userEvent.setup()
-    installBrainFetch({ signals: [signal], links: [link] })
+    installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
@@ -580,16 +643,165 @@ describe('BrainSignalsPanel', () => {
     expect(screen.getByRole('button', { name: /memory map view/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-cluster-card')).not.toBeInTheDocument()
 
     await openBrainView(user, /active signals view/i)
     expect(await screen.findByTestId('brain-signal-card')).toHaveTextContent('Older Substation Case')
     expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-cluster-card')).not.toBeInTheDocument()
 
     await openBrainView(user, /memory links view/i)
     expect(await screen.findByTestId('brain-link-card')).toHaveTextContent('Older Substation Case')
     expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-cluster-card')).not.toBeInTheDocument()
+
+    await openBrainView(user, /memory clusters view/i)
+    expect(await screen.findByTestId('brain-cluster-card')).toHaveTextContent('Acme Grid')
+    expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-link-card')).not.toBeInTheDocument()
+  })
+
+  it('renders memory clusters with drill-down and a collapsed hidden section', async () => {
+    const user = userEvent.setup()
+    const hiddenCluster = makeCluster({
+      id: 'brain-cluster-hidden-domain',
+      label: 'hidden.example',
+      summary: 'hidden.example links 2 investigations through source-domain recall.',
+      score: 0.44,
+      status: 'dormant',
+      dominantGateway: 'source-domain',
+      gatewayCounts: {
+        'source-domain': 2,
+      },
+      hidden: true,
+      signalIds: [],
+      memoryLinkIds: [],
+      reasonSamples: [
+        {
+          ...signal.reasons[1],
+          label: 'hidden.example',
+          value: 'hidden.example',
+          detail: 'Source domain "hidden.example" recurs in an older case.',
+        },
+      ],
+    })
+    installBrainFetch({ signals: [signal], links: [link], clusters: [cluster, hiddenCluster] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory clusters view/i)
+
+    const card = await screen.findByTestId('brain-cluster-card')
+    expect(card).toHaveTextContent('Acme Grid')
+    expect(card).toHaveTextContent('86%')
+    expect(card).toHaveTextContent('Active')
+    expect(card).toHaveTextContent('Entity/Date x3')
+    expect(card).toHaveTextContent('1 signal')
+    expect(card).toHaveTextContent('1 memory link')
+    expect(screen.queryByText('hidden.example')).not.toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: /inspect cluster acme grid/i }))
+
+    const detail = await screen.findByTestId('brain-cluster-detail')
+    expect(detail).toHaveTextContent('Current Grid Case')
+    expect(detail).toHaveTextContent('Older Substation Case')
+    expect(detail).toHaveTextContent('Third Grid Case')
+    expect(detail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+
+    await user.click(screen.getByRole('button', { name: /show hidden clusters \(1\)/i }))
+    expect(screen.getByText('hidden.example')).toBeInTheDocument()
+  })
+
+  it('pins, hides, and unhides memory clusters through backend actions', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [], links: [], clusters: [cluster] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory clusters view/i)
+
+    const card = await screen.findByTestId('brain-cluster-card')
+    await user.click(within(card).getByRole('button', { name: /pin cluster acme grid/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/clusters/brain-cluster-acme/pin',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(await screen.findByTestId('brain-cluster-card')).toHaveTextContent('Pinned')
+
+    await user.click(within(screen.getByTestId('brain-cluster-card')).getByRole('button', { name: /hide cluster acme grid/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/clusters/brain-cluster-acme/hide',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(screen.queryByTestId('brain-cluster-card')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show hidden clusters \(1\)/i }))
+    const hiddenCard = await screen.findByTestId('brain-hidden-cluster-card')
+    expect(hiddenCard).toHaveTextContent('Acme Grid')
+
+    await user.click(within(hiddenCard).getByRole('button', { name: /unhide cluster acme grid/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/clusters/brain-cluster-acme/unhide',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(await screen.findByTestId('brain-cluster-card')).toHaveTextContent('Acme Grid')
+  })
+
+  it('shows cluster chips on related active signals and memory links', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
+
+    expect(await screen.findByTestId('brain-signal-card')).toHaveTextContent('Cluster: Acme Grid')
+
+    await openBrainView(user, /memory links view/i)
+
+    expect(await screen.findByTestId('brain-link-card')).toHaveTextContent('Cluster: Acme Grid')
+  })
+
+  it('refreshes memory clusters after persisted board updates while Brain is open', async () => {
+    const user = userEvent.setup()
+    let clusterAvailable = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse(clusterAvailable ? [cluster] : []) as Response
+      }
+
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /memory clusters view/i)
+
+    expect(await screen.findByTestId('brain-clusters-empty-state')).toHaveTextContent(/No memory clusters yet/i)
+
+    clusterAvailable = true
+    window.dispatchEvent(new CustomEvent(BOARD_WORKSPACE_STATE_UPDATED_EVENT, {
+      detail: {
+        investigationId: 'inv-current',
+        persisted: true,
+        contentSignature: 'nodes:3|edges:2|fresh-cluster',
+      },
+    }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('brain-cluster-card')).toHaveTextContent('Acme Grid')
+    })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/clusters?')).length)
+      .toBeGreaterThanOrEqual(2)
   })
 
   it('opens a linked memory detail view with evidence and matched node ids', async () => {

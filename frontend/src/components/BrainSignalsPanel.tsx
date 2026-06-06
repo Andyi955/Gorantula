@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, ChevronDown, ChevronUp, ExternalLink, Link2, RefreshCw, Trash2, X } from 'lucide-react'
+import { Brain, ChevronDown, ChevronUp, ExternalLink, Eye, EyeOff, Link2, Pin, RefreshCw, Trash2, X } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
@@ -7,12 +7,17 @@ import {
 } from '../utils/boardWorkspaceEvents'
 import {
   dismissBrainSignal,
+  fetchBrainClusters,
   fetchBrainLinks,
   fetchBrainSignals,
   forgetBrainLink,
+  hideBrainCluster,
   promoteBrainSignal,
+  toggleBrainClusterPin,
+  unhideBrainCluster,
   type BrainGateway,
   type BrainSignal,
+  type MemoryCluster,
   type MemoryLink,
 } from '../utils/brainMemory'
 import { buildBrainMapModel, type BrainMapNode } from '../utils/brainMap'
@@ -44,7 +49,7 @@ const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
 type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
 type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
-type BrainView = 'map' | 'signals' | 'links'
+type BrainView = 'map' | 'signals' | 'links' | 'clusters'
 
 const gatewayFilterOptions: Array<{ value: GatewayFilter; label: string }> = [
   { value: 'all', label: 'All Gateways' },
@@ -129,6 +134,20 @@ const sortByScore = <T extends { score: number; createdAt?: string }>(items: T[]
       return right.score - left.score
     }
     return String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
+  })
+
+const sortClusters = (items: MemoryCluster[]) =>
+  [...items].sort((left, right) => {
+    if (left.pinned !== right.pinned) {
+      return left.pinned ? -1 : 1
+    }
+    if (left.hidden !== right.hidden) {
+      return left.hidden ? 1 : -1
+    }
+    if (right.score !== left.score) {
+      return right.score - left.score
+    }
+    return left.label.localeCompare(right.label)
   })
 
 const normalizeSignalGroupTitle = (title: string) => title.trim().toLocaleLowerCase().replace(/\s+/g, ' ')
@@ -399,6 +418,49 @@ const buildSignalSummary = (group: BrainSignalGroup) => {
   return `${visibleLabels.join(', ')}${hiddenCount > 0 ? ` +${hiddenCount} more` : ''}`
 }
 
+const formatClusterStatus = (status: string) => {
+  const normalized = status.trim().toLocaleLowerCase()
+  if (!normalized) {
+    return 'Dormant'
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
+const formatClusterGatewayCount = (cluster: MemoryCluster) => {
+  const count = cluster.gatewayCounts?.[cluster.dominantGateway] || cluster.memberInvestigationIds.length
+  return count > 1 ? `${formatGateway(cluster.dominantGateway)} x${count}` : formatGateway(cluster.dominantGateway)
+}
+
+const formatClusterMemberCount = (cluster: MemoryCluster) =>
+  formatCountLabel(cluster.memberInvestigationIds.length || cluster.members.length, 'case')
+
+const getClusterSignalCount = (cluster: MemoryCluster) => cluster.signalIds.length
+const getClusterLinkCount = (cluster: MemoryCluster) => cluster.memoryLinkIds.length
+
+const clusterMatchesFilters = (
+  cluster: MemoryCluster,
+  gatewayFilter: GatewayFilter,
+  strengthFilter: StrengthFilter,
+) => matchesBrainFilters(
+  {
+    score: cluster.score,
+    gateways: [cluster.dominantGateway],
+    reasons: cluster.reasonSamples,
+  },
+  gatewayFilter,
+  strengthFilter,
+)
+
+const relatedClustersForSignalGroup = (group: BrainSignalGroup, clusters: MemoryCluster[]) => {
+  const signalIds = new Set(group.signals.map((signal) => signal.id))
+  return clusters.filter((cluster) => !cluster.hidden && cluster.signalIds.some((signalId) => signalIds.has(signalId))).slice(0, 2)
+}
+
+const relatedClustersForLinkGroup = (group: MemoryLinkGroup, clusters: MemoryCluster[]) => {
+  const linkIds = new Set(group.links.map((link) => link.id))
+  return clusters.filter((cluster) => !cluster.hidden && cluster.memoryLinkIds.some((linkId) => linkIds.has(linkId))).slice(0, 2)
+}
+
 export default function BrainSignalsPanel({
   currentInvestigationId,
   currentInvestigationTitle,
@@ -406,13 +468,16 @@ export default function BrainSignalsPanel({
 }: BrainSignalsPanelProps) {
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
+  const [clusters, setClusters] = useState<MemoryCluster[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
   const [showOlderMemoryLinks, setShowOlderMemoryLinks] = useState(false)
+  const [showHiddenClusters, setShowHiddenClusters] = useState(false)
   const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
+  const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
@@ -430,12 +495,15 @@ export default function BrainSignalsPanel({
     if (!currentInvestigationId) {
       setSignals([])
       setLinks([])
+      setClusters([])
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
       setShowLowerPrioritySignals(false)
       setShowOlderMemoryLinks(false)
+      setShowHiddenClusters(false)
       setSelectedMemoryLinkId(null)
+      setSelectedClusterId(null)
       setSelectedBrainMapNodeId(null)
       return
     }
@@ -452,6 +520,7 @@ export default function BrainSignalsPanel({
     try {
       const nextSignals = await fetchBrainSignals(currentInvestigationId)
       const nextLinks = await fetchBrainLinks(currentInvestigationId)
+      const nextClusters = await fetchBrainClusters(currentInvestigationId)
 
       if (requestIdRef.current !== requestId) {
         return
@@ -459,10 +528,14 @@ export default function BrainSignalsPanel({
 
       setSignals(sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked)))
       setLinks(sortByScore(nextLinks))
+      setClusters(sortClusters(nextClusters))
       setShowLowerPrioritySignals(false)
       setShowOlderMemoryLinks(false)
       setSelectedMemoryLinkId((current) =>
         current && nextLinks.some((link) => link.id === current) ? current : null,
+      )
+      setSelectedClusterId((current) =>
+        current && nextClusters.some((cluster) => cluster.id === current) ? current : null,
       )
     } catch {
       if (requestIdRef.current === requestId) {
@@ -580,6 +653,17 @@ export default function BrainSignalsPanel({
   const linkGroups = useMemo(() => groupMemoryLinksByOlderCase(filteredLinks), [filteredLinks])
   const priorityLinkGroups = useMemo(() => linkGroups.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
   const olderLinkGroups = useMemo(() => linkGroups.slice(LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
+  const rankedClusters = useMemo(() => sortClusters(clusters), [clusters])
+  const filteredClusters = useMemo(
+    () => rankedClusters.filter((cluster) => clusterMatchesFilters(cluster, gatewayFilter, strengthFilter)),
+    [rankedClusters, gatewayFilter, strengthFilter],
+  )
+  const visibleClusters = useMemo(() => filteredClusters.filter((cluster) => !cluster.hidden), [filteredClusters])
+  const hiddenClusters = useMemo(() => filteredClusters.filter((cluster) => cluster.hidden), [filteredClusters])
+  const selectedCluster = useMemo(
+    () => rankedClusters.find((cluster) => cluster.id === selectedClusterId) || null,
+    [rankedClusters, selectedClusterId],
+  )
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
   const brainMapModel = useMemo(
     () => buildBrainMapModel({
@@ -605,6 +689,7 @@ export default function BrainSignalsPanel({
     const scores = [
       ...allSignalGroups.map((group) => group.score),
       ...allLinkGroups.map((group) => group.score),
+      ...rankedClusters.filter((cluster) => !cluster.hidden).map((cluster) => cluster.score),
     ]
     const strongestScore = scores.length > 0 ? Math.max(...scores) : 0
     const autoMemoryCount = rankedLinks.filter((link) => link.promotionType === 'auto').length
@@ -612,11 +697,12 @@ export default function BrainSignalsPanel({
     return {
       firingCases: formatCountLabel(allSignalGroups.length, 'firing case'),
       memoryGroups: formatCountLabel(allLinkGroups.length, 'memory group'),
+      memoryClusters: formatCountLabel(rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
       autoMemory: `${autoMemoryCount} auto`,
       strongestScore: formatScore(strongestScore),
       dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
     }
-  }, [allSignalGroups, allLinkGroups, rankedLinks])
+  }, [allSignalGroups, allLinkGroups, rankedClusters, rankedLinks])
 
   useEffect(() => {
     if (!selectedBrainMapNodeId) {
@@ -627,6 +713,16 @@ export default function BrainSignalsPanel({
       setSelectedBrainMapNodeId(null)
     }
   }, [brainMapModel.nodes, selectedBrainMapNodeId])
+
+  useEffect(() => {
+    if (!selectedClusterId) {
+      return
+    }
+
+    if (!rankedClusters.some((cluster) => cluster.id === selectedClusterId && !cluster.hidden)) {
+      setSelectedClusterId(null)
+    }
+  }, [rankedClusters, selectedClusterId])
 
   const handleDismiss = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
@@ -695,12 +791,62 @@ export default function BrainSignalsPanel({
     }
   }
 
+  const updateCluster = (updatedCluster: MemoryCluster) => {
+    setClusters((current) => sortClusters([
+      updatedCluster,
+      ...current.filter((cluster) => cluster.id !== updatedCluster.id),
+    ]))
+  }
+
+  const handleToggleClusterPin = async (cluster: MemoryCluster) => {
+    setBusyAction(`cluster-pin:${cluster.id}`)
+    setError(null)
+    try {
+      updateCluster(await toggleBrainClusterPin(cluster.id))
+    } catch {
+      setError('Brain cluster pin failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleHideCluster = async (cluster: MemoryCluster) => {
+    setBusyAction(`cluster-hide:${cluster.id}`)
+    setError(null)
+    try {
+      const updatedCluster = await hideBrainCluster(cluster.id)
+      updateCluster(updatedCluster)
+      if (selectedClusterId === cluster.id) {
+        setSelectedClusterId(null)
+      }
+    } catch {
+      setError('Brain cluster hide failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleUnhideCluster = async (cluster: MemoryCluster) => {
+    setBusyAction(`cluster-unhide:${cluster.id}`)
+    setError(null)
+    try {
+      const updatedCluster = await unhideBrainCluster(cluster.id)
+      updateCluster(updatedCluster)
+      setSelectedClusterId(updatedCluster.id)
+    } catch {
+      setError('Brain cluster unhide failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
     const signal = group.primary
     const scoreTier = getScoreTier(group.score)
     const gatewayCounts = getGatewayCounts(group)
     const signalSummary = buildSignalSummary(group)
+    const relatedClusters = relatedClustersForSignalGroup(group, rankedClusters)
 
     return (
       <article
@@ -754,6 +900,15 @@ export default function BrainSignalsPanel({
                   </span>
                 ))}
               </div>
+              {relatedClusters.length > 0 && (
+                <div className="forensic-brain-cluster-chip-row" aria-label="Related memory clusters">
+                  {relatedClusters.map((cluster) => (
+                    <span key={`${group.key}:cluster:${cluster.id}`} className="forensic-brain-cluster-chip">
+                      Cluster: {cluster.label}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -821,6 +976,7 @@ export default function BrainSignalsPanel({
   const renderMemoryLink = (group: MemoryLinkGroup) => {
     const link = group.primary
     const relatedMemoryText = getRelatedMemoryText(group.links.length)
+    const relatedClusters = relatedClustersForLinkGroup(group, rankedClusters)
 
     return (
     <article key={group.key} data-testid="brain-link-card" className="forensic-brain-link-card">
@@ -855,6 +1011,15 @@ export default function BrainSignalsPanel({
           </span>
         ))}
       </div>
+      {relatedClusters.length > 0 && (
+        <div className="forensic-brain-cluster-chip-row" aria-label="Related memory clusters">
+          {relatedClusters.map((cluster) => (
+            <span key={`${group.key}:cluster:${cluster.id}`} className="forensic-brain-cluster-chip">
+              Cluster: {cluster.label}
+            </span>
+          ))}
+        </div>
+      )}
     </article>
     )
   }
@@ -978,6 +1143,187 @@ export default function BrainSignalsPanel({
     </aside>
     )
   }
+
+  const renderClusterCard = (cluster: MemoryCluster, isHidden = false) => {
+    const statusLabel = formatClusterStatus(cluster.status)
+    const signalCount = getClusterSignalCount(cluster)
+    const linkCount = getClusterLinkCount(cluster)
+
+    return (
+      <article
+        key={`${isHidden ? 'hidden' : 'visible'}:${cluster.id}`}
+        data-testid={isHidden ? 'brain-hidden-cluster-card' : 'brain-cluster-card'}
+        className={[
+          'forensic-brain-cluster-card',
+          cluster.pinned ? 'is-pinned' : '',
+          isHidden ? 'is-hidden' : '',
+        ].filter(Boolean).join(' ')}
+      >
+        <div className="forensic-brain-cluster-card-main">
+          <div className="forensic-brain-cluster-card-topline">
+            <span className="forensic-brain-card-label">Memory cluster</span>
+            <div className="forensic-brain-cluster-card-badges">
+              {cluster.pinned && <span>Pinned</span>}
+              <span>{statusLabel}</span>
+              <strong>{formatScore(cluster.score)}</strong>
+            </div>
+          </div>
+          <h4>{cluster.label}</h4>
+          <p>{cluster.summary}</p>
+          <div className="forensic-brain-chip-row">
+            <span className={`forensic-brain-chip ${gatewayClassNames[cluster.dominantGateway] || ''}`}>
+              {formatClusterGatewayCount(cluster)}
+            </span>
+            <span className="forensic-brain-chip">{formatClusterMemberCount(cluster)}</span>
+            <span className="forensic-brain-chip">{formatCountLabel(signalCount, 'signal')}</span>
+            <span className="forensic-brain-chip">{formatCountLabel(linkCount, 'memory link')}</span>
+          </div>
+        </div>
+
+        <div className="forensic-brain-cluster-actions">
+          {!isHidden && (
+            <button
+              type="button"
+              aria-label={`Inspect cluster ${cluster.label}`}
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setSelectedClusterId(cluster.id)}
+            >
+              <ExternalLink size={13} />
+              Inspect
+            </button>
+          )}
+          {!isHidden && (
+            <button
+              type="button"
+              aria-label={`${cluster.pinned ? 'Unpin' : 'Pin'} cluster ${cluster.label}`}
+              className="forensic-brain-action"
+              disabled={busyAction === `cluster-pin:${cluster.id}`}
+              onClick={() => void handleToggleClusterPin(cluster)}
+            >
+              <Pin size={13} />
+              {cluster.pinned ? 'Unpin' : 'Pin'}
+            </button>
+          )}
+          {isHidden ? (
+            <button
+              type="button"
+              aria-label={`Unhide cluster ${cluster.label}`}
+              className="forensic-brain-action"
+              disabled={busyAction === `cluster-unhide:${cluster.id}`}
+              onClick={() => void handleUnhideCluster(cluster)}
+            >
+              <Eye size={13} />
+              Unhide
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label={`Hide cluster ${cluster.label}`}
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `cluster-hide:${cluster.id}`}
+              onClick={() => void handleHideCluster(cluster)}
+            >
+              <EyeOff size={13} />
+              Hide
+            </button>
+          )}
+        </div>
+      </article>
+    )
+  }
+
+  const renderClusterDetail = (cluster: MemoryCluster) => (
+    <aside
+      data-testid="brain-cluster-detail"
+      role="dialog"
+      aria-label={`Memory cluster detail for ${cluster.label}`}
+      className="forensic-brain-cluster-detail"
+    >
+      <header className="forensic-brain-link-detail-header">
+        <div>
+          <span className="forensic-brain-panel-kicker">Cluster detail</span>
+          <h3>{cluster.label}</h3>
+        </div>
+        <button
+          type="button"
+          aria-label="Close memory cluster detail"
+          className="forensic-brain-detail-close"
+          onClick={() => setSelectedClusterId(null)}
+        >
+          <X size={14} />
+        </button>
+      </header>
+
+      <div className="forensic-brain-detail-metrics">
+        <div>
+          <span>Strength</span>
+          <strong>{formatScore(cluster.score)}</strong>
+        </div>
+        <div>
+          <span>Status</span>
+          <strong>{formatClusterStatus(cluster.status)}</strong>
+        </div>
+        <div>
+          <span>Gateway</span>
+          <strong>{formatGateway(cluster.dominantGateway)}</strong>
+        </div>
+      </div>
+
+      <div className="forensic-brain-detail-section">
+        <span>Member Investigations</span>
+        <div className="forensic-brain-cluster-member-list">
+          {cluster.members.map((member) => (
+            <div key={`${cluster.id}:member:${member.investigationId}`}>
+              <strong>{member.title || member.investigationId}</strong>
+              <span>{member.role === 'current' ? 'Current focus' : 'Memory case'}</span>
+              {member.role !== 'current' && (
+                <button
+                  type="button"
+                  aria-label={`Open cluster member ${member.title || member.investigationId}`}
+                  className="forensic-brain-action"
+                  onClick={() => onOpenInvestigation?.(member.investigationId)}
+                >
+                  <ExternalLink size={13} />
+                  Open
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="forensic-brain-detail-section">
+        <span>Reason Samples</span>
+        <div className="forensic-brain-detail-reasons">
+          {cluster.reasonSamples.map((reason, index) => (
+            <article key={`${cluster.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
+              <strong>{formatGateway(reason.gateway)}</strong>
+              <p>{reason.detail || reason.label}</p>
+              <dl>
+                <div>
+                  <dt>Current nodes</dt>
+                  <dd>{formatNodeIds(reason.currentNodeIds)}</dd>
+                </div>
+                <div>
+                  <dt>Memory nodes</dt>
+                  <dd>{formatNodeIds(reason.targetNodeIds)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <div className="forensic-brain-detail-section">
+        <span>Related Memory Objects</span>
+        <div className="forensic-brain-chip-row">
+          <span className="forensic-brain-chip">{formatCountLabel(getClusterSignalCount(cluster), 'signal')}</span>
+          <span className="forensic-brain-chip">{formatCountLabel(getClusterLinkCount(cluster), 'memory link')}</span>
+          {cluster.pinned && <span className="forensic-brain-chip">Pinned</span>}
+        </div>
+      </div>
+    </aside>
+  )
 
   const renderBrainMapNode = (node: BrainMapNode) => {
     const isSelected = selectedBrainMapNode?.id === node.id
@@ -1188,6 +1534,10 @@ export default function BrainSignalsPanel({
         <strong>{brainHealth.memoryGroups}</strong>
       </div>
       <div>
+        <span>Memory Clusters</span>
+        <strong>{brainHealth.memoryClusters}</strong>
+      </div>
+      <div>
         <span>Auto Memory</span>
         <strong>{brainHealth.autoMemory}</strong>
       </div>
@@ -1310,10 +1660,84 @@ export default function BrainSignalsPanel({
     )
   }
 
+  const renderClustersView = () => {
+    const emptyMessage = rankedClusters.length === 0
+      ? 'No memory clusters yet.'
+      : 'No memory clusters match these filters.'
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-clusters">
+        {renderBrainFilters()}
+        <section className="forensic-brain-panel forensic-brain-panel-clusters">
+          <div className="forensic-brain-panel-header">
+            <div>
+              <span className="forensic-brain-panel-kicker">Recurring memory regions</span>
+              <h3>Memory Clusters</h3>
+            </div>
+            <div className="forensic-brain-cluster-summary">
+              <span>{visibleClusters.length} visible</span>
+              <span>{hiddenClusters.length} hidden</span>
+            </div>
+          </div>
+
+          {!currentInvestigationId ? (
+            <div data-testid="brain-clusters-empty-state" className="forensic-brain-empty">
+              Select an investigation to cluster memory.
+            </div>
+          ) : isLoading ? (
+            <div data-testid="brain-loading-state" className="forensic-brain-empty">
+              Grouping memory clusters...
+            </div>
+          ) : visibleClusters.length === 0 && hiddenClusters.length === 0 ? (
+            <div data-testid="brain-clusters-empty-state" className="forensic-brain-empty">
+              {emptyMessage}
+            </div>
+          ) : (
+            <div className="forensic-brain-cluster-workspace">
+              <div className="forensic-brain-cluster-list">
+                {visibleClusters.map((cluster) => renderClusterCard(cluster))}
+
+                {hiddenClusters.length > 0 && (
+                  <div data-testid="brain-hidden-clusters-section" className="forensic-brain-lower-priority">
+                    <button
+                      type="button"
+                      className="forensic-brain-lower-priority-toggle"
+                      aria-expanded={showHiddenClusters}
+                      onClick={() => setShowHiddenClusters((current) => !current)}
+                    >
+                      {showHiddenClusters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      {showHiddenClusters ? 'Hide' : 'Show'} hidden clusters ({hiddenClusters.length})
+                    </button>
+
+                    {showHiddenClusters && (
+                      <div className="forensic-brain-hidden-cluster-list">
+                        {hiddenClusters.map((cluster) => renderClusterCard(cluster, true))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {selectedCluster && !selectedCluster.hidden ? (
+                renderClusterDetail(selectedCluster)
+              ) : (
+                <aside className="forensic-brain-cluster-detail forensic-brain-cluster-detail-empty">
+                  <span className="forensic-brain-panel-kicker">Cluster detail</span>
+                  <p>Select a memory cluster to inspect members, reasons, and related memory objects.</p>
+                </aside>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
+
   const brainViewOptions: Array<{ view: BrainView; label: string; detail: string }> = [
     { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
     { view: 'links', label: 'Memory Links', detail: `${allLinkGroups.length} saved` },
+    { view: 'clusters', label: 'Memory Clusters', detail: `${visibleClusters.length} visible` },
   ]
 
   return (
@@ -1331,7 +1755,7 @@ export default function BrainSignalsPanel({
         </div>
         <div className="forensic-brain-command-actions">
           <span className="forensic-brain-status">
-            {allSignalGroups.length} active / {allLinkGroups.length} linked
+            {allSignalGroups.length} active / {allLinkGroups.length} linked / {visibleClusters.length} clusters
           </span>
           <button
             type="button"
@@ -1374,6 +1798,7 @@ export default function BrainSignalsPanel({
         )}
         {activeBrainView === 'signals' && renderSignalsView()}
         {activeBrainView === 'links' && renderLinksView()}
+        {activeBrainView === 'clusters' && renderClustersView()}
       </div>
 
       {activeBrainView === 'links' && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
