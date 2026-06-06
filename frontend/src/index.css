@@ -5775,6 +5775,47 @@ body {
   box-shadow: inset 0 0 0 1px rgba(129, 227, 255, 0.08);
 }
 
+.forensic-brain-health-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(7rem, 1fr));
+  gap: 0.55rem;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.12);
+  background:
+    linear-gradient(90deg, rgba(0, 255, 65, 0.045), transparent 34%),
+    rgba(2, 6, 10, 0.78);
+  padding: 0.68rem 1.2rem;
+}
+
+.forensic-brain-health-strip div {
+  min-width: 0;
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  background: rgba(1, 4, 7, 0.66);
+  padding: 0.54rem 0.62rem;
+}
+
+.forensic-brain-health-strip span,
+.forensic-brain-health-strip strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-brain-health-strip span {
+  color: var(--forensic-text-faint);
+  font-size: 0.54rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-health-strip strong {
+  margin-top: 0.22rem;
+  color: var(--forensic-text);
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
 .forensic-brain-refresh,
 .forensic-brain-action {
   display: inline-flex;

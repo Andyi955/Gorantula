@@ -334,6 +334,40 @@ describe('BrainSignalsPanel', () => {
     expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
   })
 
+  it('summarizes brain memory health across active and linked memory', async () => {
+    const sourceSignal = makeSignal({
+      id: 'brain-signal-health-source',
+      targetInvestigationId: 'inv-health-source',
+      targetTitle: 'Health Source Case',
+      score: 0.52,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+      suggestedAction: 'Compare source domain',
+    })
+    const autoLink = {
+      ...makeLink({
+        id: 'brain-link-health-auto',
+        toInvestigationId: 'inv-health-auto',
+        toTitle: 'Health Auto Memory',
+        score: 0.88,
+        gateways: ['entity-date', 'source-domain'],
+        reasons: signal.reasons,
+      }),
+      promotionType: 'auto',
+      activationCount: 3,
+    }
+    installBrainFetch({ signals: [signal, sourceSignal], links: [autoLink, link] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const health = await screen.findByTestId('brain-health-summary')
+    expect(health).toHaveTextContent('2 firing cases')
+    expect(health).toHaveTextContent('2 memory groups')
+    expect(health).toHaveTextContent('1 auto')
+    expect(health).toHaveTextContent('92%')
+    expect(health).toHaveTextContent('Entity/Date')
+  })
+
   it('opens a linked memory detail view with evidence and matched node ids', async () => {
     const user = userEvent.setup()
     const onOpenInvestigation = vi.fn()

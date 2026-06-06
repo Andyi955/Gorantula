@@ -314,6 +314,42 @@ const getRelatedMemoryText = (count: number) => {
   return `+${relatedCount} related memor${relatedCount === 1 ? 'y' : 'ies'}`
 }
 
+const formatCountLabel = (count: number, singular: string) =>
+  `${count} ${singular}${count === 1 ? '' : 's'}`
+
+const dominantGatewayLabel = (signalGroups: BrainSignalGroup[], linkGroups: MemoryLinkGroup[]) => {
+  const counts = new Map<BrainGateway, number>()
+
+  const countGateways = (gateways: BrainGateway[]) => {
+    gateways.forEach((gateway) => counts.set(gateway, (counts.get(gateway) || 0) + 1))
+  }
+
+  signalGroups.forEach((group) => countGateways(group.gateways))
+  linkGroups.forEach((group) => countGateways(group.gateways))
+
+  const dominant = Array.from(counts.entries()).sort((left, right) => {
+    if (right[1] !== left[1]) {
+      return right[1] - left[1]
+    }
+    return gatewayRank(left[0]) - gatewayRank(right[0])
+  })[0]?.[0]
+
+  return dominant ? formatGateway(dominant) : 'None'
+}
+
+const gatewayRank = (gateway: BrainGateway) => {
+  switch (gateway) {
+  case 'entity-date':
+    return 0
+  case 'source-domain':
+    return 1
+  case 'relationship-tag':
+    return 2
+  default:
+    return 9
+  }
+}
+
 const getGatewayCounts = (group: BrainSignalGroup) =>
   group.gateways.map((gateway) => {
     const reasonCount = group.reasons.filter((reason) => reason.gateway === gateway).length
@@ -428,6 +464,7 @@ export default function BrainSignalsPanel({
   }, [loadBrainMemory])
 
   const rankedSignals = useMemo(() => sortByScore(signals), [signals])
+  const allSignalGroups = useMemo(() => groupSignalsByOlderCase(rankedSignals), [rankedSignals])
   const filteredSignals = useMemo(
     () => rankedSignals.filter((signal) => matchesBrainFilters(signal, gatewayFilter, strengthFilter)),
     [rankedSignals, gatewayFilter, strengthFilter],
@@ -451,6 +488,7 @@ export default function BrainSignalsPanel({
     }
   }, [signalGroups])
   const rankedLinks = useMemo(() => sortByScore(links), [links])
+  const allLinkGroups = useMemo(() => groupMemoryLinksByOlderCase(rankedLinks), [rankedLinks])
   const filteredLinks = useMemo(
     () => rankedLinks.filter((link) => matchesBrainFilters(link, gatewayFilter, strengthFilter)),
     [rankedLinks, gatewayFilter, strengthFilter],
@@ -462,6 +500,22 @@ export default function BrainSignalsPanel({
     () => linkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
     [linkGroups, selectedMemoryLinkId],
   )
+  const brainHealth = useMemo(() => {
+    const scores = [
+      ...allSignalGroups.map((group) => group.score),
+      ...allLinkGroups.map((group) => group.score),
+    ]
+    const strongestScore = scores.length > 0 ? Math.max(...scores) : 0
+    const autoMemoryCount = rankedLinks.filter((link) => link.promotionType === 'auto').length
+
+    return {
+      firingCases: formatCountLabel(allSignalGroups.length, 'firing case'),
+      memoryGroups: formatCountLabel(allLinkGroups.length, 'memory group'),
+      autoMemory: `${autoMemoryCount} auto`,
+      strongestScore: formatScore(strongestScore),
+      dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
+    }
+  }, [allSignalGroups, allLinkGroups, rankedLinks])
 
   const handleDismiss = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
@@ -851,6 +905,29 @@ export default function BrainSignalsPanel({
               {option.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div data-testid="brain-health-summary" className="forensic-brain-health-strip" aria-label="Brain memory health">
+        <div>
+          <span>Firing Cases</span>
+          <strong>{brainHealth.firingCases}</strong>
+        </div>
+        <div>
+          <span>Memory Groups</span>
+          <strong>{brainHealth.memoryGroups}</strong>
+        </div>
+        <div>
+          <span>Auto Memory</span>
+          <strong>{brainHealth.autoMemory}</strong>
+        </div>
+        <div>
+          <span>Strongest</span>
+          <strong>{brainHealth.strongestScore}</strong>
+        </div>
+        <div>
+          <span>Dominant Gateway</span>
+          <strong>{brainHealth.dominantGateway}</strong>
         </div>
       </div>
 
