@@ -234,6 +234,44 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('4 activations')
   })
 
+  it('compresses duplicate linked memories by older case title', async () => {
+    const duplicateLinks = [
+      {
+        ...makeLink({
+          id: 'brain-link-duplicate-a',
+          toInvestigationId: 'inv-duplicate-a',
+          toTitle: 'Repeated AI Case',
+          score: 0.86,
+          gateways: ['entity-date'],
+          reasons: [signal.reasons[0]],
+        }),
+        activationCount: 2,
+      },
+      {
+        ...makeLink({
+          id: 'brain-link-duplicate-b',
+          toInvestigationId: 'inv-duplicate-b',
+          toTitle: 'Repeated AI Case',
+          score: 0.72,
+          gateways: ['source-domain'],
+          reasons: [signal.reasons[1]],
+        }),
+        activationCount: 3,
+      },
+    ]
+    installBrainFetch({ signals: [], links: duplicateLinks })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const card = await screen.findByTestId('brain-link-card')
+    expect(screen.getAllByTestId('brain-link-card')).toHaveLength(1)
+    expect(card).toHaveTextContent('Repeated AI Case')
+    expect(card).toHaveTextContent('+1 related memory')
+    expect(card).toHaveTextContent('5 activations')
+    expect(card).toHaveTextContent('Entity/Date')
+    expect(card).toHaveTextContent('Source Domain')
+  })
+
   it('opens a linked memory detail view with evidence and matched node ids', async () => {
     const user = userEvent.setup()
     const onOpenInvestigation = vi.fn()

@@ -43,6 +43,17 @@ interface BrainSignalGroup {
   gateways: BrainGateway[]
 }
 
+interface MemoryLinkGroup {
+  key: string
+  primary: MemoryLink
+  links: MemoryLink[]
+  score: number
+  reasons: MemoryLink['reasons']
+  gateways: BrainGateway[]
+  activationCount: number
+  promotionType?: string
+}
+
 const formatGateway = (gateway: BrainGateway) =>
   gatewayLabels[gateway] || String(gateway).replace(/[-_]+/g, ' ')
 
@@ -54,6 +65,7 @@ const formatActivationCount = (activationCount?: number) => {
 }
 
 const formatMemoryLinkType = (promotionType?: string) =>
+  promotionType === 'mixed' ? 'Mixed Memory' :
   promotionType === 'auto' ? 'Auto Memory' : 'Manual Memory'
 
 const formatTimestamp = (timestamp?: string) => {
@@ -96,6 +108,9 @@ const normalizeSignalGroupTitle = (title: string) => title.trim().toLocaleLowerC
 const getSignalGroupKey = (signal: BrainSignal) =>
   normalizeSignalGroupTitle(signal.targetTitle) || signal.targetInvestigationId
 
+const getMemoryLinkGroupKey = (link: MemoryLink) =>
+  normalizeSignalGroupTitle(link.toTitle) || link.toInvestigationId
+
 const uniqueReasons = (signals: BrainSignal[]) => {
   const seen = new Set<string>()
   const reasons: BrainSignal['reasons'] = []
@@ -135,6 +150,56 @@ const uniqueGateways = (signals: BrainSignal[]) => {
   return gateways
 }
 
+const uniqueLinkReasons = (links: MemoryLink[]) => {
+  const seen = new Set<string>()
+  const reasons: MemoryLink['reasons'] = []
+
+  links.forEach((link) => {
+    link.reasons.forEach((reason) => {
+      const key = `${reason.gateway}:${reason.value}:${reason.detail || reason.label}`
+      if (seen.has(key)) {
+        return
+      }
+      seen.add(key)
+      reasons.push(reason)
+    })
+  })
+
+  return reasons
+}
+
+const uniqueLinkGateways = (links: MemoryLink[]) => {
+  const seen = new Set<string>()
+  const gateways: BrainGateway[] = []
+
+  links.forEach((link) => {
+    const linkGateways = link.reasons.length > 0
+      ? link.reasons.map((reason) => reason.gateway)
+      : link.gateways
+
+    linkGateways.forEach((gateway) => {
+      if (seen.has(gateway)) {
+        return
+      }
+      seen.add(gateway)
+      gateways.push(gateway)
+    })
+  })
+
+  return gateways
+}
+
+const memoryGroupActivationCount = (links: MemoryLink[]) =>
+  links.reduce((total, link) => total + Math.max(1, Math.round(link.activationCount || 1)), 0)
+
+const memoryGroupPromotionType = (links: MemoryLink[]) => {
+  const types = new Set(links.map((link) => link.promotionType || 'manual'))
+  if (types.size > 1) {
+    return 'mixed'
+  }
+  return links[0]?.promotionType || 'manual'
+}
+
 const groupSignalsByOlderCase = (signals: BrainSignal[]): BrainSignalGroup[] => {
   const grouped = new Map<string, BrainSignal[]>()
 
@@ -165,12 +230,52 @@ const groupSignalsByOlderCase = (signals: BrainSignal[]): BrainSignalGroup[] => 
     })
 }
 
+const groupMemoryLinksByOlderCase = (links: MemoryLink[]): MemoryLinkGroup[] => {
+  const grouped = new Map<string, MemoryLink[]>()
+
+  sortByScore(links).forEach((link) => {
+    const key = getMemoryLinkGroupKey(link)
+    grouped.set(key, [...(grouped.get(key) || []), link])
+  })
+
+  return Array.from(grouped.entries())
+    .map(([key, groupLinks]) => {
+      const rankedGroupLinks = sortByScore(groupLinks)
+      const primary = rankedGroupLinks[0]
+
+      return {
+        key,
+        primary,
+        links: rankedGroupLinks,
+        score: primary.score,
+        reasons: uniqueLinkReasons(rankedGroupLinks),
+        gateways: uniqueLinkGateways(rankedGroupLinks),
+        activationCount: memoryGroupActivationCount(rankedGroupLinks),
+        promotionType: memoryGroupPromotionType(rankedGroupLinks),
+      }
+    })
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+      return left.primary.toTitle.localeCompare(right.primary.toTitle)
+    })
+}
+
 const getRelatedFiringText = (count: number) => {
   const relatedCount = count - 1
   if (relatedCount <= 0) {
     return null
   }
   return `+${relatedCount} related firing${relatedCount === 1 ? '' : 's'}`
+}
+
+const getRelatedMemoryText = (count: number) => {
+  const relatedCount = count - 1
+  if (relatedCount <= 0) {
+    return null
+  }
+  return `+${relatedCount} related memor${relatedCount === 1 ? 'y' : 'ies'}`
 }
 
 const getGatewayCounts = (group: BrainSignalGroup) =>
@@ -304,11 +409,12 @@ export default function BrainSignalsPanel({
     }
   }, [signalGroups])
   const rankedLinks = useMemo(() => sortByScore(links), [links])
-  const priorityLinks = useMemo(() => rankedLinks.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [rankedLinks])
-  const olderLinks = useMemo(() => rankedLinks.slice(LINKED_MEMORY_PRIORITY_LIMIT), [rankedLinks])
-  const selectedMemoryLink = useMemo(
-    () => rankedLinks.find((link) => link.id === selectedMemoryLinkId) || null,
-    [rankedLinks, selectedMemoryLinkId],
+  const linkGroups = useMemo(() => groupMemoryLinksByOlderCase(rankedLinks), [rankedLinks])
+  const priorityLinkGroups = useMemo(() => linkGroups.slice(0, LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
+  const olderLinkGroups = useMemo(() => linkGroups.slice(LINKED_MEMORY_PRIORITY_LIMIT), [linkGroups])
+  const selectedMemoryLinkGroup = useMemo(
+    () => linkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
+    [linkGroups, selectedMemoryLinkId],
   )
 
   const handleDismiss = async (group: BrainSignalGroup) => {
@@ -340,13 +446,14 @@ export default function BrainSignalsPanel({
     }
   }
 
-  const handleForgetLink = async (link: MemoryLink) => {
-    setBusyAction(`forget:${link.id}`)
+  const handleForgetLinkGroup = async (group: MemoryLinkGroup) => {
+    const linkIds = group.links.map((link) => link.id)
+    setBusyAction(`forget:${group.key}`)
     setError(null)
     try {
-      await forgetBrainLink(link.id)
-      setLinks((current) => current.filter((candidate) => candidate.id !== link.id))
-      setSelectedMemoryLinkId((current) => (current === link.id ? null : current))
+      await Promise.all(linkIds.map((linkId) => forgetBrainLink(linkId)))
+      setLinks((current) => current.filter((candidate) => !linkIds.includes(candidate.id)))
+      setSelectedMemoryLinkId((current) => (current && linkIds.includes(current) ? null : current))
     } catch {
       setError('Brain memory forget failed')
     } finally {
@@ -479,32 +586,37 @@ export default function BrainSignalsPanel({
     )
   }
 
-  const renderMemoryLink = (link: MemoryLink) => (
-    <article key={link.id} data-testid="brain-link-card" className="forensic-brain-link-card">
+  const renderMemoryLink = (group: MemoryLinkGroup) => {
+    const link = group.primary
+    const relatedMemoryText = getRelatedMemoryText(group.links.length)
+
+    return (
+    <article key={group.key} data-testid="brain-link-card" className="forensic-brain-link-card">
       <button
         type="button"
         className="forensic-brain-link-open"
         aria-label={`Inspect memory link ${link.toTitle}`}
-        aria-expanded={selectedMemoryLinkId === link.id}
+        aria-expanded={selectedMemoryLinkGroup?.key === group.key}
         onClick={() => setSelectedMemoryLinkId(link.id)}
       >
         <span className="forensic-brain-link-header">
           <Link2 size={14} />
           <strong>{link.toTitle}</strong>
-          <span>{formatScore(link.score)}</span>
+          <span>{formatScore(group.score)}</span>
         </span>
         <span className="forensic-brain-link-meta">
-          <span className={link.promotionType === 'auto' ? 'forensic-brain-link-meta-auto' : ''}>
-            {formatMemoryLinkType(link.promotionType)}
+          <span className={group.promotionType === 'auto' ? 'forensic-brain-link-meta-auto' : ''}>
+            {formatMemoryLinkType(group.promotionType)}
           </span>
-          <span>{formatActivationCount(link.activationCount)}</span>
+          <span>{formatActivationCount(group.activationCount)}</span>
+          {relatedMemoryText && <span>{relatedMemoryText}</span>}
         </span>
-        <span className="forensic-brain-link-preview">{link.reasons[0]?.detail || link.suggestedAction}</span>
+        <span className="forensic-brain-link-preview">{group.reasons[0]?.detail || link.suggestedAction}</span>
       </button>
       <div className="forensic-brain-chip-row">
-        {link.gateways.map((gateway) => (
+        {group.gateways.map((gateway) => (
           <span
-            key={`${link.id}:${gateway}`}
+            key={`${group.key}:${gateway}`}
             className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
           >
             {formatGateway(gateway)}
@@ -512,9 +624,14 @@ export default function BrainSignalsPanel({
         ))}
       </div>
     </article>
-  )
+    )
+  }
 
-  const renderMemoryLinkDetail = (link: MemoryLink) => (
+  const renderMemoryLinkDetail = (group: MemoryLinkGroup) => {
+    const link = group.primary
+    const relatedMemoryText = getRelatedMemoryText(group.links.length)
+
+    return (
     <aside
       data-testid="brain-link-detail"
       role="dialog"
@@ -539,21 +656,24 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-detail-metrics">
         <div>
           <span>Score</span>
-          <strong>{formatScore(link.score)}</strong>
+          <strong>{formatScore(group.score)}</strong>
         </div>
         <div>
           <span>Memory Type</span>
-          <strong>{formatMemoryLinkType(link.promotionType)}</strong>
+          <strong>{formatMemoryLinkType(group.promotionType)}</strong>
         </div>
         <div>
           <span>Activation Count</span>
-          <strong>{formatActivationCount(link.activationCount)}</strong>
+          <strong>{formatActivationCount(group.activationCount)}</strong>
         </div>
       </div>
 
       <div className="forensic-brain-detail-section">
         <span>Connected Investigations</span>
         <p><strong>{link.fromTitle}</strong> connects to <strong>{link.toTitle}</strong>.</p>
+        {relatedMemoryText && (
+          <p className="forensic-brain-detail-compressed">{relatedMemoryText} compressed into this memory case.</p>
+        )}
         <div className="forensic-brain-detail-actions">
           <button
             type="button"
@@ -568,8 +688,8 @@ export default function BrainSignalsPanel({
             type="button"
             aria-label={`Forget memory link ${link.toTitle}`}
             className="forensic-brain-action forensic-brain-action-secondary"
-            disabled={busyAction === `forget:${link.id}`}
-            onClick={() => void handleForgetLink(link)}
+            disabled={busyAction === `forget:${group.key}`}
+            onClick={() => void handleForgetLinkGroup(group)}
           >
             <Trash2 size={13} />
             Forget Link
@@ -591,9 +711,9 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-detail-section">
         <span>Gateways</span>
         <div className="forensic-brain-chip-row">
-          {link.gateways.map((gateway) => (
+          {group.gateways.map((gateway) => (
             <span
-              key={`${link.id}:detail:${gateway}`}
+              key={`${group.key}:detail:${gateway}`}
               className={`forensic-brain-chip ${gatewayClassNames[gateway] || ''}`}
             >
               {formatGateway(gateway)}
@@ -605,8 +725,8 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-detail-section">
         <span>Evidence Reasons</span>
         <div className="forensic-brain-detail-reasons">
-          {link.reasons.map((reason, index) => (
-            <article key={`${link.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
+          {group.reasons.map((reason, index) => (
+            <article key={`${group.key}:reason:${reason.gateway}:${reason.value}:${index}`}>
               <strong>{formatGateway(reason.gateway)}</strong>
               <p>{reason.detail || reason.label}</p>
               <dl>
@@ -624,7 +744,8 @@ export default function BrainSignalsPanel({
         </div>
       </div>
     </aside>
-  )
+    )
+  }
 
   return (
     <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals">
@@ -718,9 +839,9 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <div className="forensic-brain-link-list">
-              {priorityLinks.map(renderMemoryLink)}
+              {priorityLinkGroups.map(renderMemoryLink)}
 
-              {olderLinks.length > 0 && (
+              {olderLinkGroups.length > 0 && (
                 <div data-testid="brain-older-links-section" className="forensic-brain-lower-priority">
                   <button
                     type="button"
@@ -729,12 +850,12 @@ export default function BrainSignalsPanel({
                     onClick={() => setShowOlderMemoryLinks((current) => !current)}
                   >
                     {showOlderMemoryLinks ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {showOlderMemoryLinks ? 'Hide' : 'Show'} older memory links ({olderLinks.length})
+                    {showOlderMemoryLinks ? 'Hide' : 'Show'} older memory links ({olderLinkGroups.length})
                   </button>
 
                   {showOlderMemoryLinks && (
                     <div className="forensic-brain-lower-priority-list">
-                      {olderLinks.map(renderMemoryLink)}
+                      {olderLinkGroups.map(renderMemoryLink)}
                     </div>
                   )}
                 </div>
@@ -744,7 +865,7 @@ export default function BrainSignalsPanel({
         </aside>
       </div>
 
-      {selectedMemoryLink && renderMemoryLinkDetail(selectedMemoryLink)}
+      {selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
 
       {error && (
         <div data-testid="brain-error-state" role="alert" className="forensic-brain-error">
