@@ -286,6 +286,12 @@ export const waitForBoardPersistence = async (
   )
 }
 
+export const waitForRenderedBoardNodes = async (page: Page, nodeIds: string[]) => {
+  await page.waitForFunction((ids) => {
+    return ids.every((nodeId) => document.querySelector(`[data-node-id="${nodeId}"]`))
+  }, nodeIds)
+}
+
 export const createSmokeNode = (
   id: string,
   title: string,

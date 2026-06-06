@@ -7,6 +7,7 @@ import {
   outboundTypeCount,
   switchToBoard,
   waitForBoardPersistence,
+  waitForRenderedBoardNodes,
   waitForOutboundMessage,
   seedBrowserQaData,
 } from './helpers'
@@ -319,47 +320,44 @@ test.describe('Gorantula smoke flows', () => {
     const vaultId = String(crawl.vaultId)
 
     await switchToBoard(page)
-    await emitBackendMessage(page, {
-      type: 'MEMORY_NODE_GATHERED',
-      payload: {
-        vaultId,
-        node: createSmokeNode(
-          'smoke-rabbit-web',
-          'Smoke Rabbit Web Lead',
-          'A Rabbit Hole web lead follows a live smoke-test evidence trail.',
-          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'web_search', rabbitPass: 1 },
-        ),
-      },
-    })
-    await expect(page.getByText('Smoke Rabbit Web Lead')).toBeVisible()
+    const emitRabbitNodeAndWait = async (
+      id: string,
+      title: string,
+      summary: string,
+      extra: Record<string, unknown>,
+    ) => {
+      await emitBackendMessage(page, {
+        type: 'MEMORY_NODE_GATHERED',
+        payload: {
+          vaultId,
+          node: createSmokeNode(id, title, summary, extra),
+        },
+      })
+      await waitForRenderedBoardNodes(page, [id])
+    }
 
-    await emitBackendMessage(page, {
-      type: 'MEMORY_NODE_GATHERED',
-      payload: {
-        vaultId,
-        node: createSmokeNode(
-          'smoke-rabbit-vault',
-          'Smoke Rabbit Vault Echo',
-          'A Rabbit Hole vault echo finds a related older smoke-test case.',
-          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'vault_search', rabbitPass: 1 },
-        ),
-      },
+    await emitRabbitNodeAndWait(
+      'smoke-rabbit-web',
+      'Smoke Rabbit Web Lead',
+      'A Rabbit Hole web lead follows a live smoke-test evidence trail.',
+      { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'web_search', rabbitPass: 1 },
+    )
+    await emitRabbitNodeAndWait(
+      'smoke-rabbit-vault',
+      'Smoke Rabbit Vault Echo',
+      'A Rabbit Hole vault echo finds a related older smoke-test case.',
+      { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'vault_search', rabbitPass: 1 },
+    )
+    await emitRabbitNodeAndWait(
+      'smoke-rabbit-support',
+      'Smoke Rabbit Support Evidence',
+      'A Rabbit Hole support lead remains useful but unconnected after relationship synthesis.',
+      { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'timeline_context', rabbitPass: 1 },
+    )
+    await waitForBoardPersistence(page, vaultId, {
+      nodeIds: ['smoke-rabbit-web', 'smoke-rabbit-vault', 'smoke-rabbit-support'],
     })
-    await expect(page.getByText('Smoke Rabbit Vault Echo')).toBeVisible()
-
-    await emitBackendMessage(page, {
-      type: 'MEMORY_NODE_GATHERED',
-      payload: {
-        vaultId,
-        node: createSmokeNode(
-          'smoke-rabbit-support',
-          'Smoke Rabbit Support Evidence',
-          'A Rabbit Hole support lead remains useful but unconnected after relationship synthesis.',
-          { origin: 'rabbit-hole', rabbitState: 'provisional', rabbitTool: 'timeline_context', rabbitPass: 1 },
-        ),
-      },
-    })
-    await expect(page.getByText('Smoke Rabbit Support Evidence')).toBeVisible()
+    await waitForRenderedBoardNodes(page, ['smoke-rabbit-web', 'smoke-rabbit-vault', 'smoke-rabbit-support'])
 
     await emitBackendMessage(page, {
       type: 'RABBIT_HOLE_NODE_UPDATE',
