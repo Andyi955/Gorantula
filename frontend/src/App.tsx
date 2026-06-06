@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
-import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle, Activity } from 'lucide-react'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle, Activity, Brain } from 'lucide-react'
 import {
   buildSidebarInvestigationRows,
   createRootInvestigation,
@@ -67,6 +67,9 @@ const TimelineView = lazy(() => import('./components/TimelineView'))
 const VaultChatbot = lazy(() => import('./components/VaultChatbot'))
 const SynthesisPanel = lazy(() => import('./components/SynthesisPanel'))
 const DiscoveryPanel = lazy(() => import('./components/DiscoveryPanel'))
+const BrainSignalsPanel = lazy(() => import('./components/BrainSignalsPanel'))
+
+type ActiveTab = 'spider' | 'board' | 'timeline' | 'brain' | 'chat' | 'settings'
 
 export interface DiscoveryRecord {
   id: string
@@ -1021,7 +1024,7 @@ function App() {
     initialInvestigationsRef.current = getCachedInvestigations()
   }
 
-  const [activeTab, setActiveTab] = useState<'spider' | 'board' | 'timeline' | 'chat' | 'settings'>('spider')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('spider')
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<SpiderOperationMode>('web')
   const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
@@ -1092,12 +1095,12 @@ function App() {
   investigationsRef.current = investigations
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
-  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'chat' || activeTab === 'settings'
+  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'brain' || activeTab === 'chat' || activeTab === 'settings'
   const expandedSidebarWidth = hasCustomSidebarWidth
     ? sidebarWidth
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
-  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && activeTab !== 'chat' && !isBoardWorkspaceActive
+  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && activeTab !== 'brain' && activeTab !== 'chat' && !isBoardWorkspaceActive
   const visibleSystemNotice = activeTab === 'spider' && systemNotice && dismissedSystemNotice !== systemNotice ? systemNotice : null
   const systemNoticeText = visibleSystemNotice ? formatSystemNotice(visibleSystemNotice) : null
 
@@ -1356,6 +1359,16 @@ function App() {
       })
     }, 0)
   }, [clearInvestigationSwitchOverlay, clearInvestigationSwitchTimeout, currentInvestigationId])
+
+  const handleOpenBrainInvestigation = useCallback((investigationId: string) => {
+    const targetInvestigation = investigationsRef.current.find((investigation) => investigation.id === investigationId)
+    if (!targetInvestigation) {
+      return
+    }
+
+    openInvestigationFromSidebar(targetInvestigation)
+    setActiveTab('board')
+  }, [openInvestigationFromSidebar])
 
   const persistInvestigations = useCallback((nextInvestigations: InvestigationRecord[]) => {
     setInvestigations(nextInvestigations);
@@ -2806,7 +2819,7 @@ function App() {
   const tabRailClassName = isForensicWorkspaceActive
     ? 'forensic-app-tab-rail'
     : 'flex gap-4'
-  const getTabClassName = (tab: 'spider' | 'board' | 'timeline' | 'chat' | 'settings', activeClassName: string) => (
+  const getTabClassName = (tab: ActiveTab, activeClassName: string) => (
     isForensicWorkspaceActive
       ? `forensic-app-tab ${activeTab === tab ? 'forensic-app-tab-active' : ''}`
       : `flex items-center gap-2 px-4 py-2 rounded transition-all ${activeTab === tab ? activeClassName : 'text-gray-500 hover:text-white'}`
@@ -2911,6 +2924,13 @@ function App() {
           >
             <Clock size={18} />
             Timeline View
+          </button>
+          <button
+            onClick={() => setActiveTab('brain')}
+            className={getTabClassName('brain', 'bg-cyber-cyan text-black shadow-[0_0_15px_rgba(0,243,255,0.5)]')}
+          >
+            <Brain size={18} />
+            Brain
           </button>
           <button
             onClick={() => setActiveTab('chat')}
@@ -3458,6 +3478,18 @@ function App() {
                 }}
               />
             </Suspense>
+          </div>
+
+          <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'brain' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+            {activeTab === 'brain' && (
+              <Suspense fallback={tabFallback('Brain Signals')}>
+                <BrainSignalsPanel
+                  currentInvestigationId={currentInvestigationId}
+                  currentInvestigationTitle={currentInvestigation?.displayTopic || currentInvestigation?.topic || null}
+                  onOpenInvestigation={handleOpenBrainInvestigation}
+                />
+              </Suspense>
+            )}
           </div>
 
           <div className={`absolute inset-0 transition-opacity duration-500 flex flex-col ${activeTab === 'chat' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>

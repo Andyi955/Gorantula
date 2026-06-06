@@ -16,6 +16,7 @@ Gorantula is a local-first intelligence research workspace. It crawls a topic, g
 - Extracts deterministic, board-derived events into the Timeline View.
 - Archives successful investigations into the local `abdomen_vault`.
 - Lets you interrogate archived evidence through Vault Chat.
+- Surfaces Brain Signals that connect the active investigation to older related cases.
 - Supports discovery review, relationship mapping, draggable graph labels, and source-linked evidence cards.
 - Adds a Rabbit Hole mode for deeper pass-based research, Gatekeeper review, optional image scraping, supporting evidence bands, and final relationship synthesis.
 - Uses configurable AI routing with DeepSeek as the default day-to-day provider.
@@ -33,6 +34,17 @@ Rabbit Hole is the deep-investigation crawl mode. It starts from Spider View, cr
 - Relationship synthesis and board cleanup run once at the end, so the board does not churn after every pass.
 - Relevant unconnected Rabbit Hole evidence is kept in a compact Supporting Evidence layer instead of being hidden or deleted.
 - Rabbit Hole runs write detailed traces under `abdomen_vault/rabbit-hole-logs`.
+
+## Brain Signals
+
+Brain Signals is the first durable memory layer for Gorantula. Open the `Brain` tab while an investigation is selected to recompute backend-persisted activation signals against older investigations.
+
+- V1 uses deterministic recall gateways only: entity/date overlap, source-domain overlap, and relationship-tag overlap.
+- Active signals are grouped by older case, capped to a top-priority list, and lower-priority matches are collapsed by default.
+- Each signal shows why the older case fired, the strongest suggested action, score strength, gateway counts, and actions to open, dismiss, or promote it.
+- Promoting a signal creates a durable Memory Link under the backend Brain vault state.
+- Strong multi-gateway signals can auto-promote into Memory Links, and repeated future firings reinforce the existing link with activation counts instead of creating duplicate cards.
+- V1 does not mutate board content, start autonomous agents, use personas, call models, or run embeddings.
 
 ## Tech Stack
 
@@ -181,7 +193,7 @@ cd frontend
 npm.cmd run test:smoke
 ```
 
-The Playwright smoke suite runs Vite in test mode with a fake browser WebSocket and blocks non-local network requests, so it does not require the Go backend, API keys, Brave Search, or model calls. It covers normal web board creation, Rabbit Hole guided continuation, Rabbit Hole max promotion/support evidence, normal synthesis theming, board restore after refresh, backend error recovery, and Rabbit Hole-to-Web mode isolation.
+The Playwright smoke suite runs Vite in test mode with a fake browser WebSocket and blocks non-local network requests, so it does not require the Go backend, API keys, Brave Search, or model calls. It covers normal web board creation, Rabbit Hole guided continuation, Rabbit Hole max promotion/support evidence, normal synthesis theming, board restore after refresh, Brain Signal promotion persistence, backend error recovery, and Rabbit Hole-to-Web mode isolation.
 
 On Windows, the first backend start may trigger a Windows Defender Firewall prompt. Allowing private-network access is expected for local development.
 

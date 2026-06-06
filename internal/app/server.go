@@ -17,6 +17,7 @@ import (
 
 	"spider-agent/brain"
 	"spider-agent/internal/assets"
+	"spider-agent/internal/brainmemory"
 	"spider-agent/internal/config"
 	"spider-agent/internal/investigations"
 	"spider-agent/internal/pipeline"
@@ -34,6 +35,7 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("startup error: %w", err)
 	}
+	brainMemoryService := brainmemory.NewService("abdomen_vault")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +49,15 @@ func Run() error {
 	})
 	mux.HandleFunc("/api/investigations/", func(w http.ResponseWriter, r *http.Request) {
 		investigations.HandleAPI(w, r, br)
+	})
+	mux.HandleFunc("/api/brain/signals", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/signals/", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/links", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
 	})
 
 	mux.HandleFunc("/api/pick-files", func(w http.ResponseWriter, r *http.Request) {

@@ -696,9 +696,10 @@ describe('SynthesisPanel', () => {
 
   it('does not crash when localStorage quota is exceeded', () => {
     const socket = new SocketMock() as unknown as WebSocket
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new DOMException('Quota exceeded', 'QuotaExceededError')
     })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     render(
       <SynthesisPanel
@@ -730,7 +731,28 @@ describe('SynthesisPanel', () => {
 
     expect(screen.getAllByText('alice').length).toBeGreaterThan(0)
 
+    expect(() => {
+      act(() => {
+        ;(socket as unknown as SocketMock).emit('message', {
+          type: 'SYNTHESIS_ALERT',
+          payload: {
+            type: 'synthesis_alert',
+            entity: 'bob',
+            currentVaultId: 'inv-a',
+            connectedCases: ['inv-a'],
+            nodes: [{ vaultId: 'inv-a', nodeId: 'node-b', summary: 'Bob mention' }],
+            analysis: 'Alert B',
+            timestamp: '12:11:00',
+          },
+        })
+      })
+    }).not.toThrow()
+
+    expect(screen.getAllByText('bob').length).toBeGreaterThan(0)
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+
     setItemSpy.mockRestore()
+    warnSpy.mockRestore()
   })
 
   it('persists incoming alerts without updating parents during render', () => {
