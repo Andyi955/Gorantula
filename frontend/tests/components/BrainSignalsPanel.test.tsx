@@ -383,17 +383,19 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
-    expect(await screen.findByText('Entity Filter Case')).toBeInTheDocument()
-    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
-    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
-    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getAllByText('Entity Filter Case').length).toBeGreaterThan(0)
+    })
+    expect(screen.getAllByText('Source Filter Case').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Entity Linked Memory').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Source Linked Memory').length).toBeGreaterThan(0)
 
     await user.click(screen.getByRole('button', { name: /source domain filter/i }))
 
     expect(screen.queryByText('Entity Filter Case')).not.toBeInTheDocument()
-    expect(screen.getByText('Source Filter Case')).toBeInTheDocument()
+    expect(screen.getAllByText('Source Filter Case').length).toBeGreaterThan(0)
     expect(screen.queryByText('Entity Linked Memory')).not.toBeInTheDocument()
-    expect(screen.getByText('Source Linked Memory')).toBeInTheDocument()
+    expect(screen.getAllByText('Source Linked Memory').length).toBeGreaterThan(0)
 
     await user.click(screen.getByRole('button', { name: /hot filter/i }))
 
@@ -402,8 +404,8 @@ describe('BrainSignalsPanel', () => {
 
     await user.click(screen.getByRole('button', { name: /all gateways filter/i }))
 
-    expect(screen.getByText('Entity Filter Case')).toBeInTheDocument()
-    expect(screen.getByText('Entity Linked Memory')).toBeInTheDocument()
+    expect(screen.getAllByText('Entity Filter Case').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Entity Linked Memory').length).toBeGreaterThan(0)
   })
 
   it('summarizes brain memory health across active and linked memory', async () => {
@@ -438,6 +440,62 @@ describe('BrainSignalsPanel', () => {
     expect(health).toHaveTextContent('1 auto')
     expect(health).toHaveTextContent('92%')
     expect(health).toHaveTextContent('Entity/Date')
+  })
+
+  it('renders a readable brain map with digest and selected memory detail', async () => {
+    const user = userEvent.setup()
+    const onOpenInvestigation = vi.fn()
+    const autoLink = {
+      ...makeLink({
+        id: 'brain-link-map-auto',
+        toInvestigationId: 'inv-map-auto',
+        toTitle: 'Auto Linked Case',
+        score: 0.88,
+        gateways: ['entity-date'],
+        reasons: [signal.reasons[0]],
+      }),
+      promotionType: 'auto',
+      activationCount: 3,
+    }
+    const sourceSignal = makeSignal({
+      id: 'brain-signal-map-source',
+      targetInvestigationId: 'inv-map-source',
+      targetTitle: 'Source Domain Case',
+      score: 0.76,
+      gateways: ['source-domain'],
+      reasons: [signal.reasons[1]],
+      lastFiredAt: '2026-06-06T09:00:00Z',
+    })
+    installBrainFetch({ signals: [sourceSignal], links: [autoLink] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onOpenInvestigation={onOpenInvestigation}
+      />,
+    )
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    expect(radar).toHaveTextContent('Memory radar')
+    expect(radar).toHaveTextContent('Current Grid Case')
+    expect(radar).toHaveTextContent('Auto Linked Case')
+    expect(radar).toHaveTextContent('Source Domain Case')
+    expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(3)
+
+    const digest = within(radar).getByTestId('brain-map-digest')
+    expect(digest).toHaveTextContent('Auto memory created')
+    expect(digest).toHaveTextContent('Signal fired')
+
+    await user.click(within(radar).getByRole('button', { name: /select memory auto linked case/i }))
+
+    const detail = within(radar).getByTestId('brain-map-selected-node')
+    expect(detail).toHaveTextContent('Auto Linked Case')
+    expect(detail).toHaveTextContent('Auto')
+    expect(detail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+
+    await user.click(within(detail).getByRole('button', { name: /open radar memory auto linked case/i }))
+    expect(onOpenInvestigation).toHaveBeenCalledWith('inv-map-auto')
   })
 
   it('opens a linked memory detail view with evidence and matched node ids', async () => {
