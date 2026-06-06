@@ -27,6 +27,69 @@ const buildBoardState = (): PersistedBoardState => ({
   synthesisAlerts: [],
 })
 
+const installIndexedBoardShadowMock = () => {
+  const records = new Map<string, unknown>()
+  const objectStore = {
+    put: vi.fn((record: { investigationId: string }) => {
+      const request = {} as IDBRequest<boolean>
+      queueMicrotask(() => {
+        records.set(record.investigationId, record)
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+    get: vi.fn((investigationId: string) => {
+      const request = {} as IDBRequest<unknown>
+      queueMicrotask(() => {
+        Object.defineProperty(request, 'result', {
+          configurable: true,
+          value: records.get(investigationId),
+        })
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+    delete: vi.fn((investigationId: string) => {
+      const request = {} as IDBRequest<boolean>
+      queueMicrotask(() => {
+        records.delete(investigationId)
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+  }
+  const database = {
+    objectStoreNames: {
+      contains: () => true,
+    },
+    createObjectStore: vi.fn(),
+    close: vi.fn(),
+    transaction: vi.fn(() => ({
+      objectStore: () => objectStore,
+    })),
+  }
+  const indexedDB = {
+    open: vi.fn(() => {
+      const request = {} as IDBOpenDBRequest
+      queueMicrotask(() => {
+        Object.defineProperty(request, 'result', {
+          configurable: true,
+          value: database,
+        })
+        request.onsuccess?.(new Event('success') as Event)
+      })
+      return request
+    }),
+  }
+
+  Object.defineProperty(window, 'indexedDB', {
+    configurable: true,
+    value: indexedDB,
+  })
+
+  return { records, objectStore }
+}
+
 describe('investigation persistence', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -95,9 +158,10 @@ describe('investigation persistence', () => {
     expect(localStorage.getItem('gorantula_discoveries_by_investigation')).toBeNull()
   })
 
-  it('does not write browser board fallback when backend save fails', async () => {
+  it('saves a board shadow without warning when backend board save is offline', async () => {
     const boardState = buildBoardState()
     const failedEvents: Event[] = []
+    const shadow = installIndexedBoardShadowMock()
     window.addEventListener(BOARD_PERSIST_FAILED_EVENT, (event) => failedEvents.push(event))
 
     vi.stubGlobal('fetch', vi.fn(async () => {
@@ -106,10 +170,14 @@ describe('investigation persistence', () => {
 
     const saved = await saveBoardStateForInvestigation('inv-fallback', boardState)
 
-    expect(saved).toBe(false)
+    expect(saved).toBe(true)
     expect(localStorage.getItem('inv_data_inv-fallback')).toBeNull()
-    expect(localStorage.getItem('gorantula_board_shadow_inv-fallback')).toBeNull()
-    expect(failedEvents).toHaveLength(1)
+    expect(shadow.objectStore.put).toHaveBeenCalled()
+    expect(shadow.records.get('inv-fallback')).toMatchObject({
+      investigationId: 'inv-fallback',
+      state: boardState,
+    })
+    expect(failedEvents).toHaveLength(0)
   })
 
   it('serves a backend-mode board from the in-memory cache before backend hydration', async () => {

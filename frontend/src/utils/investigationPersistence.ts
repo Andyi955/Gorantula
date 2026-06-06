@@ -65,6 +65,17 @@ const emitPersistFailure = (investigationId: string, error: unknown) => {
   }))
 }
 
+const isBackendUnavailableError = (error: unknown) => {
+  const errorName = error && typeof error === 'object' && 'name' in error
+    ? String((error as { name?: unknown }).name || '')
+    : ''
+  const errorMessage = error && typeof error === 'object' && 'message' in error
+    ? String((error as { message?: unknown }).message || '')
+    : String(error || '')
+  return /typeerror/i.test(errorName)
+    || /failed to fetch|network|backend offline|connection refused|err_connection_refused/i.test(errorMessage)
+}
+
 const localGet = (key: string) => {
   if (!isBrowser()) {
     return null
@@ -165,7 +176,7 @@ const writeIndexedBoardShadowStateForInvestigation = async (
   investigationId: string,
   state: PersistedBoardState,
 ) => {
-  await withBoardShadowStore('readwrite', (store) => new Promise<boolean>((resolve) => {
+  return Boolean(await withBoardShadowStore('readwrite', (store) => new Promise<boolean>((resolve) => {
     const request = store.put({
       investigationId,
       state,
@@ -174,7 +185,7 @@ const writeIndexedBoardShadowStateForInvestigation = async (
 
     request.onsuccess = () => resolve(true)
     request.onerror = () => resolve(false)
-  }))
+  })))
 }
 
 const deleteIndexedBoardShadowStateForInvestigation = async (investigationId: string) => {
@@ -461,7 +472,13 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
         return hydrated
       }
     } catch (error) {
-      console.warn('[InvestigationPersistence] Backend board load unavailable; using in-memory cache only.', error)
+      if (isBackendUnavailableError(error)) {
+        if (import.meta.env.DEV) {
+          console.debug('[InvestigationPersistence] Backend board load unavailable; using browser cache only.', error)
+        }
+      } else {
+        console.warn('[InvestigationPersistence] Backend board load unavailable; using in-memory cache only.', error)
+      }
       return boardStateCache.get(investigationId) || null
     }
   }
@@ -504,11 +521,19 @@ export const saveBoardStateForInvestigation = async (
     void writeIndexedBoardShadowStateForInvestigation(investigationId, stateToPersist)
     return true
   } catch (error) {
+    const wroteShadowState = await writeIndexedBoardShadowStateForInvestigation(investigationId, stateToPersist)
+    if (isBackendUnavailableError(error) && wroteShadowState) {
+      if (import.meta.env.DEV) {
+        console.debug('[InvestigationPersistence] Backend board save unavailable; saved browser shadow copy instead.', error)
+      }
+      return true
+    }
+
     console.warn('[InvestigationPersistence] Failed to save board state to backend.', error)
-    if (!options.skipFallback) {
+    if (!options.skipFallback && !wroteShadowState) {
       emitPersistFailure(investigationId, error)
     }
-    return false
+    return wroteShadowState
   }
 }
 
