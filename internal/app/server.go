@@ -50,15 +50,7 @@ func Run() error {
 	mux.HandleFunc("/api/investigations/", func(w http.ResponseWriter, r *http.Request) {
 		investigations.HandleAPI(w, r, br)
 	})
-	mux.HandleFunc("/api/brain/signals", func(w http.ResponseWriter, r *http.Request) {
-		brainmemory.HandleAPI(w, r, brainMemoryService)
-	})
-	mux.HandleFunc("/api/brain/signals/", func(w http.ResponseWriter, r *http.Request) {
-		brainmemory.HandleAPI(w, r, brainMemoryService)
-	})
-	mux.HandleFunc("/api/brain/links", func(w http.ResponseWriter, r *http.Request) {
-		brainmemory.HandleAPI(w, r, brainMemoryService)
-	})
+	registerBrainMemoryRoutes(mux, brainMemoryService)
 
 	mux.HandleFunc("/api/pick-files", func(w http.ResponseWriter, r *http.Request) {
 		// Enable CORS for local dev
@@ -155,4 +147,25 @@ func Run() error {
 	address := config.ListenAddress()
 	fmt.Printf("Gorantula Backend running on http://%s\n", address)
 	return http.ListenAndServe(address, mux)
+}
+
+func registerBrainMemoryRoutes(mux *http.ServeMux, brainMemoryService *brainmemory.Service) {
+	mux.HandleFunc("/api/brain/signals", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/signals/", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/links", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/links/", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/clusters", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/clusters/", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
 }

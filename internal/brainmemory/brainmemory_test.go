@@ -368,6 +368,189 @@ func TestServiceDoesNotGenerateSelfSignals(t *testing.T) {
 	}
 }
 
+func TestServiceGeneratesEntityDateMemoryClusters(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[ORG:Acme Grid] appears during [DATE:2026-05-20] power stress.",
+			"sourceURL":"https://intel.example.com/current"
+		}}],
+		"edges":[{"source":"current-node","target":"current-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old-a", "Older Grid Alpha"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-a-node","data":{
+			"summary":"[ORG:Acme Grid] appeared during [DATE:2026-05-20] capacity talks.",
+			"sourceURL":"https://intel.example.com/alpha"
+		}}],
+		"edges":[{"source":"old-a-node","target":"old-a-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old-b", "Older Grid Beta"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-b-node","data":{
+			"summary":"[ORG:Acme Grid] resurfaced in [DATE:2026-05-21] cooling notes.",
+			"sourceURL":"https://archive.example.com/beta"
+		}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	clusters, err := service.ClustersForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	cluster := findCluster(t, clusters, GatewayEntityDate, "Acme Grid")
+	if cluster.ID == "" {
+		t.Fatal("expected deterministic cluster id")
+	}
+	if cluster.Label != "Acme Grid" {
+		t.Fatalf("expected cluster label Acme Grid, got %q", cluster.Label)
+	}
+	if cluster.Status != "active" {
+		t.Fatalf("expected active cluster, got %q", cluster.Status)
+	}
+	if cluster.GatewayCounts[GatewayEntityDate] != 3 {
+		t.Fatalf("expected entity/date count for all member investigations, got %#v", cluster.GatewayCounts)
+	}
+	for _, investigationID := range []string{"inv-current", "inv-old-a", "inv-old-b"} {
+		if !containsString(cluster.MemberInvestigationIDs, investigationID) {
+			t.Fatalf("expected cluster members to include %s, got %#v", investigationID, cluster.MemberInvestigationIDs)
+		}
+	}
+	if len(cluster.ReasonSamples) == 0 || !strings.Contains(cluster.ReasonSamples[0].Detail, "Acme Grid") {
+		t.Fatalf("expected explainable reason samples, got %#v", cluster.ReasonSamples)
+	}
+	if len(cluster.SignalIDs) == 0 {
+		t.Fatalf("expected cluster to associate generated signal ids, got %#v", cluster.SignalIDs)
+	}
+	if len(cluster.MemoryLinkIDs) == 0 {
+		t.Fatalf("expected cluster to associate promoted memory links, got %#v", cluster.MemoryLinkIDs)
+	}
+
+	recomputed, err := service.ClustersForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("second ClustersForInvestigation failed: %v", err)
+	}
+	recomputedCluster := findCluster(t, recomputed, GatewayEntityDate, "Acme Grid")
+	if recomputedCluster.ID != cluster.ID {
+		t.Fatalf("expected deterministic cluster id to persist, got %q then %q", cluster.ID, recomputedCluster.ID)
+	}
+}
+
+func TestServiceGeneratesSourceAndRelationshipMemoryClusters(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Supply Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{"summary":"No tagged entities here.","sourceURL":"https://intel.example.com/current"}}],
+		"edges":[{"source":"current-node","target":"current-node","data":{"tag":"SUPPLY_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Supply Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{"summary":"Older notes with the same source network.","sourceURL":"https://intel.example.com/archive"}}],
+		"edges":[{"source":"old-node","target":"old-node","data":{"tag":"SUPPLY_RISK"}}]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("expected active source/relationship signal, got %#v", signals)
+	}
+	clusters, err := service.ClustersForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	sourceCluster := findCluster(t, clusters, GatewaySourceDomain, "intel.example.com")
+	if !containsString(sourceCluster.SignalIDs, signals[0].ID) {
+		t.Fatalf("expected source cluster to include signal %s, got %#v", signals[0].ID, sourceCluster.SignalIDs)
+	}
+	relationshipCluster := findCluster(t, clusters, GatewayRelationshipTag, "SUPPLY_RISK")
+	if relationshipCluster.Summary == "" {
+		t.Fatalf("expected relationship cluster summary, got %#v", relationshipCluster)
+	}
+	if relationshipCluster.GatewayCounts[GatewayRelationshipTag] != 2 {
+		t.Fatalf("expected relationship gateway count for both investigations, got %#v", relationshipCluster.GatewayCounts)
+	}
+}
+
+func TestServiceDoesNotGenerateSelfOnlyMemoryClusters(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-only", "Only Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"node-1","data":{"summary":"[ORG:Solo Grid] appears.","sourceURL":"https://solo.example.com/a"}}],
+		"edges":[{"source":"node-1","target":"node-1","data":{"tag":"SOLO_RISK"}}]
+	}`, "")
+
+	clusters, err := NewService(root).ClustersForInvestigation("inv-only")
+	if err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if len(clusters) != 0 {
+		t.Fatalf("expected no self-only clusters, got %#v", clusters)
+	}
+}
+
+func TestClusterPinHideStatePersistsAcrossRecompute(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{"summary":"[ORG:Acme Grid] appears."}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Old Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{"summary":"[ORG:Acme Grid] appeared before."}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	clusters, err := service.ClustersForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	cluster := findCluster(t, clusters, GatewayEntityDate, "Acme Grid")
+
+	pinned, err := service.ToggleClusterPin(cluster.ID)
+	if err != nil {
+		t.Fatalf("ToggleClusterPin failed: %v", err)
+	}
+	if !pinned.Pinned {
+		t.Fatalf("expected cluster to be pinned, got %#v", pinned)
+	}
+	hidden, err := service.HideCluster(cluster.ID)
+	if err != nil {
+		t.Fatalf("HideCluster failed: %v", err)
+	}
+	if !hidden.Hidden {
+		t.Fatalf("expected cluster to be hidden, got %#v", hidden)
+	}
+
+	clusters, err = service.ClustersForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("ClustersForInvestigation after state changes failed: %v", err)
+	}
+	cluster = findCluster(t, clusters, GatewayEntityDate, "Acme Grid")
+	if !cluster.Pinned || !cluster.Hidden {
+		t.Fatalf("expected pin/hide state to persist across recompute, got %#v", cluster)
+	}
+
+	unhidden, err := service.UnhideCluster(cluster.ID)
+	if err != nil {
+		t.Fatalf("UnhideCluster failed: %v", err)
+	}
+	if unhidden.Hidden {
+		t.Fatalf("expected cluster to be unhidden, got %#v", unhidden)
+	}
+}
+
 func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
@@ -523,7 +706,32 @@ func TestHandleAPIRejectsInvalidBrainRoutes(t *testing.T) {
 		t.Fatalf("expected missing signal to return 404, got %d", recorder.Code)
 	}
 
+	request = httptest.NewRequest(http.MethodGet, "/api/brain/clusters?investigationId=../escape", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid cluster investigation id to be rejected, got %d", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/brain/clusters/missing/pin", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected missing cluster to return 404, got %d", recorder.Code)
+	}
+
 	if _, err := os.Stat(filepath.Join(root, "brain")); err == nil {
 		t.Fatal("invalid API calls should not create brain storage")
 	}
+}
+
+func findCluster(t *testing.T, clusters []MemoryCluster, gateway string, label string) MemoryCluster {
+	t.Helper()
+	for _, cluster := range clusters {
+		if cluster.DominantGateway == gateway && cluster.Label == label {
+			return cluster
+		}
+	}
+	t.Fatalf("expected cluster gateway=%q label=%q in %#v", gateway, label, clusters)
+	return MemoryCluster{}
 }

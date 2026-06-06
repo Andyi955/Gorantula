@@ -48,6 +48,32 @@ export interface MemoryLink {
   promotionType?: 'manual' | 'auto' | string
 }
 
+export interface MemoryClusterMember {
+  investigationId: string
+  title: string
+  role: 'current' | 'memory' | string
+}
+
+export interface MemoryCluster {
+  id: string
+  label: string
+  summary: string
+  score: number
+  status: 'active' | 'warm' | 'dormant' | string
+  dominantGateway: BrainGateway
+  gatewayCounts: Record<string, number>
+  memberInvestigationIds: string[]
+  members: MemoryClusterMember[]
+  signalIds: string[]
+  memoryLinkIds: string[]
+  reasonSamples: BrainSignalReason[]
+  pinned: boolean
+  hidden: boolean
+  createdAt: string
+  updatedAt: string
+  lastActivatedAt: string
+}
+
 const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
     cache: 'no-store',
@@ -71,6 +97,9 @@ export const fetchBrainSignals = (investigationId: string) =>
 export const fetchBrainLinks = (investigationId: string) =>
   requestJSON<MemoryLink[]>(`${API_BASE}/links?investigationId=${encodeURIComponent(investigationId)}`)
 
+export const fetchBrainClusters = (investigationId: string) =>
+  requestJSON<MemoryCluster[]>(`${API_BASE}/clusters?investigationId=${encodeURIComponent(investigationId)}`)
+
 export const dismissBrainSignal = (signalId: string) =>
   requestJSON<BrainSignal>(`${API_BASE}/signals/${encodeURIComponent(signalId)}/dismiss`, {
     method: 'PUT',
@@ -83,5 +112,20 @@ export const promoteBrainSignal = (signalId: string) =>
 
 export const forgetBrainLink = (linkId: string) =>
   requestJSON<MemoryLink>(`${API_BASE}/links/${encodeURIComponent(linkId)}/forget`, {
+    method: 'PUT',
+  })
+
+export const toggleBrainClusterPin = (clusterId: string) =>
+  requestJSON<MemoryCluster>(`${API_BASE}/clusters/${encodeURIComponent(clusterId)}/pin`, {
+    method: 'PUT',
+  })
+
+export const hideBrainCluster = (clusterId: string) =>
+  requestJSON<MemoryCluster>(`${API_BASE}/clusters/${encodeURIComponent(clusterId)}/hide`, {
+    method: 'PUT',
+  })
+
+export const unhideBrainCluster = (clusterId: string) =>
+  requestJSON<MemoryCluster>(`${API_BASE}/clusters/${encodeURIComponent(clusterId)}/unhide`, {
     method: 'PUT',
   })
