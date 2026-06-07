@@ -27,6 +27,7 @@ frontend/test-results/
 .superpowers/
 abdomen_vault/
 local-test-docs/
+docs/
 
 # Agent Configuration (Private)
 .agents/
