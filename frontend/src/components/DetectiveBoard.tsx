@@ -73,10 +73,8 @@ import {
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
 import {
-    BOARD_RESTORE_COMPLETE_EVENT,
     BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
     BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
-    type BoardRestoreCompleteDetail,
     emitBoardWorkspaceEvent,
 } from '../utils/boardWorkspaceEvents';
 import {
@@ -104,6 +102,7 @@ import {
     type SupportingEvidenceBand,
 } from './supportingEvidenceLayer';
 import { getMiniMapNodeColor } from './detectiveBoardMinimap';
+import { useDetectiveBoardPersistence } from './useDetectiveBoardPersistence';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle, ExternalLink } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -572,8 +571,6 @@ const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
 const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
 const INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS = 80;
 const INITIAL_RESTORE_VIEWPORT_REVEAL_DELAY_MS = 16;
-const BOARD_RESTORE_OVERLAY_MIN_MS = 380;
-const BOARD_RESTORE_OVERLAY_MAX_MS = 1600;
 const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE = { width: 960, height: 540 };
 const BOARD_NAVIGATOR_BOUNDS_PADDING = BOARD_GRID_SIZE * 3;
@@ -611,11 +608,6 @@ const appendClassName = (className: string | undefined, nextClassName: string) =
 
 const removeClassName = (className: string | undefined, targetClassName: string) =>
     (className || '').split(/\s+/).filter((classNamePart) => classNamePart && classNamePart !== targetClassName).join(' ');
-
-const getBoardLoadNow = () =>
-    typeof performance !== 'undefined' && typeof performance.now === 'function'
-        ? performance.now()
-        : Date.now();
 
 const getConnectLayoutSettleDelay = () => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -1353,8 +1345,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [isGathering, setIsGathering] = useState(false);
     const [isReorganizing, setIsReorganizing] = useState(false);
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
-    const [loadedInvestigationId, setLoadedInvestigationId] = useState<string | null>(null);
-    const loadedInvestigationIdRef = useRef<string | null>(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [exportMenuPosition, setExportMenuPosition] = useState<{ top: number; left: number; width: number }>({
         top: 0,
@@ -1397,11 +1387,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [supportHoverNodeId, setSupportHoverNodeId] = useState<string | null>(null);
     const [connectionHover, setConnectionHover] = useState<{ edgeId?: string; nodeIds: string[]; color: string } | null>(null);
     const [isInitialRestoreViewportSettling, setIsInitialRestoreViewportSettling] = useState(false);
-    const [boardRestoreOverlay, setBoardRestoreOverlay] = useState<{
-        investigationId: string;
-        startedAt: number;
-        source: string;
-    } | null>(null);
     const showBrowserQaBoardTools = import.meta.env.DEV || import.meta.env.MODE === 'test';
     const [qaToolsEnabled, setQaToolsEnabled] = useState(false);
     const [showQaReplayMenu, setShowQaReplayMenu] = useState(false);
@@ -1427,7 +1412,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const isDraggingNodeRef = useRef(false);
     const draggingNodeIdsRef = useRef<Set<string>>(new Set());
     const dragPreviewFrameRef = useRef<number | null>(null);
-    const persistTimerRef = useRef<number | null>(null);
     const marqueePointerIdRef = useRef<number | null>(null);
     const marqueeSelectedIdsRef = useRef<Set<string>>(new Set());
     const recentImportTimeoutsRef = useRef<Map<string, number>>(new Map());
@@ -1449,8 +1433,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const timelineFocusTimeoutRef = useRef<number | null>(null);
     const boardCameraMovementTimeoutRef = useRef<number | null>(null);
     const initialRestoreViewportFitTimeoutRef = useRef<number | null>(null);
-    const boardRestoreOverlayTimeoutRef = useRef<number | null>(null);
-    const boardRestoreWatchdogTimeoutRef = useRef<number | null>(null);
     const pendingInitialRestoreViewportFitRef = useRef<string | null>(null);
     const completedInitialRestoreViewportFitRef = useRef<string | null>(null);
 
@@ -1458,6 +1440,34 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     edgesRef.current = edges;
     pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds;
     analysisModeRef.current = analysisMode;
+    const shouldSkipBoardAutosave = useCallback(() => (
+        qaEvidenceExpansionDemoActiveRef.current ||
+        qaRabbitHoleDemoActiveRef.current ||
+        nodesRef.current.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID || node.id.startsWith('qa-rabbit-')) ||
+        isDraggingNodeRef.current
+    ), []);
+    const {
+        loadedInvestigationId,
+        loadedInvestigationIdRef,
+        boardRestoreOverlay,
+        markInvestigationLoaded,
+        startBoardRestoreLoad,
+        finishBoardRestoreLoad,
+        persistBoardNow,
+        clearPendingBoardPersist,
+    } = useDetectiveBoardPersistence({
+        investigationId,
+        boardMode,
+        nodes,
+        edges,
+        pendingIntegrationNodeIds,
+        isInitialRestoreViewportSettling,
+        setIsInitialRestoreViewportSettling,
+        pendingInitialRestoreViewportFitRef,
+        shouldSkipAutosave: shouldSkipBoardAutosave,
+        serializeNodes: sanitizeNodesForPersistence,
+        serializeEdges: sanitizeEdgesForPersistence,
+    });
 
     const openNodeDossier = useCallback((nodeData?: NodeDossierInput) => {
         const summary = normalizeDossierText(nodeData?.summary);
@@ -1584,120 +1594,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         return () => observer.disconnect();
     }, []);
-
-    const startBoardRestoreLoad = useCallback((nextInvestigationId: string) => {
-        const startedAt = getBoardLoadNow();
-
-        if (boardRestoreOverlayTimeoutRef.current !== null) {
-            window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
-            boardRestoreOverlayTimeoutRef.current = null;
-        }
-
-        setBoardRestoreOverlay({
-            investigationId: nextInvestigationId,
-            startedAt,
-            source: 'loading',
-        });
-        console.debug('[BoardLoad] started', { investigationId: nextInvestigationId });
-
-        return startedAt;
-    }, []);
-
-    const finishBoardRestoreLoad = useCallback((
-        nextInvestigationId: string,
-        startedAt: number,
-        source: string,
-        nodeCount: number,
-        edgeCount: number
-    ) => {
-        const durationMs = Math.max(0, Math.round(getBoardLoadNow() - startedAt));
-        console.info('[BoardLoad] restored', {
-            investigationId: nextInvestigationId,
-            source,
-            durationMs,
-            nodeCount,
-            edgeCount,
-        });
-        window.dispatchEvent(new CustomEvent<BoardRestoreCompleteDetail>(BOARD_RESTORE_COMPLETE_EVENT, {
-            detail: {
-                investigationId: nextInvestigationId,
-                source,
-                durationMs,
-                nodeCount,
-                edgeCount,
-            },
-        }));
-
-        const hideDelayMs = Math.min(
-            BOARD_RESTORE_OVERLAY_MAX_MS,
-            Math.max(BOARD_RESTORE_OVERLAY_MIN_MS - durationMs, INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS)
-        );
-
-        setBoardRestoreOverlay({
-            investigationId: nextInvestigationId,
-            startedAt,
-            source,
-        });
-
-        if (boardRestoreOverlayTimeoutRef.current !== null) {
-            window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
-        }
-
-        boardRestoreOverlayTimeoutRef.current = window.setTimeout(() => {
-            boardRestoreOverlayTimeoutRef.current = null;
-            setBoardRestoreOverlay((current) => (
-                current?.investigationId === nextInvestigationId && current.startedAt === startedAt
-                    ? null
-                    : current
-            ));
-        }, hideDelayMs);
-    }, []);
-
-    useEffect(() => {
-        if (!boardRestoreOverlay) {
-            if (boardRestoreWatchdogTimeoutRef.current !== null) {
-                window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
-                boardRestoreWatchdogTimeoutRef.current = null;
-            }
-            return;
-        }
-
-        const isLoadedInvestigation = loadedInvestigationId === boardRestoreOverlay.investigationId;
-        if (!isLoadedInvestigation) {
-            return;
-        }
-
-        if (boardRestoreWatchdogTimeoutRef.current !== null) {
-            window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
-            boardRestoreWatchdogTimeoutRef.current = null;
-        }
-
-        const elapsedMs = Math.max(0, getBoardLoadNow() - boardRestoreOverlay.startedAt);
-        const clearDelayMs = isInitialRestoreViewportSettling
-            ? Math.max(0, BOARD_RESTORE_OVERLAY_MAX_MS - elapsedMs)
-            : Math.max(0, Math.min(BOARD_RESTORE_OVERLAY_MIN_MS - elapsedMs, 120));
-
-        boardRestoreWatchdogTimeoutRef.current = window.setTimeout(() => {
-            boardRestoreWatchdogTimeoutRef.current = null;
-            if (pendingInitialRestoreViewportFitRef.current === boardRestoreOverlay.investigationId) {
-                pendingInitialRestoreViewportFitRef.current = null;
-            }
-            setIsInitialRestoreViewportSettling(false);
-            setBoardRestoreOverlay((current) => (
-                current?.investigationId === boardRestoreOverlay.investigationId &&
-                current.startedAt === boardRestoreOverlay.startedAt
-                    ? null
-                    : current
-            ));
-        }, clearDelayMs);
-
-        return () => {
-            if (boardRestoreWatchdogTimeoutRef.current !== null) {
-                window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
-                boardRestoreWatchdogTimeoutRef.current = null;
-            }
-        };
-    }, [boardRestoreOverlay, isInitialRestoreViewportSettling, loadedInvestigationId]);
 
     const persistTagStyles = useCallback((nextStyles: Record<string, TagStyle>) => {
         setTagStyles(nextStyles);
@@ -3463,8 +3359,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 setPendingIntegrationNodeIds([]);
                 setHasConnectedDots(false);
             }
-            loadedInvestigationIdRef.current = investigationId;
-            setLoadedInvestigationId(investigationId);
+            markInvestigationLoaded(investigationId);
             if (shouldFinishLoad) {
                 finishBoardRestoreLoad(investigationId, loadStartedAt, source, restoredNodeCount, restoredEdgeCount);
             }
@@ -3489,7 +3384,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [finishBoardRestoreLoad, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, startBoardRestoreLoad, syncStrictGridEdgesToNodes]);
+    }, [finishBoardRestoreLoad, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, markInvestigationLoaded, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, startBoardRestoreLoad, syncStrictGridEdgesToNodes]);
 
     useEffect(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) return;
@@ -3534,58 +3429,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         };
     }, [fitView, investigationId, loadedInvestigationId, nodes.length]);
 
-    useEffect(() => {
-        if (!investigationId || loadedInvestigationId !== investigationId) return;
-        if (nodes.length === 0 && edges.length === 0) return;
-        if (
-            qaEvidenceExpansionDemoActiveRef.current ||
-            qaRabbitHoleDemoActiveRef.current ||
-            nodes.some((node) => node.id === QA_EVIDENCE_EXPANSION_NODE_ID || node.id.startsWith('qa-rabbit-'))
-        ) return;
-        if (isDraggingNodeRef.current) return;
-
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-        }
-
-        persistTimerRef.current = window.setTimeout(() => {
-            const existingState = getCachedBoardStateForInvestigation(investigationId);
-            void saveBoardStateForInvestigation(investigationId, {
-                mode: boardMode,
-                nodes: sanitizeNodesForPersistence(nodes),
-                edges: sanitizeEdgesForPersistence(edges),
-                pendingIntegrationNodeIds,
-                synthesisAlerts: existingState?.synthesisAlerts || [],
-            });
-            persistTimerRef.current = null;
-        }, 250);
-
-        return () => {
-            if (persistTimerRef.current) {
-                window.clearTimeout(persistTimerRef.current);
-                persistTimerRef.current = null;
-            }
-        };
-    }, [boardMode, nodes, edges, investigationId, loadedInvestigationId, pendingIntegrationNodeIds]);
-
-    const persistBoardNow = useCallback(() => {
-        if (!investigationId || loadedInvestigationId !== investigationId) return;
-
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-        }
-
-        const existingState = getCachedBoardStateForInvestigation(investigationId);
-        void saveBoardStateForInvestigation(investigationId, {
-            mode: boardMode,
-            nodes: sanitizeNodesForPersistence(nodesRef.current),
-            edges: sanitizeEdgesForPersistence(edgesRef.current),
-            pendingIntegrationNodeIds: pendingIntegrationNodeIdsRef.current,
-            synthesisAlerts: existingState?.synthesisAlerts || [],
-        });
-    }, [boardMode, investigationId, loadedInvestigationId]);
-
     useEffect(() => () => {
         recentImportTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         recentImportTimeoutsRef.current.clear();
@@ -3611,19 +3454,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             window.clearTimeout(initialRestoreViewportFitTimeoutRef.current);
             initialRestoreViewportFitTimeoutRef.current = null;
         }
-        if (boardRestoreOverlayTimeoutRef.current !== null) {
-            window.clearTimeout(boardRestoreOverlayTimeoutRef.current);
-            boardRestoreOverlayTimeoutRef.current = null;
-        }
-        if (boardRestoreWatchdogTimeoutRef.current !== null) {
-            window.clearTimeout(boardRestoreWatchdogTimeoutRef.current);
-            boardRestoreWatchdogTimeoutRef.current = null;
-        }
         if (dragPreviewFrameRef.current !== null) {
             window.cancelAnimationFrame(dragPreviewFrameRef.current);
             dragPreviewFrameRef.current = null;
         }
-    }, []);
+    }, [clearPendingBoardPersist]);
 
     const onNodesChange: OnNodesChange = useCallback(
         (changes) => {
@@ -3858,10 +3693,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             dragPreviewFrameRef.current = null;
         }
         setEdges((currentEdges) => currentEdges.map(clearEdgeDragPreview));
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-        }
+        clearPendingBoardPersist();
     }, []);
     const onNodeDragStop = useCallback(() => {
         isDraggingNodeRef.current = false;
@@ -4391,10 +4223,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             return;
         }
 
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-        }
+        clearPendingBoardPersist();
 
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
@@ -4484,17 +4313,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
         setNodes(demoNodes);
         setEdges(demoEdges);
-    }, [buildEdgeVisuals, clearLayoutChoreographyState, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, tagStyles]);
+    }, [buildEdgeVisuals, clearLayoutChoreographyState, clearPendingBoardPersist, handleAttachImage, handleConnectionHover, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier, snapConnectionLabels, tagStyles]);
 
     const playBrowserQaTextFitDemo = useCallback(() => {
         if (!investigationId || loadedInvestigationId !== investigationId) {
             return;
         }
 
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-        }
+        clearPendingBoardPersist();
 
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
@@ -4545,7 +4371,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         });
 
         setNodes(demoNodes);
-    }, [clearLayoutChoreographyState, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier]);
+    }, [clearLayoutChoreographyState, clearPendingBoardPersist, handleAttachImage, handleDeleteNode, handleNodeExpand, handleNodeResizeCommit, handleRemoveImage, handleSaveNode, handleSetEditing, handleUpdateNode, investigationId, loadedInvestigationId, onDeepDiveNode, onNavigateToChild, openImageLightbox, openNodeDossier]);
 
     const playBrowserQaRabbitHoleDemo = useCallback((detail?: BrowserQaRabbitHoleDemoDetail | null) => {
         const requestedInvestigationId = typeof detail?.investigationId === 'string'
@@ -4558,10 +4384,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             return;
         }
 
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-        }
+        clearPendingBoardPersist();
 
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
@@ -4669,6 +4492,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, [
         buildEdgeVisuals,
         clearLayoutChoreographyState,
+        clearPendingBoardPersist,
         handleAttachImage,
         handleConnectionHover,
         handleDeleteNode,
@@ -4693,10 +4517,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             return;
         }
 
-        if (persistTimerRef.current) {
-            window.clearTimeout(persistTimerRef.current);
-            persistTimerRef.current = null;
-        }
+        clearPendingBoardPersist();
 
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
         qaAnimationTimeoutsRef.current = [];
@@ -4805,6 +4626,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         window.dispatchEvent(new CustomEvent(BROWSER_QA_EVIDENCE_EXPANSION_DEMO_EVENT, { detail }));
     }, [
         clearLayoutChoreographyState,
+        clearPendingBoardPersist,
         handleAttachImage,
         handleDeleteNode,
         handleNodeExpand,
