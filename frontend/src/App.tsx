@@ -2017,7 +2017,8 @@ function App() {
   }, [])
 
   const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: SpiderOperationMode) => {
-    const textToRun = customPrompt || prompt;
+    const inputValue = crawlInputRef.current?.value || '';
+    const textToRun = customPrompt || inputValue || prompt;
     const labelToUse = customLabel || textToRun;
     const modeToUse = overrideMode || crawlMode;
     const shouldScrapeImages = modeToUse !== 'local' && imageScrapingEnabled

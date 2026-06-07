@@ -852,6 +852,29 @@ describe('App', () => {
     expect(crawlMessage.scrapeImages).toBe(true)
   })
 
+  it('submits the latest crawl input value when the controlled prompt state has not flushed yet', async () => {
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const input = screen.getByPlaceholderText(/enter a topic or url to crawl the web/i) as HTMLInputElement
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    input.value = 'smoke recovery second pass'
+
+    fireEvent.click(screen.getByRole('button', { name: /execute/i }))
+
+    expect(alertSpy).not.toHaveBeenCalled()
+    expect(WebSocketMock.instances[0]?.send).toHaveBeenCalled()
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL',
+      payload: 'smoke recovery second pass',
+    }))
+  })
+
   it('launches Rabbit Hole crawls with descent controls and optional image scraping', async () => {
     const user = userEvent.setup()
 
