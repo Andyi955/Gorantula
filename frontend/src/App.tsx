@@ -59,6 +59,7 @@ import type { LocalIngestionFile, SpiderOperationMode } from './components/Spide
 import { calculateNodeFrame } from './components/boardGeometry'
 import { STRICT_GRID_NODE_Z_INDEX } from './components/detectiveBoardStrictGridLayout'
 import { nodeHasImages, type NodeImageAsset } from './components/nodeImages'
+import { useBackendWebSocket } from './hooks/useBackendWebSocket'
 import {
   accumulateTokenUsage,
   buildEmptyTokenUsageReport,
@@ -695,25 +696,6 @@ const shouldFetchPipelineProfiles = () => {
   return Boolean((fetch as unknown as { mock?: unknown }).mock)
 }
 
-const isBackendReachable = async () => {
-  if (!SHOULD_PROBE_BACKEND) {
-    return true
-  }
-
-  try {
-    const response = await fetch(BACKEND_STATUS_ENDPOINT, { cache: 'no-store' })
-    if (!response.ok) {
-      return true
-    }
-
-    const status = await response.json()
-    return status?.ready === true
-  } catch {
-    // In dev, prefer quiet local mode over noisy connection-refused loops.
-    return false
-  }
-}
-
 function App() {
   const initialInvestigationsRef = useRef<InvestigationRecord[] | null>(null)
   if (initialInvestigationsRef.current === null) {
@@ -732,7 +714,6 @@ function App() {
   const [investigationSwitchOverlay, setInvestigationSwitchOverlay] = useState<InvestigationSwitchOverlayState | null>(null)
   const [boardWorkspaceRevision, setBoardWorkspaceRevision] = useState(0)
   const [showSummaryLog, setShowSummaryLog] = useState(false)
-  const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => getMostRecentInvestigationId(initialInvestigationsRef.current || []))
@@ -770,13 +751,8 @@ function App() {
   const [systemNotice, setSystemNotice] = useState<string | null>(null)
   const [dismissedSystemNotice, setDismissedSystemNotice] = useState<string | null>(null)
 
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const connectRef = useRef<() => Promise<void>>(async () => {});
-  const isUnmounted = useRef(false);
   const investigationsRef = useRef(investigations);
   const investigationHydrationRequestRef = useRef(0);
-  const backendOfflineNoticeShownRef = useRef(false);
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
   const sidebarResizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -789,6 +765,14 @@ function App() {
   const qaPipelineDemoTimeoutsRef = useRef<number[]>([])
   const animatedPipelineTokenRef = useRef(animatedPipelineToken)
   investigationsRef.current = investigations
+  const getBackendSyncVaultIds = useCallback(() => investigationsRef.current.map((investigation) => investigation.id), [])
+  const socketConfig = useBackendWebSocket({
+    socketUrl: BACKEND_WS_URL,
+    statusEndpoint: BACKEND_STATUS_ENDPOINT,
+    reconnectDelayMs: WEBSOCKET_RETRY_DELAY_MS,
+    shouldProbeBackend: SHOULD_PROBE_BACKEND,
+    getSyncVaultIds: getBackendSyncVaultIds,
+  })
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
   const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'brain' || activeTab === 'chat' || activeTab === 'settings'
@@ -1181,82 +1165,12 @@ function App() {
     qaPipelineDemoTimeoutsRef.current = []
   }, [])
 
-  const scheduleReconnect = useCallback((delay = WEBSOCKET_RETRY_DELAY_MS) => {
-    if (isUnmounted.current) {
-      return
-    }
-
-    if (reconnectTimeoutRef.current) {
-      window.clearTimeout(reconnectTimeoutRef.current)
-    }
-
-    reconnectTimeoutRef.current = window.setTimeout(() => {
-      reconnectTimeoutRef.current = null
-      void connectRef.current()
-    }, delay)
-  }, [])
-
-  const connect = useCallback(async () => {
-    if (isUnmounted.current) {
-      return
-    }
-
-    if (socketRef.current && (socketRef.current.readyState === 0 || socketRef.current.readyState === 1)) {
-      return
-    }
-
-    const backendReady = await isBackendReachable()
-    if (!backendReady) {
-      setSocketConfig({ socket: null, ready: false })
-      if (!backendOfflineNoticeShownRef.current) {
-        console.debug('[App] Backend offline; staying in local UI mode and retrying quietly.')
-        backendOfflineNoticeShownRef.current = true
-      }
-      scheduleReconnect()
-      return
-    }
-
-    console.debug('[App] Connecting to WebSocket...');
-    const s = new WebSocket(BACKEND_WS_URL)
-
-    socketRef.current = s;
-
-    s.onopen = () => {
-      backendOfflineNoticeShownRef.current = false
-      console.debug('[App] WebSocket Connected');
-      setSocketConfig({ socket: s, ready: true });
-      
-      const ids = investigationsRef.current.map((inv) => inv.id);
-      if (ids.length > 0) {
-        s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
-      }
-    };
-
-    s.onclose = () => {
-      setSocketConfig({ socket: null, ready: false });
-      socketRef.current = null;
-      scheduleReconnect();
-    };
-
-    s.onerror = () => {
-      if (s.readyState !== 3) {
-        s.close();
-      }
-    };
-  }, [scheduleReconnect]);
-
-  connectRef.current = connect;
-
   useEffect(() => {
-    isUnmounted.current = false;
-    reconnectTimeoutRef.current = window.setTimeout(() => {
-      reconnectTimeoutRef.current = null;
-      void connect();
-    }, 0);
+    let cancelled = false
 
     void (async () => {
       const data = await loadInvestigations()
-      if (isUnmounted.current) {
+      if (cancelled) {
         return
       }
       if (data.length > 0) {
@@ -1270,7 +1184,7 @@ function App() {
           ] as const)),
           Promise.all(data.map((investigation) => loadBoardStateForInvestigation(investigation.id))),
         ])
-        if (!isUnmounted.current) {
+        if (!cancelled) {
           setDiscoveriesByInvestigation(discoveries as unknown as Record<string, DiscoveryRecord[]>)
           setVaultResultsByInvestigation(Object.fromEntries(vaultResultEntries))
           setBoardWorkspaceRevision((current) => current + 1)
@@ -1279,11 +1193,9 @@ function App() {
     })()
 
     return () => {
-      isUnmounted.current = true;
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (socketRef.current && socketRef.current.readyState === 1) socketRef.current.close();
+      cancelled = true
     }
-  }, [connect])
+  }, [])
 
   useEffect(() => {
     void refreshPipelineProfiles()
