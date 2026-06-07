@@ -59,6 +59,28 @@ import type { LocalIngestionFile, SpiderOperationMode } from './components/Spide
 import { calculateNodeFrame } from './components/boardGeometry'
 import { STRICT_GRID_NODE_Z_INDEX } from './components/detectiveBoardStrictGridLayout'
 import { nodeHasImages, type NodeImageAsset } from './components/nodeImages'
+import { useBackendWebSocket } from './hooks/useBackendWebSocket'
+import { usePipelineProgress } from './hooks/usePipelineProgress'
+import {
+  accumulateTokenUsage,
+  buildEmptyTokenUsageReport,
+  clampProgressPercent,
+  coercePipelineProgressPayload,
+  coerceTokenUsageReport,
+  formatCompactTokens,
+  formatDuration,
+  formatPipelinePercent,
+  formatTokenProviderBreakdown,
+  getPipelineStepTransitionKey,
+  getTopPipelineDurationBottleneck,
+  getTopPipelineTokenBottleneck,
+  getTopPipelineTokenUsage,
+  parseTokenCount,
+  type PipelinePerformanceProfile,
+  type PipelineProgressPayload,
+  type PipelineProgressStepState,
+  type TokenUsageReport,
+} from './utils/pipelineTelemetry'
 
 const SpiderVisualizer = lazy(() => import('./components/SpiderVisualizer'))
 const DetectiveBoard = lazy(() => import('./components/DetectiveBoard'))
@@ -81,87 +103,6 @@ export interface DiscoveryRecord {
   sourceVaultID: string
   createdAt: string
   nodeKind: string
-}
-
-interface TokenUsageReport {
-  investigationId?: string
-  label: string
-  callCount: number
-  reportedCallCount: number
-  estimatedCallCount: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  providerTotals?: Record<string, number>
-}
-
-interface PipelineProgressStepState {
-  id: string
-  label: string
-  status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled'
-  startedAt?: string
-  completedAt?: string
-  durationMs?: number
-  detail?: string
-  error?: string
-}
-
-interface PipelineProgressPayload {
-  runId: string
-  vaultId?: string
-  mode: string
-  stepId: string
-  stepLabel: string
-  status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled'
-  completedSteps: number
-  totalSteps: number
-  startedAt?: string
-  stepStartedAt?: string
-  completedAt?: string
-  elapsedMs: number
-  durationMs?: number
-  estimatedRemainingMs?: number
-  detail?: string
-  error?: string
-  steps?: PipelineProgressStepState[]
-}
-
-interface PipelineRunState extends PipelineProgressPayload {
-  updatedAt: number
-}
-
-interface PipelineProfileBottleneck {
-  kind: 'step' | 'span' | 'token'
-  id: string
-  label: string
-  stepId?: string
-  durationMs?: number
-  totalTokens?: number
-  percentOfTotal?: number
-}
-
-interface PipelineProfileTokenUsage {
-  operation: string
-  provider: string
-  callCount: number
-  reportedCallCount?: number
-  estimatedCallCount?: number
-  promptTokens?: number
-  completionTokens?: number
-  totalTokens: number
-}
-
-interface PipelinePerformanceProfile {
-  runId: string
-  vaultId?: string
-  mode?: string
-  status?: string
-  startedAt?: string
-  completedAt?: string
-  totalElapsedMs: number
-  counters?: Record<string, number>
-  bottlenecks: PipelineProfileBottleneck[]
-  tokenUsage: PipelineProfileTokenUsage[]
 }
 
 interface AnimatedPipelineTokenState {
@@ -242,13 +183,7 @@ const INVESTIGATION_SWITCH_OVERLAY_MAX_MS = 2400
 const REPORT_READABILITY_CACHE_LIMIT = 40
 const PIPELINE_STEP_TRANSITION_MS = 900
 const PIPELINE_TOKEN_COUNT_MS = 600
-const compactTokenFormatter = new Intl.NumberFormat('en-US', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
 const investigationTimestampPattern = /(?:inv|merge)-(\d{10,})$/i
-
-const formatCompactTokens = (value: number) => compactTokenFormatter.format(value)
 
 const prefersReducedMotion = () => {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -256,9 +191,6 @@ const prefersReducedMotion = () => {
   }
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
-
-const getPipelineStepTransitionKey = (runId: string, stepId: string, status: PipelineProgressStepState['status']) =>
-  `${runId}:${stepId}:${status}`
 
 const formatProviderName = (provider: string) => {
   const normalized = provider.trim().toLowerCase()
@@ -322,80 +254,6 @@ const createLocalIngestionFiles = (paths: string[]): LocalIngestionFile[] =>
     state: 'queued',
   }))
 
-const clampProgressPercent = (completedSteps: number, totalSteps: number) => {
-  if (!Number.isFinite(completedSteps) || !Number.isFinite(totalSteps) || totalSteps <= 0) {
-    return 0
-  }
-  return Math.max(0, Math.min(100, Math.round((completedSteps / totalSteps) * 100)))
-}
-
-const formatDuration = (milliseconds?: number | null) => {
-  if (!milliseconds || !Number.isFinite(milliseconds) || milliseconds <= 0) {
-    return '0s'
-  }
-
-  const totalSeconds = Math.max(1, Math.round(milliseconds / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  if (minutes <= 0) {
-    return `${seconds}s`
-  }
-  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
-}
-
-const coercePipelineStatus = (value: unknown): PipelineProgressPayload['status'] => {
-  if (value === 'pending' || value === 'running' || value === 'complete' || value === 'error' || value === 'cancelled') {
-    return value
-  }
-  return 'running'
-}
-
-const coercePipelineProgressPayload = (payload: unknown): PipelineProgressPayload | null => {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null
-  }
-
-  const candidate = payload as Record<string, unknown>
-  if (typeof candidate.runId !== 'string' || candidate.runId.trim() === '') {
-    return null
-  }
-
-  const rawSteps = Array.isArray(candidate.steps) ? candidate.steps : []
-  const steps = rawSteps
-    .filter((step): step is Record<string, unknown> => Boolean(step) && typeof step === 'object' && !Array.isArray(step))
-    .map((step) => ({
-      id: typeof step.id === 'string' ? step.id : '',
-      label: typeof step.label === 'string' ? step.label : 'Pipeline step',
-      status: coercePipelineStatus(step.status),
-      startedAt: typeof step.startedAt === 'string' ? step.startedAt : undefined,
-      completedAt: typeof step.completedAt === 'string' ? step.completedAt : undefined,
-      durationMs: parseTokenCount(step.durationMs),
-      detail: typeof step.detail === 'string' ? step.detail : undefined,
-      error: typeof step.error === 'string' ? step.error : undefined,
-    }))
-    .filter((step) => step.id)
-
-  return {
-    runId: candidate.runId.trim(),
-    vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId : undefined,
-    mode: typeof candidate.mode === 'string' ? candidate.mode : 'web',
-    stepId: typeof candidate.stepId === 'string' ? candidate.stepId : 'pipeline',
-    stepLabel: typeof candidate.stepLabel === 'string' ? candidate.stepLabel : 'Pipeline',
-    status: coercePipelineStatus(candidate.status),
-    completedSteps: parseTokenCount(candidate.completedSteps),
-    totalSteps: Math.max(1, parseTokenCount(candidate.totalSteps)),
-    startedAt: typeof candidate.startedAt === 'string' ? candidate.startedAt : undefined,
-    stepStartedAt: typeof candidate.stepStartedAt === 'string' ? candidate.stepStartedAt : undefined,
-    completedAt: typeof candidate.completedAt === 'string' ? candidate.completedAt : undefined,
-    elapsedMs: parseTokenCount(candidate.elapsedMs),
-    durationMs: parseTokenCount(candidate.durationMs),
-    estimatedRemainingMs: parseTokenCount(candidate.estimatedRemainingMs),
-    detail: typeof candidate.detail === 'string' ? candidate.detail : undefined,
-    error: typeof candidate.error === 'string' ? candidate.error : undefined,
-    steps,
-  }
-}
-
 const coerceRabbitHoleGatekeeperPayload = (payload: unknown): RabbitHoleGatekeeperPanelState | null => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return null
@@ -431,168 +289,6 @@ const tabFallback = (label: string) => (
     Loading {label}...
   </div>
 )
-
-const formatTokenProviderBreakdown = (providerTotals?: Record<string, number>) => {
-  const entries = Object.entries(providerTotals || {})
-  if (entries.length === 0) {
-    return 'No provider totals reported'
-  }
-
-  return entries
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([provider, total]) => `${provider}: ${total.toLocaleString()}`)
-    .join(' | ')
-}
-
-const buildEmptyTokenUsageReport = (label: string): TokenUsageReport => ({
-  label,
-  callCount: 0,
-  reportedCallCount: 0,
-  estimatedCallCount: 0,
-  promptTokens: 0,
-  completionTokens: 0,
-  totalTokens: 0,
-  providerTotals: {},
-})
-
-const parseTokenCount = (value: unknown): number => {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
-}
-
-const coerceTokenUsageReport = (payload: unknown): TokenUsageReport | null => {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null
-  }
-
-  const candidate = payload as Record<string, unknown>
-  if (typeof candidate.label !== 'string' || candidate.label.trim() === '') {
-    return null
-  }
-
-  const rawProviderTotals = candidate.providerTotals && typeof candidate.providerTotals === 'object' && !Array.isArray(candidate.providerTotals)
-    ? candidate.providerTotals as Record<string, unknown>
-    : {}
-
-  const providerTotals = Object.entries(rawProviderTotals).reduce<Record<string, number>>((totals, [provider, total]) => {
-    totals[provider] = parseTokenCount(total)
-    return totals
-  }, {})
-
-  return {
-    investigationId: typeof candidate.investigationId === 'string' && candidate.investigationId.trim() !== '' ? candidate.investigationId : undefined,
-    label: candidate.label,
-    callCount: parseTokenCount(candidate.callCount),
-    reportedCallCount: parseTokenCount(candidate.reportedCallCount),
-    estimatedCallCount: parseTokenCount(candidate.estimatedCallCount),
-    promptTokens: parseTokenCount(candidate.promptTokens),
-    completionTokens: parseTokenCount(candidate.completionTokens),
-    totalTokens: parseTokenCount(candidate.totalTokens),
-    providerTotals,
-  }
-}
-
-const coercePipelineProfile = (payload: unknown): PipelinePerformanceProfile | null => {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null
-  }
-
-  const candidate = payload as Record<string, unknown>
-  if (typeof candidate.runId !== 'string' || candidate.runId.trim() === '') {
-    return null
-  }
-
-  const rawCounters = candidate.counters && typeof candidate.counters === 'object' && !Array.isArray(candidate.counters)
-    ? candidate.counters as Record<string, unknown>
-    : {}
-  const counters = Object.entries(rawCounters).reduce<Record<string, number>>((accumulator, [key, value]) => {
-    accumulator[key] = parseTokenCount(value)
-    return accumulator
-  }, {})
-
-  const bottlenecks = (Array.isArray(candidate.bottlenecks) ? candidate.bottlenecks : [])
-    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-    .map((item): PipelineProfileBottleneck => ({
-      kind: item.kind === 'step' || item.kind === 'span' || item.kind === 'token' ? item.kind : 'span',
-      id: typeof item.id === 'string' ? item.id : '',
-      label: typeof item.label === 'string' && item.label.trim() ? item.label : 'Pipeline bottleneck',
-      stepId: typeof item.stepId === 'string' ? item.stepId : undefined,
-      durationMs: parseTokenCount(item.durationMs),
-      totalTokens: parseTokenCount(item.totalTokens),
-      percentOfTotal: parseTokenCount(item.percentOfTotal),
-    }))
-    .filter((item) => item.id || item.label)
-
-  const tokenUsage = (Array.isArray(candidate.tokenUsage) ? candidate.tokenUsage : [])
-    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-    .map((item) => ({
-      operation: typeof item.operation === 'string' && item.operation.trim() ? item.operation : 'unknown',
-      provider: typeof item.provider === 'string' && item.provider.trim() ? item.provider : 'unknown',
-      callCount: parseTokenCount(item.callCount),
-      reportedCallCount: parseTokenCount(item.reportedCallCount),
-      estimatedCallCount: parseTokenCount(item.estimatedCallCount),
-      promptTokens: parseTokenCount(item.promptTokens),
-      completionTokens: parseTokenCount(item.completionTokens),
-      totalTokens: parseTokenCount(item.totalTokens),
-    }))
-    .sort((left, right) => right.totalTokens - left.totalTokens)
-
-  return {
-    runId: candidate.runId.trim(),
-    vaultId: typeof candidate.vaultId === 'string' ? candidate.vaultId : undefined,
-    mode: typeof candidate.mode === 'string' ? candidate.mode : undefined,
-    status: typeof candidate.status === 'string' ? candidate.status : undefined,
-    startedAt: typeof candidate.startedAt === 'string' ? candidate.startedAt : undefined,
-    completedAt: typeof candidate.completedAt === 'string' ? candidate.completedAt : undefined,
-    totalElapsedMs: parseTokenCount(candidate.totalElapsedMs),
-    counters,
-    bottlenecks,
-    tokenUsage,
-  }
-}
-
-const coercePipelineProfiles = (payload: unknown): PipelinePerformanceProfile[] => {
-  if (!Array.isArray(payload)) {
-    return []
-  }
-  return payload
-    .map(coercePipelineProfile)
-    .filter((profile): profile is PipelinePerformanceProfile => Boolean(profile))
-}
-
-const getTopPipelineDurationBottleneck = (profile?: PipelinePerformanceProfile | null) =>
-  profile?.bottlenecks.find((bottleneck) => bottleneck.kind === 'span' || bottleneck.kind === 'step') || null
-
-const getTopPipelineTokenBottleneck = (profile?: PipelinePerformanceProfile | null) =>
-  profile?.bottlenecks.find((bottleneck) => bottleneck.kind === 'token' && (bottleneck.totalTokens || 0) > 0) || null
-
-const getTopPipelineTokenUsage = (profile?: PipelinePerformanceProfile | null) =>
-  profile?.tokenUsage[0] || null
-
-const formatPipelinePercent = (value?: number | null) => {
-  if (!value || !Number.isFinite(value)) {
-    return '0%'
-  }
-  return `${Math.round(value)}%`
-}
-
-const accumulateTokenUsage = (base: TokenUsageReport, incoming: TokenUsageReport): TokenUsageReport => {
-  const providerTotals: Record<string, number> = { ...(base.providerTotals || {}) }
-  for (const [provider, total] of Object.entries(incoming.providerTotals || {})) {
-    providerTotals[provider] = (providerTotals[provider] || 0) + total
-  }
-
-  return {
-    investigationId: base.investigationId,
-    label: base.label,
-    callCount: base.callCount + incoming.callCount,
-    reportedCallCount: base.reportedCallCount + incoming.reportedCallCount,
-    estimatedCallCount: base.estimatedCallCount + incoming.estimatedCallCount,
-    promptTokens: base.promptTokens + incoming.promptTokens,
-    completionTokens: base.completionTokens + incoming.completionTokens,
-    totalTokens: base.totalTokens + incoming.totalTokens,
-    providerTotals,
-  }
-}
 
 const getInvestigationTimestamp = (investigationId: string): number | null => {
   const match = investigationId.match(investigationTimestampPattern)
@@ -992,32 +688,6 @@ const formatWorkspaceTimestamp = (investigationId: string | null) => {
 const isFiniteConfidence = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
 
-const shouldFetchPipelineProfiles = () => {
-  if (import.meta.env.MODE !== 'test') {
-    return true
-  }
-  return Boolean((fetch as unknown as { mock?: unknown }).mock)
-}
-
-const isBackendReachable = async () => {
-  if (!SHOULD_PROBE_BACKEND) {
-    return true
-  }
-
-  try {
-    const response = await fetch(BACKEND_STATUS_ENDPOINT, { cache: 'no-store' })
-    if (!response.ok) {
-      return true
-    }
-
-    const status = await response.json()
-    return status?.ready === true
-  } catch {
-    // In dev, prefer quiet local mode over noisy connection-refused loops.
-    return false
-  }
-}
-
 function App() {
   const initialInvestigationsRef = useRef<InvestigationRecord[] | null>(null)
   if (initialInvestigationsRef.current === null) {
@@ -1036,7 +706,6 @@ function App() {
   const [investigationSwitchOverlay, setInvestigationSwitchOverlay] = useState<InvestigationSwitchOverlayState | null>(null)
   const [boardWorkspaceRevision, setBoardWorkspaceRevision] = useState(0)
   const [showSummaryLog, setShowSummaryLog] = useState(false)
-  const [socketConfig, setSocketConfig] = useState<{ socket: WebSocket | null, ready: boolean }>({ socket: null, ready: false })
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => getMostRecentInvestigationId(initialInvestigationsRef.current || []))
@@ -1057,12 +726,6 @@ function App() {
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
-  const [pipelineRunsById, setPipelineRunsById] = useState<Record<string, PipelineRunState>>({})
-  const [pipelineProfiles, setPipelineProfiles] = useState<PipelinePerformanceProfile[]>([])
-  const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
-  const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
-  const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
-  const [pipelineStepTransitions, setPipelineStepTransitions] = useState<Record<string, PipelineProgressStepState['status']>>({})
   const [rabbitHoleGatekeeper, setRabbitHoleGatekeeper] = useState<RabbitHoleGatekeeperPanelState | null>(null)
   const [animatedPipelineToken, setAnimatedPipelineToken] = useState<AnimatedPipelineTokenState>({
     runId: null,
@@ -1074,13 +737,8 @@ function App() {
   const [systemNotice, setSystemNotice] = useState<string | null>(null)
   const [dismissedSystemNotice, setDismissedSystemNotice] = useState<string | null>(null)
 
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const connectRef = useRef<() => Promise<void>>(async () => {});
-  const isUnmounted = useRef(false);
   const investigationsRef = useRef(investigations);
   const investigationHydrationRequestRef = useRef(0);
-  const backendOfflineNoticeShownRef = useRef(false);
   const crawlInputRef = useRef<HTMLInputElement | null>(null);
   const activeSidebarItemRef = useRef<HTMLDivElement | null>(null);
   const sidebarResizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -1088,11 +746,37 @@ function App() {
   const investigationSwitchOverlayRef = useRef<InvestigationSwitchOverlayState | null>(null);
   const investigationSwitchOverlayTimeoutRef = useRef<number | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
-  const pipelineRunsByIdRef = useRef<Record<string, PipelineRunState>>({})
-  const pipelineStepTransitionTimeoutsRef = useRef<Record<string, number>>({})
   const qaPipelineDemoTimeoutsRef = useRef<number[]>([])
   const animatedPipelineTokenRef = useRef(animatedPipelineToken)
+  const {
+    pipelineRuns,
+    activePipelineRun,
+    activePipelineProfile,
+    comparisonPipelineProfile,
+    isPipelineDrawerOpen,
+    dismissedPipelineChipRuns,
+    pipelineStepTransitions,
+    setPipelineProfiles,
+    setActivePipelineRunId,
+    setIsPipelineDrawerOpen,
+    setDismissedPipelineChipRuns,
+    refreshPipelineProfiles,
+    clearPipelineStepTransitions,
+    applyPipelineProgress,
+    closePipelineDrawer: closePipelineProgressDrawer,
+  } = usePipelineProgress({
+    profilesEndpoint: PIPELINE_RUNS_ENDPOINT,
+    stepTransitionMs: PIPELINE_STEP_TRANSITION_MS,
+  })
   investigationsRef.current = investigations
+  const getBackendSyncVaultIds = useCallback(() => investigationsRef.current.map((investigation) => investigation.id), [])
+  const socketConfig = useBackendWebSocket({
+    socketUrl: BACKEND_WS_URL,
+    statusEndpoint: BACKEND_STATUS_ENDPOINT,
+    reconnectDelayMs: WEBSOCKET_RETRY_DELAY_MS,
+    shouldProbeBackend: SHOULD_PROBE_BACKEND,
+    getSyncVaultIds: getBackendSyncVaultIds,
+  })
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
   const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'brain' || activeTab === 'chat' || activeTab === 'settings'
@@ -1383,184 +1067,26 @@ function App() {
     });
   }, []);
 
-  const refreshPipelineProfiles = useCallback(async () => {
-    if (!shouldFetchPipelineProfiles()) {
-      return
-    }
-    try {
-      const response = await fetch(`${PIPELINE_RUNS_ENDPOINT}?limit=20`, { cache: 'no-store' })
-      if (!response.ok) {
-        return
-      }
-      const data = await response.json()
-      setPipelineProfiles(coercePipelineProfiles(data))
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.debug('[App] Pipeline profile history unavailable', error)
-      }
-    }
-  }, [])
-
-  const clearPipelineStepTransitions = useCallback(() => {
-    Object.values(pipelineStepTransitionTimeoutsRef.current).forEach((timeoutId) => {
-      window.clearTimeout(timeoutId)
-    })
-    pipelineStepTransitionTimeoutsRef.current = {}
-    setPipelineStepTransitions({})
-  }, [])
-
-  const recordPipelineStepTransitions = useCallback((progress: PipelineProgressPayload) => {
-    const previousRun = pipelineRunsByIdRef.current[progress.runId]
-    const previousSteps = new Map((previousRun?.steps || []).map((step) => [step.id, step.status]))
-    const transitions: Record<string, PipelineProgressStepState['status']> = {}
-
-    ;(progress.steps || []).forEach((step) => {
-      const previousStatus = previousSteps.get(step.id)
-      const isNewActiveStep = !previousStatus && step.status !== 'pending'
-      const changedStatus = Boolean(previousStatus && previousStatus !== step.status)
-      if (!isNewActiveStep && !changedStatus) {
-        return
-      }
-      transitions[getPipelineStepTransitionKey(progress.runId, step.id, step.status)] = step.status
-    })
-
-    const transitionKeys = Object.keys(transitions)
-    if (transitionKeys.length === 0) {
-      return
-    }
-
-    setPipelineStepTransitions((current) => ({
-      ...current,
-      ...transitions,
-    }))
-
-    transitionKeys.forEach((key) => {
-      const existingTimeout = pipelineStepTransitionTimeoutsRef.current[key]
-      if (existingTimeout) {
-        window.clearTimeout(existingTimeout)
-      }
-      pipelineStepTransitionTimeoutsRef.current[key] = window.setTimeout(() => {
-        delete pipelineStepTransitionTimeoutsRef.current[key]
-        setPipelineStepTransitions((current) => {
-          if (!current[key]) {
-            return current
-          }
-          const next = { ...current }
-          delete next[key]
-          return next
-        })
-      }, PIPELINE_STEP_TRANSITION_MS)
-    })
-  }, [])
-
-  const applyPipelineProgress = useCallback((progress: PipelineProgressPayload) => {
-    recordPipelineStepTransitions(progress)
-    setPipelineRunsById((current) => {
-      const next = {
-        ...current,
-        [progress.runId]: {
-          ...(current[progress.runId] || {}),
-          ...progress,
-          updatedAt: Date.now(),
-        },
-      }
-      pipelineRunsByIdRef.current = next
-      return next
-    })
-    setActivePipelineRunId(progress.runId)
-  }, [recordPipelineStepTransitions])
-
   const closePipelineDrawer = useCallback(() => {
-    setIsPipelineDrawerOpen(false)
-    clearPipelineStepTransitions()
+    closePipelineProgressDrawer()
     setAnimatedPipelineToken((current) => ({
       ...current,
       display: current.target,
       isAnimating: false,
     }))
-  }, [clearPipelineStepTransitions])
+  }, [closePipelineProgressDrawer])
 
   const clearQaPipelineDemoTimers = useCallback(() => {
     qaPipelineDemoTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId))
     qaPipelineDemoTimeoutsRef.current = []
   }, [])
 
-  const scheduleReconnect = useCallback((delay = WEBSOCKET_RETRY_DELAY_MS) => {
-    if (isUnmounted.current) {
-      return
-    }
-
-    if (reconnectTimeoutRef.current) {
-      window.clearTimeout(reconnectTimeoutRef.current)
-    }
-
-    reconnectTimeoutRef.current = window.setTimeout(() => {
-      reconnectTimeoutRef.current = null
-      void connectRef.current()
-    }, delay)
-  }, [])
-
-  const connect = useCallback(async () => {
-    if (isUnmounted.current) {
-      return
-    }
-
-    if (socketRef.current && (socketRef.current.readyState === 0 || socketRef.current.readyState === 1)) {
-      return
-    }
-
-    const backendReady = await isBackendReachable()
-    if (!backendReady) {
-      setSocketConfig({ socket: null, ready: false })
-      if (!backendOfflineNoticeShownRef.current) {
-        console.debug('[App] Backend offline; staying in local UI mode and retrying quietly.')
-        backendOfflineNoticeShownRef.current = true
-      }
-      scheduleReconnect()
-      return
-    }
-
-    console.debug('[App] Connecting to WebSocket...');
-    const s = new WebSocket(BACKEND_WS_URL)
-
-    socketRef.current = s;
-
-    s.onopen = () => {
-      backendOfflineNoticeShownRef.current = false
-      console.debug('[App] WebSocket Connected');
-      setSocketConfig({ socket: s, ready: true });
-      
-      const ids = investigationsRef.current.map((inv) => inv.id);
-      if (ids.length > 0) {
-        s.send(JSON.stringify({ type: 'SYNC_VAULTS', payload: ids }));
-      }
-    };
-
-    s.onclose = () => {
-      setSocketConfig({ socket: null, ready: false });
-      socketRef.current = null;
-      scheduleReconnect();
-    };
-
-    s.onerror = () => {
-      if (s.readyState !== 3) {
-        s.close();
-      }
-    };
-  }, [scheduleReconnect]);
-
-  connectRef.current = connect;
-
   useEffect(() => {
-    isUnmounted.current = false;
-    reconnectTimeoutRef.current = window.setTimeout(() => {
-      reconnectTimeoutRef.current = null;
-      void connect();
-    }, 0);
+    let cancelled = false
 
     void (async () => {
       const data = await loadInvestigations()
-      if (isUnmounted.current) {
+      if (cancelled) {
         return
       }
       if (data.length > 0) {
@@ -1574,7 +1100,7 @@ function App() {
           ] as const)),
           Promise.all(data.map((investigation) => loadBoardStateForInvestigation(investigation.id))),
         ])
-        if (!isUnmounted.current) {
+        if (!cancelled) {
           setDiscoveriesByInvestigation(discoveries as unknown as Record<string, DiscoveryRecord[]>)
           setVaultResultsByInvestigation(Object.fromEntries(vaultResultEntries))
           setBoardWorkspaceRevision((current) => current + 1)
@@ -1583,11 +1109,9 @@ function App() {
     })()
 
     return () => {
-      isUnmounted.current = true;
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (socketRef.current && socketRef.current.readyState === 1) socketRef.current.close();
+      cancelled = true
     }
-  }, [connect])
+  }, [])
 
   useEffect(() => {
     void refreshPipelineProfiles()
@@ -1816,27 +1340,6 @@ function App() {
       value: '0',
       title: 'No token usage reported yet',
     }
-  const pipelineRuns = useMemo(
-    () => Object.values(pipelineRunsById).sort((left, right) => right.updatedAt - left.updatedAt),
-    [pipelineRunsById],
-  )
-  const activePipelineRun = activePipelineRunId ? pipelineRunsById[activePipelineRunId] || null : pipelineRuns[0] || null
-  const pipelineProfilesByRunId = useMemo(() => {
-    return pipelineProfiles.reduce<Record<string, PipelinePerformanceProfile>>((profiles, profile) => {
-      profiles[profile.runId] = profile
-      return profiles
-    }, {})
-  }, [pipelineProfiles])
-  const activePipelineProfile = activePipelineRun
-    ? pipelineProfilesByRunId[activePipelineRun.runId] || null
-    : pipelineProfiles[0] || null
-  const comparisonPipelineProfile = activePipelineProfile
-    ? pipelineProfiles.find((profile) => (
-      profile.runId !== activePipelineProfile.runId &&
-      profile.vaultId === activePipelineProfile.vaultId &&
-      profile.mode === activePipelineProfile.mode
-    )) || null
-    : null
   const activePipelineDurationBottleneck = getTopPipelineDurationBottleneck(activePipelineProfile)
   const activePipelineTokenBottleneck = getTopPipelineTokenBottleneck(activePipelineProfile)
   const activePipelineTokenUsageHotspot = getTopPipelineTokenUsage(activePipelineProfile)
@@ -1987,10 +1490,6 @@ function App() {
   }, [clearPipelineStepTransitions, currentInvestigationId])
 
   useEffect(() => () => {
-    Object.values(pipelineStepTransitionTimeoutsRef.current).forEach((timeoutId) => {
-      window.clearTimeout(timeoutId)
-    })
-    pipelineStepTransitionTimeoutsRef.current = {}
     clearQaPipelineDemoTimers()
   }, [clearQaPipelineDemoTimers])
 
