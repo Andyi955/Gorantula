@@ -103,6 +103,10 @@ import {
 } from './supportingEvidenceLayer';
 import { getMiniMapNodeColor } from './detectiveBoardMinimap';
 import { useDetectiveBoardPersistence } from './useDetectiveBoardPersistence';
+import {
+    BOARD_CONTROLS_PANEL_MARGIN,
+    useDetectiveBoardInteractionState,
+} from './useDetectiveBoardInteractionState';
 
 import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle, ExternalLink } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
@@ -571,7 +575,6 @@ const BOARD_CAMERA_GLIDE_DURATION_MS = 900;
 const BOARD_CAMERA_SETTLE_BUFFER_MS = 140;
 const INITIAL_RESTORE_VIEWPORT_FIT_DELAY_MS = 80;
 const INITIAL_RESTORE_VIEWPORT_REVEAL_DELAY_MS = 16;
-const RELATIONSHIP_LEGEND_VISIBILITY_KEY = 'detective_board_relationship_legend_visible';
 const BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE = { width: 960, height: 540 };
 const BOARD_NAVIGATOR_BOUNDS_PADDING = BOARD_GRID_SIZE * 3;
 const BOARD_NAVIGATOR_MIN_SPAN = BOARD_GRID_SIZE * 10;
@@ -586,9 +589,6 @@ const MINIMAP_PANEL_LAYOUT = {
     },
 } as const;
 const MINIMAP_PANEL_OFFSET = { left: 24, top: 16, padding: 16, header: 42, toolbarGap: 20 };
-const EXPORT_MENU_WIDTH = 224;
-const BOARD_CONTROLS_PANEL_MAX_WIDTH = 416;
-const BOARD_CONTROLS_PANEL_MARGIN = 16;
 const RECENT_IMPORT_HIGHLIGHT_DURATION_MS = 3000;
 const CONNECTION_REVEAL_DURATION_MS = 3200;
 const CONNECT_LAYOUT_SETTLE_MS = 850;
@@ -1345,29 +1345,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [isGathering, setIsGathering] = useState(false);
     const [isReorganizing, setIsReorganizing] = useState(false);
     const [deepDiveTopic, setDeepDiveTopic] = useState<string | null>(null);
-    const [showExportMenu, setShowExportMenu] = useState(false);
-    const [exportMenuPosition, setExportMenuPosition] = useState<{ top: number; left: number; width: number }>({
-        top: 0,
-        left: 0,
-        width: EXPORT_MENU_WIDTH,
-    });
-    const [showBoardControls, setShowBoardControls] = useState(false);
-    const [boardControlsPosition, setBoardControlsPosition] = useState<{ top: number; width: number; maxHeight: number }>({
-        top: 0,
-        width: BOARD_CONTROLS_PANEL_MAX_WIDTH,
-        maxHeight: 520,
-    });
-    const [showRelationshipLegend, setShowRelationshipLegend] = useState<boolean>(() => {
-        if (typeof window === 'undefined') {
-            return true;
-        }
-
-        const storedValue = window.localStorage.getItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY);
-        return storedValue === null ? true : storedValue === 'true';
-    });
-    const [showGrid, setShowGrid] = useState(true);
-    const [snapNodes, setSnapNodes] = useState(false);
-    const [snapConnectionLabels, setSnapConnectionLabels] = useState(false);
     const [boardMode, setBoardMode] = useState<BoardMode>('strict-grid');
     const [appendSearchPrompt, setAppendSearchPrompt] = useState('');
     const [pendingIntegrationNodeIds, setPendingIntegrationNodeIds] = useState<string[]>([]);
@@ -1435,6 +1412,42 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const initialRestoreViewportFitTimeoutRef = useRef<number | null>(null);
     const pendingInitialRestoreViewportFitRef = useRef<string | null>(null);
     const completedInitialRestoreViewportFitRef = useRef<string | null>(null);
+
+    const handleRelationshipLegendClosed = useCallback(() => {
+        setEditingTag(null);
+    }, []);
+
+    const {
+        showExportMenu,
+        exportMenuPosition,
+        showBoardControls,
+        boardControlsPosition,
+        showRelationshipLegend,
+        showGrid,
+        snapNodes,
+        snapConnectionLabels,
+        closeExportMenu,
+        closeBoardControls,
+        closeBoardOverlays,
+        closeRelationshipLegend,
+        openRelationshipLegend,
+        toggleRelationshipWorkspacePanel,
+        toggleExportMenu,
+        toggleBoardControlsPanel,
+        toggleShowGrid,
+        toggleSnapNodes,
+        toggleSnapConnectionLabels,
+    } = useDetectiveBoardInteractionState({
+        canExport: nodes.length > 0 && !isReorganizing,
+        boardContainerRef,
+        exportButtonRef,
+        exportMenuPanelRef,
+        boardToolbarRef,
+        boardActionBarRef,
+        boardControlsButtonRef,
+        boardControlsPanelRef,
+        onRelationshipLegendClosed: handleRelationshipLegendClosed,
+    });
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -1617,15 +1630,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         setMarquee(null);
         marqueeSelectedIdsRef.current.clear();
         marqueePointerIdRef.current = null;
-    }, []);
-
-    const closeRelationshipLegend = useCallback(() => {
-        setShowRelationshipLegend(false);
-        setEditingTag(null);
-    }, []);
-
-    const openRelationshipLegend = useCallback(() => {
-        setShowRelationshipLegend(true);
     }, []);
 
     const clearConnectionRevealForEdges = useCallback((edgeIds: string[]) => {
@@ -2941,128 +2945,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     // Help distribute edges evenly
 
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            const targetNode = event.target as unknown as globalThis.Node;
-            const clickedExportButton = exportButtonRef.current?.contains(targetNode);
-            const clickedExportPanel = exportMenuPanelRef.current?.contains(targetNode);
-            if (!clickedExportButton && !clickedExportPanel) {
-                setShowExportMenu(false);
-            }
-
-            const clickedBoardControlsButton = boardControlsButtonRef.current?.contains(targetNode);
-            const clickedBoardControlsPanel = boardControlsPanelRef.current?.contains(targetNode);
-            if (!clickedBoardControlsButton && !clickedBoardControlsPanel) {
-                setShowBoardControls(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const updateExportMenuPosition = useCallback(() => {
-        const container = boardContainerRef.current;
-        const button = exportButtonRef.current;
-        if (!container || !button) {
-            return;
-        }
-
-        const containerRect = container.getBoundingClientRect();
-        const buttonRect = button.getBoundingClientRect();
-        const availableWidth = Math.max(180, Math.min(EXPORT_MENU_WIDTH, containerRect.width - (BOARD_CONTROLS_PANEL_MARGIN * 2)));
-        const unclampedLeft = buttonRect.left - containerRect.left;
-        const maxLeft = Math.max(BOARD_CONTROLS_PANEL_MARGIN, containerRect.width - availableWidth - BOARD_CONTROLS_PANEL_MARGIN);
-        const nextLeft = Math.min(Math.max(unclampedLeft, BOARD_CONTROLS_PANEL_MARGIN), maxLeft);
-        const nextTop = buttonRect.bottom - containerRect.top + 12;
-
-        setExportMenuPosition({
-            top: nextTop,
-            left: nextLeft,
-            width: availableWidth,
-        });
-    }, []);
-
-    const updateBoardControlsPosition = useCallback(() => {
-        const container = boardContainerRef.current;
-        const actionBar = boardActionBarRef.current;
-        const positioningRoot = boardToolbarRef.current;
-        if (!container || !actionBar || !positioningRoot) {
-            return;
-        }
-
-        const containerRect = container.getBoundingClientRect();
-        const actionBarRect = actionBar.getBoundingClientRect();
-        const positioningRootRect = positioningRoot.getBoundingClientRect();
-        const availableWidth = Math.max(280, Math.min(BOARD_CONTROLS_PANEL_MAX_WIDTH, containerRect.width - (BOARD_CONTROLS_PANEL_MARGIN * 2)));
-        const nextTop = actionBarRect.bottom - positioningRootRect.top + 12;
-        const availableHeight = Math.max(0, containerRect.bottom - actionBarRect.bottom - 12 - BOARD_CONTROLS_PANEL_MARGIN);
-
-        setBoardControlsPosition({
-            top: nextTop,
-            width: availableWidth,
-            maxHeight: availableHeight,
-        });
-    }, []);
-
-    useEffect(() => {
-        if (!showExportMenu) {
-            return;
-        }
-
-        updateExportMenuPosition();
-
-        const handleViewportChange = () => updateExportMenuPosition();
-        window.addEventListener('resize', handleViewportChange);
-        window.addEventListener('scroll', handleViewportChange, true);
-
-        return () => {
-            window.removeEventListener('resize', handleViewportChange);
-            window.removeEventListener('scroll', handleViewportChange, true);
-        };
-    }, [showExportMenu, updateExportMenuPosition]);
-
-    useEffect(() => {
-        if (!showBoardControls) {
-            return;
-        }
-
-        updateBoardControlsPosition();
-
-        const handleViewportChange = () => updateBoardControlsPosition();
-        window.addEventListener('resize', handleViewportChange);
-        window.addEventListener('scroll', handleViewportChange, true);
-
-        return () => {
-            window.removeEventListener('resize', handleViewportChange);
-            window.removeEventListener('scroll', handleViewportChange, true);
-        };
-    }, [showBoardControls, updateBoardControlsPosition]);
-
-    const toggleExportMenu = useCallback(() => {
-        if (!canExport) {
-            return;
-        }
-
-        setShowBoardControls(false);
-        updateExportMenuPosition();
-        setShowExportMenu((current) => !current);
-    }, [canExport, updateExportMenuPosition]);
-
-    const toggleBoardControlsPanel = useCallback(() => {
-        setShowExportMenu(false);
-        updateBoardControlsPosition();
-        setShowBoardControls((current) => !current);
-    }, [updateBoardControlsPosition]);
-
     const recenterBoardViewport = useCallback(() => {
-        setShowExportMenu(false);
-        setShowBoardControls(false);
+        closeBoardOverlays();
         const duration = startBoardCameraMovement(BOARD_CAMERA_GLIDE_DURATION_MS);
         fitView({
             ...BOARD_FIT_VIEW_OPTIONS,
             duration,
         });
-    }, [fitView, startBoardCameraMovement]);
+    }, [closeBoardOverlays, fitView, startBoardCameraMovement]);
 
     const toggleDiscoveryWorkspacePanel = useCallback(() => {
         emitBoardWorkspaceEvent(BOARD_TOGGLE_DISCOVERY_PANEL_EVENT);
@@ -3079,11 +2969,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         ? `Toggle discoveries panel - Discoveries ready${hasUnreadDiscoveries ? ' with unread notification' : ''}`
         : 'Toggle discoveries panel';
 
-    const toggleRelationshipWorkspacePanel = useCallback(() => {
-        setEditingTag(null);
-        setShowRelationshipLegend((current) => !current);
-    }, []);
-
     // Load tag styles on mount
     useEffect(() => {
         const saved = localStorage.getItem('board_tag_styles');
@@ -3095,10 +2980,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             }
         }
     }, []);
-
-    useEffect(() => {
-        localStorage.setItem(RELATIONSHIP_LEGEND_VISIBILITY_KEY, String(showRelationshipLegend));
-    }, [showRelationshipLegend]);
 
     useEffect(() => {
         if (!imageLightbox) {
@@ -3132,26 +3013,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, [closeImageLightbox, imageLightbox, stepImageLightbox]);
 
     useEffect(() => {
-        const savedGridPreference = localStorage.getItem('detective_board_show_grid');
-        if (savedGridPreference !== null) {
-            console.debug('[DetectiveBoard] Loaded grid preference:', savedGridPreference);
-            setShowGrid(savedGridPreference === 'true');
-        } else {
-            console.debug('[DetectiveBoard] No saved grid preference found. Defaulting to visible grid.');
-        }
-
-        const savedSnappingPreference = localStorage.getItem('detective_board_snap_connection_labels');
-        if (savedSnappingPreference !== null) {
-            setSnapConnectionLabels(savedSnappingPreference === 'true');
-        }
-
-        const savedNodeSnappingPreference = localStorage.getItem('detective_board_snap_nodes');
-        if (savedNodeSnappingPreference !== null) {
-            setSnapNodes(savedNodeSnappingPreference === 'true');
-        }
-    }, []);
-
-    useEffect(() => {
         clearMarqueeSelection();
     }, [clearMarqueeSelection, investigationId]);
 
@@ -3175,19 +3036,6 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         qaEvidenceExpansionDemoActiveRef.current = false;
         qaRabbitHoleDemoActiveRef.current = false;
     }, [clearBoardCameraMovement, clearLayoutChoreographyState, investigationId]);
-
-    useEffect(() => {
-        console.debug('[DetectiveBoard] Grid visibility changed:', showGrid);
-        localStorage.setItem('detective_board_show_grid', String(showGrid));
-    }, [showGrid]);
-
-    useEffect(() => {
-        localStorage.setItem('detective_board_snap_connection_labels', String(snapConnectionLabels));
-    }, [snapConnectionLabels]);
-
-    useEffect(() => {
-        localStorage.setItem('detective_board_snap_nodes', String(snapNodes));
-    }, [snapNodes]);
 
     useEffect(() => {
         if (!showBrowserQaBoardTools || typeof window === 'undefined') {
@@ -5272,7 +5120,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     }, []);
 
     const handleExport = async (type: 'png' | 'svg' | 'pdf') => {
-        setShowExportMenu(false);
+        closeExportMenu();
         const boardElementId = 'detective-board-flow';
         const exportUtils = await import('../utils/ExportUtils');
 
@@ -5458,7 +5306,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                 </p>
                             </div>
                             <button
-                                onClick={() => setShowBoardControls(false)}
+                                onClick={closeBoardControls}
                                 className="rounded-lg border border-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--forensic-text-faint)] transition-colors hover:border-white/30 hover:text-white"
                             >
                                 Close
@@ -5473,11 +5321,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         View
                                     </div>
                                     <button
-                                        onClick={() => setShowGrid((current) => {
-                                            const next = !current;
-                                            console.debug('[DetectiveBoard] Grid toggle clicked. Next state:', next);
-                                            return next;
-                                        })}
+                                        onClick={toggleShowGrid}
                                         className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${showGrid
                                             ? 'border-white/20 bg-white/7 text-white hover:border-white/35'
                                             : 'border-white/10 bg-black/35 text-gray-300 hover:border-white/25 hover:text-white'
@@ -5505,7 +5349,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                     </div>
                                     <div className="space-y-2">
                                         <button
-                                            onClick={() => setSnapConnectionLabels((current) => !current)}
+                                            onClick={toggleSnapConnectionLabels}
                                             className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapConnectionLabels
                                                 ? 'border-cyber-cyan/40 bg-cyber-cyan/10 text-cyber-cyan'
                                                 : 'border-cyber-cyan/18 bg-black/35 text-gray-300 hover:border-cyber-cyan/35 hover:text-white'
@@ -5523,7 +5367,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                         </button>
 
                                         <button
-                                            onClick={() => setSnapNodes((current) => !current)}
+                                            onClick={toggleSnapNodes}
                                             className={`flex w-full rounded-xl border px-3 py-3 text-left transition-all ${snapNodes
                                                 ? 'border-cyber-green/40 bg-cyber-green/10 text-cyber-green'
                                                 : 'border-cyber-green/18 bg-black/35 text-gray-300 hover:border-cyber-green/35 hover:text-white'
