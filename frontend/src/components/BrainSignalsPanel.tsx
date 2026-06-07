@@ -15,7 +15,9 @@ import {
   promoteBrainSignal,
   toggleBrainClusterPin,
   unhideBrainCluster,
+  type BrainSignal,
   type MemoryCluster,
+  type MemoryLink,
 } from '../utils/brainMemory'
 import { buildBrainMapModel, type BrainMapNode } from '../utils/brainMap'
 import {
