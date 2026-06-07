@@ -60,12 +60,12 @@ import { calculateNodeFrame } from './components/boardGeometry'
 import { STRICT_GRID_NODE_Z_INDEX } from './components/detectiveBoardStrictGridLayout'
 import { nodeHasImages, type NodeImageAsset } from './components/nodeImages'
 import { useBackendWebSocket } from './hooks/useBackendWebSocket'
+import { usePipelineProgress } from './hooks/usePipelineProgress'
 import {
   accumulateTokenUsage,
   buildEmptyTokenUsageReport,
   clampProgressPercent,
   coercePipelineProgressPayload,
-  coercePipelineProfiles,
   coerceTokenUsageReport,
   formatCompactTokens,
   formatDuration,
@@ -79,7 +79,6 @@ import {
   type PipelinePerformanceProfile,
   type PipelineProgressPayload,
   type PipelineProgressStepState,
-  type PipelineRunState,
   type TokenUsageReport,
 } from './utils/pipelineTelemetry'
 
@@ -689,13 +688,6 @@ const formatWorkspaceTimestamp = (investigationId: string | null) => {
 const isFiniteConfidence = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
 
-const shouldFetchPipelineProfiles = () => {
-  if (import.meta.env.MODE !== 'test') {
-    return true
-  }
-  return Boolean((fetch as unknown as { mock?: unknown }).mock)
-}
-
 function App() {
   const initialInvestigationsRef = useRef<InvestigationRecord[] | null>(null)
   if (initialInvestigationsRef.current === null) {
@@ -734,12 +726,6 @@ function App() {
   const [unreadTheoryByInvestigation, setUnreadTheoryByInvestigation] = useState<Record<string, boolean>>({})
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsageReport>(() => buildEmptyTokenUsageReport('Session Total'))
   const [boardTokenUsageByInvestigation, setBoardTokenUsageByInvestigation] = useState<Record<string, TokenUsageReport>>({})
-  const [pipelineRunsById, setPipelineRunsById] = useState<Record<string, PipelineRunState>>({})
-  const [pipelineProfiles, setPipelineProfiles] = useState<PipelinePerformanceProfile[]>([])
-  const [activePipelineRunId, setActivePipelineRunId] = useState<string | null>(null)
-  const [isPipelineDrawerOpen, setIsPipelineDrawerOpen] = useState(false)
-  const [dismissedPipelineChipRuns, setDismissedPipelineChipRuns] = useState<Record<string, boolean>>({})
-  const [pipelineStepTransitions, setPipelineStepTransitions] = useState<Record<string, PipelineProgressStepState['status']>>({})
   const [rabbitHoleGatekeeper, setRabbitHoleGatekeeper] = useState<RabbitHoleGatekeeperPanelState | null>(null)
   const [animatedPipelineToken, setAnimatedPipelineToken] = useState<AnimatedPipelineTokenState>({
     runId: null,
@@ -760,10 +746,28 @@ function App() {
   const investigationSwitchOverlayRef = useRef<InvestigationSwitchOverlayState | null>(null);
   const investigationSwitchOverlayTimeoutRef = useRef<number | null>(null);
   const currentInvestigation = investigations.find((investigation) => investigation.id === currentInvestigationId) || null;
-  const pipelineRunsByIdRef = useRef<Record<string, PipelineRunState>>({})
-  const pipelineStepTransitionTimeoutsRef = useRef<Record<string, number>>({})
   const qaPipelineDemoTimeoutsRef = useRef<number[]>([])
   const animatedPipelineTokenRef = useRef(animatedPipelineToken)
+  const {
+    pipelineRuns,
+    activePipelineRun,
+    activePipelineProfile,
+    comparisonPipelineProfile,
+    isPipelineDrawerOpen,
+    dismissedPipelineChipRuns,
+    pipelineStepTransitions,
+    setPipelineProfiles,
+    setActivePipelineRunId,
+    setIsPipelineDrawerOpen,
+    setDismissedPipelineChipRuns,
+    refreshPipelineProfiles,
+    clearPipelineStepTransitions,
+    applyPipelineProgress,
+    closePipelineDrawer: closePipelineProgressDrawer,
+  } = usePipelineProgress({
+    profilesEndpoint: PIPELINE_RUNS_ENDPOINT,
+    stepTransitionMs: PIPELINE_STEP_TRANSITION_MS,
+  })
   investigationsRef.current = investigations
   const getBackendSyncVaultIds = useCallback(() => investigationsRef.current.map((investigation) => investigation.id), [])
   const socketConfig = useBackendWebSocket({
@@ -1063,102 +1067,14 @@ function App() {
     });
   }, []);
 
-  const refreshPipelineProfiles = useCallback(async () => {
-    if (!shouldFetchPipelineProfiles()) {
-      return
-    }
-    try {
-      const response = await fetch(`${PIPELINE_RUNS_ENDPOINT}?limit=20`, { cache: 'no-store' })
-      if (!response.ok) {
-        return
-      }
-      const data = await response.json()
-      setPipelineProfiles(coercePipelineProfiles(data))
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.debug('[App] Pipeline profile history unavailable', error)
-      }
-    }
-  }, [])
-
-  const clearPipelineStepTransitions = useCallback(() => {
-    Object.values(pipelineStepTransitionTimeoutsRef.current).forEach((timeoutId) => {
-      window.clearTimeout(timeoutId)
-    })
-    pipelineStepTransitionTimeoutsRef.current = {}
-    setPipelineStepTransitions({})
-  }, [])
-
-  const recordPipelineStepTransitions = useCallback((progress: PipelineProgressPayload) => {
-    const previousRun = pipelineRunsByIdRef.current[progress.runId]
-    const previousSteps = new Map((previousRun?.steps || []).map((step) => [step.id, step.status]))
-    const transitions: Record<string, PipelineProgressStepState['status']> = {}
-
-    ;(progress.steps || []).forEach((step) => {
-      const previousStatus = previousSteps.get(step.id)
-      const isNewActiveStep = !previousStatus && step.status !== 'pending'
-      const changedStatus = Boolean(previousStatus && previousStatus !== step.status)
-      if (!isNewActiveStep && !changedStatus) {
-        return
-      }
-      transitions[getPipelineStepTransitionKey(progress.runId, step.id, step.status)] = step.status
-    })
-
-    const transitionKeys = Object.keys(transitions)
-    if (transitionKeys.length === 0) {
-      return
-    }
-
-    setPipelineStepTransitions((current) => ({
-      ...current,
-      ...transitions,
-    }))
-
-    transitionKeys.forEach((key) => {
-      const existingTimeout = pipelineStepTransitionTimeoutsRef.current[key]
-      if (existingTimeout) {
-        window.clearTimeout(existingTimeout)
-      }
-      pipelineStepTransitionTimeoutsRef.current[key] = window.setTimeout(() => {
-        delete pipelineStepTransitionTimeoutsRef.current[key]
-        setPipelineStepTransitions((current) => {
-          if (!current[key]) {
-            return current
-          }
-          const next = { ...current }
-          delete next[key]
-          return next
-        })
-      }, PIPELINE_STEP_TRANSITION_MS)
-    })
-  }, [])
-
-  const applyPipelineProgress = useCallback((progress: PipelineProgressPayload) => {
-    recordPipelineStepTransitions(progress)
-    setPipelineRunsById((current) => {
-      const next = {
-        ...current,
-        [progress.runId]: {
-          ...(current[progress.runId] || {}),
-          ...progress,
-          updatedAt: Date.now(),
-        },
-      }
-      pipelineRunsByIdRef.current = next
-      return next
-    })
-    setActivePipelineRunId(progress.runId)
-  }, [recordPipelineStepTransitions])
-
   const closePipelineDrawer = useCallback(() => {
-    setIsPipelineDrawerOpen(false)
-    clearPipelineStepTransitions()
+    closePipelineProgressDrawer()
     setAnimatedPipelineToken((current) => ({
       ...current,
       display: current.target,
       isAnimating: false,
     }))
-  }, [clearPipelineStepTransitions])
+  }, [closePipelineProgressDrawer])
 
   const clearQaPipelineDemoTimers = useCallback(() => {
     qaPipelineDemoTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId))
@@ -1424,27 +1340,6 @@ function App() {
       value: '0',
       title: 'No token usage reported yet',
     }
-  const pipelineRuns = useMemo(
-    () => Object.values(pipelineRunsById).sort((left, right) => right.updatedAt - left.updatedAt),
-    [pipelineRunsById],
-  )
-  const activePipelineRun = activePipelineRunId ? pipelineRunsById[activePipelineRunId] || null : pipelineRuns[0] || null
-  const pipelineProfilesByRunId = useMemo(() => {
-    return pipelineProfiles.reduce<Record<string, PipelinePerformanceProfile>>((profiles, profile) => {
-      profiles[profile.runId] = profile
-      return profiles
-    }, {})
-  }, [pipelineProfiles])
-  const activePipelineProfile = activePipelineRun
-    ? pipelineProfilesByRunId[activePipelineRun.runId] || null
-    : pipelineProfiles[0] || null
-  const comparisonPipelineProfile = activePipelineProfile
-    ? pipelineProfiles.find((profile) => (
-      profile.runId !== activePipelineProfile.runId &&
-      profile.vaultId === activePipelineProfile.vaultId &&
-      profile.mode === activePipelineProfile.mode
-    )) || null
-    : null
   const activePipelineDurationBottleneck = getTopPipelineDurationBottleneck(activePipelineProfile)
   const activePipelineTokenBottleneck = getTopPipelineTokenBottleneck(activePipelineProfile)
   const activePipelineTokenUsageHotspot = getTopPipelineTokenUsage(activePipelineProfile)
@@ -1595,10 +1490,6 @@ function App() {
   }, [clearPipelineStepTransitions, currentInvestigationId])
 
   useEffect(() => () => {
-    Object.values(pipelineStepTransitionTimeoutsRef.current).forEach((timeoutId) => {
-      window.clearTimeout(timeoutId)
-    })
-    pipelineStepTransitionTimeoutsRef.current = {}
     clearQaPipelineDemoTimers()
   }, [clearQaPipelineDemoTimers])
 
