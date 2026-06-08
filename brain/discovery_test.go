@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func TestSynthesizeDiscoveriesReturnsCandidateDiscoveries(t *testing.T) {

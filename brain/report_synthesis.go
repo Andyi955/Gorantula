@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 // RankResult encapsulates the relevance score for a fact (Generation 2)

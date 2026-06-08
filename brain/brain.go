@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"spider-agent/models"
-	"spider-agent/nervous_system"
+	"github.com/Andyi955/Gorantula/models"
+	"github.com/Andyi955/Gorantula/nervous_system"
 
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"

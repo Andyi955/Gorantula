@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"spider-agent/models"
-	"spider-agent/pkg/document"
+	"github.com/Andyi955/Gorantula/models"
+	"github.com/Andyi955/Gorantula/pkg/document"
 
 	"github.com/PuerkitoBio/goquery"
 )

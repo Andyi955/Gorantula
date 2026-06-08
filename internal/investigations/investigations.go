@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"spider-agent/brain"
-	"spider-agent/internal/assets"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/internal/assets"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 var relationshipLogConnectionLinePattern = regexp.MustCompile(`^(.+?) -> (.+?) \[(.+?)\] confidence=([0-9.]+) quality=([0-9.]+)$`)

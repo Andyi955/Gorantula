@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 const maxTokenUsageRecords = 2048

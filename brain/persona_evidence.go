@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 const personaFullTextExcerptLength = 220

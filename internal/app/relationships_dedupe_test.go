@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"spider-agent/internal/pipeline"
+	"github.com/Andyi955/Gorantula/internal/pipeline"
 )
 
 func TestConnectDotsRunClaimRejectsDuplicateUntilRelease(t *testing.T) {

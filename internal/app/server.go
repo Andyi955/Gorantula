@@ -14,15 +14,15 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/ncruces/zenity"
 
-	"spider-agent/brain"
-	"spider-agent/internal/assets"
-	"spider-agent/internal/brainmemory"
-	"spider-agent/internal/config"
-	"spider-agent/internal/investigations"
-	"spider-agent/internal/pipeline"
-	"spider-agent/internal/settings"
-	"spider-agent/models"
-	"spider-agent/nervous_system"
+	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/internal/assets"
+	"github.com/Andyi955/Gorantula/internal/brainmemory"
+	"github.com/Andyi955/Gorantula/internal/config"
+	"github.com/Andyi955/Gorantula/internal/investigations"
+	"github.com/Andyi955/Gorantula/internal/pipeline"
+	"github.com/Andyi955/Gorantula/internal/settings"
+	"github.com/Andyi955/Gorantula/models"
+	"github.com/Andyi955/Gorantula/nervous_system"
 )
 
 func Run() error {

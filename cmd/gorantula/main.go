@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"spider-agent/internal/app"
-	"spider-agent/internal/logging"
+	"github.com/Andyi955/Gorantula/internal/app"
+	"github.com/Andyi955/Gorantula/internal/logging"
 )
 
 func main() {

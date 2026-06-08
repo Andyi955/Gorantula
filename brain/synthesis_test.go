@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func taggedNode(id, title, summary string) models.MemoryNode {

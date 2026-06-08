@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 // NodeContextPayload represents where an entity was found

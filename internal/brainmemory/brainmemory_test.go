@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func writeTestInvestigation(t *testing.T, root string, record models.InvestigationRecord, board string, relationships string) {

@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"spider-agent/brain"
-	"spider-agent/internal/investigations"
-	"spider-agent/internal/pipeline"
-	"spider-agent/internal/synthesis"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/internal/investigations"
+	"github.com/Andyi955/Gorantula/internal/pipeline"
+	"github.com/Andyi955/Gorantula/internal/synthesis"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 var activeConnectDotsClaims sync.Map
