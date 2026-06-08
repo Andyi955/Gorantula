@@ -1000,6 +1000,23 @@ describe('BrainSignalsPanel', () => {
     expect(within(radar).getByTestId('brain-map-selected-node')).toHaveTextContent('Memory cluster')
   })
 
+  it('expands and collapses the living brain map workspace', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ brainMap: backendBrainMap })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    expect(radar).not.toHaveClass('is-expanded')
+
+    await user.click(within(radar).getByRole('button', { name: /expand brain map/i }))
+    expect(radar).toHaveClass('is-expanded')
+    expect(within(radar).getByRole('button', { name: /collapse brain map/i })).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(within(radar).getByRole('button', { name: /collapse brain map/i }))
+    expect(radar).not.toHaveClass('is-expanded')
+  })
+
   it('separates the Brain map, active signal feed, linked-memory archive, and clusters into sub-tabs', async () => {
     const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })

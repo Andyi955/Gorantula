@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Brain, ChevronDown, ChevronUp, ExternalLink, Eye, EyeOff, Link2, Pin, RefreshCw, Trash2, X } from 'lucide-react'
+import { Brain, ChevronDown, ChevronUp, ExternalLink, Eye, EyeOff, Link2, Maximize2, Minimize2, Pin, RefreshCw, Trash2, X } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
@@ -165,6 +165,7 @@ export default function BrainSignalsPanel({
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
+  const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
@@ -1348,18 +1349,34 @@ export default function BrainSignalsPanel({
   }
 
   const renderBrainMap = () => (
-    <section data-testid="brain-map-radar" className="forensic-brain-map-radar" aria-label="Brain memory map">
+    <section
+      data-testid="brain-map-radar"
+      className={`forensic-brain-map-radar ${isBrainMapExpanded ? 'is-expanded' : ''}`}
+      aria-label="Brain memory map"
+    >
       <div className="forensic-brain-map-header">
         <div>
           <span className="forensic-brain-panel-kicker">Memory map</span>
           <h3>Living memory map</h3>
         </div>
-        <div className="forensic-brain-map-summary">
-          <span>{brainMapModel.summary.linkedMemoryCount} saved</span>
-          <span>{brainMapModel.summary.activeSignalCount} firing</span>
-          <span>{brainMapModel.summary.visibleCount} visible</span>
-          {brainMapModel.hiddenCount > 0 && <span>{brainMapModel.hiddenCount} folded</span>}
-          <strong>{brainMapModel.summary.strongestScore}</strong>
+        <div className="forensic-brain-map-tools">
+          <div className="forensic-brain-map-summary">
+            <span>{brainMapModel.summary.linkedMemoryCount} saved</span>
+            <span>{brainMapModel.summary.activeSignalCount} firing</span>
+            <span>{brainMapModel.summary.visibleCount} visible</span>
+            {brainMapModel.hiddenCount > 0 && <span>{brainMapModel.hiddenCount} folded</span>}
+            <strong>{brainMapModel.summary.strongestScore}</strong>
+          </div>
+          <button
+            type="button"
+            className="forensic-brain-map-expand"
+            aria-label={isBrainMapExpanded ? 'Collapse brain map' : 'Expand brain map'}
+            aria-pressed={isBrainMapExpanded}
+            title={isBrainMapExpanded ? 'Collapse brain map' : 'Expand brain map'}
+            onClick={() => setIsBrainMapExpanded((current) => !current)}
+          >
+            {isBrainMapExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
         </div>
       </div>
 
