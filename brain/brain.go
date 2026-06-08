@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +68,7 @@ func (b *Brain) ReloadModelProviders() error {
 		return err
 	}
 	b.ModelRouter = router
-	fmt.Printf("[Brain] Model providers successfully reloaded. Available: %d\n", len(router))
+	brainLog("providers").Info("model providers reloaded", "available", len(router))
 	return nil
 }
 
@@ -99,7 +98,7 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 
 	router, err := NewModelRouter(brain)
 	if err != nil {
-		fmt.Printf("[Brain] Warning: failed to initialize model router: %v\n", err)
+		brainLog("providers").Warn("failed to initialize model router", "err", err)
 	} else {
 		brain.ModelRouter = router
 	}
@@ -108,7 +107,13 @@ func NewBrain(ns *nervous_system.NervousSystem, abdomen *models.Abdomen) (*Brain
 	brain.Synthesis = NewSynthesisEngine("./abdomen_vault", alertChan)
 	go func() {
 		for alert := range alertChan {
-			log.Printf("[Brain] Broadcasting SYNTHESIS_ALERT alertKey=%s currentVault=%s entity=%s connectedCases=%v", alert.AlertKey, alert.CurrentVaultID, alert.Entity, alert.ConnectedCases)
+			brainLog("synthesis").Info(
+				"broadcasting synthesis alert",
+				"alert_key", alert.AlertKey,
+				"current_vault", alert.CurrentVaultID,
+				"entity", alert.Entity,
+				"connected_cases", alert.ConnectedCases,
+			)
 			if brain.NS.Broadcast != nil {
 				brain.NS.Broadcast(models.WSMessage{
 					Type:    "SYNTHESIS_ALERT",
@@ -160,16 +165,16 @@ func (b *Brain) generateJSONWithFallbackProvider(ctx context.Context, operation 
 		return nil, fmt.Errorf("no model providers available")
 	}
 	if err := provider.GenerateJSON(ctx, prompt, target); err != nil {
-		fmt.Printf("[Brain Error] %s provider %s failed: %v. Attempting generic provider fallback...\n", operation, provider.Name(), err)
+		brainLog("providers").Warn("provider json generation failed; trying fallback", "operation", operation, "provider", provider.Name(), "err", err)
 		fallbackProvider, ok := b.fallbackProviderAfter(provider)
 		if !ok {
 			return nil, err
 		}
 		if fallbackErr := fallbackProvider.GenerateJSON(ctx, prompt, target); fallbackErr != nil {
-			fmt.Printf("[Brain Error] %s fallback provider %s failed: %v\n", operation, fallbackProvider.Name(), fallbackErr)
+			brainLog("providers").Error("fallback provider json generation failed", "operation", operation, "provider", provider.Name(), "fallback_provider", fallbackProvider.Name(), "err", fallbackErr)
 			return nil, err
 		}
-		fmt.Printf("[Brain] %s recovered using fallback provider %s\n", operation, fallbackProvider.Name())
+		brainLog("providers").Info("provider json generation recovered using fallback", "operation", operation, "provider", provider.Name(), "fallback_provider", fallbackProvider.Name())
 		return fallbackProvider, nil
 	}
 	return provider, nil
@@ -188,17 +193,17 @@ func (b *Brain) generateContentWithFallback(ctx context.Context, operation strin
 	if err == nil {
 		return content, nil
 	}
-	fmt.Printf("[Brain Error] %s provider %s failed: %v. Attempting generic provider fallback...\n", operation, provider.Name(), err)
+	brainLog("providers").Warn("provider content generation failed; trying fallback", "operation", operation, "provider", provider.Name(), "err", err)
 	fallbackProvider, ok := b.fallbackProviderAfter(provider)
 	if !ok {
 		return "", err
 	}
 	content, fallbackErr := fallbackProvider.GenerateContent(ctx, prompt)
 	if fallbackErr != nil {
-		fmt.Printf("[Brain Error] %s fallback provider %s failed: %v\n", operation, fallbackProvider.Name(), fallbackErr)
+		brainLog("providers").Error("fallback provider content generation failed", "operation", operation, "provider", provider.Name(), "fallback_provider", fallbackProvider.Name(), "err", fallbackErr)
 		return "", err
 	}
-	fmt.Printf("[Brain] %s recovered using fallback provider %s\n", operation, fallbackProvider.Name())
+	brainLog("providers").Info("provider content generation recovered using fallback", "operation", operation, "provider", provider.Name(), "fallback_provider", fallbackProvider.Name())
 	return content, nil
 }
 
@@ -217,7 +222,7 @@ func (b *Brain) GetSearchProvider() ModelProvider {
 	// Safe Fallback: if the preferred provider is missing, use any available provider.
 	if provider == nil {
 		if p, ok := b.firstAvailableProvider(); ok {
-			fmt.Printf("[Brain Warning] Preferred search provider '%s' unavailable. Using '%s' as generic search fallback.\n", pref, p.Name())
+			brainLog("providers").Warn("preferred search provider unavailable; using fallback", "preferred_provider", pref, "fallback_provider", p.Name())
 			return p
 		}
 	}

@@ -301,8 +301,16 @@ func (b *Brain) recordProviderTokenUsage(ctx context.Context, providerName, fall
 	tracker.record(record)
 
 	if shouldLogPerCallTokenUsage() {
-		fmt.Printf("[TokenUsage] provider=%s operation=%s prompt=%d completion=%d total=%d estimated=%t scope=%s\n",
-			record.Provider, record.Operation, record.PromptTokens, record.CompletionTokens, record.TotalTokens, record.Estimated, record.ScopeID)
+		brainLog("token_usage").Info(
+			"provider token usage recorded",
+			"provider", record.Provider,
+			"operation", record.Operation,
+			"prompt_tokens", record.PromptTokens,
+			"completion_tokens", record.CompletionTokens,
+			"total_tokens", record.TotalTokens,
+			"estimated", record.Estimated,
+			"scope", record.ScopeID,
+		)
 	}
 }
 
@@ -328,7 +336,15 @@ func (b *Brain) broadcastTokenUsageSummary(investigationID, label string, summar
 	}
 
 	message := formatTokenUsageSummary(label, summary)
-	fmt.Printf("[TokenUsage] %s\n", message)
+	brainLog("token_usage").Info(
+		"pipeline token usage summary",
+		"investigation", investigationID,
+		"label", label,
+		"calls", summary.CallCount,
+		"reported_calls", summary.ReportedCallCount,
+		"estimated_calls", summary.EstimatedCallCount,
+		"total_tokens", summary.TotalTokens,
+	)
 	b.broadcastTokenUsageReport(buildTokenUsageReport(investigationID, label, summary))
 	b.broadcastSystemLog(message)
 }

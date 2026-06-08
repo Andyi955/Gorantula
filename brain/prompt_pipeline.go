@@ -57,7 +57,7 @@ func notifyImageReviewUnavailable(provider ModelProvider, broadcast models.Broad
 		"Image scraping is enabled, but provider '%s' does not support multimodal image review. Falling back to basic image scraping for this crawl.",
 		provider.Name(),
 	)
-	fmt.Println("[Brain Warning]", message)
+	brainLog("pipeline").Warn("image review unavailable", "provider", provider.Name())
 	if broadcast != nil {
 		broadcast(models.WSMessage{
 			Type:    "SYSTEM_LOG",
@@ -115,9 +115,9 @@ func (b *Brain) processPrompt(ctx context.Context, prompt, vaultID string, isApp
 
 func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID string, isAppend bool, scrapeImages bool, progress *models.PipelineProgressTracker, options processPromptRunOptions) (string, error) {
 	if strings.HasPrefix(strings.ToLower(prompt), "deep dive investigation into:") {
-		fmt.Printf("[Brain] >>> DISPATCHING DEEP DIVE: %s <<<\n", strings.TrimPrefix(prompt, "Deep dive investigation into: "))
+		brainLog("pipeline").Info("dispatching deep dive crawl", "prompt", strings.TrimPrefix(prompt, "Deep dive investigation into: "), "vault", vaultID, "append", isAppend)
 	} else {
-		fmt.Printf("[Brain] Processing new investigation: %s\n", prompt)
+		brainLog("pipeline").Info("processing web investigation", "prompt", prompt, "vault", vaultID, "append", isAppend, "scrape_images", scrapeImages)
 	}
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err
@@ -213,7 +213,7 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 	if len(mediaURLs) > 0 {
 		if !provider.SupportsMedia() {
 			warningMsg := fmt.Sprintf("⚠️ Provider '%s' does not support media transcriptions. Skipping media URLs.", provider.Name())
-			fmt.Println("[Brain Warning]", warningMsg)
+			brainLog("pipeline").Warn("provider does not support media transcriptions", "provider", provider.Name(), "media_urls", len(mediaURLs))
 			if b.NS.Broadcast != nil {
 				b.NS.Broadcast(models.WSMessage{
 					Type:    "SYSTEM_LOG",
@@ -340,7 +340,7 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 		b.RecordPipelineTokenUsage(progress, rankScopeID)
 	}
 	if err != nil {
-		fmt.Printf("[Brain Warning] Ranking failed, falling back to raw join: %v\n", err)
+		brainLog("pipeline").Warn("fact ranking failed; falling back to raw facts", "facts", len(rawFacts), "err", err)
 		contextText = strings.Join(rawFacts, "\n\n")
 	}
 	if err := checkPipelineContext(ctx); err != nil {
@@ -388,7 +388,7 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "running", "Persisting report to vault"))
 	vaultPath, err := saveVaultMemory(prompt, contextText, finalSynthesis, vaultID, isAppend)
 	if err != nil {
-		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
+		brainLog("pipeline").Warn("failed to save vault memory", "vault", vaultID, "append", isAppend, "err", err)
 	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "complete", "Vault memory saved"))
 	if !options.SuppressTerminalComplete && (vaultID == "" || isAppend) {

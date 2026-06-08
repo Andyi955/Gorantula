@@ -14,7 +14,7 @@ import (
 
 // ProcessLocalDirectory reads a local folder, finding supported files, and dispatches them to Legs.
 func (b *Brain) ProcessLocalDirectory(ctx context.Context, dirPath string) (string, error) {
-	fmt.Printf("[Brain] Processing local directory: %s\n", dirPath)
+	brainLog("local_ingestion").Info("processing local directory", "path", dirPath)
 
 	if b.NS.Broadcast != nil {
 		b.NS.Broadcast(models.WSMessage{
@@ -60,7 +60,7 @@ func (b *Brain) ProcessLocalFilesForVaultWithProgress(ctx context.Context, fileP
 }
 
 func (b *Brain) processLocalFiles(ctx context.Context, filePaths []string, vaultID string, progress *models.PipelineProgressTracker) (string, error) {
-	fmt.Printf("[Brain] Processing %d local files\n", len(filePaths))
+	brainLog("local_ingestion").Info("processing local files", "files", len(filePaths), "vault", vaultID)
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err
 	}
@@ -113,7 +113,7 @@ func (b *Brain) processLocalFiles(ctx context.Context, filePaths []string, vault
 		}
 
 		if err != nil || content == "" {
-			fmt.Printf("[Brain Warning] Failed to parse local file %s: %v\n", filepath.Base(path), err)
+			brainLog("local_ingestion").Warn("failed to parse local file", "file", filepath.Base(path), "err", err)
 			continue
 		}
 
@@ -257,7 +257,7 @@ func (b *Brain) processLocalFiles(ctx context.Context, filePaths []string, vault
 	}
 	vaultPath, err := saveVaultMemory(vaultPrefix, contextText, finalSynthesis, vaultID, false)
 	if err != nil {
-		fmt.Printf("Warning: failed to save vault memory: %v\n", err)
+		brainLog("local_ingestion").Warn("failed to save local vault memory", "vault", vaultID, "err", err)
 	}
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "vault_persistence", "complete", "Local vault memory saved"))
 	if vaultID == "" {

@@ -27,10 +27,10 @@ func buildNodeMapping(nodes []models.MemoryNode) string {
 }
 
 func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNode) ([]models.BoardConnection, error) {
-	fmt.Printf("[Brain] Analyzing connections for %d nodes...\n", len(nodes))
+	brainLog("synthesis").Info("analyzing evidence connections", "nodes", len(nodes))
 	combinedText := ""
 	for _, node := range nodes {
-		fmt.Printf(" - Node: %s (%s)\n", node.ID, node.Title)
+		brainLog("synthesis").Debug("connection analysis node", "node", node.ID, "title", node.Title)
 		combinedText += fmt.Sprintf("ID: %s\nTitle: %s\nSummary: %s\n---\n", node.ID, node.Title, node.Summary)
 	}
 
@@ -68,13 +68,13 @@ func (b *Brain) AnalyzeConnections(ctx context.Context, nodes []models.MemoryNod
 		connections[i].Tag = SanitizeTag(connections[i].Tag)
 	}
 
-	fmt.Printf("[Brain] Analysis complete. Found %d relationships.\n", len(connections))
+	brainLog("synthesis").Info("connection analysis complete", "relationships", len(connections))
 	return connections, nil
 }
 
 // SynthesizePersonaInsights combines all persona insights into final connections
 func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.MemoryNode, insights []PersonaInsight) ([]models.BoardConnection, error) {
-	fmt.Printf("[Brain] Synthesizing %d persona insights into final connections...\n", len(insights))
+	brainLog("synthesis").Info("synthesizing persona insights", "nodes", len(nodes), "insights", len(insights))
 
 	if len(insights) == 0 {
 		// Fall back to standard analysis if no insights
@@ -137,7 +137,7 @@ func (b *Brain) SynthesizePersonaInsights(ctx context.Context, nodes []models.Me
 		connections[i].Tag = SanitizeTag(connections[i].Tag)
 	}
 
-	fmt.Printf("[Brain] Synthesis complete. Found %d final relationships.\n", len(connections))
+	brainLog("synthesis").Info("persona synthesis complete", "relationships", len(connections))
 	return connections, nil
 }
 
@@ -157,7 +157,7 @@ func (b *Brain) RankAndFilterFacts(ctx context.Context, originalPrompt string, f
 		return "", fmt.Errorf("no model providers available for ranking")
 	}
 
-	fmt.Printf("[Brain] Ranking %d facts for relevance...\n", len(facts))
+	brainLog("synthesis").Info("ranking facts for relevance", "facts", len(facts))
 
 	// Construct a ranking prompt
 	rankingInstruction := "You are a Senior Strategic Intelligence Analyst. Rank the following gathered facts by relevance to the user's prompt. " +
@@ -209,6 +209,6 @@ func (b *Brain) RankAndFilterFacts(ctx context.Context, originalPrompt string, f
 		filteredFacts = facts[:count]
 	}
 
-	fmt.Printf("[Brain] Ranking complete. Retained %d/%d facts.\n", len(filteredFacts), len(facts))
+	brainLog("synthesis").Info("fact ranking complete", "retained", len(filteredFacts), "facts", len(facts))
 	return strings.Join(filteredFacts, "\n\n"), nil
 }
