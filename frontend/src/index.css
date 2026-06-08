@@ -6188,6 +6188,7 @@ body {
   position: absolute;
   inset: 0;
   z-index: 0;
+  display: none;
   pointer-events: none;
 }
 
