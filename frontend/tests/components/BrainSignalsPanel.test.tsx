@@ -964,6 +964,19 @@ describe('BrainSignalsPanel', () => {
     expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(2)
   })
 
+  it('renders living map regions and pathways from backend graph coordinates', async () => {
+    installBrainFetch({ brainMap: backendBrainMap })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    expect(within(radar).getByTestId('brain-map-graph-region')).toHaveTextContent('Backend Cluster Region')
+    expect(within(radar).getByTestId('brain-map-graph-edge')).toHaveAttribute('data-edge-kind', 'cluster')
+
+    await userEvent.click(within(radar).getByRole('button', { name: /select cluster backend cluster region/i }))
+    expect(within(radar).getByTestId('brain-map-selected-node')).toHaveTextContent('Memory cluster')
+  })
+
   it('separates the Brain map, active signal feed, linked-memory archive, and clusters into sub-tabs', async () => {
     const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })

@@ -5992,7 +5992,7 @@ body {
   display: grid;
   grid-template-columns: minmax(30rem, 1fr) minmax(21rem, 0.44fr);
   gap: 0.8rem;
-  height: clamp(15.25rem, 31vh, 18rem);
+  height: clamp(18rem, 42vh, 25rem);
   min-height: 0;
 }
 
@@ -6041,15 +6041,117 @@ body {
 }
 
 .forensic-brain-map-node-stack {
-  display: grid;
-  align-content: start;
-  gap: 0.38rem;
+  position: relative;
+  display: block;
   min-height: 0;
-  overflow: auto;
+  height: 100%;
+  overflow: hidden;
   overscroll-behavior: contain;
   padding: 0.5rem;
   scrollbar-color: rgba(129, 227, 255, 0.36) rgba(1, 5, 8, 0.68);
   scrollbar-width: thin;
+}
+
+.forensic-brain-map-edges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.forensic-brain-map-edge {
+  stroke: rgba(129, 227, 255, 0.36);
+  stroke-dasharray: 5 4;
+  stroke-linecap: square;
+  stroke-width: 0.45;
+  filter: drop-shadow(0 0 0.28rem rgba(129, 227, 255, 0.18));
+  vector-effect: non-scaling-stroke;
+}
+
+.forensic-brain-map-edge-link,
+.forensic-brain-map-edge-memory {
+  stroke: rgba(0, 255, 65, 0.52);
+}
+
+.forensic-brain-map-edge-cluster {
+  stroke: rgba(255, 78, 129, 0.54);
+}
+
+.forensic-brain-map-edge-cluster-member {
+  stroke: rgba(129, 227, 255, 0.28);
+}
+
+.forensic-brain-map-edge-hot {
+  stroke-width: 0.58;
+}
+
+.forensic-brain-map-edge-weak {
+  opacity: 0.62;
+}
+
+.forensic-brain-map-regions {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.forensic-brain-map-region {
+  position: absolute;
+  left: var(--brain-map-x);
+  top: var(--brain-map-y);
+  display: grid;
+  place-items: center;
+  width: clamp(8.5rem, 26%, 15rem);
+  min-height: 5.25rem;
+  border: 1px dashed rgba(129, 227, 255, 0.18);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(129, 227, 255, 0.12), transparent 64%),
+    rgba(2, 8, 12, 0.28);
+  color: var(--forensic-text-muted);
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.forensic-brain-map-region-hot {
+  border-color: rgba(0, 255, 65, 0.28);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(0, 255, 65, 0.14), transparent 66%),
+    rgba(2, 8, 12, 0.3);
+}
+
+.forensic-brain-map-region-warm {
+  border-color: rgba(129, 227, 255, 0.24);
+}
+
+.forensic-brain-map-region-weak {
+  border-color: rgba(255, 215, 106, 0.2);
+}
+
+.forensic-brain-map-region span,
+.forensic-brain-map-region strong {
+  max-width: calc(100% - 1.2rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-brain-map-region span {
+  align-self: end;
+  color: var(--forensic-text-faint);
+  font-size: 0.48rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-map-region strong {
+  align-self: start;
+  color: #74ff95;
+  font-size: 0.58rem;
+  font-weight: 950;
 }
 
 .forensic-brain-map-node {
@@ -6072,6 +6174,15 @@ body {
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
+.forensic-brain-map-node-positioned {
+  position: absolute;
+  left: var(--brain-map-x);
+  top: var(--brain-map-y);
+  z-index: 2;
+  width: clamp(10.5rem, 28%, 18rem);
+  transform: translate(-50%, -50%);
+}
+
 .forensic-brain-map-node::before {
   content: '';
   position: absolute;
@@ -6088,6 +6199,11 @@ body {
   transform: translateX(0.16rem);
 }
 
+.forensic-brain-map-node-positioned:hover,
+.forensic-brain-map-node-positioned.is-selected {
+  transform: translate(-50%, -50%) scale(1.02);
+}
+
 .forensic-brain-map-node-current {
   border-color: rgba(0, 255, 65, 0.36);
   background:
@@ -6095,8 +6211,20 @@ body {
     linear-gradient(135deg, rgba(0, 255, 65, 0.1), rgba(4, 10, 12, 0.96));
 }
 
+.forensic-brain-map-node-current.forensic-brain-map-node-positioned {
+  z-index: 3;
+  width: clamp(12rem, 32%, 20rem);
+}
+
 .forensic-brain-map-node-memory {
   border-color: rgba(0, 255, 65, 0.26);
+}
+
+.forensic-brain-map-node-cluster {
+  border-color: rgba(255, 78, 129, 0.36);
+  background:
+    linear-gradient(90deg, rgba(255, 78, 129, 0.1), transparent 48%),
+    linear-gradient(135deg, rgba(7, 12, 16, 0.94), rgba(2, 6, 10, 0.98));
 }
 
 .forensic-brain-map-node-signal {

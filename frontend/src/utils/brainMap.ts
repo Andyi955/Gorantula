@@ -36,11 +36,28 @@ export interface BrainMapNode {
 
 export interface BrainMapEdge {
   id: string
+  kind?: string
   from: string
   to: string
+  label?: string
   strength: Lowercase<BrainMapTier>
   gateway?: BrainGateway
   score: number
+}
+
+export interface BrainMapRegion {
+  id: string
+  clusterId: string
+  label: string
+  status: string
+  score: number
+  scoreLabel: string
+  tier: BrainMapTier
+  gateway?: BrainGateway
+  nodeIds: string[]
+  memberInvestigationIds: string[]
+  x: number
+  y: number
 }
 
 export interface BrainMapDigestItem {
@@ -53,6 +70,7 @@ export interface BrainMapDigestItem {
 export interface BrainMapModel {
   nodes: BrainMapNode[]
   edges: BrainMapEdge[]
+  regions: BrainMapRegion[]
   digest: BrainMapDigestItem[]
   hiddenCount: number
   summary: {
@@ -132,8 +150,10 @@ export const buildBrainMapModel = ({
 
   const edges = nodes.slice(1).map((node) => ({
     id: `brain-map-edge-${node.id}`,
+    kind: node.kind === 'memory' ? 'link' : node.kind,
     from: 'brain-map-current',
     to: node.id,
+    label: node.kind === 'memory' ? 'Memory link' : 'Active signal',
     strength: getBrainMapTier(node.score).toLowerCase() as Lowercase<BrainMapTier>,
     gateway: node.gateways[0],
     score: node.score,
@@ -145,6 +165,7 @@ export const buildBrainMapModel = ({
   return {
     nodes,
     edges,
+    regions: [],
     digest: buildDigest(signals, links),
     hiddenCount: Math.max(0, links.length + signals.length - visibleItems.length),
     summary: {
@@ -185,11 +206,27 @@ export const buildBrainMapModelFromView = (view: BackendBrainMapView): BrainMapM
     nodes,
     edges: view.edges.map((edge) => ({
       id: edge.id,
+      kind: edge.kind,
       from: edge.from,
       to: edge.to,
+      label: edge.label,
       strength: getBrainMapTier(edge.score).toLowerCase() as Lowercase<BrainMapTier>,
       gateway: edge.gateway,
       score: normalizeScore(edge.score),
+    })),
+    regions: view.regions.map((region) => ({
+      id: region.id,
+      clusterId: region.clusterId,
+      label: region.label,
+      status: region.status,
+      score: normalizeScore(region.score),
+      scoreLabel: formatBrainMapScore(region.score),
+      tier: getBrainMapTier(region.score),
+      gateway: region.gateway,
+      nodeIds: region.nodeIds || [],
+      memberInvestigationIds: region.memberInvestigationIds || [],
+      x: region.x,
+      y: region.y,
     })),
     digest: view.digest.map((item) => ({
       id: item.id,

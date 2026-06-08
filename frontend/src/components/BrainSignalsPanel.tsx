@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Brain, ChevronDown, ChevronUp, ExternalLink, Eye, EyeOff, Link2, Pin, RefreshCw, Trash2, X } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
@@ -25,7 +25,14 @@ import {
   type MemoryCluster,
   type MemoryLink,
 } from '../utils/brainMemory'
-import { buildBrainMapModel, buildBrainMapModelFromView, type BrainMapNode } from '../utils/brainMap'
+import {
+  buildBrainMapModel,
+  buildBrainMapModelFromView,
+  type BrainMapEdge,
+  type BrainMapNode,
+  type BrainMapRegion,
+  type BrainMapSlot,
+} from '../utils/brainMap'
 import {
   LOW_PRIORITY_SCORE_THRESHOLD,
   buildSignalSummary,
@@ -1100,6 +1107,77 @@ export default function BrainSignalsPanel({
     </aside>
   )
 
+  const brainMapSlotPositions: Record<BrainMapSlot, { x: number; y: number }> = {
+    center: { x: 50, y: 50 },
+    northwest: { x: 23, y: 25 },
+    northeast: { x: 76, y: 24 },
+    southwest: { x: 26, y: 76 },
+    southeast: { x: 76, y: 75 },
+    east: { x: 86, y: 50 },
+  }
+
+  const getBrainMapNodePosition = (node: BrainMapNode) => {
+    if (Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      return { x: node.x as number, y: node.y as number }
+    }
+
+    return brainMapSlotPositions[node.slot] || brainMapSlotPositions.east
+  }
+
+  const getBrainMapPositionStyle = ({ x, y }: { x: number; y: number }): CSSProperties => ({
+    '--brain-map-x': `${x}%`,
+    '--brain-map-y': `${y}%`,
+  }) as CSSProperties
+
+  const getBrainMapNodeStyle = (node: BrainMapNode): CSSProperties => (
+    getBrainMapPositionStyle(getBrainMapNodePosition(node))
+  )
+
+  const renderBrainMapEdge = (edge: BrainMapEdge) => {
+    const from = brainMapModel.nodes.find((node) => node.id === edge.from)
+    const to = brainMapModel.nodes.find((node) => node.id === edge.to)
+
+    if (!from || !to) {
+      return null
+    }
+
+    const fromPosition = getBrainMapNodePosition(from)
+    const toPosition = getBrainMapNodePosition(to)
+    const edgeKind = edge.kind || 'memory'
+
+    return (
+      <line
+        key={edge.id}
+        data-testid="brain-map-graph-edge"
+        data-edge-kind={edgeKind}
+        className={[
+          'forensic-brain-map-edge',
+          `forensic-brain-map-edge-${edgeKind}`,
+          `forensic-brain-map-edge-${edge.strength}`,
+        ].join(' ')}
+        x1={`${fromPosition.x}%`}
+        y1={`${fromPosition.y}%`}
+        x2={`${toPosition.x}%`}
+        y2={`${toPosition.y}%`}
+      />
+    )
+  }
+
+  const renderBrainMapRegion = (region: BrainMapRegion) => (
+    <div
+      key={region.id}
+      data-testid="brain-map-graph-region"
+      className={[
+        'forensic-brain-map-region',
+        `forensic-brain-map-region-${region.tier.toLocaleLowerCase()}`,
+      ].join(' ')}
+      style={getBrainMapPositionStyle({ x: region.x, y: region.y })}
+    >
+      <span>{region.label}</span>
+      <strong>{region.scoreLabel}</strong>
+    </div>
+  )
+
   const renderBrainMapNode = (node: BrainMapNode) => {
     const isSelected = selectedBrainMapNode?.id === node.id
     const nodeTypeLabel = node.kind === 'current' ? 'focus' : node.kind
@@ -1112,8 +1190,11 @@ export default function BrainSignalsPanel({
         data-testid="brain-map-node"
         aria-label={`Select ${nodeTypeLabel} ${node.kind === 'current' ? node.subtitle : node.title}`}
         aria-pressed={isSelected}
+        data-node-kind={node.kind}
+        style={getBrainMapNodeStyle(node)}
         className={[
           'forensic-brain-map-node',
+          'forensic-brain-map-node-positioned',
           `forensic-brain-map-node-${node.kind}`,
           `forensic-brain-map-slot-${node.slot}`,
           `forensic-brain-map-tier-${node.tier.toLocaleLowerCase()}`,
@@ -1147,10 +1228,18 @@ export default function BrainSignalsPanel({
     const targetInvestigationId = node.targetInvestigationId
     const linkId = node.linkId
     const signalId = node.signalId
+    const clusterId = node.clusterId
+    const selectedNodeKindLabel = node.kind === 'current'
+      ? 'Current scan'
+      : node.kind === 'memory'
+        ? 'Linked memory'
+        : node.kind === 'cluster'
+          ? 'Memory cluster'
+          : 'Active signal'
 
     return (
       <section data-testid="brain-map-selected-node" className="forensic-brain-map-selected">
-        <span>{node.kind === 'current' ? 'Current scan' : node.kind === 'memory' ? 'Linked memory' : 'Active signal'}</span>
+        <span>{selectedNodeKindLabel}</span>
         <h4>{node.kind === 'current' ? node.subtitle : node.title}</h4>
         <div className="forensic-brain-map-selected-badges">
           {node.badges.map((badge) => (
@@ -1211,6 +1300,20 @@ export default function BrainSignalsPanel({
                 Promote Link
               </button>
             )}
+            {clusterId && (
+              <button
+                type="button"
+                aria-label={`Inspect radar cluster ${node.title}`}
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => {
+                  setSelectedClusterId(clusterId)
+                  setActiveBrainView('clusters')
+                }}
+              >
+                <Brain size={13} />
+                Inspect Cluster
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -1222,7 +1325,7 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-map-header">
         <div>
           <span className="forensic-brain-panel-kicker">Memory map</span>
-          <h3>Active recall deck</h3>
+          <h3>Living memory map</h3>
         </div>
         <div className="forensic-brain-map-summary">
           <span>{brainMapModel.summary.linkedMemoryCount} saved</span>
@@ -1240,6 +1343,12 @@ export default function BrainSignalsPanel({
             <strong>{brainMapModel.summary.strongestScore}</strong>
           </div>
           <div className="forensic-brain-map-node-stack">
+            <svg className="forensic-brain-map-edges" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {brainMapModel.edges.map(renderBrainMapEdge)}
+            </svg>
+            <div className="forensic-brain-map-regions" aria-label="Brain map memory regions">
+              {brainMapModel.regions.map(renderBrainMapRegion)}
+            </div>
             {brainMapModel.nodes.map(renderBrainMapNode)}
           </div>
         </div>
