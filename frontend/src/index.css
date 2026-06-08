@@ -7713,6 +7713,13 @@ body {
   margin-top: 0.72rem;
 }
 
+.forensic-brain-link-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.62rem;
+}
+
 .forensic-brain-detail-actions .forensic-brain-action {
   min-height: 2.35rem;
 }

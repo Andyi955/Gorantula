@@ -1393,6 +1393,17 @@ export default function BrainSignalsPanel({
           ))}
         </div>
       )}
+      <div className="forensic-brain-link-card-actions">
+        <button
+          type="button"
+          aria-label={`Compare memory link ${link.toTitle}`}
+          className="forensic-brain-action forensic-brain-action-primary"
+          onClick={() => setCompareSelection({ kind: 'link', id: link.id })}
+        >
+          <Maximize2 size={13} />
+          Compare
+        </button>
+      </div>
     </article>
     )
   }
@@ -1445,6 +1456,15 @@ export default function BrainSignalsPanel({
           <p className="forensic-brain-detail-compressed">{relatedMemoryText} compressed into this memory case.</p>
         )}
         <div className="forensic-brain-detail-actions">
+          <button
+            type="button"
+            aria-label={`Compare memory link ${link.toTitle}`}
+            className="forensic-brain-action forensic-brain-action-primary"
+            onClick={() => setCompareSelection({ kind: 'link', id: link.id })}
+          >
+            <Maximize2 size={13} />
+            Compare
+          </button>
           <button
             type="button"
             aria-label={`Open memory link ${link.toTitle}`}
@@ -1554,6 +1574,17 @@ export default function BrainSignalsPanel({
         </div>
 
         <div className="forensic-brain-cluster-actions">
+          {!isHidden && (
+            <button
+              type="button"
+              aria-label={`Compare cluster ${cluster.label}`}
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setCompareSelection({ kind: 'cluster', id: cluster.id })}
+            >
+              <Maximize2 size={13} />
+              Compare
+            </button>
+          )}
           {!isHidden && (
             <button
               type="button"
@@ -1862,6 +1893,15 @@ export default function BrainSignalsPanel({
 
         {node.kind !== 'current' && (
           <div className="forensic-brain-map-selected-actions">
+            <button
+              type="button"
+              aria-label={`Compare map memory ${node.title}`}
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setCompareSelection({ kind: 'map-node', id: node.id })}
+            >
+              <Maximize2 size={13} />
+              Compare
+            </button>
             {targetInvestigationId && (
               <button
                 type="button"
@@ -2125,6 +2165,15 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          <button
+            type="button"
+            aria-label={`Compare next move ${suggestion.title}`}
+            className="forensic-brain-action forensic-brain-action-primary"
+            onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
+          >
+            <Maximize2 size={13} />
+            Compare
+          </button>
           {canViewMap && (
             <button
               type="button"

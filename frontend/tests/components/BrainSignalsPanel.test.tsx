@@ -486,6 +486,43 @@ describe('BrainSignalsPanel', () => {
     expect(screen.queryByTestId('brain-compare-workspace')).not.toBeInTheDocument()
   })
 
+  it('opens the same compare workspace from next moves, links, clusters, and map nodes', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({
+      signals: [signal],
+      links: [link],
+      clusters: [cluster],
+      suggestions: [suggestion],
+      brainMap: backendBrainMap,
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await openBrainView(user, /next moves view/i)
+    const moveCard = await screen.findByTestId('brain-suggestion-card')
+    await user.click(within(moveCard).getByRole('button', { name: /compare next move review active memory cluster/i }))
+    expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Review active memory cluster')
+    await user.click(screen.getByRole('button', { name: /close brain compare/i }))
+
+    await openBrainView(user, /memory links view/i)
+    const linkCard = await screen.findByTestId('brain-link-card')
+    await user.click(within(linkCard).getByRole('button', { name: /compare memory link older substation case/i }))
+    expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Durable memory link')
+    await user.click(screen.getByRole('button', { name: /close brain compare/i }))
+
+    await openBrainView(user, /memory clusters view/i)
+    const clusterCard = await screen.findByTestId('brain-cluster-card')
+    await user.click(within(clusterCard).getByRole('button', { name: /compare cluster acme grid/i }))
+    expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Acme Grid')
+    await user.click(screen.getByRole('button', { name: /close brain compare/i }))
+
+    await openBrainView(user, /memory map view/i)
+    const radar = await screen.findByTestId('brain-map-radar')
+    await user.click(within(radar).getByRole('button', { name: /select cluster backend cluster region/i }))
+    await user.click(within(radar).getByRole('button', { name: /compare map memory backend cluster region/i }))
+    expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Backend Cluster Region')
+  })
+
   it('renders next moves from brain suggestions', async () => {
     const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link], clusters: [cluster], suggestions: [suggestion] })
