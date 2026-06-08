@@ -197,6 +197,54 @@ const emptyBackendBrainMap = {
   },
 }
 
+const crowdedBackendBrainMap = {
+  ...backendBrainMap,
+  nodes: [
+    backendBrainMap.nodes[0],
+    ...Array.from({ length: 12 }, (_, index) => ({
+      ...backendBrainMap.nodes[1],
+      id: `brain-map-crowded-${index}`,
+      kind: index % 3 === 0 ? 'cluster' : index % 3 === 1 ? 'memory' : 'signal',
+      title: `Crowded Memory ${index}`,
+      subtitle: `Crowded memory node ${index}`,
+      score: 0.94 - index * 0.03,
+      clusterId: `crowded-cluster-${Math.floor(index / 3)}`,
+      signalId: index % 3 === 2 ? `crowded-signal-${index}` : undefined,
+      linkId: index % 3 === 1 ? `crowded-link-${index}` : undefined,
+      relatedSignalIds: [`crowded-signal-${index}`],
+      relatedMemoryLinkIds: [`crowded-link-${index}`],
+      x: 50,
+      y: 50,
+    })),
+  ],
+  edges: Array.from({ length: 12 }, (_, index) => ({
+    ...backendBrainMap.edges[0],
+    id: `brain-map-crowded-edge-${index}`,
+    to: `brain-map-crowded-${index}`,
+    kind: index % 3 === 0 ? 'cluster' : index % 3 === 1 ? 'link' : 'signal',
+    score: 0.94 - index * 0.03,
+  })),
+  regions: Array.from({ length: 4 }, (_, index) => ({
+    ...backendBrainMap.regions[0],
+    id: `brain-map-crowded-region-${index}`,
+    clusterId: `crowded-cluster-${index}`,
+    label: `Crowded Region ${index}`,
+    score: 0.94 - index * 0.06,
+    nodeIds: [`brain-map-crowded-${index * 3}`, `brain-map-crowded-${index * 3 + 1}`, `brain-map-crowded-${index * 3 + 2}`],
+    x: 50,
+    y: 50,
+  })),
+  summary: {
+    ...backendBrainMap.summary,
+    visibleNodeCount: 13,
+    edgeCount: 12,
+    clusterCount: 4,
+    linkedMemoryCount: 4,
+    activeSignalCount: 4,
+    strongestScore: 0.94,
+  },
+}
+
 const makeLink = (overrides: Partial<MemoryLink> = {}): MemoryLink => {
   const toInvestigationId = overrides.toInvestigationId || 'inv-older'
   const toTitle = overrides.toTitle || 'Older Substation Case'
@@ -1016,6 +1064,23 @@ describe('BrainSignalsPanel', () => {
 
     await user.click(within(canvas).getByRole('button', { name: /collapse brain map/i }))
     expect(radar).not.toHaveClass('is-expanded')
+  })
+
+  it('keeps crowded maps focused until the map is expanded', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ brainMap: crowdedBackendBrainMap })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    const canvas = within(radar).getByTestId('brain-map-canvas')
+    expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(8)
+    expect(within(radar).queryByText('Crowded Memory 11')).not.toBeInTheDocument()
+
+    await user.click(within(canvas).getByRole('button', { name: /expand brain map/i }))
+
+    expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(13)
+    expect(within(radar).getByText('Crowded Memory 11')).toBeInTheDocument()
   })
 
   it('separates the Brain map, active signal feed, linked-memory archive, and clusters into sub-tabs', async () => {
