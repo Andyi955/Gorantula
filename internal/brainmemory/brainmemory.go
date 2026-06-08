@@ -1415,8 +1415,34 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, clusters, err)
 		return
 	}
+	if path == "api/brain/suggestions" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		suggestions, err := service.SuggestionsForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, suggestions, err)
+		return
+	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "suggestions" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		switch parts[4] {
+		case "dismiss":
+			suggestion, err := service.DismissSuggestion(parts[3])
+			writeAPIResult(w, suggestion, err)
+		case "review":
+			suggestion, err := service.MarkSuggestionReviewed(parts[3])
+			writeAPIResult(w, suggestion, err)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
 	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "clusters" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1485,6 +1511,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "memory link not found", http.StatusNotFound)
 		case errors.Is(err, ErrClusterNotFound):
 			http.Error(w, "memory cluster not found", http.StatusNotFound)
+		case errors.Is(err, ErrSuggestionNotFound):
+			http.Error(w, "brain suggestion not found", http.StatusNotFound)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

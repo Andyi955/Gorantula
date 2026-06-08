@@ -644,6 +644,59 @@ func TestBrainSuggestionFeedbackPersistsAcrossRecompute(t *testing.T) {
 	}
 }
 
+func TestHandleAPIRoutesBrainSuggestions(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/brain/suggestions?investigationId=inv-current", nil)
+	recorder := httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected suggestions GET 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var suggestions []BrainSuggestion
+	if err := json.Unmarshal(recorder.Body.Bytes(), &suggestions); err != nil {
+		t.Fatalf("decode suggestions failed: %v", err)
+	}
+	if len(suggestions) < 2 {
+		t.Fatalf("expected multiple suggestions, got %#v", suggestions)
+	}
+
+	reviewRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+suggestions[0].ID+"/review", nil)
+	reviewRecorder := httptest.NewRecorder()
+	HandleAPI(reviewRecorder, reviewRequest, service)
+	if reviewRecorder.Code != http.StatusOK {
+		t.Fatalf("expected review PUT 200, got %d body=%s", reviewRecorder.Code, reviewRecorder.Body.String())
+	}
+	var reviewed BrainSuggestion
+	if err := json.Unmarshal(reviewRecorder.Body.Bytes(), &reviewed); err != nil {
+		t.Fatalf("decode reviewed suggestion failed: %v", err)
+	}
+	if reviewed.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected reviewed status, got %#v", reviewed)
+	}
+
+	dismissRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+suggestions[1].ID+"/dismiss", nil)
+	dismissRecorder := httptest.NewRecorder()
+	HandleAPI(dismissRecorder, dismissRequest, service)
+	if dismissRecorder.Code != http.StatusOK {
+		t.Fatalf("expected dismiss PUT 200, got %d body=%s", dismissRecorder.Code, dismissRecorder.Body.String())
+	}
+	var dismissed BrainSuggestion
+	if err := json.Unmarshal(dismissRecorder.Body.Bytes(), &dismissed); err != nil {
+		t.Fatalf("decode dismissed suggestion failed: %v", err)
+	}
+	if dismissed.Status != SuggestionStatusDismissed {
+		t.Fatalf("expected dismissed status, got %#v", dismissed)
+	}
+}
+
 func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
@@ -875,11 +928,25 @@ func TestHandleAPIRejectsInvalidBrainRoutes(t *testing.T) {
 		t.Fatalf("expected invalid cluster investigation id to be rejected, got %d", recorder.Code)
 	}
 
+	request = httptest.NewRequest(http.MethodGet, "/api/brain/suggestions?investigationId=../escape", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid suggestion investigation id to be rejected, got %d", recorder.Code)
+	}
+
 	request = httptest.NewRequest(http.MethodPut, "/api/brain/clusters/missing/pin", nil)
 	recorder = httptest.NewRecorder()
 	HandleAPI(recorder, request, service)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected missing cluster to return 404, got %d", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/missing/dismiss", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected missing suggestion to return 404, got %d", recorder.Code)
 	}
 
 	if _, err := os.Stat(filepath.Join(root, "brain")); err == nil {

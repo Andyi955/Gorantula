@@ -74,6 +74,33 @@ export interface MemoryCluster {
   lastActivatedAt: string
 }
 
+export interface BrainSuggestion {
+  id: string
+  investigationId: string
+  kind:
+    | 'cluster-review'
+    | 'source-review'
+    | 'relationship-motif'
+    | 'memory-link-compare'
+    | 'gap-review'
+    | string
+  status: 'active' | 'dismissed' | 'reviewed' | string
+  title: string
+  summary: string
+  suggestedAction: string
+  score: number
+  priority: 'high' | 'medium' | 'low' | string
+  reason: string
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  relatedClusterIds: string[]
+  targetInvestigationIds: string[]
+  createdAt: string
+  updatedAt: string
+  dismissedAt?: string
+  reviewedAt?: string
+}
+
 const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
     cache: 'no-store',
@@ -99,6 +126,9 @@ export const fetchBrainLinks = (investigationId: string) =>
 
 export const fetchBrainClusters = (investigationId: string) =>
   requestJSON<MemoryCluster[]>(`${API_BASE}/clusters?investigationId=${encodeURIComponent(investigationId)}`)
+
+export const fetchBrainSuggestions = (investigationId: string) =>
+  requestJSON<BrainSuggestion[]>(`${API_BASE}/suggestions?investigationId=${encodeURIComponent(investigationId)}`)
 
 export const dismissBrainSignal = (signalId: string) =>
   requestJSON<BrainSignal>(`${API_BASE}/signals/${encodeURIComponent(signalId)}/dismiss`, {
@@ -127,5 +157,15 @@ export const hideBrainCluster = (clusterId: string) =>
 
 export const unhideBrainCluster = (clusterId: string) =>
   requestJSON<MemoryCluster>(`${API_BASE}/clusters/${encodeURIComponent(clusterId)}/unhide`, {
+    method: 'PUT',
+  })
+
+export const dismissBrainSuggestion = (suggestionId: string) =>
+  requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, {
+    method: 'PUT',
+  })
+
+export const reviewBrainSuggestion = (suggestionId: string) =>
+  requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/review`, {
     method: 'PUT',
   })
