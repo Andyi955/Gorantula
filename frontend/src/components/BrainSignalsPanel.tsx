@@ -1,5 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Brain, ChevronDown, ChevronUp, ExternalLink, Eye, EyeOff, Link2, Maximize2, Minimize2, Pin, RefreshCw, Trash2, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  Crosshair,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Link2,
+  Maximize2,
+  Minimize2,
+  Minus,
+  Pin,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
@@ -79,6 +100,10 @@ const PRIORITY_SIGNAL_LIMIT = 10
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
 const NEXT_MOVES_PRIORITY_LIMIT = 7
 const COMPACT_BRAIN_MAP_NODE_LIMIT = 8
+const BRAIN_MAP_ZOOM_STEP = 0.12
+const BRAIN_MAP_MIN_ZOOM = 0.82
+const BRAIN_MAP_MAX_ZOOM = 1.54
+const BRAIN_MAP_PAN_STEP = 8
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
@@ -196,6 +221,7 @@ export default function BrainSignalsPanel({
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
+  const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
@@ -468,6 +494,11 @@ export default function BrainSignalsPanel({
     () => allLinkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
     [allLinkGroups, selectedMemoryLinkId],
   )
+  const brainMapViewportStyle = useMemo(() => ({
+    '--brain-map-scale': Number(brainMapViewport.scale.toFixed(2)).toString(),
+    '--brain-map-pan-x': `${brainMapViewport.x}%`,
+    '--brain-map-pan-y': `${brainMapViewport.y}%`,
+  }) as CSSProperties, [brainMapViewport])
   const brainHealth = useMemo(() => {
     const scores = [
       ...allSignalGroups.map((group) => group.score),
@@ -681,6 +712,33 @@ export default function BrainSignalsPanel({
     setGatewayFilter('all')
     setStrengthFilter('all')
     setActiveBrainView('signals')
+  }
+
+  const resetBrainMapViewport = () => {
+    setBrainMapViewport({ scale: 1, x: 0, y: 0 })
+  }
+
+  const handleToggleBrainMapExpanded = () => {
+    if (isBrainMapExpanded) {
+      resetBrainMapViewport()
+    }
+
+    setIsBrainMapExpanded((current) => !current)
+  }
+
+  const handleBrainMapZoom = (direction: 1 | -1) => {
+    setBrainMapViewport((current) => ({
+      ...current,
+      scale: Math.min(BRAIN_MAP_MAX_ZOOM, Math.max(BRAIN_MAP_MIN_ZOOM, current.scale + direction * BRAIN_MAP_ZOOM_STEP)),
+    }))
+  }
+
+  const handleBrainMapPan = (x: number, y: number) => {
+    setBrainMapViewport((current) => ({
+      ...current,
+      x: current.x + x,
+      y: current.y + y,
+    }))
   }
 
   const findBrainMapNodeForSuggestion = (suggestion: BrainSuggestion) => {
@@ -1443,15 +1501,44 @@ export default function BrainSignalsPanel({
             aria-label={isBrainMapExpanded ? 'Collapse brain map' : 'Expand brain map'}
             aria-pressed={isBrainMapExpanded}
             title={isBrainMapExpanded ? 'Collapse brain map' : 'Expand brain map'}
-            onClick={() => setIsBrainMapExpanded((current) => !current)}
+            onClick={handleToggleBrainMapExpanded}
           >
             {isBrainMapExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
+          {isBrainMapExpanded && (
+            <div className="forensic-brain-map-nav" aria-label="Expanded brain map controls">
+              <button type="button" aria-label="Pan brain map up" onClick={() => handleBrainMapPan(0, -BRAIN_MAP_PAN_STEP)}>
+                <ArrowUp size={13} />
+              </button>
+              <button type="button" aria-label="Pan brain map left" onClick={() => handleBrainMapPan(-BRAIN_MAP_PAN_STEP, 0)}>
+                <ArrowLeft size={13} />
+              </button>
+              <button type="button" aria-label="Reset brain map view" onClick={resetBrainMapViewport}>
+                <Crosshair size={13} />
+              </button>
+              <button type="button" aria-label="Pan brain map right" onClick={() => handleBrainMapPan(BRAIN_MAP_PAN_STEP, 0)}>
+                <ArrowRight size={13} />
+              </button>
+              <button type="button" aria-label="Pan brain map down" onClick={() => handleBrainMapPan(0, BRAIN_MAP_PAN_STEP)}>
+                <ArrowDown size={13} />
+              </button>
+              <button type="button" aria-label="Zoom out brain map" onClick={() => handleBrainMapZoom(-1)}>
+                <Minus size={13} />
+              </button>
+              <button type="button" aria-label="Zoom in brain map" onClick={() => handleBrainMapZoom(1)}>
+                <Plus size={13} />
+              </button>
+            </div>
+          )}
           <div className="forensic-brain-map-bus" aria-hidden="true">
             <span>Active Recall</span>
             <strong>{renderedBrainMapModel.summary.strongestScore}</strong>
           </div>
-          <div className="forensic-brain-map-node-stack">
+          <div
+            data-testid="brain-map-viewport"
+            className="forensic-brain-map-node-stack"
+            style={brainMapViewportStyle}
+          >
             <svg className="forensic-brain-map-edges" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               {renderedBrainMapModel.edges.map(renderBrainMapEdge)}
             </svg>

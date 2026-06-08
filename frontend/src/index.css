@@ -6104,6 +6104,41 @@ body {
   padding: 0.5rem;
   scrollbar-color: rgba(129, 227, 255, 0.36) rgba(1, 5, 8, 0.68);
   scrollbar-width: thin;
+  transform: translate(var(--brain-map-pan-x, 0%), var(--brain-map-pan-y, 0%)) scale(var(--brain-map-scale, 1));
+  transform-origin: center;
+  transition: transform 160ms ease;
+}
+
+.forensic-brain-map-nav {
+  position: absolute;
+  right: 0.58rem;
+  bottom: 0.58rem;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(3, 2rem);
+  gap: 0.26rem;
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(1, 5, 8, 0.78);
+  padding: 0.3rem;
+  box-shadow: 0 0 1.4rem rgba(0, 0, 0, 0.28);
+}
+
+.forensic-brain-map-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  background: rgba(2, 7, 10, 0.88);
+  color: var(--forensic-text-muted);
+  transition: border-color 160ms ease, color 160ms ease, background-color 160ms ease;
+}
+
+.forensic-brain-map-nav button:hover {
+  border-color: rgba(129, 227, 255, 0.58);
+  background: rgba(129, 227, 255, 0.08);
+  color: #ffffff;
 }
 
 .forensic-brain-map-edges {

@@ -1083,6 +1083,31 @@ describe('BrainSignalsPanel', () => {
     expect(within(radar).getByText('Crowded Memory 11')).toBeInTheDocument()
   })
 
+  it('adds pan and zoom controls to the expanded brain map', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ brainMap: crowdedBackendBrainMap })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    const canvas = within(radar).getByTestId('brain-map-canvas')
+    await user.click(within(canvas).getByRole('button', { name: /expand brain map/i }))
+
+    const viewport = within(canvas).getByTestId('brain-map-viewport')
+    await user.click(within(canvas).getByRole('button', { name: /zoom in brain map/i }))
+    expect(viewport).toHaveStyle({ '--brain-map-scale': '1.12' })
+
+    await user.click(within(canvas).getByRole('button', { name: /pan brain map right/i }))
+    expect(viewport).toHaveStyle({ '--brain-map-pan-x': '8%' })
+
+    await user.click(within(canvas).getByRole('button', { name: /reset brain map view/i }))
+    expect(viewport).toHaveStyle({
+      '--brain-map-scale': '1',
+      '--brain-map-pan-x': '0%',
+      '--brain-map-pan-y': '0%',
+    })
+  })
+
   it('separates the Brain map, active signal feed, linked-memory archive, and clusters into sub-tabs', async () => {
     const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
