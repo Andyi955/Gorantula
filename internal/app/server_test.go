@@ -25,6 +25,17 @@ func TestBrainMemoryRoutesIncludeClustersAndLinkActions(t *testing.T) {
 		t.Fatalf("expected clusters route to include CORS header, got %q", got)
 	}
 
+	mapRequest := httptest.NewRequest(http.MethodOptions, "/api/brain/map?investigationId=inv-current", nil)
+	mapRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(mapRecorder, mapRequest)
+
+	if mapRecorder.Code != http.StatusNoContent {
+		t.Fatalf("expected map preflight to route through brain memory handler, got %d", mapRecorder.Code)
+	}
+	if got := mapRecorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected map route to include CORS header, got %q", got)
+	}
+
 	suggestionRequest := httptest.NewRequest(http.MethodOptions, "/api/brain/suggestions?investigationId=inv-current", nil)
 	suggestionRecorder := httptest.NewRecorder()
 	mux.ServeHTTP(suggestionRecorder, suggestionRequest)
