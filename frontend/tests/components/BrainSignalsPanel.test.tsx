@@ -320,6 +320,31 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('1 link')
   })
 
+  it('does not crash when suggestion relationship arrays are null', async () => {
+    const user = userEvent.setup()
+    const nullableSuggestion = {
+      ...suggestion,
+      relatedSignalIds: null as unknown as string[],
+      relatedMemoryLinkIds: null as unknown as string[],
+      relatedClusterIds: null as unknown as string[],
+      targetInvestigationIds: null as unknown as string[],
+    }
+    installBrainFetch({ suggestions: [nullableSuggestion] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+      />,
+    )
+    await openBrainView(user, /next moves view/i)
+
+    const card = await screen.findByTestId('brain-suggestion-card')
+    expect(card).toHaveTextContent('Review active memory cluster')
+    expect(card).not.toHaveTextContent('1 cluster')
+    expect(within(card).getByRole('button', { name: /^open$/i })).toBeDisabled()
+  })
+
   it('marks next moves reviewed and dismisses them', async () => {
     const user = userEvent.setup()
     const fetchMock = installBrainFetch({ suggestions: [suggestion] })

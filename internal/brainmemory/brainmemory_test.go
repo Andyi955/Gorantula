@@ -644,6 +644,37 @@ func TestBrainSuggestionFeedbackPersistsAcrossRecompute(t *testing.T) {
 	}
 }
 
+func TestBrainSuggestionsEncodeEmptyCollectionsAsArrays(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	data, err := json.Marshal(suggestions)
+	if err != nil {
+		t.Fatalf("marshal suggestions failed: %v", err)
+	}
+	encoded := string(data)
+	for _, field := range []string{
+		"relatedSignalIds",
+		"relatedMemoryLinkIds",
+		"relatedClusterIds",
+		"targetInvestigationIds",
+	} {
+		if strings.Contains(encoded, `"`+field+`":null`) {
+			t.Fatalf("expected %s to encode as [] instead of null in %s", field, encoded)
+		}
+	}
+}
+
 func TestHandleAPIRoutesBrainSuggestions(t *testing.T) {
 	root := writeSuggestionFixture(t)
 	service := NewService(root)

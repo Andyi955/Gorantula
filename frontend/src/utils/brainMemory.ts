@@ -118,6 +118,20 @@ const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> =>
   return response.json() as Promise<T>
 }
 
+const asStringArray = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+)
+
+const normalizeBrainSuggestion = (suggestion: BrainSuggestion): BrainSuggestion => ({
+  ...suggestion,
+  relatedSignalIds: asStringArray(suggestion.relatedSignalIds),
+  relatedMemoryLinkIds: asStringArray(suggestion.relatedMemoryLinkIds),
+  relatedClusterIds: asStringArray(suggestion.relatedClusterIds),
+  targetInvestigationIds: asStringArray(suggestion.targetInvestigationIds),
+})
+
 export const fetchBrainSignals = (investigationId: string) =>
   requestJSON<BrainSignal[]>(`${API_BASE}/signals?investigationId=${encodeURIComponent(investigationId)}`)
 
@@ -127,8 +141,12 @@ export const fetchBrainLinks = (investigationId: string) =>
 export const fetchBrainClusters = (investigationId: string) =>
   requestJSON<MemoryCluster[]>(`${API_BASE}/clusters?investigationId=${encodeURIComponent(investigationId)}`)
 
-export const fetchBrainSuggestions = (investigationId: string) =>
-  requestJSON<BrainSuggestion[]>(`${API_BASE}/suggestions?investigationId=${encodeURIComponent(investigationId)}`)
+export const fetchBrainSuggestions = async (investigationId: string) => {
+  const suggestions = await requestJSON<BrainSuggestion[]>(
+    `${API_BASE}/suggestions?investigationId=${encodeURIComponent(investigationId)}`,
+  )
+  return suggestions.map(normalizeBrainSuggestion)
+}
 
 export const dismissBrainSignal = (signalId: string) =>
   requestJSON<BrainSignal>(`${API_BASE}/signals/${encodeURIComponent(signalId)}/dismiss`, {
@@ -163,9 +181,9 @@ export const unhideBrainCluster = (clusterId: string) =>
 export const dismissBrainSuggestion = (suggestionId: string) =>
   requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, {
     method: 'PUT',
-  })
+  }).then(normalizeBrainSuggestion)
 
 export const reviewBrainSuggestion = (suggestionId: string) =>
   requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/review`, {
     method: 'PUT',
-  })
+  }).then(normalizeBrainSuggestion)

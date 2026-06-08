@@ -637,6 +637,7 @@ func (s *Service) SuggestionsForInvestigation(investigationID string) ([]BrainSu
 	recomputed := buildBrainSuggestions(investigationID, signals, links, clusters, existing, now)
 	nextSuggestions := make(map[string]BrainSuggestion, len(existing)+len(recomputed))
 	for id, suggestion := range existing {
+		suggestion = normalizeSuggestionCollections(suggestion)
 		if suggestion.InvestigationID != investigationID {
 			nextSuggestions[id] = suggestion
 			continue
@@ -648,6 +649,7 @@ func (s *Service) SuggestionsForInvestigation(investigationID string) ([]BrainSu
 
 	visible := make([]BrainSuggestion, 0, len(recomputed))
 	for _, suggestion := range recomputed {
+		suggestion = normalizeSuggestionCollections(suggestion)
 		nextSuggestions[suggestion.ID] = suggestion
 		if suggestion.Status != SuggestionStatusDismissed {
 			visible = append(visible, suggestion)
@@ -687,6 +689,7 @@ func (s *Service) setSuggestionStatus(suggestionID string, status string) (Brain
 	case SuggestionStatusReviewed:
 		suggestion.ReviewedAt = now
 	}
+	suggestion = normalizeSuggestionCollections(suggestion)
 	suggestions[suggestionID] = suggestion
 	if err := s.saveSuggestions(suggestions); err != nil {
 		return BrainSuggestion{}, err
@@ -1306,7 +1309,7 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 		if suggestion.Status == "" {
 			suggestion.Status = SuggestionStatusActive
 		}
-		return suggestion
+		return normalizeSuggestionCollections(suggestion)
 	}
 	suggestion.CreatedAt = previous.CreatedAt
 	if suggestion.CreatedAt == "" {
@@ -1324,6 +1327,14 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 	if suggestion.Status == SuggestionStatusReviewed && suggestion.ReviewedAt == "" {
 		suggestion.ReviewedAt = timestamp
 	}
+	return normalizeSuggestionCollections(suggestion)
+}
+
+func normalizeSuggestionCollections(suggestion BrainSuggestion) BrainSuggestion {
+	suggestion.RelatedSignalIDs = cleanStringSet(suggestion.RelatedSignalIDs)
+	suggestion.RelatedMemoryLinkIDs = cleanStringSet(suggestion.RelatedMemoryLinkIDs)
+	suggestion.RelatedClusterIDs = cleanStringSet(suggestion.RelatedClusterIDs)
+	suggestion.TargetInvestigationIDs = cleanStringSet(suggestion.TargetInvestigationIDs)
 	return suggestion
 }
 
@@ -2194,7 +2205,7 @@ func (s *Service) loadSuggestions() (map[string]BrainSuggestion, error) {
 	byID := make(map[string]BrainSuggestion, len(suggestions))
 	for _, suggestion := range suggestions {
 		if strings.TrimSpace(suggestion.ID) != "" {
-			byID[suggestion.ID] = suggestion
+			byID[suggestion.ID] = normalizeSuggestionCollections(suggestion)
 		}
 	}
 	return byID, nil
@@ -2203,7 +2214,7 @@ func (s *Service) loadSuggestions() (map[string]BrainSuggestion, error) {
 func (s *Service) saveSuggestions(suggestions map[string]BrainSuggestion) error {
 	list := make([]BrainSuggestion, 0, len(suggestions))
 	for _, suggestion := range suggestions {
-		list = append(list, suggestion)
+		list = append(list, normalizeSuggestionCollections(suggestion))
 	}
 	sortSuggestions(list)
 	return s.saveBrainJSON(suggestionsFilename, list)
