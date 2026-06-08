@@ -6051,7 +6051,7 @@ body {
 
 .forensic-brain-map-radar.is-expanded .forensic-brain-map-shell {
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr) minmax(22rem, 0.32fr);
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
   height: auto;
 }
 
@@ -6503,6 +6503,13 @@ body {
   padding: 0.5rem;
 }
 
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-side {
+  align-self: start;
+  grid-template-rows: none;
+  max-height: calc(100vh - 7rem);
+  overflow: auto;
+}
+
 .forensic-brain-map-digest,
 .forensic-brain-map-selected {
   min-height: 0;
@@ -6510,6 +6517,11 @@ body {
   border: 1px solid rgba(129, 227, 255, 0.14);
   background: rgba(1, 4, 7, 0.68);
   padding: 0.55rem;
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-digest,
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-selected {
+  max-height: 18rem;
 }
 
 .forensic-brain-map-digest {
