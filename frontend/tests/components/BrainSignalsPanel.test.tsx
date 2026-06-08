@@ -406,6 +406,62 @@ describe('BrainSignalsPanel', () => {
     expect(screen.getByText('Next Move Case 8')).toBeInTheDocument()
   })
 
+  it('jumps from next moves to related brain sections', async () => {
+    const user = userEvent.setup()
+    const clusterSuggestion = makeSuggestion({
+      id: 'brain-suggestion-cluster-jump',
+      title: 'Jump to cluster context',
+      relatedClusterIds: [cluster.id],
+      relatedMemoryLinkIds: [],
+      relatedSignalIds: [],
+    })
+    const linkSuggestion = makeSuggestion({
+      id: 'brain-suggestion-link-jump',
+      kind: 'memory-link-compare',
+      title: 'Jump to linked memory',
+      relatedClusterIds: [],
+      relatedMemoryLinkIds: [link.id],
+      relatedSignalIds: [],
+    })
+    const signalSuggestion = makeSuggestion({
+      id: 'brain-suggestion-signal-jump',
+      kind: 'source-review',
+      title: 'Jump to active signal',
+      relatedClusterIds: [],
+      relatedMemoryLinkIds: [],
+      relatedSignalIds: [signal.id],
+    })
+    installBrainFetch({
+      signals: [signal],
+      links: [link],
+      clusters: [cluster],
+      suggestions: [clusterSuggestion, linkSuggestion, signalSuggestion],
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const clusterMove = screen.getByText('Jump to cluster context').closest('article') as HTMLElement
+    await user.click(within(clusterMove).getByRole('button', { name: /view cluster/i }))
+    expect(await screen.findByTestId('brain-cluster-detail')).toHaveAttribute(
+      'aria-label',
+      'Memory cluster detail for Acme Grid',
+    )
+
+    await openBrainView(user, /next moves view/i)
+    const linkMove = screen.getByText('Jump to linked memory').closest('article') as HTMLElement
+    await user.click(within(linkMove).getByRole('button', { name: /view link/i }))
+    expect(await screen.findByTestId('brain-link-detail')).toHaveAttribute(
+      'aria-label',
+      'Memory link detail for Older Substation Case',
+    )
+
+    await openBrainView(user, /next moves view/i)
+    const signalMove = screen.getByText('Jump to active signal').closest('article') as HTMLElement
+    await user.click(within(signalMove).getByRole('button', { name: /view signal/i }))
+    expect(await screen.findByTestId('brain-signal-card')).toHaveTextContent('Older Substation Case')
+  })
+
   it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
     const user = userEvent.setup()
     let signalGenerationComplete = false

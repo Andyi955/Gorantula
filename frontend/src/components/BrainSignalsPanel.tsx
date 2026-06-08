@@ -566,6 +566,37 @@ export default function BrainSignalsPanel({
     }
   }
 
+  const handleViewSuggestionCluster = (suggestion: BrainSuggestion) => {
+    const clusterId = suggestion.relatedClusterIds.find((id) =>
+      rankedClusters.some((cluster) => cluster.id === id && !cluster.hidden),
+    ) || suggestion.relatedClusterIds[0]
+    if (!clusterId) {
+      return
+    }
+    setGatewayFilter('all')
+    setStrengthFilter('all')
+    setSelectedClusterId(clusterId)
+    setActiveBrainView('clusters')
+  }
+
+  const handleViewSuggestionLink = (suggestion: BrainSuggestion) => {
+    const linkId = suggestion.relatedMemoryLinkIds.find((id) => rankedLinks.some((link) => link.id === id)) ||
+      suggestion.relatedMemoryLinkIds[0]
+    if (!linkId) {
+      return
+    }
+    setGatewayFilter('all')
+    setStrengthFilter('all')
+    setSelectedMemoryLinkId(linkId)
+    setActiveBrainView('links')
+  }
+
+  const handleViewSuggestionSignal = () => {
+    setGatewayFilter('all')
+    setStrengthFilter('all')
+    setActiveBrainView('signals')
+  }
+
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
     const signal = group.primary
@@ -1284,6 +1315,9 @@ export default function BrainSignalsPanel({
 
   const renderSuggestionCard = (suggestion: BrainSuggestion) => {
     const canOpenTarget = suggestion.targetInvestigationIds.length > 0 && !!onOpenInvestigation
+    const canViewCluster = suggestion.relatedClusterIds.length > 0
+    const canViewLink = suggestion.relatedMemoryLinkIds.length > 0
+    const canViewSignal = suggestion.relatedSignalIds.length > 0
     const isReviewed = suggestion.status === 'reviewed'
 
     return (
@@ -1330,9 +1364,39 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          {canViewCluster && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => handleViewSuggestionCluster(suggestion)}
+            >
+              <ExternalLink size={13} />
+              View Cluster
+            </button>
+          )}
+          {canViewLink && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => handleViewSuggestionLink(suggestion)}
+            >
+              <Link2 size={13} />
+              View Link
+            </button>
+          )}
+          {!canViewCluster && !canViewLink && canViewSignal && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={handleViewSuggestionSignal}
+            >
+              <ExternalLink size={13} />
+              View Signal
+            </button>
+          )}
           <button
             type="button"
-            className="forensic-brain-action forensic-brain-action-primary"
+            className="forensic-brain-action forensic-brain-action-secondary"
             disabled={isReviewed || busyAction === `suggestion-review:${suggestion.id}`}
             onClick={() => void handleReviewSuggestion(suggestion)}
           >
