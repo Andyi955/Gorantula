@@ -1460,8 +1460,9 @@ export default function BrainSignalsPanel({
     const linkId = node.linkId
     const signalId = node.signalId
     const clusterId = node.clusterId
+    const selectedNodeTitle = node.kind === 'current' && node.title === 'Current investigation' ? node.subtitle : node.title
     const selectedNodeKindLabel = node.kind === 'current'
-      ? 'Current scan'
+      ? 'Map focus'
       : node.kind === 'memory'
         ? 'Linked memory'
         : node.kind === 'cluster'
@@ -1471,13 +1472,15 @@ export default function BrainSignalsPanel({
     return (
       <section data-testid="brain-map-selected-node" className="forensic-brain-map-selected">
         <span>{selectedNodeKindLabel}</span>
-        <h4>{node.kind === 'current' ? node.subtitle : node.title}</h4>
-        <div className="forensic-brain-map-selected-badges">
-          {node.badges.map((badge) => (
-            <span key={`${node.id}:${badge}`}>{badge}</span>
-          ))}
-          {node.kind !== 'current' && <span>{node.scoreLabel}</span>}
-        </div>
+        <h4>{selectedNodeTitle}</h4>
+        {node.kind !== 'current' && (
+          <div className="forensic-brain-map-selected-badges">
+            {node.badges.map((badge) => (
+              <span key={`${node.id}:${badge}`}>{badge}</span>
+            ))}
+            <span>{node.scoreLabel}</span>
+          </div>
+        )}
 
         {node.reasons.length > 0 ? (
           <div className="forensic-brain-map-selected-reasons">
@@ -1489,7 +1492,7 @@ export default function BrainSignalsPanel({
             ))}
           </div>
         ) : (
-          <p className="forensic-brain-map-selected-empty">This investigation is the current memory focus.</p>
+          <p className="forensic-brain-map-selected-empty">Signals and saved memories radiate from this case.</p>
         )}
 
         {node.kind !== 'current' && (
@@ -1567,7 +1570,9 @@ export default function BrainSignalsPanel({
             <span>{renderedBrainMapModel.summary.linkedMemoryCount} saved</span>
             <span>{renderedBrainMapModel.summary.activeSignalCount} firing</span>
             <span>{renderedBrainMapModel.summary.visibleCount} visible</span>
-            {renderedBrainMapModel.hiddenCount > 0 && <span>{renderedBrainMapModel.hiddenCount} folded</span>}
+            {renderedBrainMapModel.hiddenCount > 0 && (
+              <span title="Expand the map to see folded memories.">{renderedBrainMapModel.hiddenCount} folded / expand</span>
+            )}
             <strong>{renderedBrainMapModel.summary.strongestScore}</strong>
           </div>
         </div>

@@ -1033,6 +1033,13 @@ describe('BrainSignalsPanel', () => {
     expect(radar).toHaveTextContent('Backend Cluster Region')
     expect(radar).toHaveTextContent('Backend map loaded')
     expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(2)
+
+    const detail = within(radar).getByTestId('brain-map-selected-node')
+    expect(detail).toHaveTextContent('Map focus')
+    expect(detail).toHaveTextContent('Current Grid Case')
+    expect(detail).toHaveTextContent('Signals and saved memories radiate from this case.')
+    expect(detail).not.toHaveTextContent('Current scan')
+    expect(detail).not.toHaveTextContent('Current investigation focus')
   })
 
   it('renders living map regions and pathways from backend graph coordinates', async () => {
@@ -1075,6 +1082,7 @@ describe('BrainSignalsPanel', () => {
     const radar = await screen.findByTestId('brain-map-radar')
     const canvas = within(radar).getByTestId('brain-map-canvas')
     expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(8)
+    expect(within(radar).getByText('5 folded / expand')).toBeInTheDocument()
     expect(within(radar).queryByText('Crowded Memory 11')).not.toBeInTheDocument()
     expect(within(radar).getByRole('button', { name: /select cluster crowded memory 9/i })).toHaveAttribute('data-map-density', 'marker')
 
