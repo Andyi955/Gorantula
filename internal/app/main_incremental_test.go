@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func TestFilterConnectionsByPendingNodeIDs(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"spider-agent/brain"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 const maxNodeImageUploadBodyBytes = 12 << 20

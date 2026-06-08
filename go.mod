@@ -1,4 +1,4 @@
-module spider-agent
+module github.com/Andyi955/Gorantula
 
 go 1.24.1
 

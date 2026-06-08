@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"

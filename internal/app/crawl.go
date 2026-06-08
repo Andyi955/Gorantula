@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"spider-agent/brain"
-	"spider-agent/internal/pipeline"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/internal/pipeline"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func extractScrapeImagesPreference(msg map[string]interface{}) bool {

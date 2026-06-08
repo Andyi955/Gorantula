@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func TestBuildPersonaFullTextExcerptOmitsEmptyOrRedundantText(t *testing.T) {

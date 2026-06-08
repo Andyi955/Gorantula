@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"

@@ -3,8 +3,8 @@ package app
 import (
 	"strings"
 
-	"spider-agent/internal/pipeline"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/internal/pipeline"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func broadcastPipelineCancelled(tracker *models.PipelineProgressTracker, detail string) {

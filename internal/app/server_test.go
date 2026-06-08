@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"spider-agent/internal/brainmemory"
+	"github.com/Andyi955/Gorantula/internal/brainmemory"
 )
 
 func TestBrainMemoryRoutesIncludeClustersAndLinkActions(t *testing.T) {

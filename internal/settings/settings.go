@@ -10,7 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"spider-agent/brain"
+	"github.com/Andyi955/Gorantula/brain"
 )
 
 func Handle(w http.ResponseWriter, r *http.Request, envFile string, envMutex *sync.Mutex, br *brain.Brain) {

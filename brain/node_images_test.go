@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func TestAttachManualNodeImage(t *testing.T) {

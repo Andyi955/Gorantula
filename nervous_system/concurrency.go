@@ -3,8 +3,8 @@ package nervous_system
 import (
 	"context"
 	"fmt"
-	"spider-agent/legs"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/legs"
+	"github.com/Andyi955/Gorantula/models"
 	"sync"
 )
 

@@ -3,7 +3,7 @@ package app
 import (
 	"log/slog"
 
-	"spider-agent/internal/logging"
+	"github.com/Andyi955/Gorantula/internal/logging"
 )
 
 func appLog(component string) *slog.Logger {

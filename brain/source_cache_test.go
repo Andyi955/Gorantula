@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func setNodeSummaryResponse(target interface{}, title, summary string) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 type personaAnalysisResult struct {

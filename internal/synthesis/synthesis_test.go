@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"spider-agent/brain"
-	"spider-agent/models"
+	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func TestMemoryNodesFromPersistedBoard(t *testing.T) {

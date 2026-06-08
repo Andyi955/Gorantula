@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"spider-agent/models"
-	"spider-agent/nervous_system"
+	"github.com/Andyi955/Gorantula/models"
+	"github.com/Andyi955/Gorantula/nervous_system"
 )
 
 // MockProvider implements ModelProvider for testing
