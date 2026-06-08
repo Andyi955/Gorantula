@@ -5961,7 +5961,9 @@ body {
   box-shadow: 0 0 0 999vmax rgba(0, 0, 0, 0.66), 0 0 4rem rgba(129, 227, 255, 0.16);
 }
 
-.forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-sidebar-toggle {
+.forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-app-shell-header,
+.forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-sidebar-toggle,
+.forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-statusbar {
   opacity: 0;
   pointer-events: none;
 }
