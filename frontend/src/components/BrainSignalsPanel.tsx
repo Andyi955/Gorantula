@@ -1074,6 +1074,155 @@ export default function BrainSignalsPanel({
     const currentNodeIds = uniqueStrings(context.reasons.flatMap((reason) => reason.currentNodeIds))
     const rememberedNodeIds = uniqueStrings(context.reasons.flatMap((reason) => reason.targetNodeIds))
     const canOpenRememberedCase = !!context.targetInvestigationId && !!onOpenInvestigation
+    const renderSourceActions = () => {
+      if (!compareSelection) {
+        return null
+      }
+
+      if (compareSelection.kind === 'signal') {
+        const group = allSignalGroups.find((candidate) =>
+          candidate.signals.some((signal) => signal.id === compareSelection.id),
+        )
+
+        if (!group) {
+          return null
+        }
+
+        return (
+          <>
+            <button
+              type="button"
+              aria-label="Promote signal memory"
+              className="forensic-brain-action forensic-brain-action-primary"
+              disabled={busyAction === `promote:${group.key}`}
+              onClick={() => {
+                void handlePromote(group)
+                setCompareSelection(null)
+              }}
+            >
+              <Link2 size={13} />
+              Promote Link
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss signal memory"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `dismiss:${group.key}`}
+              onClick={() => {
+                void handleDismiss(group)
+                setCompareSelection(null)
+              }}
+            >
+              <X size={13} />
+              Dismiss Signal
+            </button>
+          </>
+        )
+      }
+
+      if (compareSelection.kind === 'suggestion') {
+        const suggestion = rankedSuggestions.find((candidate) => candidate.id === compareSelection.id)
+
+        if (!suggestion) {
+          return null
+        }
+
+        return (
+          <>
+            <button
+              type="button"
+              aria-label="Mark move reviewed"
+              className="forensic-brain-action forensic-brain-action-primary"
+              disabled={suggestion.status === 'reviewed' || busyAction === `suggestion-review:${suggestion.id}`}
+              onClick={() => {
+                void handleReviewSuggestion(suggestion)
+                setCompareSelection(null)
+              }}
+            >
+              <Eye size={13} />
+              Mark Reviewed
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss move"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `suggestion-dismiss:${suggestion.id}`}
+              onClick={() => {
+                void handleDismissSuggestion(suggestion)
+                setCompareSelection(null)
+              }}
+            >
+              <X size={13} />
+              Dismiss Move
+            </button>
+          </>
+        )
+      }
+
+      if (compareSelection.kind === 'link') {
+        const group = allLinkGroups.find((candidate) =>
+          candidate.links.some((link) => link.id === compareSelection.id),
+        )
+
+        if (!group) {
+          return null
+        }
+
+        return (
+          <button
+            type="button"
+            aria-label="Forget compared memory link"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={busyAction === `forget:${group.key}`}
+            onClick={() => {
+              void handleForgetLinkGroup(group)
+              setCompareSelection(null)
+            }}
+          >
+            <Trash2 size={13} />
+            Forget Link
+          </button>
+        )
+      }
+
+      if (compareSelection.kind === 'cluster') {
+        const cluster = rankedClusters.find((candidate) => candidate.id === compareSelection.id)
+
+        if (!cluster) {
+          return null
+        }
+
+        return (
+          <>
+            <button
+              type="button"
+              aria-label={`${cluster.pinned ? 'Unpin' : 'Pin'} compared cluster`}
+              className="forensic-brain-action"
+              disabled={busyAction === `cluster-pin:${cluster.id}`}
+              onClick={() => void handleToggleClusterPin(cluster)}
+            >
+              <Pin size={13} />
+              {cluster.pinned ? 'Unpin' : 'Pin'}
+            </button>
+            <button
+              type="button"
+              aria-label="Hide compared cluster"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `cluster-hide:${cluster.id}`}
+              onClick={() => {
+                void handleHideCluster(cluster)
+                setCompareSelection(null)
+              }}
+            >
+              <EyeOff size={13} />
+              Hide Cluster
+            </button>
+          </>
+        )
+      }
+
+      return null
+    }
 
     return (
       <section
@@ -1177,6 +1326,7 @@ export default function BrainSignalsPanel({
             <strong>{context.suggestedAction}</strong>
           </div>
           <div className="forensic-brain-compare-actions">
+            {renderSourceActions()}
             <button
               type="button"
               className="forensic-brain-action forensic-brain-action-primary"

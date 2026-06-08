@@ -523,6 +523,37 @@ describe('BrainSignalsPanel', () => {
     expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Backend Cluster Region')
   })
 
+  it('runs source-specific decisions inside the compare workspace', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({
+      signals: [signal],
+      links: [link],
+      clusters: [cluster],
+      suggestions: [suggestion],
+      promoteLink: link,
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await openBrainView(user, /active signals view/i)
+    await user.click(within(await screen.findByTestId('brain-signal-card')).getByRole('button', { name: /compare memory older substation case/i }))
+    const signalCompare = await screen.findByTestId('brain-compare-workspace')
+    await user.click(within(signalCompare).getByRole('button', { name: /promote signal memory/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/signals/brain-signal-alpha/link',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+
+    await openBrainView(user, /next moves view/i)
+    await user.click(within(await screen.findByTestId('brain-suggestion-card')).getByRole('button', { name: /compare next move review active memory cluster/i }))
+    const moveCompare = await screen.findByTestId('brain-compare-workspace')
+    await user.click(within(moveCompare).getByRole('button', { name: /mark move reviewed/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/suggestions/brain-suggestion-next-move/review',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+  })
+
   it('renders next moves from brain suggestions', async () => {
     const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link], clusters: [cluster], suggestions: [suggestion] })
