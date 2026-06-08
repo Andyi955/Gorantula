@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
-import type { BrainSignal, MemoryCluster, MemoryLink } from '../../src/utils/brainMemory'
+import type { BrainSignal, BrainSuggestion, MemoryCluster, MemoryLink } from '../../src/utils/brainMemory'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 
 const signal: BrainSignal = {
@@ -77,6 +77,25 @@ const cluster: MemoryCluster = {
   lastActivatedAt: '2026-06-06T09:00:00Z',
 }
 
+const suggestion: BrainSuggestion = {
+  id: 'brain-suggestion-next-move',
+  investigationId: 'inv-current',
+  kind: 'cluster-review',
+  status: 'active',
+  title: 'Review active memory cluster',
+  summary: 'Acme Grid has an active memory cluster worth checking.',
+  suggestedAction: 'Inspect recurring memory cluster',
+  score: 0.86,
+  priority: 'high',
+  reason: 'Acme Grid is an active cluster with 3 related investigations.',
+  relatedSignalIds: [signal.id],
+  relatedMemoryLinkIds: [link.id],
+  relatedClusterIds: [cluster.id],
+  targetInvestigationIds: ['inv-older'],
+  createdAt: '2026-06-05T12:00:00Z',
+  updatedAt: '2026-06-05T12:00:00Z',
+}
+
 const makeLink = (overrides: Partial<MemoryLink> = {}): MemoryLink => {
   const toInvestigationId = overrides.toInvestigationId || 'inv-older'
   const toTitle = overrides.toTitle || 'Older Substation Case'
@@ -142,6 +161,15 @@ const makeCluster = (overrides: Partial<MemoryCluster> = {}): MemoryCluster => (
   reasonSamples: overrides.reasonSamples || cluster.reasonSamples,
 })
 
+const makeSuggestion = (overrides: Partial<BrainSuggestion> = {}): BrainSuggestion => ({
+  ...suggestion,
+  ...overrides,
+  relatedSignalIds: overrides.relatedSignalIds || suggestion.relatedSignalIds,
+  relatedMemoryLinkIds: overrides.relatedMemoryLinkIds || suggestion.relatedMemoryLinkIds,
+  relatedClusterIds: overrides.relatedClusterIds || suggestion.relatedClusterIds,
+  targetInvestigationIds: overrides.targetInvestigationIds || suggestion.targetInvestigationIds,
+})
+
 const jsonResponse = (payload: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
@@ -152,11 +180,13 @@ const installBrainFetch = ({
   signals = [],
   links = [],
   clusters = [],
+  suggestions = [],
   promoteLink = link,
 }: {
   signals?: BrainSignal[]
   links?: MemoryLink[]
   clusters?: MemoryCluster[]
+  suggestions?: BrainSuggestion[]
   promoteLink?: MemoryLink
 } = {}) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -171,6 +201,9 @@ const installBrainFetch = ({
     }
     if (url.includes('/api/brain/clusters?')) {
       return Promise.resolve(jsonResponse(clusters) as Response)
+    }
+    if (url.includes('/api/brain/suggestions?')) {
+      return Promise.resolve(jsonResponse(suggestions) as Response)
     }
     if (method === 'PUT' && url.endsWith('/dismiss')) {
       return Promise.resolve(jsonResponse({ ...signal, dismissed: true }) as Response)
@@ -257,6 +290,28 @@ describe('BrainSignalsPanel', () => {
     expect(linkedMemory).toHaveTextContent('Entity/Date')
   })
 
+  it('renders next moves from brain suggestions', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [link], clusters: [cluster], suggestions: [suggestion] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+      />,
+    )
+    await openBrainView(user, /next moves view/i)
+
+    const card = await screen.findByTestId('brain-suggestion-card')
+    expect(card).toHaveTextContent('Review active memory cluster')
+    expect(card).toHaveTextContent('Cluster Review')
+    expect(card).toHaveTextContent('Inspect recurring memory cluster')
+    expect(card).toHaveTextContent('Acme Grid is an active cluster')
+    expect(card).toHaveTextContent('1 cluster')
+    expect(card).toHaveTextContent('1 signal')
+    expect(card).toHaveTextContent('1 link')
+  })
+
   it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
     const user = userEvent.setup()
     let signalGenerationComplete = false
@@ -277,6 +332,9 @@ describe('BrainSignalsPanel', () => {
         return jsonResponse(signalGenerationComplete ? [autoLink] : []) as Response
       }
       if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
         return jsonResponse([]) as Response
       }
 
@@ -310,6 +368,9 @@ describe('BrainSignalsPanel', () => {
         return jsonResponse(linkAvailable ? [delayedLink] : []) as Response
       }
       if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
         return jsonResponse([]) as Response
       }
 
@@ -354,6 +415,9 @@ describe('BrainSignalsPanel', () => {
         return jsonResponse(linkAvailable ? [autoLink] : []) as Response
       }
       if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
         return jsonResponse([]) as Response
       }
 
@@ -777,6 +841,9 @@ describe('BrainSignalsPanel', () => {
       }
       if (url.includes('/api/brain/clusters?')) {
         return jsonResponse(clusterAvailable ? [cluster] : []) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
       }
 
       return jsonResponse({}, 404) as Response

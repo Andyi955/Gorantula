@@ -9,12 +9,14 @@ import {
   dismissBrainSignal,
   fetchBrainClusters,
   fetchBrainLinks,
+  fetchBrainSuggestions,
   fetchBrainSignals,
   forgetBrainLink,
   hideBrainCluster,
   promoteBrainSignal,
   toggleBrainClusterPin,
   unhideBrainCluster,
+  type BrainSuggestion,
   type BrainSignal,
   type MemoryCluster,
   type MemoryLink,
@@ -68,7 +70,7 @@ const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
-type BrainView = 'map' | 'signals' | 'links' | 'clusters'
+type BrainView = 'map' | 'moves' | 'signals' | 'links' | 'clusters'
 
 const gatewayFilterOptions: Array<{ value: GatewayFilter; label: string }> = [
   { value: 'all', label: 'All Gateways' },
@@ -84,6 +86,51 @@ const strengthFilterOptions: Array<{ value: StrengthFilter; label: string }> = [
   { value: 'weak', label: 'Weak' },
 ]
 
+const suggestionPriorityRank = (priority: string) => {
+  switch (priority) {
+    case 'high':
+      return 0
+    case 'medium':
+      return 1
+    default:
+      return 2
+  }
+}
+
+const suggestionStatusRank = (status: string) => (status === 'active' ? 0 : status === 'reviewed' ? 1 : 2)
+
+const sortSuggestionsForView = (items: BrainSuggestion[]) => [...items].sort((left, right) => {
+  const statusDelta = suggestionStatusRank(left.status) - suggestionStatusRank(right.status)
+  if (statusDelta !== 0) {
+    return statusDelta
+  }
+  const priorityDelta = suggestionPriorityRank(left.priority) - suggestionPriorityRank(right.priority)
+  if (priorityDelta !== 0) {
+    return priorityDelta
+  }
+  if (left.score === right.score) {
+    return left.title.localeCompare(right.title)
+  }
+  return right.score - left.score
+})
+
+const formatSuggestionKind = (kind: string) => {
+  switch (kind) {
+    case 'cluster-review':
+      return 'Cluster Review'
+    case 'source-review':
+      return 'Source Review'
+    case 'relationship-motif':
+      return 'Relationship Motif'
+    case 'memory-link-compare':
+      return 'Memory Link'
+    case 'gap-review':
+      return 'Gap Review'
+    default:
+      return kind.replace(/-/g, ' ')
+  }
+}
+
 export default function BrainSignalsPanel({
   currentInvestigationId,
   currentInvestigationTitle,
@@ -92,6 +139,7 @@ export default function BrainSignalsPanel({
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
+  const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -119,6 +167,7 @@ export default function BrainSignalsPanel({
       setSignals([])
       setLinks([])
       setClusters([])
+      setSuggestions([])
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
@@ -144,6 +193,7 @@ export default function BrainSignalsPanel({
       const nextSignals = await fetchBrainSignals(currentInvestigationId)
       const nextLinks = await fetchBrainLinks(currentInvestigationId)
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
+      const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
 
       if (requestIdRef.current !== requestId) {
         return
@@ -152,6 +202,7 @@ export default function BrainSignalsPanel({
       setSignals(sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked)))
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
+      setSuggestions(sortSuggestionsForView(nextSuggestions))
       setShowLowerPrioritySignals(false)
       setShowOlderMemoryLinks(false)
       setSelectedMemoryLinkId((current) =>
@@ -287,6 +338,15 @@ export default function BrainSignalsPanel({
     () => rankedClusters.find((cluster) => cluster.id === selectedClusterId) || null,
     [rankedClusters, selectedClusterId],
   )
+  const rankedSuggestions = useMemo(() => sortSuggestionsForView(suggestions), [suggestions])
+  const activeSuggestions = useMemo(
+    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active'),
+    [rankedSuggestions],
+  )
+  const reviewedSuggestions = useMemo(
+    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
+    [rankedSuggestions],
+  )
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
   const brainMapModel = useMemo(
     () => buildBrainMapModel({
@@ -321,11 +381,12 @@ export default function BrainSignalsPanel({
       firingCases: formatCountLabel(allSignalGroups.length, 'firing case'),
       memoryGroups: formatCountLabel(allLinkGroups.length, 'memory group'),
       memoryClusters: formatCountLabel(rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
+      nextMoves: formatCountLabel(activeSuggestions.length, 'next move'),
       autoMemory: `${autoMemoryCount} auto`,
       strongestScore: formatScore(strongestScore),
       dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
     }
-  }, [allSignalGroups, allLinkGroups, rankedClusters, rankedLinks])
+  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, rankedClusters, rankedLinks])
 
   useEffect(() => {
     if (!selectedBrainMapNodeId) {
@@ -1161,6 +1222,10 @@ export default function BrainSignalsPanel({
         <strong>{brainHealth.memoryClusters}</strong>
       </div>
       <div>
+        <span>Next Moves</span>
+        <strong>{brainHealth.nextMoves}</strong>
+      </div>
+      <div>
         <span>Auto Memory</span>
         <strong>{brainHealth.autoMemory}</strong>
       </div>
@@ -1174,6 +1239,120 @@ export default function BrainSignalsPanel({
       </div>
     </div>
   )
+
+  const renderSuggestionCard = (suggestion: BrainSuggestion) => {
+    const canOpenTarget = suggestion.targetInvestigationIds.length > 0 && !!onOpenInvestigation
+    const isReviewed = suggestion.status === 'reviewed'
+
+    return (
+      <article
+        key={suggestion.id}
+        data-testid="brain-suggestion-card"
+        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} ${isReviewed ? 'is-reviewed' : ''}`}
+      >
+        <div className="forensic-brain-suggestion-main">
+          <div className="forensic-brain-suggestion-topline">
+            <span>{formatSuggestionKind(suggestion.kind)}</span>
+            <strong>{suggestion.priority}</strong>
+          </div>
+          <h4>{suggestion.title}</h4>
+          <p>{suggestion.summary}</p>
+          <div className="forensic-brain-suggestion-reason">
+            <span>Why it matters</span>
+            <strong>{suggestion.reason}</strong>
+          </div>
+          <div className="forensic-brain-chip-row" aria-label="Related memory objects">
+            {suggestion.relatedClusterIds.length > 0 && (
+              <span className="forensic-brain-chip forensic-brain-chip-entity">
+                {suggestion.relatedClusterIds.length} cluster
+              </span>
+            )}
+            {suggestion.relatedSignalIds.length > 0 && (
+              <span className="forensic-brain-chip forensic-brain-chip-source">
+                {suggestion.relatedSignalIds.length} signal
+              </span>
+            )}
+            {suggestion.relatedMemoryLinkIds.length > 0 && (
+              <span className="forensic-brain-chip forensic-brain-chip-relationship">
+                {suggestion.relatedMemoryLinkIds.length} link
+              </span>
+            )}
+            {isReviewed && (
+              <span className="forensic-brain-chip">
+                Reviewed
+              </span>
+            )}
+          </div>
+        </div>
+
+        <aside className="forensic-brain-suggestion-action">
+          <span>{formatScore(suggestion.score)}</span>
+          <strong>{suggestion.suggestedAction}</strong>
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={!canOpenTarget}
+            onClick={() => {
+              const targetId = suggestion.targetInvestigationIds[0]
+              if (targetId) {
+                onOpenInvestigation?.(targetId)
+              }
+            }}
+          >
+            <ExternalLink size={13} />
+            Open
+          </button>
+        </aside>
+      </article>
+    )
+  }
+
+  const renderNextMovesView = () => {
+    const emptyMessage = rankedSuggestions.length === 0
+      ? 'No next moves yet. Run or refresh Brain after memory signals form.'
+      : 'No active next moves need attention.'
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-moves">
+        <section className="forensic-brain-panel forensic-brain-panel-moves">
+          <div className="forensic-brain-panel-header">
+            <div>
+              <span className="forensic-brain-panel-kicker">Active thinking</span>
+              <h3>Next Moves</h3>
+            </div>
+            <div className="forensic-brain-cluster-summary">
+              <span>{activeSuggestions.length} active</span>
+              <span>{reviewedSuggestions.length} reviewed</span>
+            </div>
+          </div>
+
+          {!currentInvestigationId ? (
+            <div data-testid="brain-suggestions-empty-state" className="forensic-brain-empty">
+              Select an investigation to generate next moves.
+            </div>
+          ) : isLoading ? (
+            <div data-testid="brain-loading-state" className="forensic-brain-empty">
+              Checking grounded next moves...
+            </div>
+          ) : activeSuggestions.length === 0 && reviewedSuggestions.length === 0 ? (
+            <div data-testid="brain-suggestions-empty-state" className="forensic-brain-empty">
+              {emptyMessage}
+            </div>
+          ) : (
+            <div className="forensic-brain-suggestion-list">
+              {activeSuggestions.map(renderSuggestionCard)}
+              {reviewedSuggestions.length > 0 && (
+                <div className="forensic-brain-reviewed-suggestions">
+                  <span className="forensic-brain-panel-kicker">Reviewed context</span>
+                  {reviewedSuggestions.map(renderSuggestionCard)}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
 
   const renderSignalsView = () => {
     const emptyMessage = rankedSignals.length === 0
@@ -1358,6 +1537,7 @@ export default function BrainSignalsPanel({
 
   const brainViewOptions: Array<{ view: BrainView; label: string; detail: string }> = [
     { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
+    { view: 'moves', label: 'Next Moves', detail: `${activeSuggestions.length} active` },
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
     { view: 'links', label: 'Memory Links', detail: `${allLinkGroups.length} saved` },
     { view: 'clusters', label: 'Memory Clusters', detail: `${visibleClusters.length} visible` },
@@ -1378,7 +1558,7 @@ export default function BrainSignalsPanel({
         </div>
         <div className="forensic-brain-command-actions">
           <span className="forensic-brain-status">
-            {allSignalGroups.length} active / {allLinkGroups.length} linked / {visibleClusters.length} clusters
+            {activeSuggestions.length} moves / {allSignalGroups.length} active / {allLinkGroups.length} linked / {visibleClusters.length} clusters
           </span>
           <button
             type="button"
@@ -1420,6 +1600,7 @@ export default function BrainSignalsPanel({
           </div>
         )}
         {activeBrainView === 'signals' && renderSignalsView()}
+        {activeBrainView === 'moves' && renderNextMovesView()}
         {activeBrainView === 'links' && renderLinksView()}
         {activeBrainView === 'clusters' && renderClustersView()}
       </div>
