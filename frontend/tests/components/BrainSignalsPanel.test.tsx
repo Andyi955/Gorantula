@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type { BrainSignal, BrainSuggestion, MemoryCluster, MemoryLink } from '../../src/utils/brainMemory'
@@ -1086,7 +1086,7 @@ describe('BrainSignalsPanel', () => {
     expect(within(radar).getByRole('button', { name: /select signal crowded memory 11/i })).toHaveClass('forensic-brain-map-node-spatial')
   })
 
-  it('adds pan and zoom controls to the expanded brain map', async () => {
+  it('supports drag panning and wheel zoom in the expanded brain map', async () => {
     const user = userEvent.setup()
     installBrainFetch({ brainMap: crowdedBackendBrainMap })
 
@@ -1097,13 +1097,35 @@ describe('BrainSignalsPanel', () => {
     await user.click(within(canvas).getByRole('button', { name: /expand brain map/i }))
 
     const viewport = within(canvas).getByTestId('brain-map-viewport')
-    await user.click(within(canvas).getByRole('button', { name: /zoom in brain map/i }))
+    expect(within(canvas).queryByRole('button', { name: /pan brain map/i })).not.toBeInTheDocument()
+
+    fireEvent.wheel(canvas, { deltaY: -78 })
     expect(viewport).toHaveStyle({ '--brain-map-scale': '1.12' })
 
-    await user.click(within(canvas).getByRole('button', { name: /pan brain map right/i }))
-    expect(viewport).toHaveStyle({ '--brain-map-pan-x': '8%' })
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 1000,
+      bottom: 800,
+      width: 1000,
+      height: 800,
+      toJSON: () => ({}),
+    } as DOMRect)
+    Object.assign(canvas, {
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn(),
+      hasPointerCapture: vi.fn(() => true),
+    })
 
-    await user.click(within(canvas).getByRole('button', { name: /reset brain map view/i }))
+    fireEvent.pointerDown(canvas, { pointerId: 7, button: 0, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(canvas, { pointerId: 7, clientX: 180, clientY: 140 })
+    expect(viewport).toHaveStyle({ '--brain-map-pan-x': '8%' })
+    expect(viewport).toHaveStyle({ '--brain-map-pan-y': '5%' })
+
+    fireEvent.pointerUp(canvas, { pointerId: 7, clientX: 180, clientY: 140 })
+    fireEvent.doubleClick(canvas)
     expect(viewport).toHaveStyle({
       '--brain-map-scale': '1',
       '--brain-map-pan-x': '0%',

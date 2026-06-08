@@ -1,22 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from 'react'
+import {
   Brain,
   ChevronDown,
   ChevronUp,
-  Crosshair,
   ExternalLink,
   Eye,
   EyeOff,
   Link2,
   Maximize2,
   Minimize2,
-  Minus,
   Pin,
-  Plus,
   RefreshCw,
   Trash2,
   X,
@@ -103,7 +106,9 @@ const COMPACT_BRAIN_MAP_NODE_LIMIT = 8
 const BRAIN_MAP_ZOOM_STEP = 0.12
 const BRAIN_MAP_MIN_ZOOM = 0.82
 const BRAIN_MAP_MAX_ZOOM = 1.54
-const BRAIN_MAP_PAN_STEP = 8
+const BRAIN_MAP_PAN_LIMIT = 44
+
+const clampBrainMapValue = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
@@ -222,9 +227,17 @@ export default function BrainSignalsPanel({
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
+  const [isBrainMapDragging, setIsBrainMapDragging] = useState(false)
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
+  const brainMapDragStartRef = useRef<{
+    pointerId: number
+    clientX: number
+    clientY: number
+    x: number
+    y: number
+  } | null>(null)
   const requestIdRef = useRef(0)
   const boardRefreshTimerRef = useRef<number | null>(null)
   const latestBoardRefreshSignatureRef = useRef<string | null>(null)
@@ -726,19 +739,68 @@ export default function BrainSignalsPanel({
     setIsBrainMapExpanded((current) => !current)
   }
 
-  const handleBrainMapZoom = (direction: 1 | -1) => {
+  const handleBrainMapWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!isBrainMapExpanded) {
+      return
+    }
+
+    event.preventDefault()
+    const zoomDelta = clampBrainMapValue(-event.deltaY / 650, -BRAIN_MAP_ZOOM_STEP * 1.5, BRAIN_MAP_ZOOM_STEP * 1.5)
     setBrainMapViewport((current) => ({
       ...current,
-      scale: Math.min(BRAIN_MAP_MAX_ZOOM, Math.max(BRAIN_MAP_MIN_ZOOM, current.scale + direction * BRAIN_MAP_ZOOM_STEP)),
+      scale: clampBrainMapValue(current.scale + zoomDelta, BRAIN_MAP_MIN_ZOOM, BRAIN_MAP_MAX_ZOOM),
     }))
   }
 
-  const handleBrainMapPan = (x: number, y: number) => {
+  const handleBrainMapPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isBrainMapExpanded || event.button !== 0 || (event.target as HTMLElement).closest('button')) {
+      return
+    }
+
+    brainMapDragStartRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x: brainMapViewport.x,
+      y: brainMapViewport.y,
+    }
+    setIsBrainMapDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const handleBrainMapPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragStart = brainMapDragStartRef.current
+    if (!dragStart || dragStart.pointerId !== event.pointerId) {
+      return
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    const deltaX = ((event.clientX - dragStart.clientX) / Math.max(1, rect.width)) * 100
+    const deltaY = ((event.clientY - dragStart.clientY) / Math.max(1, rect.height)) * 100
+
     setBrainMapViewport((current) => ({
       ...current,
-      x: current.x + x,
-      y: current.y + y,
+      x: clampBrainMapValue(dragStart.x + deltaX, -BRAIN_MAP_PAN_LIMIT, BRAIN_MAP_PAN_LIMIT),
+      y: clampBrainMapValue(dragStart.y + deltaY, -BRAIN_MAP_PAN_LIMIT, BRAIN_MAP_PAN_LIMIT),
     }))
+  }
+
+  const stopBrainMapDrag = (event?: ReactPointerEvent<HTMLDivElement>) => {
+    const pointerId = brainMapDragStartRef.current?.pointerId
+    brainMapDragStartRef.current = null
+    setIsBrainMapDragging(false)
+
+    if (event && pointerId !== undefined && event.currentTarget.hasPointerCapture?.(pointerId)) {
+      event.currentTarget.releasePointerCapture?.(pointerId)
+    }
+  }
+
+  const handleBrainMapDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!isBrainMapExpanded || (event.target as HTMLElement).closest('button')) {
+      return
+    }
+
+    resetBrainMapViewport()
   }
 
   const findBrainMapNodeForSuggestion = (suggestion: BrainSuggestion) => {
@@ -1497,8 +1559,16 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-map-shell">
         <div
           data-testid="brain-map-canvas"
-          className="forensic-brain-map-canvas"
+          className={`forensic-brain-map-canvas ${isBrainMapDragging ? 'is-dragging' : ''}`}
           aria-label="Current investigation and related memories"
+          title={isBrainMapExpanded ? 'Drag to pan. Scroll to zoom. Double-click to reset.' : undefined}
+          onWheel={handleBrainMapWheel}
+          onPointerDown={handleBrainMapPointerDown}
+          onPointerMove={handleBrainMapPointerMove}
+          onPointerUp={stopBrainMapDrag}
+          onPointerCancel={stopBrainMapDrag}
+          onPointerLeave={stopBrainMapDrag}
+          onDoubleClick={handleBrainMapDoubleClick}
         >
           <button
             type="button"
@@ -1510,31 +1580,6 @@ export default function BrainSignalsPanel({
           >
             {isBrainMapExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
-          {isBrainMapExpanded && (
-            <div className="forensic-brain-map-nav" aria-label="Expanded brain map controls">
-              <button type="button" aria-label="Pan brain map up" onClick={() => handleBrainMapPan(0, -BRAIN_MAP_PAN_STEP)}>
-                <ArrowUp size={13} />
-              </button>
-              <button type="button" aria-label="Pan brain map left" onClick={() => handleBrainMapPan(-BRAIN_MAP_PAN_STEP, 0)}>
-                <ArrowLeft size={13} />
-              </button>
-              <button type="button" aria-label="Reset brain map view" onClick={resetBrainMapViewport}>
-                <Crosshair size={13} />
-              </button>
-              <button type="button" aria-label="Pan brain map right" onClick={() => handleBrainMapPan(BRAIN_MAP_PAN_STEP, 0)}>
-                <ArrowRight size={13} />
-              </button>
-              <button type="button" aria-label="Pan brain map down" onClick={() => handleBrainMapPan(0, BRAIN_MAP_PAN_STEP)}>
-                <ArrowDown size={13} />
-              </button>
-              <button type="button" aria-label="Zoom out brain map" onClick={() => handleBrainMapZoom(-1)}>
-                <Minus size={13} />
-              </button>
-              <button type="button" aria-label="Zoom in brain map" onClick={() => handleBrainMapZoom(1)}>
-                <Plus size={13} />
-              </button>
-            </div>
-          )}
           <div className="forensic-brain-map-bus" aria-hidden="true">
             <span>Active Recall</span>
             <strong>{renderedBrainMapModel.summary.strongestScore}</strong>
