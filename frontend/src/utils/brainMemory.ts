@@ -101,6 +101,83 @@ export interface BrainSuggestion {
   reviewedAt?: string
 }
 
+export interface BrainMapNode {
+  id: string
+  kind: 'current' | 'cluster' | 'memory' | 'signal' | string
+  title: string
+  subtitle: string
+  score: number
+  status: string
+  gateway?: BrainGateway
+  gatewayCounts?: Record<string, number>
+  badges: string[]
+  investigationId?: string
+  targetInvestigationId?: string
+  clusterId?: string
+  signalId?: string
+  linkId?: string
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  memberInvestigationIds: string[]
+  reasonSamples: BrainSignalReason[]
+  x: number
+  y: number
+}
+
+export interface BrainMapEdge {
+  id: string
+  kind: 'cluster' | 'cluster-member' | 'link' | 'signal' | string
+  from: string
+  to: string
+  label: string
+  score: number
+  gateway?: BrainGateway
+  clusterId?: string
+  signalId?: string
+  linkId?: string
+}
+
+export interface BrainMapRegion {
+  id: string
+  clusterId: string
+  label: string
+  status: string
+  score: number
+  gateway: BrainGateway
+  nodeIds: string[]
+  memberInvestigationIds: string[]
+  x: number
+  y: number
+}
+
+export interface BrainMapDigestItem {
+  id: string
+  tone: 'hot' | 'warm' | 'cool' | 'weak' | 'high' | 'medium' | 'low' | string
+  title: string
+  detail: string
+}
+
+export interface BrainMapSummary {
+  visibleNodeCount: number
+  edgeCount: number
+  clusterCount: number
+  linkedMemoryCount: number
+  activeSignalCount: number
+  suggestionCount: number
+  strongestScore: number
+}
+
+export interface BrainMapView {
+  investigationId: string
+  investigationTitle: string
+  generatedAt: string
+  nodes: BrainMapNode[]
+  edges: BrainMapEdge[]
+  regions: BrainMapRegion[]
+  digest: BrainMapDigestItem[]
+  summary: BrainMapSummary
+}
+
 const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
     cache: 'no-store',
@@ -137,6 +214,9 @@ export const fetchBrainSignals = (investigationId: string) =>
 
 export const fetchBrainLinks = (investigationId: string) =>
   requestJSON<MemoryLink[]>(`${API_BASE}/links?investigationId=${encodeURIComponent(investigationId)}`)
+
+export const fetchBrainMap = (investigationId: string) =>
+  requestJSON<BrainMapView>(`${API_BASE}/map?investigationId=${encodeURIComponent(investigationId)}`)
 
 export const fetchBrainClusters = (investigationId: string) =>
   requestJSON<MemoryCluster[]>(`${API_BASE}/clusters?investigationId=${encodeURIComponent(investigationId)}`)

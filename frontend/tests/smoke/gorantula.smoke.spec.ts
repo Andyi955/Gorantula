@@ -213,6 +213,156 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
     reviewedAt: suggestionReviewed ? '2026-06-05T12:02:00Z' : undefined,
   })
 
+  const brainMapPayload = () => {
+    const cluster = clusterPayload()
+    const activeMemoryNode = promoted && !forgotten
+      ? {
+          id: `brain-map-link-${link.id}`,
+          kind: 'memory',
+          title: link.toTitle,
+          subtitle: link.reasons[0].detail,
+          score: link.score,
+          status: 'linked',
+          gateway: link.gateways[0],
+          badges: ['Manual', `${link.activationCount || 1} activation`],
+          investigationId: link.toInvestigationId,
+          targetInvestigationId: link.toInvestigationId,
+          clusterId: cluster.id,
+          linkId: link.id,
+          relatedSignalIds: [signal.id],
+          relatedMemoryLinkIds: [link.id],
+          memberInvestigationIds: cluster.memberInvestigationIds,
+          reasonSamples: link.reasons,
+          x: 76,
+          y: 58,
+        }
+      : {
+          id: `brain-map-signal-${signal.id}`,
+          kind: 'signal',
+          title: signal.targetTitle,
+          subtitle: signal.reasons[0].detail,
+          score: signal.score,
+          status: 'firing',
+          gateway: signal.gateways[0],
+          badges: ['Signal'],
+          investigationId: signal.targetInvestigationId,
+          targetInvestigationId: signal.targetInvestigationId,
+          clusterId: cluster.id,
+          signalId: signal.id,
+          relatedSignalIds: [signal.id],
+          relatedMemoryLinkIds: [],
+          memberInvestigationIds: cluster.memberInvestigationIds,
+          reasonSamples: signal.reasons,
+          x: 76,
+          y: 58,
+        }
+
+    return {
+      investigationId: signal.investigationId,
+      investigationTitle: signal.investigationTitle,
+      generatedAt: '2026-06-05T12:01:00Z',
+      nodes: [
+        {
+          id: 'brain-map-current',
+          kind: 'current',
+          title: signal.investigationTitle,
+          subtitle: 'Current investigation focus',
+          score: 1,
+          status: 'focus',
+          badges: ['Current'],
+          investigationId: signal.investigationId,
+          relatedSignalIds: [],
+          relatedMemoryLinkIds: [],
+          memberInvestigationIds: [signal.investigationId],
+          reasonSamples: [],
+          x: 50,
+          y: 50,
+        },
+        {
+          id: `brain-map-cluster-${cluster.id}`,
+          kind: 'cluster',
+          title: cluster.label,
+          subtitle: cluster.summary,
+          score: cluster.score,
+          status: cluster.status,
+          gateway: cluster.dominantGateway,
+          badges: ['Active', 'Entity/date'],
+          investigationId: signal.investigationId,
+          clusterId: cluster.id,
+          relatedSignalIds: cluster.signalIds,
+          relatedMemoryLinkIds: cluster.memoryLinkIds,
+          memberInvestigationIds: cluster.memberInvestigationIds,
+          reasonSamples: cluster.reasonSamples,
+          x: 28,
+          y: 36,
+        },
+        activeMemoryNode,
+      ],
+      edges: [
+        {
+          id: `brain-map-edge-cluster-${cluster.id}`,
+          kind: 'cluster',
+          from: 'brain-map-current',
+          to: `brain-map-cluster-${cluster.id}`,
+          label: 'Memory cluster',
+          score: cluster.score,
+          gateway: cluster.dominantGateway,
+          clusterId: cluster.id,
+        },
+        {
+          id: `brain-map-edge-memory-${cluster.id}`,
+          kind: promoted && !forgotten ? 'link' : 'signal',
+          from: `brain-map-cluster-${cluster.id}`,
+          to: activeMemoryNode.id,
+          label: promoted && !forgotten ? 'Durable memory' : 'Active signal',
+          score: signal.score,
+          gateway: signal.gateways[0],
+          clusterId: cluster.id,
+          signalId: promoted && !forgotten ? undefined : signal.id,
+          linkId: promoted && !forgotten ? link.id : undefined,
+        },
+      ],
+      regions: [
+        {
+          id: `brain-map-region-${cluster.id}`,
+          clusterId: cluster.id,
+          label: cluster.label,
+          status: cluster.status,
+          score: cluster.score,
+          gateway: cluster.dominantGateway,
+          nodeIds: [`brain-map-cluster-${cluster.id}`, activeMemoryNode.id],
+          memberInvestigationIds: cluster.memberInvestigationIds,
+          x: 28,
+          y: 36,
+        },
+      ],
+      digest: [
+        promoted && !forgotten
+          ? {
+              id: 'brain-map-digest-link',
+              tone: 'hot',
+              title: 'Memory promoted',
+              detail: `${link.toTitle} became a durable memory link.`,
+            }
+          : {
+              id: 'brain-map-digest-signal',
+              tone: 'cool',
+              title: 'Signal fired',
+              detail: `${signal.targetTitle} fired through Entity/Date.`,
+            },
+      ],
+      summary: {
+        visibleNodeCount: 3,
+        edgeCount: 2,
+        clusterCount: 1,
+        linkedMemoryCount: promoted && !forgotten ? 1 : 0,
+        activeSignalCount: promoted || forgotten ? 0 : 1,
+        suggestionCount: suggestionDismissed ? 0 : 1,
+        strongestScore: signal.score,
+      },
+    }
+  }
+
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -253,6 +403,33 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(investigationId === signal.investigationId && !suggestionDismissed ? [suggestionPayload()] : []),
+      })
+      return
+    }
+
+    if (request.method() === 'GET' && url.pathname.endsWith('/map')) {
+      const investigationId = url.searchParams.get('investigationId')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(investigationId === signal.investigationId && !forgotten ? brainMapPayload() : {
+          investigationId: investigationId || '',
+          investigationTitle: '',
+          generatedAt: '2026-06-05T12:01:00Z',
+          nodes: [],
+          edges: [],
+          regions: [],
+          digest: [],
+          summary: {
+            visibleNodeCount: 0,
+            edgeCount: 0,
+            clusterCount: 0,
+            linkedMemoryCount: 0,
+            activeSignalCount: 0,
+            suggestionCount: 0,
+            strongestScore: 0,
+          },
+        }),
       })
       return
     }
@@ -657,19 +834,28 @@ test.describe('Gorantula smoke flows', () => {
     await expect(suggestionCard).toContainText('Cluster Review')
     await expect(suggestionCard).toContainText('Inspect recurring memory cluster')
     await expect(suggestionCard).toContainText('Grid reliability signal is an active cluster')
+    const radar = page.getByTestId('brain-map-radar')
+    await suggestionCard.getByRole('button', { name: /view map/i }).click()
+    await expect(radar).toBeVisible()
+    await expect(radar.getByTestId('brain-map-graph-region')).toContainText('Grid reliability signal')
+    await expect(radar.locator('[data-testid="brain-map-graph-edge"][data-edge-kind="cluster"]')).toHaveCount(1)
+    await expect(radar.getByTestId('brain-map-selected-node')).toContainText('Memory cluster')
+
+    await radar.getByRole('button', { name: /collapse brain map/i }).click()
+    await expect(radar).not.toHaveClass(/is-expanded/)
+    await page.getByRole('button', { name: /next moves view/i }).click()
     await suggestionCard.getByRole('button', { name: /mark reviewed/i }).click()
     await expect(page.getByText(/reviewed context/i)).toBeVisible()
     await expect(page.getByTestId('brain-suggestion-card')).toContainText('Reviewed')
     await page.getByTestId('brain-suggestion-card').getByRole('button', { name: /dismiss/i }).click()
     await expect(page.getByTestId('brain-suggestion-card')).toHaveCount(0)
 
-    const radar = page.getByTestId('brain-map-radar')
     await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(radar).toBeVisible()
     await expect(radar).toContainText('Memory map')
     await expect(radar).toContainText('QA: Imported Target')
     await expect(radar).toContainText('QA: Source Case')
-    await expect(radar.getByTestId('brain-map-node')).toHaveCount(2)
+    await expect(radar.getByTestId('brain-map-node')).toHaveCount(3)
     await expect(radar.getByTestId('brain-map-digest')).toContainText('Signal fired')
 
     await radar.getByRole('button', { name: /select signal qa: source case/i }).click()

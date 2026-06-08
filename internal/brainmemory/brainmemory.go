@@ -169,6 +169,83 @@ type BrainSuggestion struct {
 	ReviewedAt             string   `json:"reviewedAt,omitempty"`
 }
 
+type BrainMapView struct {
+	InvestigationID    string               `json:"investigationId"`
+	InvestigationTitle string               `json:"investigationTitle"`
+	GeneratedAt        string               `json:"generatedAt"`
+	Nodes              []BrainMapNode       `json:"nodes"`
+	Edges              []BrainMapEdge       `json:"edges"`
+	Regions            []BrainMapRegion     `json:"regions"`
+	Digest             []BrainMapDigestItem `json:"digest"`
+	Summary            BrainMapSummary      `json:"summary"`
+}
+
+type BrainMapNode struct {
+	ID                     string         `json:"id"`
+	Kind                   string         `json:"kind"`
+	Title                  string         `json:"title"`
+	Subtitle               string         `json:"subtitle"`
+	Score                  float64        `json:"score"`
+	Status                 string         `json:"status"`
+	Gateway                string         `json:"gateway,omitempty"`
+	GatewayCounts          map[string]int `json:"gatewayCounts,omitempty"`
+	Badges                 []string       `json:"badges"`
+	InvestigationID        string         `json:"investigationId,omitempty"`
+	TargetInvestigationID  string         `json:"targetInvestigationId,omitempty"`
+	ClusterID              string         `json:"clusterId,omitempty"`
+	SignalID               string         `json:"signalId,omitempty"`
+	LinkID                 string         `json:"linkId,omitempty"`
+	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
+	MemberInvestigationIDs []string       `json:"memberInvestigationIds"`
+	ReasonSamples          []SignalReason `json:"reasonSamples"`
+	X                      float64        `json:"x"`
+	Y                      float64        `json:"y"`
+}
+
+type BrainMapEdge struct {
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	From      string  `json:"from"`
+	To        string  `json:"to"`
+	Label     string  `json:"label"`
+	Score     float64 `json:"score"`
+	Gateway   string  `json:"gateway,omitempty"`
+	ClusterID string  `json:"clusterId,omitempty"`
+	SignalID  string  `json:"signalId,omitempty"`
+	LinkID    string  `json:"linkId,omitempty"`
+}
+
+type BrainMapRegion struct {
+	ID                     string   `json:"id"`
+	ClusterID              string   `json:"clusterId"`
+	Label                  string   `json:"label"`
+	Status                 string   `json:"status"`
+	Score                  float64  `json:"score"`
+	Gateway                string   `json:"gateway"`
+	NodeIDs                []string `json:"nodeIds"`
+	MemberInvestigationIDs []string `json:"memberInvestigationIds"`
+	X                      float64  `json:"x"`
+	Y                      float64  `json:"y"`
+}
+
+type BrainMapDigestItem struct {
+	ID     string `json:"id"`
+	Tone   string `json:"tone"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+}
+
+type BrainMapSummary struct {
+	VisibleNodeCount  int     `json:"visibleNodeCount"`
+	EdgeCount         int     `json:"edgeCount"`
+	ClusterCount      int     `json:"clusterCount"`
+	LinkedMemoryCount int     `json:"linkedMemoryCount"`
+	ActiveSignalCount int     `json:"activeSignalCount"`
+	SuggestionCount   int     `json:"suggestionCount"`
+	StrongestScore    float64 `json:"strongestScore"`
+}
+
 type Service struct {
 	vaultRoot string
 	store     *models.InvestigationStore
@@ -668,6 +745,494 @@ func (s *Service) DismissSuggestion(suggestionID string) (BrainSuggestion, error
 
 func (s *Service) MarkSuggestionReviewed(suggestionID string) (BrainSuggestion, error) {
 	return s.setSuggestionStatus(suggestionID, SuggestionStatusReviewed)
+}
+
+func (s *Service) MapForInvestigation(investigationID string) (BrainMapView, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return BrainMapView{}, models.ErrInvalidInvestigationID
+	}
+	record, err := s.store.LoadMetadata(investigationID)
+	if err != nil {
+		return BrainMapView{}, err
+	}
+	signals, err := s.GenerateSignals(investigationID)
+	if err != nil {
+		return BrainMapView{}, err
+	}
+	links, err := s.LinksForInvestigation(investigationID)
+	if err != nil {
+		return BrainMapView{}, err
+	}
+	clusters, err := s.ClustersForInvestigation(investigationID)
+	if err != nil {
+		return BrainMapView{}, err
+	}
+	suggestions, err := s.SuggestionsForInvestigation(investigationID)
+	if err != nil {
+		return BrainMapView{}, err
+	}
+	return buildBrainMapView(record, signals, links, clusters, suggestions, time.Now().UTC().Format(time.RFC3339)), nil
+}
+
+func buildBrainMapView(
+	record models.InvestigationRecord,
+	signals []BrainSignal,
+	links []MemoryLink,
+	clusters []MemoryCluster,
+	suggestions []BrainSuggestion,
+	timestamp string,
+) BrainMapView {
+	sortSignals(signals)
+	sortLinksForMap(links)
+	sortClusters(clusters)
+	sortSuggestions(suggestions)
+
+	nodes := make([]BrainMapNode, 0, 1+len(clusters)+len(links)+len(signals))
+	edges := make([]BrainMapEdge, 0, len(clusters)+len(links)+len(signals))
+	regions := make([]BrainMapRegion, 0, len(clusters))
+	currentNode := BrainMapNode{
+		ID:              "brain-map-current",
+		Kind:            "current",
+		Title:           investigationRecordTitle(record),
+		Subtitle:        "Current investigation focus",
+		Score:           1,
+		Status:          "focus",
+		Badges:          []string{"Current"},
+		InvestigationID: record.ID,
+		X:               50,
+		Y:               50,
+	}
+	nodes = append(nodes, normalizeBrainMapNode(currentNode))
+
+	clusterNodeIDsByClusterID := make(map[string]string)
+	visibleClusters := visibleBrainMapClusters(clusters, 6)
+	for index, cluster := range visibleClusters {
+		x, y := brainMapPosition(index, len(visibleClusters), 33)
+		nodeID := "brain-map-cluster-" + cluster.ID
+		clusterNodeIDsByClusterID[cluster.ID] = nodeID
+		node := BrainMapNode{
+			ID:                     nodeID,
+			Kind:                   "cluster",
+			Title:                  cluster.Label,
+			Subtitle:               cluster.Summary,
+			Score:                  normalizeMapScore(cluster.Score),
+			Status:                 cluster.Status,
+			Gateway:                cluster.DominantGateway,
+			GatewayCounts:          cloneGatewayCounts(cluster.GatewayCounts),
+			Badges:                 cleanStringSet([]string{formatClusterStatusForMap(cluster.Status), formatGatewayName(cluster.DominantGateway)}),
+			ClusterID:              cluster.ID,
+			RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
+			RelatedMemoryLinkIDs:   cleanStringSet(cluster.MemoryLinkIDs),
+			MemberInvestigationIDs: cleanStringSet(cluster.MemberInvestigationIDs),
+			ReasonSamples:          limitReasons(cluster.ReasonSamples, 3),
+			X:                      x,
+			Y:                      y,
+		}
+		nodes = append(nodes, normalizeBrainMapNode(node))
+		edges = append(edges, BrainMapEdge{
+			ID:        "brain-map-edge-cluster-" + cluster.ID,
+			Kind:      "cluster",
+			From:      currentNode.ID,
+			To:        nodeID,
+			Label:     "Memory cluster",
+			Score:     normalizeMapScore(cluster.Score),
+			Gateway:   cluster.DominantGateway,
+			ClusterID: cluster.ID,
+		})
+		regions = append(regions, BrainMapRegion{
+			ID:                     "brain-map-region-" + cluster.ID,
+			ClusterID:              cluster.ID,
+			Label:                  cluster.Label,
+			Status:                 cluster.Status,
+			Score:                  normalizeMapScore(cluster.Score),
+			Gateway:                cluster.DominantGateway,
+			NodeIDs:                []string{nodeID},
+			MemberInvestigationIDs: cleanStringSet(cluster.MemberInvestigationIDs),
+			X:                      x,
+			Y:                      y,
+		})
+	}
+
+	linkedNodeIDsByInvestigationID := make(map[string]string)
+	for index, link := range firstMemoryLinksForMap(links, 8) {
+		targetID, targetTitle := memoryLinkTargetForMap(link, record.ID)
+		if targetID == "" {
+			continue
+		}
+		x, y := brainMapPosition(index, maxInt(1, minInt(8, len(links))), 46)
+		nodeID := "brain-map-memory-" + link.ID
+		linkedNodeIDsByInvestigationID[targetID] = nodeID
+		node := BrainMapNode{
+			ID:                    nodeID,
+			Kind:                  "memory",
+			Title:                 nonEmptyString(targetTitle, targetID),
+			Subtitle:              firstReasonDetail(link.Reasons, link.SuggestedAction),
+			Score:                 normalizeMapScore(link.Score),
+			Status:                mapStatusForScore(link.Score),
+			Gateway:               firstGateway(link.Gateways),
+			Badges:                memoryLinkBadges(link),
+			InvestigationID:       targetID,
+			TargetInvestigationID: targetID,
+			LinkID:                link.ID,
+			RelatedSignalIDs:      cleanStringSet([]string{link.SignalID}),
+			RelatedMemoryLinkIDs:  []string{link.ID},
+			ReasonSamples:         limitReasons(link.Reasons, 3),
+			X:                     x,
+			Y:                     y,
+		}
+		nodes = append(nodes, normalizeBrainMapNode(node))
+		edges = append(edges, BrainMapEdge{
+			ID:      "brain-map-edge-link-" + link.ID,
+			Kind:    "link",
+			From:    currentNode.ID,
+			To:      nodeID,
+			Label:   "Memory link",
+			Score:   normalizeMapScore(link.Score),
+			Gateway: firstGateway(link.Gateways),
+			LinkID:  link.ID,
+		})
+	}
+
+	for index, signal := range firstSignalsForMap(signals, 8) {
+		x, y := brainMapPosition(index+len(linkedNodeIDsByInvestigationID), maxInt(1, len(signals)+len(linkedNodeIDsByInvestigationID)), 58)
+		nodeID := "brain-map-signal-" + signal.ID
+		node := BrainMapNode{
+			ID:                    nodeID,
+			Kind:                  "signal",
+			Title:                 nonEmptyString(signal.TargetTitle, signal.TargetInvestigationID),
+			Subtitle:              firstReasonDetail(signal.Reasons, signal.SuggestedAction),
+			Score:                 normalizeMapScore(signal.Score),
+			Status:                mapStatusForScore(signal.Score),
+			Gateway:               firstGateway(signal.Gateways),
+			Badges:                signalBadges(signal),
+			InvestigationID:       signal.TargetInvestigationID,
+			TargetInvestigationID: signal.TargetInvestigationID,
+			SignalID:              signal.ID,
+			RelatedSignalIDs:      []string{signal.ID},
+			ReasonSamples:         limitReasons(signal.Reasons, 3),
+			X:                     x,
+			Y:                     y,
+		}
+		nodes = append(nodes, normalizeBrainMapNode(node))
+		edges = append(edges, BrainMapEdge{
+			ID:       "brain-map-edge-signal-" + signal.ID,
+			Kind:     "signal",
+			From:     currentNode.ID,
+			To:       nodeID,
+			Label:    "Active signal",
+			Score:    normalizeMapScore(signal.Score),
+			Gateway:  firstGateway(signal.Gateways),
+			SignalID: signal.ID,
+		})
+	}
+
+	for index := range regions {
+		region := &regions[index]
+		cluster := visibleClusters[index]
+		for _, memberID := range cluster.MemberInvestigationIDs {
+			nodeID, ok := linkedNodeIDsByInvestigationID[memberID]
+			if !ok {
+				continue
+			}
+			region.NodeIDs = cleanStringSet(append(region.NodeIDs, nodeID))
+			edges = append(edges, BrainMapEdge{
+				ID:        deterministicID("brain-map-edge-region", cluster.ID, nodeID),
+				Kind:      "cluster-member",
+				From:      clusterNodeIDsByClusterID[cluster.ID],
+				To:        nodeID,
+				Label:     "Cluster member",
+				Score:     normalizeMapScore(cluster.Score),
+				Gateway:   cluster.DominantGateway,
+				ClusterID: cluster.ID,
+			})
+		}
+	}
+
+	strongestScore := strongestBrainMapScore(signals, links, visibleClusters)
+	return BrainMapView{
+		InvestigationID:    record.ID,
+		InvestigationTitle: investigationRecordTitle(record),
+		GeneratedAt:        timestamp,
+		Nodes:              nodes,
+		Edges:              edges,
+		Regions:            regions,
+		Digest:             buildBrainMapDigest(record.ID, signals, links, visibleClusters, suggestions),
+		Summary: BrainMapSummary{
+			VisibleNodeCount:  len(nodes),
+			EdgeCount:         len(edges),
+			ClusterCount:      len(visibleClusters),
+			LinkedMemoryCount: len(links),
+			ActiveSignalCount: len(signals),
+			SuggestionCount:   len(suggestions),
+			StrongestScore:    strongestScore,
+		},
+	}
+}
+
+func normalizeBrainMapNode(node BrainMapNode) BrainMapNode {
+	node.Score = normalizeMapScore(node.Score)
+	node.Badges = cleanStringSet(node.Badges)
+	node.RelatedSignalIDs = cleanStringSet(node.RelatedSignalIDs)
+	node.RelatedMemoryLinkIDs = cleanStringSet(node.RelatedMemoryLinkIDs)
+	node.MemberInvestigationIDs = cleanStringSet(node.MemberInvestigationIDs)
+	node.ReasonSamples = limitReasons(node.ReasonSamples, 3)
+	if node.GatewayCounts == nil {
+		node.GatewayCounts = map[string]int{}
+	}
+	return node
+}
+
+func visibleBrainMapClusters(clusters []MemoryCluster, limit int) []MemoryCluster {
+	result := make([]MemoryCluster, 0, minInt(limit, len(clusters)))
+	for _, cluster := range clusters {
+		if cluster.Hidden {
+			continue
+		}
+		result = append(result, cluster)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
+}
+
+func firstMemoryLinksForMap(links []MemoryLink, limit int) []MemoryLink {
+	if len(links) <= limit {
+		return links
+	}
+	return links[:limit]
+}
+
+func firstSignalsForMap(signals []BrainSignal, limit int) []BrainSignal {
+	if len(signals) <= limit {
+		return signals
+	}
+	return signals[:limit]
+}
+
+func sortLinksForMap(links []MemoryLink) {
+	sort.SliceStable(links, func(i, j int) bool {
+		if links[i].Score == links[j].Score {
+			return links[i].CreatedAt > links[j].CreatedAt
+		}
+		return links[i].Score > links[j].Score
+	})
+}
+
+func brainMapPosition(index int, total int, radius float64) (float64, float64) {
+	positions := []struct {
+		x float64
+		y float64
+	}{
+		{50, 12},
+		{77, 25},
+		{82, 58},
+		{62, 83},
+		{32, 83},
+		{12, 58},
+		{17, 25},
+		{50, 88},
+	}
+	if total <= 1 {
+		if radius > 50 {
+			return 50, 86
+		}
+		return 50, 14
+	}
+	position := positions[index%len(positions)]
+	scale := radius / 46
+	x := 50 + (position.x-50)*scale
+	y := 50 + (position.y-50)*scale
+	return clampMapCoordinate(x), clampMapCoordinate(y)
+}
+
+func clampMapCoordinate(value float64) float64 {
+	if value < 6 {
+		return 6
+	}
+	if value > 94 {
+		return 94
+	}
+	return value
+}
+
+func cloneGatewayCounts(counts map[string]int) map[string]int {
+	clone := make(map[string]int, len(counts))
+	for key, value := range counts {
+		if strings.TrimSpace(key) == "" || value <= 0 {
+			continue
+		}
+		clone[key] = value
+	}
+	return clone
+}
+
+func memoryLinkTargetForMap(link MemoryLink, currentInvestigationID string) (string, string) {
+	if link.FromInvestigationID == currentInvestigationID {
+		return link.ToInvestigationID, link.ToTitle
+	}
+	return link.FromInvestigationID, link.FromTitle
+}
+
+func firstReasonDetail(reasons []SignalReason, fallback string) string {
+	for _, reason := range reasons {
+		if detail := strings.TrimSpace(reason.Detail); detail != "" {
+			return detail
+		}
+		if label := strings.TrimSpace(reason.Label); label != "" {
+			return label
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func firstGateway(gateways []string) string {
+	for _, gateway := range gateways {
+		if gateway = strings.TrimSpace(gateway); gateway != "" {
+			return gateway
+		}
+	}
+	return ""
+}
+
+func memoryLinkBadges(link MemoryLink) []string {
+	badges := []string{formatMemoryPromotionForMap(link.PromotionType)}
+	if link.ActivationCount > 1 {
+		badges = append(badges, fmt.Sprintf("%d activations", link.ActivationCount))
+	}
+	return badges
+}
+
+func signalBadges(signal BrainSignal) []string {
+	badges := []string{"Signal"}
+	if signal.ActivationCount > 1 {
+		badges = append(badges, fmt.Sprintf("%d firings", signal.ActivationCount))
+	}
+	return badges
+}
+
+func formatMemoryPromotionForMap(promotionType string) string {
+	switch promotionType {
+	case promotionTypeAuto:
+		return "Auto memory"
+	case promotionTypeManual:
+		return "Manual memory"
+	default:
+		return "Memory"
+	}
+}
+
+func formatClusterStatusForMap(status string) string {
+	switch strings.TrimSpace(status) {
+	case "active":
+		return "Active"
+	case "warm":
+		return "Warm"
+	case "dormant":
+		return "Dormant"
+	default:
+		return "Cluster"
+	}
+}
+
+func mapStatusForScore(score float64) string {
+	score = normalizeMapScore(score)
+	if score >= 0.75 {
+		return "hot"
+	}
+	if score >= 0.5 {
+		return "warm"
+	}
+	return "weak"
+}
+
+func normalizeMapScore(score float64) float64 {
+	if score < 0 {
+		return 0
+	}
+	if score > 1 {
+		return 1
+	}
+	return score
+}
+
+func strongestBrainMapScore(signals []BrainSignal, links []MemoryLink, clusters []MemoryCluster) float64 {
+	score := 0.0
+	for _, signal := range signals {
+		score = maxFloat(score, signal.Score)
+	}
+	for _, link := range links {
+		score = maxFloat(score, link.Score)
+	}
+	for _, cluster := range clusters {
+		score = maxFloat(score, cluster.Score)
+	}
+	return normalizeMapScore(score)
+}
+
+func buildBrainMapDigest(
+	currentInvestigationID string,
+	signals []BrainSignal,
+	links []MemoryLink,
+	clusters []MemoryCluster,
+	suggestions []BrainSuggestion,
+) []BrainMapDigestItem {
+	digest := make([]BrainMapDigestItem, 0, 4)
+	if len(clusters) > 0 {
+		cluster := clusters[0]
+		digest = append(digest, BrainMapDigestItem{
+			ID:     "brain-map-digest-cluster-" + cluster.ID,
+			Tone:   mapStatusForScore(cluster.Score),
+			Title:  "Cluster region active",
+			Detail: fmt.Sprintf("%s links %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
+		})
+	}
+	if len(links) > 0 {
+		link := links[0]
+		_, title := memoryLinkTargetForMap(link, currentInvestigationID)
+		digest = append(digest, BrainMapDigestItem{
+			ID:     "brain-map-digest-link-" + link.ID,
+			Tone:   mapStatusForScore(link.Score),
+			Title:  "Linked memory visible",
+			Detail: fmt.Sprintf("%s is available on the map.", nonEmptyString(title, link.ToTitle)),
+		})
+	}
+	if len(signals) > 0 {
+		signal := signals[0]
+		digest = append(digest, BrainMapDigestItem{
+			ID:     "brain-map-digest-signal-" + signal.ID,
+			Tone:   mapStatusForScore(signal.Score),
+			Title:  "Signal firing",
+			Detail: fmt.Sprintf("%s is firing through %s.", signal.TargetTitle, formatGatewayName(firstGateway(signal.Gateways))),
+		})
+	}
+	if len(suggestions) > 0 {
+		suggestion := suggestions[0]
+		digest = append(digest, BrainMapDigestItem{
+			ID:     "brain-map-digest-suggestion-" + suggestion.ID,
+			Tone:   suggestion.Priority,
+			Title:  "Next move ready",
+			Detail: suggestion.Title,
+		})
+	}
+	if len(digest) > 3 {
+		return digest[:3]
+	}
+	return digest
+}
+
+func nonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func investigationRecordTitle(record models.InvestigationRecord) string {
+	return nonEmptyString(record.DisplayTopic, record.Topic, record.ID)
 }
 
 func (s *Service) setSuggestionStatus(suggestionID string, status string) (BrainSuggestion, error) {
@@ -1495,6 +2060,15 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, links, err)
 		return
 	}
+	if path == "api/brain/map" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		brainMap, err := service.MapForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, brainMap, err)
+		return
+	}
 	if path == "api/brain/clusters" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2190,6 +2764,13 @@ func maxFloat(left float64, right float64) float64 {
 
 func minInt(left int, right int) int {
 	if left < right {
+		return left
+	}
+	return right
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
 		return left
 	}
 	return right

@@ -1,5 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, ChevronDown, ChevronUp, ExternalLink, Eye, EyeOff, Link2, Pin, RefreshCw, Trash2, X } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from 'react'
+import {
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Link2,
+  Maximize2,
+  Minimize2,
+  Pin,
+  RefreshCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
@@ -10,6 +34,7 @@ import {
   dismissBrainSignal,
   fetchBrainClusters,
   fetchBrainLinks,
+  fetchBrainMap,
   fetchBrainSuggestions,
   fetchBrainSignals,
   forgetBrainLink,
@@ -20,10 +45,18 @@ import {
   unhideBrainCluster,
   type BrainSuggestion,
   type BrainSignal,
+  type BrainMapView,
   type MemoryCluster,
   type MemoryLink,
 } from '../utils/brainMemory'
-import { buildBrainMapModel, type BrainMapNode } from '../utils/brainMap'
+import {
+  buildBrainMapModel,
+  buildBrainMapModelFromView,
+  type BrainMapEdge,
+  type BrainMapNode,
+  type BrainMapRegion,
+  type BrainMapSlot,
+} from '../utils/brainMap'
 import {
   LOW_PRIORITY_SCORE_THRESHOLD,
   buildSignalSummary,
@@ -69,6 +102,13 @@ interface BrainSignalsPanelProps {
 const PRIORITY_SIGNAL_LIMIT = 10
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
 const NEXT_MOVES_PRIORITY_LIMIT = 7
+const COMPACT_BRAIN_MAP_NODE_LIMIT = 8
+const BRAIN_MAP_ZOOM_STEP = 0.12
+const BRAIN_MAP_MIN_ZOOM = 0.82
+const BRAIN_MAP_MAX_ZOOM = 1.54
+const BRAIN_MAP_PAN_LIMIT = 44
+
+const clampBrainMapValue = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
@@ -117,6 +157,35 @@ const sortSuggestionsForView = (items: BrainSuggestion[]) => [...items].sort((le
   return right.score - left.score
 })
 
+const brainMapNodeDisplayRank = (node: BrainMapNode) => {
+  switch (node.kind) {
+    case 'cluster':
+      return 0
+    case 'memory':
+      return 1
+    case 'signal':
+      return 2
+    default:
+      return 3
+  }
+}
+
+const compareBrainMapDisplayNodes = (left: BrainMapNode, right: BrainMapNode) => {
+  const kindDelta = brainMapNodeDisplayRank(left) - brainMapNodeDisplayRank(right)
+
+  if (kindDelta !== 0) {
+    return kindDelta
+  }
+
+  const scoreDelta = right.score - left.score
+
+  if (scoreDelta !== 0) {
+    return scoreDelta
+  }
+
+  return left.title.localeCompare(right.title)
+}
+
 const formatSuggestionKind = (kind: string) => {
   switch (kind) {
     case 'cluster-review':
@@ -143,6 +212,7 @@ export default function BrainSignalsPanel({
   const [links, setLinks] = useState<MemoryLink[]>([])
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
+  const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -155,9 +225,19 @@ export default function BrainSignalsPanel({
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
+  const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
+  const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
+  const [isBrainMapDragging, setIsBrainMapDragging] = useState(false)
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
+  const brainMapDragStartRef = useRef<{
+    pointerId: number
+    clientX: number
+    clientY: number
+    x: number
+    y: number
+  } | null>(null)
   const requestIdRef = useRef(0)
   const boardRefreshTimerRef = useRef<number | null>(null)
   const latestBoardRefreshSignatureRef = useRef<string | null>(null)
@@ -172,6 +252,7 @@ export default function BrainSignalsPanel({
       setLinks([])
       setClusters([])
       setSuggestions([])
+      setBrainMapView(null)
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
@@ -197,6 +278,12 @@ export default function BrainSignalsPanel({
     try {
       const nextSignals = await fetchBrainSignals(currentInvestigationId)
       const nextLinks = await fetchBrainLinks(currentInvestigationId)
+      let nextBrainMap: BrainMapView | null = null
+      try {
+        nextBrainMap = await fetchBrainMap(currentInvestigationId)
+      } catch {
+        nextBrainMap = null
+      }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
 
@@ -208,6 +295,7 @@ export default function BrainSignalsPanel({
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
+      setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
       setShowLowerPrioritySignals(false)
       setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
@@ -362,7 +450,7 @@ export default function BrainSignalsPanel({
     [rankedSuggestions],
   )
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
-  const brainMapModel = useMemo(
+  const localBrainMapModel = useMemo(
     () => buildBrainMapModel({
       currentInvestigationId: currentInvestigationId || undefined,
       currentInvestigationTitle: activeTitle,
@@ -371,17 +459,76 @@ export default function BrainSignalsPanel({
     }),
     [activeTitle, currentInvestigationId, rankedSignals, rankedLinks],
   )
+  const backendBrainMapModel = useMemo(
+    () => (brainMapView && Array.isArray(brainMapView.nodes) && brainMapView.nodes.length > 0
+      ? buildBrainMapModelFromView(brainMapView)
+      : null),
+    [brainMapView],
+  )
+  const brainMapModel = backendBrainMapModel || localBrainMapModel
+  const renderedBrainMapModel = useMemo(() => {
+    if (isBrainMapExpanded || brainMapModel.nodes.length <= COMPACT_BRAIN_MAP_NODE_LIMIT) {
+      return brainMapModel
+    }
+
+    const currentNode = brainMapModel.nodes.find((node) => node.kind === 'current')
+    const visibleCandidates = brainMapModel.nodes
+      .filter((node) => node.kind !== 'current')
+      .sort(compareBrainMapDisplayNodes)
+      .slice(0, COMPACT_BRAIN_MAP_NODE_LIMIT - (currentNode ? 1 : 0))
+    const visibleNodes = currentNode ? [currentNode, ...visibleCandidates] : visibleCandidates
+    const visibleNodeIds = new Set(visibleNodes.map((node) => node.id))
+    const visibleClusterIds = new Set(
+      visibleNodes.map((node) => node.clusterId).filter((clusterId): clusterId is string => Boolean(clusterId)),
+    )
+    const visibleRegions = brainMapModel.regions
+      .filter((region) =>
+        visibleClusterIds.has(region.clusterId) || region.nodeIds.some((nodeId) => visibleNodeIds.has(nodeId)),
+      )
+      .map((region) => {
+        const visibleRegionNodes = visibleNodes.filter((node) =>
+          node.clusterId === region.clusterId || region.nodeIds.includes(node.id),
+        )
+
+        if (visibleRegionNodes.length === 0) {
+          return region
+        }
+
+        return {
+          ...region,
+          x: visibleRegionNodes.reduce((sum, node) => sum + (node.x || region.x), 0) / visibleRegionNodes.length,
+          y: visibleRegionNodes.reduce((sum, node) => sum + (node.y || region.y), 0) / visibleRegionNodes.length,
+        }
+      })
+
+    return {
+      ...brainMapModel,
+      nodes: visibleNodes,
+      edges: brainMapModel.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)),
+      regions: visibleRegions,
+      hiddenCount: brainMapModel.hiddenCount + Math.max(0, brainMapModel.nodes.length - visibleNodes.length),
+      summary: {
+        ...brainMapModel.summary,
+        visibleCount: Math.max(0, visibleNodes.length - (currentNode ? 1 : 0)),
+      },
+    }
+  }, [brainMapModel, isBrainMapExpanded])
   const selectedBrainMapNode = useMemo(
     () =>
-      brainMapModel.nodes.find((node) => node.id === selectedBrainMapNodeId) ||
-      brainMapModel.nodes[0] ||
+      renderedBrainMapModel.nodes.find((node) => node.id === selectedBrainMapNodeId) ||
+      renderedBrainMapModel.nodes[0] ||
       null,
-    [brainMapModel.nodes, selectedBrainMapNodeId],
+    [renderedBrainMapModel.nodes, selectedBrainMapNodeId],
   )
   const selectedMemoryLinkGroup = useMemo(
     () => allLinkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
     [allLinkGroups, selectedMemoryLinkId],
   )
+  const brainMapViewportStyle = useMemo(() => ({
+    '--brain-map-scale': Number(brainMapViewport.scale.toFixed(2)).toString(),
+    '--brain-map-pan-x': `${brainMapViewport.x}%`,
+    '--brain-map-pan-y': `${brainMapViewport.y}%`,
+  }) as CSSProperties, [brainMapViewport])
   const brainHealth = useMemo(() => {
     const scores = [
       ...allSignalGroups.map((group) => group.score),
@@ -407,10 +554,10 @@ export default function BrainSignalsPanel({
       return
     }
 
-    if (!brainMapModel.nodes.some((node) => node.id === selectedBrainMapNodeId)) {
+    if (!renderedBrainMapModel.nodes.some((node) => node.id === selectedBrainMapNodeId)) {
       setSelectedBrainMapNodeId(null)
     }
-  }, [brainMapModel.nodes, selectedBrainMapNodeId])
+  }, [renderedBrainMapModel.nodes, selectedBrainMapNodeId])
 
   useEffect(() => {
     if (!selectedClusterId) {
@@ -595,6 +742,110 @@ export default function BrainSignalsPanel({
     setGatewayFilter('all')
     setStrengthFilter('all')
     setActiveBrainView('signals')
+  }
+
+  const resetBrainMapViewport = () => {
+    setBrainMapViewport({ scale: 1, x: 0, y: 0 })
+  }
+
+  const handleToggleBrainMapExpanded = () => {
+    if (isBrainMapExpanded) {
+      resetBrainMapViewport()
+    }
+
+    setIsBrainMapExpanded((current) => !current)
+  }
+
+  const handleBrainMapWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!isBrainMapExpanded) {
+      return
+    }
+
+    event.preventDefault()
+    const zoomDelta = clampBrainMapValue(-event.deltaY / 650, -BRAIN_MAP_ZOOM_STEP * 1.5, BRAIN_MAP_ZOOM_STEP * 1.5)
+    setBrainMapViewport((current) => ({
+      ...current,
+      scale: clampBrainMapValue(current.scale + zoomDelta, BRAIN_MAP_MIN_ZOOM, BRAIN_MAP_MAX_ZOOM),
+    }))
+  }
+
+  const handleBrainMapPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isBrainMapExpanded || event.button !== 0 || (event.target as HTMLElement).closest('button')) {
+      return
+    }
+
+    brainMapDragStartRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x: brainMapViewport.x,
+      y: brainMapViewport.y,
+    }
+    setIsBrainMapDragging(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const handleBrainMapPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragStart = brainMapDragStartRef.current
+    if (!dragStart || dragStart.pointerId !== event.pointerId) {
+      return
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    const deltaX = ((event.clientX - dragStart.clientX) / Math.max(1, rect.width)) * 100
+    const deltaY = ((event.clientY - dragStart.clientY) / Math.max(1, rect.height)) * 100
+
+    setBrainMapViewport((current) => ({
+      ...current,
+      x: clampBrainMapValue(dragStart.x + deltaX, -BRAIN_MAP_PAN_LIMIT, BRAIN_MAP_PAN_LIMIT),
+      y: clampBrainMapValue(dragStart.y + deltaY, -BRAIN_MAP_PAN_LIMIT, BRAIN_MAP_PAN_LIMIT),
+    }))
+  }
+
+  const stopBrainMapDrag = (event?: ReactPointerEvent<HTMLDivElement>) => {
+    const pointerId = brainMapDragStartRef.current?.pointerId
+    brainMapDragStartRef.current = null
+    setIsBrainMapDragging(false)
+
+    if (event && pointerId !== undefined && event.currentTarget.hasPointerCapture?.(pointerId)) {
+      event.currentTarget.releasePointerCapture?.(pointerId)
+    }
+  }
+
+  const handleBrainMapDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!isBrainMapExpanded || (event.target as HTMLElement).closest('button')) {
+      return
+    }
+
+    resetBrainMapViewport()
+  }
+
+  const findBrainMapNodeForSuggestion = (suggestion: BrainSuggestion) => {
+    const clusterIds = suggestion.relatedClusterIds || []
+    const linkIds = suggestion.relatedMemoryLinkIds || []
+    const signalIds = suggestion.relatedSignalIds || []
+    const targetInvestigationIds = suggestion.targetInvestigationIds || []
+
+    return brainMapModel.nodes.find((node) =>
+      (node.clusterId && clusterIds.includes(node.clusterId)) ||
+      (node.linkId && linkIds.includes(node.linkId)) ||
+      (node.signalId && signalIds.includes(node.signalId)) ||
+      (node.targetInvestigationId && targetInvestigationIds.includes(node.targetInvestigationId)),
+    )
+  }
+
+  const handleViewSuggestionMap = (suggestion: BrainSuggestion) => {
+    const node = findBrainMapNodeForSuggestion(suggestion)
+
+    if (!node) {
+      return
+    }
+
+    setGatewayFilter('all')
+    setStrengthFilter('all')
+    setIsBrainMapExpanded(true)
+    setSelectedBrainMapNodeId(node.id)
+    setActiveBrainView('map')
   }
 
   const renderSignalGroup = (group: BrainSignalGroup) => {
@@ -1082,8 +1333,80 @@ export default function BrainSignalsPanel({
     </aside>
   )
 
+  const brainMapSlotPositions: Record<BrainMapSlot, { x: number; y: number }> = {
+    center: { x: 50, y: 50 },
+    northwest: { x: 23, y: 25 },
+    northeast: { x: 76, y: 24 },
+    southwest: { x: 26, y: 76 },
+    southeast: { x: 76, y: 75 },
+    east: { x: 86, y: 50 },
+  }
+
+  const getBrainMapNodePosition = (node: BrainMapNode) => {
+    if (Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      return { x: node.x as number, y: node.y as number }
+    }
+
+    return brainMapSlotPositions[node.slot] || brainMapSlotPositions.east
+  }
+
+  const getBrainMapPositionStyle = ({ x, y }: { x: number; y: number }): CSSProperties => ({
+    '--brain-map-x': `${x}%`,
+    '--brain-map-y': `${y}%`,
+  }) as CSSProperties
+
+  const getBrainMapNodeStyle = (node: BrainMapNode): CSSProperties => (
+    getBrainMapPositionStyle(getBrainMapNodePosition(node))
+  )
+
+  const renderBrainMapEdge = (edge: BrainMapEdge) => {
+    const from = renderedBrainMapModel.nodes.find((node) => node.id === edge.from)
+    const to = renderedBrainMapModel.nodes.find((node) => node.id === edge.to)
+
+    if (!from || !to) {
+      return null
+    }
+
+    const fromPosition = getBrainMapNodePosition(from)
+    const toPosition = getBrainMapNodePosition(to)
+    const edgeKind = edge.kind || 'memory'
+
+    return (
+      <line
+        key={edge.id}
+        data-testid="brain-map-graph-edge"
+        data-edge-kind={edgeKind}
+        className={[
+          'forensic-brain-map-edge',
+          `forensic-brain-map-edge-${edgeKind}`,
+          `forensic-brain-map-edge-${edge.strength}`,
+        ].join(' ')}
+        x1={`${fromPosition.x}%`}
+        y1={`${fromPosition.y}%`}
+        x2={`${toPosition.x}%`}
+        y2={`${toPosition.y}%`}
+      />
+    )
+  }
+
+  const renderBrainMapRegion = (region: BrainMapRegion) => (
+    <div
+      key={region.id}
+      data-testid="brain-map-graph-region"
+      className={[
+        'forensic-brain-map-region',
+        `forensic-brain-map-region-${region.tier.toLocaleLowerCase()}`,
+      ].join(' ')}
+      style={getBrainMapPositionStyle({ x: region.x, y: region.y })}
+    >
+      <span>{region.label}</span>
+      <strong>{region.scoreLabel}</strong>
+    </div>
+  )
+
   const renderBrainMapNode = (node: BrainMapNode) => {
     const isSelected = selectedBrainMapNode?.id === node.id
+    const isSpatialMarker = node.kind !== 'current'
     const nodeTypeLabel = node.kind === 'current' ? 'focus' : node.kind
     const gatewayLabel = node.gateways[0] ? formatGateway(node.gateways[0]) : node.kind === 'current' ? 'Live focus' : 'Memory'
 
@@ -1094,8 +1417,15 @@ export default function BrainSignalsPanel({
         data-testid="brain-map-node"
         aria-label={`Select ${nodeTypeLabel} ${node.kind === 'current' ? node.subtitle : node.title}`}
         aria-pressed={isSelected}
+        data-node-kind={node.kind}
+        data-map-density={isSpatialMarker ? 'marker' : 'card'}
+        data-map-label={node.kind === 'current' ? node.subtitle : node.title}
+        style={getBrainMapNodeStyle(node)}
+        title={node.kind === 'current' ? node.subtitle : node.title}
         className={[
           'forensic-brain-map-node',
+          'forensic-brain-map-node-positioned',
+          isSpatialMarker ? 'forensic-brain-map-node-spatial' : '',
           `forensic-brain-map-node-${node.kind}`,
           `forensic-brain-map-slot-${node.slot}`,
           `forensic-brain-map-tier-${node.tier.toLocaleLowerCase()}`,
@@ -1129,17 +1459,28 @@ export default function BrainSignalsPanel({
     const targetInvestigationId = node.targetInvestigationId
     const linkId = node.linkId
     const signalId = node.signalId
+    const clusterId = node.clusterId
+    const selectedNodeTitle = node.kind === 'current' && node.title === 'Current investigation' ? node.subtitle : node.title
+    const selectedNodeKindLabel = node.kind === 'current'
+      ? 'Map focus'
+      : node.kind === 'memory'
+        ? 'Linked memory'
+        : node.kind === 'cluster'
+          ? 'Memory cluster'
+          : 'Active signal'
 
     return (
       <section data-testid="brain-map-selected-node" className="forensic-brain-map-selected">
-        <span>{node.kind === 'current' ? 'Current scan' : node.kind === 'memory' ? 'Linked memory' : 'Active signal'}</span>
-        <h4>{node.kind === 'current' ? node.subtitle : node.title}</h4>
-        <div className="forensic-brain-map-selected-badges">
-          {node.badges.map((badge) => (
-            <span key={`${node.id}:${badge}`}>{badge}</span>
-          ))}
-          {node.kind !== 'current' && <span>{node.scoreLabel}</span>}
-        </div>
+        <span>{selectedNodeKindLabel}</span>
+        <h4>{selectedNodeTitle}</h4>
+        {node.kind !== 'current' && (
+          <div className="forensic-brain-map-selected-badges">
+            {node.badges.map((badge) => (
+              <span key={`${node.id}:${badge}`}>{badge}</span>
+            ))}
+            <span>{node.scoreLabel}</span>
+          </div>
+        )}
 
         {node.reasons.length > 0 ? (
           <div className="forensic-brain-map-selected-reasons">
@@ -1151,7 +1492,7 @@ export default function BrainSignalsPanel({
             ))}
           </div>
         ) : (
-          <p className="forensic-brain-map-selected-empty">This investigation is the current memory focus.</p>
+          <p className="forensic-brain-map-selected-empty">Signals and saved memories radiate from this case.</p>
         )}
 
         {node.kind !== 'current' && (
@@ -1193,6 +1534,20 @@ export default function BrainSignalsPanel({
                 Promote Link
               </button>
             )}
+            {clusterId && (
+              <button
+                type="button"
+                aria-label={`Inspect radar cluster ${node.title}`}
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => {
+                  setSelectedClusterId(clusterId)
+                  setActiveBrainView('clusters')
+                }}
+              >
+                <Brain size={13} />
+                Inspect Cluster
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -1200,29 +1555,69 @@ export default function BrainSignalsPanel({
   }
 
   const renderBrainMap = () => (
-    <section data-testid="brain-map-radar" className="forensic-brain-map-radar" aria-label="Brain memory map">
+    <section
+      data-testid="brain-map-radar"
+      className={`forensic-brain-map-radar ${isBrainMapExpanded ? 'is-expanded' : ''}`}
+      aria-label="Brain memory map"
+    >
       <div className="forensic-brain-map-header">
         <div>
           <span className="forensic-brain-panel-kicker">Memory map</span>
-          <h3>Active recall deck</h3>
+          <h3>Living memory map</h3>
         </div>
-        <div className="forensic-brain-map-summary">
-          <span>{brainMapModel.summary.linkedMemoryCount} saved</span>
-          <span>{brainMapModel.summary.activeSignalCount} firing</span>
-          <span>{brainMapModel.summary.visibleCount} visible</span>
-          {brainMapModel.hiddenCount > 0 && <span>{brainMapModel.hiddenCount} folded</span>}
-          <strong>{brainMapModel.summary.strongestScore}</strong>
+        <div className="forensic-brain-map-tools">
+          <div className="forensic-brain-map-summary">
+            <span>{renderedBrainMapModel.summary.linkedMemoryCount} saved</span>
+            <span>{renderedBrainMapModel.summary.activeSignalCount} firing</span>
+            <span>{renderedBrainMapModel.summary.visibleCount} visible</span>
+            {renderedBrainMapModel.hiddenCount > 0 && (
+              <span title="Expand the map to see folded memories.">{renderedBrainMapModel.hiddenCount} folded / expand</span>
+            )}
+            <strong>{renderedBrainMapModel.summary.strongestScore}</strong>
+          </div>
         </div>
       </div>
 
       <div className="forensic-brain-map-shell">
-        <div className="forensic-brain-map-canvas" aria-label="Current investigation and related memories">
+        <div
+          data-testid="brain-map-canvas"
+          className={`forensic-brain-map-canvas ${isBrainMapDragging ? 'is-dragging' : ''}`}
+          aria-label="Current investigation and related memories"
+          title={isBrainMapExpanded ? 'Drag to pan. Scroll to zoom. Double-click to reset.' : undefined}
+          onWheel={handleBrainMapWheel}
+          onPointerDown={handleBrainMapPointerDown}
+          onPointerMove={handleBrainMapPointerMove}
+          onPointerUp={stopBrainMapDrag}
+          onPointerCancel={stopBrainMapDrag}
+          onPointerLeave={stopBrainMapDrag}
+          onDoubleClick={handleBrainMapDoubleClick}
+        >
+          <button
+            type="button"
+            className="forensic-brain-map-expand"
+            aria-label={isBrainMapExpanded ? 'Collapse brain map' : 'Expand brain map'}
+            aria-pressed={isBrainMapExpanded}
+            title={isBrainMapExpanded ? 'Collapse brain map' : 'Expand brain map'}
+            onClick={handleToggleBrainMapExpanded}
+          >
+            {isBrainMapExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
           <div className="forensic-brain-map-bus" aria-hidden="true">
             <span>Active Recall</span>
-            <strong>{brainMapModel.summary.strongestScore}</strong>
+            <strong>{renderedBrainMapModel.summary.strongestScore}</strong>
           </div>
-          <div className="forensic-brain-map-node-stack">
-            {brainMapModel.nodes.map(renderBrainMapNode)}
+          <div
+            data-testid="brain-map-viewport"
+            className="forensic-brain-map-node-stack"
+            style={brainMapViewportStyle}
+          >
+            <svg className="forensic-brain-map-edges" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {renderedBrainMapModel.edges.map(renderBrainMapEdge)}
+            </svg>
+            <div className="forensic-brain-map-regions" aria-label="Brain map memory regions">
+              {renderedBrainMapModel.regions.map(renderBrainMapRegion)}
+            </div>
+            {renderedBrainMapModel.nodes.map(renderBrainMapNode)}
           </div>
         </div>
 
@@ -1318,6 +1713,7 @@ export default function BrainSignalsPanel({
     const canViewCluster = suggestion.relatedClusterIds.length > 0
     const canViewLink = suggestion.relatedMemoryLinkIds.length > 0
     const canViewSignal = suggestion.relatedSignalIds.length > 0
+    const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
 
     return (
@@ -1364,6 +1760,16 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          {canViewMap && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => handleViewSuggestionMap(suggestion)}
+            >
+              <Brain size={13} />
+              View Map
+            </button>
+          )}
           {canViewCluster && (
             <button
               type="button"

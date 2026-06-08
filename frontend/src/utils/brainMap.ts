@@ -1,6 +1,12 @@
-import type { BrainGateway, BrainSignal, BrainSignalReason, MemoryLink } from './brainMemory'
+import type {
+  BrainGateway,
+  BrainSignal,
+  BrainSignalReason,
+  MemoryLink,
+  BrainMapView as BackendBrainMapView,
+} from './brainMemory'
 
-export type BrainMapNodeKind = 'current' | 'memory' | 'signal'
+export type BrainMapNodeKind = 'current' | 'cluster' | 'memory' | 'signal'
 export type BrainMapSlot = 'center' | 'northwest' | 'northeast' | 'southwest' | 'southeast' | 'east'
 export type BrainMapTier = 'Hot' | 'Warm' | 'Weak'
 
@@ -17,18 +23,41 @@ export interface BrainMapNode {
   gateways: BrainGateway[]
   reasons: BrainSignalReason[]
   targetInvestigationId?: string
+  clusterId?: string
   linkId?: string
   signalId?: string
   activationCount?: number
+  relatedSignalIds?: string[]
+  relatedMemoryLinkIds?: string[]
+  memberInvestigationIds?: string[]
+  x?: number
+  y?: number
 }
 
 export interface BrainMapEdge {
   id: string
+  kind?: string
   from: string
   to: string
+  label?: string
   strength: Lowercase<BrainMapTier>
   gateway?: BrainGateway
   score: number
+}
+
+export interface BrainMapRegion {
+  id: string
+  clusterId: string
+  label: string
+  status: string
+  score: number
+  scoreLabel: string
+  tier: BrainMapTier
+  gateway?: BrainGateway
+  nodeIds: string[]
+  memberInvestigationIds: string[]
+  x: number
+  y: number
 }
 
 export interface BrainMapDigestItem {
@@ -41,6 +70,7 @@ export interface BrainMapDigestItem {
 export interface BrainMapModel {
   nodes: BrainMapNode[]
   edges: BrainMapEdge[]
+  regions: BrainMapRegion[]
   digest: BrainMapDigestItem[]
   hiddenCount: number
   summary: {
@@ -75,6 +105,24 @@ type RankedMapItem =
 
 const VISIBLE_MEMORY_LIMIT = 5
 const MAP_SLOTS: BrainMapSlot[] = ['northwest', 'northeast', 'southwest', 'southeast', 'east']
+const MAP_CENTER = { x: 50, y: 50 }
+const MAP_MIN = 12
+const MAP_MAX = 88
+const MAP_NODE_MIN_DISTANCE = 8.5
+const MAP_GOLDEN_ANGLE = 137.508
+
+const CHILD_OFFSETS = [
+  { x: 0, y: -16 },
+  { x: 17, y: -7 },
+  { x: 17, y: 9 },
+  { x: 0, y: 17 },
+  { x: -17, y: 9 },
+  { x: -17, y: -7 },
+  { x: 9, y: -21 },
+  { x: 22, y: 0 },
+  { x: -9, y: 21 },
+  { x: -22, y: 0 },
+]
 
 export const formatBrainMapScore = (score: number) => `${Math.round(normalizeScore(score) * 100)}%`
 
@@ -120,8 +168,10 @@ export const buildBrainMapModel = ({
 
   const edges = nodes.slice(1).map((node) => ({
     id: `brain-map-edge-${node.id}`,
+    kind: node.kind === 'memory' ? 'link' : node.kind,
     from: 'brain-map-current',
     to: node.id,
+    label: node.kind === 'memory' ? 'Memory link' : 'Active signal',
     strength: getBrainMapTier(node.score).toLowerCase() as Lowercase<BrainMapTier>,
     gateway: node.gateways[0],
     score: node.score,
@@ -133,6 +183,7 @@ export const buildBrainMapModel = ({
   return {
     nodes,
     edges,
+    regions: [],
     digest: buildDigest(signals, links),
     hiddenCount: Math.max(0, links.length + signals.length - visibleItems.length),
     summary: {
@@ -141,6 +192,75 @@ export const buildBrainMapModel = ({
       autoMemoryCount: links.filter((link) => link.promotionType === 'auto').length,
       activeSignalCount: signals.length,
       linkedMemoryCount: links.length,
+    },
+  }
+}
+
+export const buildBrainMapModelFromView = (view: BackendBrainMapView): BrainMapModel => {
+  const nodes = view.nodes.map((node) => ({
+    id: node.id,
+    kind: normalizeNodeKind(node.kind),
+    title: node.title,
+    subtitle: node.subtitle,
+    score: normalizeScore(node.score),
+    scoreLabel: formatBrainMapScore(node.score),
+    tier: getBrainMapTier(node.score),
+    slot: node.kind === 'current' ? 'center' : slotFromMapPosition(node.x, node.y),
+    badges: node.badges || [],
+    gateways: node.gateway ? [node.gateway] : [],
+    reasons: node.reasonSamples || [],
+    targetInvestigationId: node.targetInvestigationId || node.investigationId,
+    clusterId: node.clusterId,
+    linkId: node.linkId,
+    signalId: node.signalId,
+    relatedSignalIds: node.relatedSignalIds || [],
+    relatedMemoryLinkIds: node.relatedMemoryLinkIds || [],
+    memberInvestigationIds: node.memberInvestigationIds || [],
+    x: node.x,
+    y: node.y,
+  }))
+  const regions = view.regions.map((region) => ({
+    id: region.id,
+    clusterId: region.clusterId,
+    label: region.label,
+    status: region.status,
+    score: normalizeScore(region.score),
+    scoreLabel: formatBrainMapScore(region.score),
+    tier: getBrainMapTier(region.score),
+    gateway: region.gateway,
+    nodeIds: region.nodeIds || [],
+    memberInvestigationIds: region.memberInvestigationIds || [],
+    x: region.x,
+    y: region.y,
+  }))
+  const layout = layoutBrainMap(nodes, regions)
+
+  return {
+    nodes: layout.nodes,
+    edges: view.edges.map((edge) => ({
+      id: edge.id,
+      kind: edge.kind,
+      from: edge.from,
+      to: edge.to,
+      label: edge.label,
+      strength: getBrainMapTier(edge.score).toLowerCase() as Lowercase<BrainMapTier>,
+      gateway: edge.gateway,
+      score: normalizeScore(edge.score),
+    })),
+    regions: layout.regions,
+    digest: view.digest.map((item) => ({
+      id: item.id,
+      tone: normalizeDigestTone(item.tone),
+      title: item.title,
+      detail: item.detail,
+    })),
+    hiddenCount: 0,
+    summary: {
+      visibleCount: view.summary.visibleNodeCount,
+      strongestScore: formatBrainMapScore(view.summary.strongestScore),
+      autoMemoryCount: 0,
+      activeSignalCount: view.summary.activeSignalCount,
+      linkedMemoryCount: view.summary.linkedMemoryCount,
     },
   }
 }
@@ -261,6 +381,212 @@ const buildDigest = (signals: BrainSignal[], links: MemoryLink[]): BrainMapDiges
   }
 
   return digest.slice(0, 3)
+}
+
+const normalizeNodeKind = (kind: string): BrainMapNodeKind => {
+  if (kind === 'cluster' || kind === 'memory' || kind === 'signal') {
+    return kind
+  }
+  return 'current'
+}
+
+const slotFromMapPosition = (x = 50, y = 50): BrainMapSlot => {
+  if (x > 66) {
+    return y < 50 ? 'northeast' : 'southeast'
+  }
+  if (x < 34) {
+    return y < 50 ? 'northwest' : 'southwest'
+  }
+  return y < 50 ? 'northwest' : 'east'
+}
+
+const layoutBrainMap = (
+  rawNodes: BrainMapNode[],
+  rawRegions: BrainMapRegion[],
+): { nodes: BrainMapNode[]; regions: BrainMapRegion[] } => {
+  const nodes = rawNodes.map((node) => ({ ...node }))
+  const regions = rawRegions.map((region) => ({ ...region }))
+  const currentNode = nodes.find((node) => node.kind === 'current')
+
+  if (currentNode) {
+    placeMapItem(currentNode, MAP_CENTER)
+  }
+
+  const clusterNodes = nodes
+    .filter((node) => node.kind === 'cluster')
+    .sort(compareMapNodes)
+  const clusterPositions = new Map<string, { x: number; y: number }>()
+
+  clusterNodes.forEach((node, index) => {
+    const position = getClusterOrbitPosition(index, clusterNodes.length)
+    placeMapItem(node, position)
+
+    if (node.clusterId) {
+      clusterPositions.set(node.clusterId, position)
+    }
+  })
+
+  const groupedChildren = new Map<string, BrainMapNode[]>()
+  const looseNodes: BrainMapNode[] = []
+
+  nodes
+    .filter((node) => node.kind !== 'current' && node.kind !== 'cluster')
+    .sort(compareMapNodes)
+    .forEach((node) => {
+      if (node.clusterId && clusterPositions.has(node.clusterId)) {
+        groupedChildren.set(node.clusterId, [...(groupedChildren.get(node.clusterId) || []), node])
+        return
+      }
+
+      looseNodes.push(node)
+    })
+
+  Array.from(groupedChildren.entries()).forEach(([clusterId, children]) => {
+    const clusterPosition = clusterPositions.get(clusterId)
+
+    if (!clusterPosition) {
+      return
+    }
+
+    children.forEach((node, index) => {
+      const offset = getChildOrbitOffset(index)
+      placeMapItem(node, {
+        x: clusterPosition.x + offset.x,
+        y: clusterPosition.y + offset.y,
+      })
+    })
+  })
+
+  looseNodes.forEach((node, index) => {
+    placeMapItem(node, getClusterOrbitPosition(index + clusterNodes.length, clusterNodes.length + looseNodes.length || 1))
+  })
+
+  repelMapNodes(nodes)
+
+  for (const node of nodes) {
+    node.slot = slotFromMapPosition(node.x, node.y)
+  }
+
+  for (const region of regions) {
+    const clusterPosition = clusterPositions.get(region.clusterId)
+    const memberPositions = region.nodeIds
+      .map((nodeId) => nodes.find((node) => node.id === nodeId))
+      .filter((node): node is BrainMapNode => Boolean(node && Number.isFinite(node.x) && Number.isFinite(node.y)))
+
+    if (clusterPosition) {
+      const averagePosition = memberPositions.length > 0
+        ? {
+            x: (clusterPosition.x + memberPositions.reduce((sum, node) => sum + (node.x || clusterPosition.x), 0)) /
+              (memberPositions.length + 1),
+            y: (clusterPosition.y + memberPositions.reduce((sum, node) => sum + (node.y || clusterPosition.y), 0)) /
+              (memberPositions.length + 1),
+          }
+        : clusterPosition
+      placeMapItem(region, averagePosition)
+    }
+  }
+
+  return { nodes, regions }
+}
+
+const compareMapNodes = (left: BrainMapNode, right: BrainMapNode) => {
+  const scoreDelta = right.score - left.score
+
+  if (scoreDelta !== 0) {
+    return scoreDelta
+  }
+
+  return left.title.localeCompare(right.title)
+}
+
+const getClusterOrbitPosition = (index: number, total: number) => {
+  const normalizedTotal = Math.max(1, total)
+  const ring = Math.floor(index / 10)
+  const ringIndex = index % 10
+  const itemsOnRing = Math.min(10, normalizedTotal - ring * 10 || 10)
+  const angle = ((itemsOnRing <= 2 ? -90 + (360 / itemsOnRing) * ringIndex : -90 + MAP_GOLDEN_ANGLE * index) * Math.PI) / 180
+  const radius = ring % 2 === 0 ? 32 : 23
+
+  return {
+    x: MAP_CENTER.x + Math.cos(angle) * radius,
+    y: MAP_CENTER.y + Math.sin(angle) * radius,
+  }
+}
+
+const getChildOrbitOffset = (index: number) => {
+  if (index < CHILD_OFFSETS.length) {
+    return CHILD_OFFSETS[index]
+  }
+
+  const angle = ((index * MAP_GOLDEN_ANGLE - 90) * Math.PI) / 180
+  const radius = 18 + (index % 3) * 4
+
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+  }
+}
+
+const repelMapNodes = (nodes: BrainMapNode[]) => {
+  const movableNodes = nodes.filter((node) => node.kind !== 'current')
+
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    for (let leftIndex = 0; leftIndex < movableNodes.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < movableNodes.length; rightIndex += 1) {
+        const left = movableNodes[leftIndex]
+        const right = movableNodes[rightIndex]
+        const leftPosition = { x: left.x || MAP_CENTER.x, y: left.y || MAP_CENTER.y }
+        const rightPosition = { x: right.x || MAP_CENTER.x, y: right.y || MAP_CENTER.y }
+        let deltaX = rightPosition.x - leftPosition.x
+        let deltaY = rightPosition.y - leftPosition.y
+        let distance = Math.hypot(deltaX, deltaY)
+
+        if (distance < 0.001) {
+          const angle = ((leftIndex + rightIndex + 1) * MAP_GOLDEN_ANGLE * Math.PI) / 180
+          deltaX = Math.cos(angle)
+          deltaY = Math.sin(angle)
+          distance = 1
+        }
+
+        if (distance >= MAP_NODE_MIN_DISTANCE) {
+          continue
+        }
+
+        const shift = (MAP_NODE_MIN_DISTANCE - distance) / 2
+        const unitX = deltaX / distance
+        const unitY = deltaY / distance
+
+        placeMapItem(left, {
+          x: leftPosition.x - unitX * shift,
+          y: leftPosition.y - unitY * shift,
+        })
+        placeMapItem(right, {
+          x: rightPosition.x + unitX * shift,
+          y: rightPosition.y + unitY * shift,
+        })
+      }
+    }
+  }
+}
+
+const placeMapItem = <T extends { x?: number; y?: number }>(item: T, position: { x: number; y: number }) => {
+  item.x = clampMapPosition(position.x)
+  item.y = clampMapPosition(position.y)
+}
+
+const clampMapPosition = (value: number) => Math.min(MAP_MAX, Math.max(MAP_MIN, value))
+
+const normalizeDigestTone = (tone: string): BrainMapDigestItem['tone'] => {
+  switch (tone) {
+    case 'hot':
+    case 'high':
+      return 'hot'
+    case 'warm':
+    case 'medium':
+      return 'warm'
+    default:
+      return 'cool'
+  }
 }
 
 const compareByScoreAndDate = (

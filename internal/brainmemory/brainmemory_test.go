@@ -807,6 +807,81 @@ func TestBrainSuggestionsEncodeEmptyCollectionsAsArrays(t *testing.T) {
 	}
 }
 
+func TestServiceBuildsBrainMapView(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals second pass failed: %v", err)
+	}
+	if len(signals) == 0 {
+		t.Fatalf("expected active signals for map fixture")
+	}
+	if _, err := service.PromoteSignal(signals[0].ID); err != nil {
+		t.Fatalf("PromoteSignal failed: %v", err)
+	}
+
+	brainMap, err := service.MapForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("MapForInvestigation failed: %v", err)
+	}
+	if brainMap.InvestigationID != "inv-current" {
+		t.Fatalf("expected current investigation id, got %#v", brainMap)
+	}
+	if brainMap.Summary.VisibleNodeCount < 3 {
+		t.Fatalf("expected current, cluster, and memory/signal nodes, got %#v", brainMap.Summary)
+	}
+	if !hasBrainMapNodeKind(brainMap.Nodes, "current") {
+		t.Fatalf("expected current node in %#v", brainMap.Nodes)
+	}
+	if !hasBrainMapNodeKind(brainMap.Nodes, "cluster") {
+		t.Fatalf("expected cluster node in %#v", brainMap.Nodes)
+	}
+	if !hasBrainMapNodeKind(brainMap.Nodes, "memory") {
+		t.Fatalf("expected memory node in %#v", brainMap.Nodes)
+	}
+	if !hasBrainMapEdgeKind(brainMap.Edges, "cluster") {
+		t.Fatalf("expected cluster edge in %#v", brainMap.Edges)
+	}
+	if !hasBrainMapEdgeKind(brainMap.Edges, "link") {
+		t.Fatalf("expected link edge in %#v", brainMap.Edges)
+	}
+	if len(brainMap.Regions) == 0 {
+		t.Fatalf("expected cluster regions in %#v", brainMap)
+	}
+	if len(brainMap.Digest) == 0 {
+		t.Fatalf("expected digest items in %#v", brainMap)
+	}
+}
+
+func TestHandleAPIRoutesBrainMap(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/brain/map?investigationId=inv-current", nil)
+	recorder := httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected map GET 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var brainMap BrainMapView
+	if err := json.Unmarshal(recorder.Body.Bytes(), &brainMap); err != nil {
+		t.Fatalf("decode brain map failed: %v", err)
+	}
+	if brainMap.InvestigationID != "inv-current" {
+		t.Fatalf("expected brain map for inv-current, got %#v", brainMap)
+	}
+	if len(brainMap.Nodes) == 0 {
+		t.Fatalf("expected brain map nodes, got %#v", brainMap)
+	}
+}
+
 func TestHandleAPIRoutesBrainSuggestions(t *testing.T) {
 	root := writeSuggestionFixture(t)
 	service := NewService(root)
@@ -1002,6 +1077,24 @@ func findSuggestionByClusterID(t *testing.T, suggestions []BrainSuggestion, clus
 	}
 	t.Fatalf("expected suggestion for cluster %q in %#v", clusterID, suggestions)
 	return BrainSuggestion{}
+}
+
+func hasBrainMapNodeKind(nodes []BrainMapNode, kind string) bool {
+	for _, node := range nodes {
+		if node.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBrainMapEdgeKind(edges []BrainMapEdge, kind string) bool {
+	for _, edge := range edges {
+		if edge.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func findSuggestionByID(t *testing.T, suggestions []BrainSuggestion, id string) BrainSuggestion {
