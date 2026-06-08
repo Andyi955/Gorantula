@@ -841,6 +841,8 @@ test.describe('Gorantula smoke flows', () => {
     await expect(radar.locator('[data-testid="brain-map-graph-edge"][data-edge-kind="cluster"]')).toHaveCount(1)
     await expect(radar.getByTestId('brain-map-selected-node')).toContainText('Memory cluster')
 
+    await radar.getByRole('button', { name: /collapse brain map/i }).click()
+    await expect(radar).not.toHaveClass(/is-expanded/)
     await page.getByRole('button', { name: /next moves view/i }).click()
     await suggestionCard.getByRole('button', { name: /mark reviewed/i }).click()
     await expect(page.getByText(/reviewed context/i)).toBeVisible()
