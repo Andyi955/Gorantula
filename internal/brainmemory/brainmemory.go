@@ -23,10 +23,11 @@ const (
 	GatewaySourceDomain    = "source-domain"
 	GatewayRelationshipTag = "relationship-tag"
 
-	brainDirectoryName = "brain"
-	signalsFilename    = "signals.json"
-	linksFilename      = "links.json"
-	clustersFilename   = "clusters.json"
+	brainDirectoryName  = "brain"
+	signalsFilename     = "signals.json"
+	linksFilename       = "links.json"
+	clustersFilename    = "clusters.json"
+	suggestionsFilename = "suggestions.json"
 
 	promotionTypeManual = "manual"
 	promotionTypeAuto   = "auto"
@@ -34,12 +35,23 @@ const (
 	autoPromotionScoreThreshold      = 0.85
 	repeatedPromotionScoreThreshold  = 0.75
 	repeatedPromotionActivationCount = 3
+
+	SuggestionKindClusterReview     = "cluster-review"
+	SuggestionKindSourceReview      = "source-review"
+	SuggestionKindRelationshipMotif = "relationship-motif"
+	SuggestionKindMemoryLinkCompare = "memory-link-compare"
+	SuggestionKindGapReview         = "gap-review"
+
+	SuggestionStatusActive    = "active"
+	SuggestionStatusDismissed = "dismissed"
+	SuggestionStatusReviewed  = "reviewed"
 )
 
 var (
-	ErrSignalNotFound  = errors.New("brain signal not found")
-	ErrLinkNotFound    = errors.New("brain memory link not found")
-	ErrClusterNotFound = errors.New("brain memory cluster not found")
+	ErrSignalNotFound     = errors.New("brain signal not found")
+	ErrLinkNotFound       = errors.New("brain memory link not found")
+	ErrClusterNotFound    = errors.New("brain memory cluster not found")
+	ErrSuggestionNotFound = errors.New("brain suggestion not found")
 
 	taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
 	spacePattern        = regexp.MustCompile(`\s+`)
@@ -134,6 +146,27 @@ type MemoryCluster struct {
 	CreatedAt              string                `json:"createdAt"`
 	UpdatedAt              string                `json:"updatedAt"`
 	LastActivatedAt        string                `json:"lastActivatedAt"`
+}
+
+type BrainSuggestion struct {
+	ID                     string   `json:"id"`
+	InvestigationID        string   `json:"investigationId"`
+	Kind                   string   `json:"kind"`
+	Status                 string   `json:"status"`
+	Title                  string   `json:"title"`
+	Summary                string   `json:"summary"`
+	SuggestedAction        string   `json:"suggestedAction"`
+	Score                  float64  `json:"score"`
+	Priority               string   `json:"priority"`
+	Reason                 string   `json:"reason"`
+	RelatedSignalIDs       []string `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string `json:"relatedMemoryLinkIds"`
+	RelatedClusterIDs      []string `json:"relatedClusterIds"`
+	TargetInvestigationIDs []string `json:"targetInvestigationIds"`
+	CreatedAt              string   `json:"createdAt"`
+	UpdatedAt              string   `json:"updatedAt"`
+	DismissedAt            string   `json:"dismissedAt,omitempty"`
+	ReviewedAt             string   `json:"reviewedAt,omitempty"`
 }
 
 type Service struct {
@@ -574,6 +607,439 @@ func (s *Service) setClusterHidden(clusterID string, hidden bool) (MemoryCluster
 	return cluster, nil
 }
 
+func (s *Service) SuggestionsForInvestigation(investigationID string) ([]BrainSuggestion, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return nil, models.ErrInvalidInvestigationID
+	}
+	if _, err := s.store.LoadMetadata(investigationID); err != nil {
+		return nil, err
+	}
+
+	signals, err := s.loadSignals()
+	if err != nil {
+		return nil, err
+	}
+	links, err := s.loadLinks()
+	if err != nil {
+		return nil, err
+	}
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.loadSuggestions()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	recomputed := buildBrainSuggestions(investigationID, signals, links, clusters, existing, now)
+	nextSuggestions := make(map[string]BrainSuggestion, len(existing)+len(recomputed))
+	for id, suggestion := range existing {
+		suggestion = normalizeSuggestionCollections(suggestion)
+		if suggestion.InvestigationID != investigationID {
+			nextSuggestions[id] = suggestion
+			continue
+		}
+		if suggestion.Status == SuggestionStatusDismissed {
+			nextSuggestions[id] = suggestion
+		}
+	}
+
+	visible := make([]BrainSuggestion, 0, len(recomputed))
+	for _, suggestion := range recomputed {
+		suggestion = normalizeSuggestionCollections(suggestion)
+		nextSuggestions[suggestion.ID] = suggestion
+		if suggestion.Status != SuggestionStatusDismissed {
+			visible = append(visible, suggestion)
+		}
+	}
+	if err := s.saveSuggestions(nextSuggestions); err != nil {
+		return nil, err
+	}
+	sortSuggestions(visible)
+	return visible, nil
+}
+
+func (s *Service) DismissSuggestion(suggestionID string) (BrainSuggestion, error) {
+	return s.setSuggestionStatus(suggestionID, SuggestionStatusDismissed)
+}
+
+func (s *Service) MarkSuggestionReviewed(suggestionID string) (BrainSuggestion, error) {
+	return s.setSuggestionStatus(suggestionID, SuggestionStatusReviewed)
+}
+
+func (s *Service) setSuggestionStatus(suggestionID string, status string) (BrainSuggestion, error) {
+	suggestionID = strings.TrimSpace(suggestionID)
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return BrainSuggestion{}, err
+	}
+	suggestion, ok := suggestions[suggestionID]
+	if !ok {
+		return BrainSuggestion{}, ErrSuggestionNotFound
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	suggestion.Status = status
+	suggestion.UpdatedAt = now
+	switch status {
+	case SuggestionStatusDismissed:
+		suggestion.DismissedAt = now
+	case SuggestionStatusReviewed:
+		suggestion.ReviewedAt = now
+	}
+	suggestion = normalizeSuggestionCollections(suggestion)
+	suggestions[suggestionID] = suggestion
+	if err := s.saveSuggestions(suggestions); err != nil {
+		return BrainSuggestion{}, err
+	}
+	return suggestion, nil
+}
+
+func buildBrainSuggestions(
+	investigationID string,
+	signals map[string]BrainSignal,
+	links map[string]MemoryLink,
+	clusters map[string]MemoryCluster,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) []BrainSuggestion {
+	activeSignals := activeSignalsForInvestigation(signals, investigationID)
+	activeLinks := linksForInvestigationMap(links, investigationID)
+	visibleClusters := clustersForInvestigationMap(clusters, investigationID)
+
+	suggestions := make([]BrainSuggestion, 0)
+	suggestions = append(suggestions, clusterReviewSuggestions(investigationID, visibleClusters, existing, timestamp)...)
+	suggestions = append(suggestions, sourceReviewSuggestions(investigationID, activeSignals, existing, timestamp)...)
+	suggestions = append(suggestions, relationshipMotifSuggestions(investigationID, activeSignals, visibleClusters, existing, timestamp)...)
+	suggestions = append(suggestions, memoryLinkCompareSuggestions(investigationID, activeLinks, existing, timestamp)...)
+	if gapSuggestion, ok := gapReviewSuggestion(investigationID, activeSignals, existing, timestamp); ok {
+		suggestions = append(suggestions, gapSuggestion)
+	}
+	sortSuggestions(suggestions)
+	return suggestions
+}
+
+func clusterReviewSuggestions(
+	investigationID string,
+	clusters []MemoryCluster,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) []BrainSuggestion {
+	suggestions := make([]BrainSuggestion, 0)
+	for _, cluster := range clusters {
+		if cluster.Hidden || cluster.Score < 0.75 {
+			continue
+		}
+		targetIDs := clusterTargetInvestigationIDs(cluster, investigationID)
+		if len(targetIDs) == 0 {
+			continue
+		}
+		score := clusterSuggestionScore(cluster)
+		suggestion := BrainSuggestion{
+			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindClusterReview, cluster.ID),
+			InvestigationID:        investigationID,
+			Kind:                   SuggestionKindClusterReview,
+			Status:                 SuggestionStatusActive,
+			Title:                  clusterSuggestionTitle(cluster),
+			Summary:                cluster.Summary,
+			SuggestedAction:        "Inspect recurring memory cluster",
+			Score:                  score,
+			Priority:               suggestionPriority(score),
+			Reason:                 fmt.Sprintf("%s is an %s cluster with %d related investigations.", cluster.Label, cluster.Status, len(cluster.MemberInvestigationIDs)),
+			RelatedClusterIDs:      []string{cluster.ID},
+			RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
+			RelatedMemoryLinkIDs:   cleanStringSet(cluster.MemoryLinkIDs),
+			TargetInvestigationIDs: targetIDs,
+			CreatedAt:              timestamp,
+			UpdatedAt:              timestamp,
+		}
+		suggestions = append(suggestions, mergeSuggestionState(suggestion, existing, timestamp))
+	}
+	return suggestions
+}
+
+func clusterSuggestionTitle(cluster MemoryCluster) string {
+	label := strings.TrimSpace(cluster.Label)
+	if label == "" {
+		label = "active"
+	}
+	switch {
+	case clusterIsDateOnlyRecall(cluster):
+		return fmt.Sprintf("Review %s timeline cluster", label)
+	case cluster.DominantGateway == GatewaySourceDomain:
+		return fmt.Sprintf("Compare %s source cluster", label)
+	case cluster.DominantGateway == GatewayRelationshipTag:
+		return fmt.Sprintf("Inspect %s relationship cluster", label)
+	default:
+		return fmt.Sprintf("Review %s memory cluster", label)
+	}
+}
+
+func clusterSuggestionScore(cluster MemoryCluster) float64 {
+	score := cluster.Score
+	if clusterIsDateOnlyRecall(cluster) {
+		score -= 0.30
+	}
+	memberCount := len(cluster.MemberInvestigationIDs)
+	if memberCount >= 25 {
+		score -= 0.24
+	} else if memberCount >= 15 {
+		score -= 0.18
+	}
+	if score < 0.35 {
+		return 0.35
+	}
+	return score
+}
+
+func clusterIsDateOnlyRecall(cluster MemoryCluster) bool {
+	if cluster.DominantGateway != GatewayEntityDate {
+		return false
+	}
+	for _, reason := range cluster.ReasonSamples {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(reason.Value)), "DATE|") {
+			return true
+		}
+	}
+	return looksLikeYearOrISODate(cluster.Label)
+}
+
+func looksLikeYearOrISODate(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) == 4 {
+		for _, ch := range value {
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	if len(value) >= 7 {
+		prefix := value
+		if len(prefix) > 10 {
+			prefix = prefix[:10]
+		}
+		for index, ch := range prefix {
+			if index == 4 || index == 7 {
+				if ch != '-' {
+					return false
+				}
+				continue
+			}
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return len(prefix) == 7 || len(prefix) == 10
+	}
+	return false
+}
+
+func sourceReviewSuggestions(
+	investigationID string,
+	signals []BrainSignal,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) []BrainSuggestion {
+	type sourceGroup struct {
+		domain    string
+		score     float64
+		signalIDs []string
+		targetIDs []string
+	}
+	groups := make(map[string]sourceGroup)
+	for _, signal := range signals {
+		for _, reason := range signal.Reasons {
+			if reason.Gateway != GatewaySourceDomain {
+				continue
+			}
+			group := groups[reason.Value]
+			group.domain = reason.Label
+			if group.domain == "" {
+				group.domain = reason.Value
+			}
+			if signal.Score > group.score {
+				group.score = signal.Score
+			}
+			group.signalIDs = append(group.signalIDs, signal.ID)
+			group.targetIDs = append(group.targetIDs, signal.TargetInvestigationID)
+			groups[reason.Value] = group
+		}
+	}
+	suggestions := make([]BrainSuggestion, 0, len(groups))
+	for value, group := range groups {
+		suggestion := BrainSuggestion{
+			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindSourceReview, value),
+			InvestigationID:        investigationID,
+			Kind:                   SuggestionKindSourceReview,
+			Status:                 SuggestionStatusActive,
+			Title:                  "Compare repeated source domain",
+			Summary:                fmt.Sprintf("Source domain %q appears in active Brain firings.", group.domain),
+			SuggestedAction:        "Compare source domain",
+			Score:                  maxFloat(group.score, 0.44),
+			Priority:               suggestionPriority(maxFloat(group.score, 0.44)),
+			Reason:                 fmt.Sprintf("%s appears across %d active signal(s).", group.domain, len(cleanStringSet(group.signalIDs))),
+			RelatedSignalIDs:       cleanStringSet(group.signalIDs),
+			TargetInvestigationIDs: cleanStringSet(group.targetIDs),
+			CreatedAt:              timestamp,
+			UpdatedAt:              timestamp,
+		}
+		suggestions = append(suggestions, mergeSuggestionState(suggestion, existing, timestamp))
+	}
+	return suggestions
+}
+
+func relationshipMotifSuggestions(
+	investigationID string,
+	signals []BrainSignal,
+	clusters []MemoryCluster,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) []BrainSuggestion {
+	suggestionsByValue := make(map[string]BrainSuggestion)
+	for _, cluster := range clusters {
+		if cluster.Hidden || cluster.DominantGateway != GatewayRelationshipTag {
+			continue
+		}
+		targetIDs := clusterTargetInvestigationIDs(cluster, investigationID)
+		if len(targetIDs) == 0 {
+			continue
+		}
+		suggestion := BrainSuggestion{
+			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindRelationshipMotif, cluster.ID),
+			InvestigationID:        investigationID,
+			Kind:                   SuggestionKindRelationshipMotif,
+			Status:                 SuggestionStatusActive,
+			Title:                  "Inspect repeated relationship motif",
+			Summary:                cluster.Summary,
+			SuggestedAction:        "Inspect repeated relationship pattern",
+			Score:                  maxFloat(cluster.Score, 0.58),
+			Priority:               suggestionPriority(maxFloat(cluster.Score, 0.58)),
+			Reason:                 fmt.Sprintf("Relationship pattern %q recurs across %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
+			RelatedClusterIDs:      []string{cluster.ID},
+			RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
+			RelatedMemoryLinkIDs:   cleanStringSet(cluster.MemoryLinkIDs),
+			TargetInvestigationIDs: targetIDs,
+			CreatedAt:              timestamp,
+			UpdatedAt:              timestamp,
+		}
+		suggestionsByValue[cluster.ID] = mergeSuggestionState(suggestion, existing, timestamp)
+	}
+	for _, signal := range signals {
+		for _, reason := range signal.Reasons {
+			if reason.Gateway != GatewayRelationshipTag {
+				continue
+			}
+			key := reason.Value
+			suggestion, ok := suggestionsByValue[key]
+			if !ok {
+				suggestion = BrainSuggestion{
+					ID:              deterministicID("brain-suggestion", investigationID, SuggestionKindRelationshipMotif, key),
+					InvestigationID: investigationID,
+					Kind:            SuggestionKindRelationshipMotif,
+					Status:          SuggestionStatusActive,
+					Title:           "Inspect repeated relationship motif",
+					Summary:         fmt.Sprintf("Relationship pattern %q appears in active Brain firings.", reason.Label),
+					SuggestedAction: "Inspect repeated relationship pattern",
+					Score:           maxFloat(signal.Score, 0.58),
+					Priority:        suggestionPriority(maxFloat(signal.Score, 0.58)),
+					Reason:          reason.Detail,
+					CreatedAt:       timestamp,
+					UpdatedAt:       timestamp,
+				}
+			}
+			suggestion.RelatedSignalIDs = cleanStringSet(append(suggestion.RelatedSignalIDs, signal.ID))
+			suggestion.TargetInvestigationIDs = cleanStringSet(append(suggestion.TargetInvestigationIDs, signal.TargetInvestigationID))
+			suggestionsByValue[key] = mergeSuggestionState(suggestion, existing, timestamp)
+		}
+	}
+	suggestions := make([]BrainSuggestion, 0, len(suggestionsByValue))
+	for _, suggestion := range suggestionsByValue {
+		suggestions = append(suggestions, suggestion)
+	}
+	return suggestions
+}
+
+func memoryLinkCompareSuggestions(
+	investigationID string,
+	links []MemoryLink,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) []BrainSuggestion {
+	suggestions := make([]BrainSuggestion, 0, len(links))
+	for _, link := range links {
+		targetID := link.ToInvestigationID
+		targetTitle := link.ToTitle
+		if link.ToInvestigationID == investigationID {
+			targetID = link.FromInvestigationID
+			targetTitle = link.FromTitle
+		}
+		if targetID == "" || targetID == investigationID {
+			continue
+		}
+		suggestion := BrainSuggestion{
+			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindMemoryLinkCompare, link.ID),
+			InvestigationID:        investigationID,
+			Kind:                   SuggestionKindMemoryLinkCompare,
+			Status:                 SuggestionStatusActive,
+			Title:                  "Compare durable memory link",
+			Summary:                fmt.Sprintf("%s has a durable memory link to %s.", link.FromTitle, link.ToTitle),
+			SuggestedAction:        "Compare linked memory",
+			Score:                  maxFloat(link.Score, 0.50),
+			Priority:               suggestionPriority(maxFloat(link.Score, 0.50)),
+			Reason:                 fmt.Sprintf("Linked memory %q has fired %d time(s).", targetTitle, link.ActivationCount),
+			RelatedMemoryLinkIDs:   []string{link.ID},
+			RelatedSignalIDs:       cleanStringSet([]string{link.SignalID}),
+			TargetInvestigationIDs: []string{targetID},
+			CreatedAt:              timestamp,
+			UpdatedAt:              timestamp,
+		}
+		suggestions = append(suggestions, mergeSuggestionState(suggestion, existing, timestamp))
+	}
+	return suggestions
+}
+
+func gapReviewSuggestion(
+	investigationID string,
+	signals []BrainSignal,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) (BrainSuggestion, bool) {
+	if len(signals) == 0 {
+		return BrainSuggestion{}, false
+	}
+	sortSignals(signals)
+	top := signals[0]
+	signalIDs := make([]string, 0, minInt(3, len(signals)))
+	targetIDs := make([]string, 0, minInt(3, len(signals)))
+	for _, signal := range signals {
+		signalIDs = append(signalIDs, signal.ID)
+		targetIDs = append(targetIDs, signal.TargetInvestigationID)
+		if len(signalIDs) == 3 {
+			break
+		}
+	}
+	suggestion := BrainSuggestion{
+		ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindGapReview, strings.Join(cleanStringSet(signalIDs), ",")),
+		InvestigationID:        investigationID,
+		Kind:                   SuggestionKindGapReview,
+		Status:                 SuggestionStatusActive,
+		Title:                  "Decide whether this firing becomes memory",
+		Summary:                fmt.Sprintf("%d active signal(s) have not become durable memory links yet.", len(signals)),
+		SuggestedAction:        "Review before promoting memory",
+		Score:                  maxFloat(top.Score, 0.42),
+		Priority:               suggestionPriority(maxFloat(top.Score, 0.42)),
+		Reason:                 "Active firings are present without a user decision on whether they should become durable memory.",
+		RelatedSignalIDs:       cleanStringSet(signalIDs),
+		TargetInvestigationIDs: cleanStringSet(targetIDs),
+		CreatedAt:              timestamp,
+		UpdatedAt:              timestamp,
+	}
+	return mergeSuggestionState(suggestion, existing, timestamp), true
+}
+
 func buildMemoryClusters(
 	currentInvestigationID string,
 	profiles []memoryProfile,
@@ -863,6 +1329,138 @@ func sortClusters(clusters []MemoryCluster) {
 	})
 }
 
+func activeSignalsForInvestigation(signals map[string]BrainSignal, investigationID string) []BrainSignal {
+	result := make([]BrainSignal, 0)
+	for _, signal := range signals {
+		if signal.Dismissed || signal.Linked {
+			continue
+		}
+		if signal.InvestigationID != investigationID {
+			continue
+		}
+		result = append(result, signal)
+	}
+	sortSignals(result)
+	return result
+}
+
+func linksForInvestigationMap(links map[string]MemoryLink, investigationID string) []MemoryLink {
+	result := make([]MemoryLink, 0)
+	for _, link := range links {
+		if link.FromInvestigationID == investigationID || link.ToInvestigationID == investigationID {
+			result = append(result, link)
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Score == result[j].Score {
+			return result[i].CreatedAt > result[j].CreatedAt
+		}
+		return result[i].Score > result[j].Score
+	})
+	return result
+}
+
+func clustersForInvestigationMap(clusters map[string]MemoryCluster, investigationID string) []MemoryCluster {
+	result := make([]MemoryCluster, 0)
+	for _, cluster := range clusters {
+		if containsString(cluster.MemberInvestigationIDs, investigationID) {
+			result = append(result, cluster)
+		}
+	}
+	sortClusters(result)
+	return result
+}
+
+func clusterTargetInvestigationIDs(cluster MemoryCluster, investigationID string) []string {
+	targetIDs := make([]string, 0, len(cluster.MemberInvestigationIDs))
+	for _, memberID := range cluster.MemberInvestigationIDs {
+		if memberID != investigationID {
+			targetIDs = append(targetIDs, memberID)
+		}
+	}
+	return cleanStringSet(targetIDs)
+}
+
+func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainSuggestion, timestamp string) BrainSuggestion {
+	previous, ok := existing[suggestion.ID]
+	if !ok {
+		if suggestion.Status == "" {
+			suggestion.Status = SuggestionStatusActive
+		}
+		return normalizeSuggestionCollections(suggestion)
+	}
+	suggestion.CreatedAt = previous.CreatedAt
+	if suggestion.CreatedAt == "" {
+		suggestion.CreatedAt = timestamp
+	}
+	suggestion.Status = previous.Status
+	if suggestion.Status == "" {
+		suggestion.Status = SuggestionStatusActive
+	}
+	suggestion.DismissedAt = previous.DismissedAt
+	suggestion.ReviewedAt = previous.ReviewedAt
+	if suggestion.Status == SuggestionStatusDismissed && suggestion.DismissedAt == "" {
+		suggestion.DismissedAt = timestamp
+	}
+	if suggestion.Status == SuggestionStatusReviewed && suggestion.ReviewedAt == "" {
+		suggestion.ReviewedAt = timestamp
+	}
+	return normalizeSuggestionCollections(suggestion)
+}
+
+func normalizeSuggestionCollections(suggestion BrainSuggestion) BrainSuggestion {
+	suggestion.RelatedSignalIDs = cleanStringSet(suggestion.RelatedSignalIDs)
+	suggestion.RelatedMemoryLinkIDs = cleanStringSet(suggestion.RelatedMemoryLinkIDs)
+	suggestion.RelatedClusterIDs = cleanStringSet(suggestion.RelatedClusterIDs)
+	suggestion.TargetInvestigationIDs = cleanStringSet(suggestion.TargetInvestigationIDs)
+	return suggestion
+}
+
+func suggestionPriority(score float64) string {
+	if score >= 0.78 {
+		return "high"
+	}
+	if score >= 0.55 {
+		return "medium"
+	}
+	return "low"
+}
+
+func sortSuggestions(suggestions []BrainSuggestion) {
+	statusRank := func(status string) int {
+		switch status {
+		case SuggestionStatusActive:
+			return 0
+		case SuggestionStatusReviewed:
+			return 1
+		default:
+			return 2
+		}
+	}
+	priorityRank := func(priority string) int {
+		switch priority {
+		case "high":
+			return 0
+		case "medium":
+			return 1
+		default:
+			return 2
+		}
+	}
+	sort.SliceStable(suggestions, func(i, j int) bool {
+		if statusRank(suggestions[i].Status) != statusRank(suggestions[j].Status) {
+			return statusRank(suggestions[i].Status) < statusRank(suggestions[j].Status)
+		}
+		if priorityRank(suggestions[i].Priority) != priorityRank(suggestions[j].Priority) {
+			return priorityRank(suggestions[i].Priority) < priorityRank(suggestions[j].Priority)
+		}
+		if suggestions[i].Score == suggestions[j].Score {
+			return suggestions[i].Title < suggestions[j].Title
+		}
+		return suggestions[i].Score > suggestions[j].Score
+	})
+}
+
 func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 	if service == nil {
 		service = NewService("abdomen_vault")
@@ -906,8 +1504,34 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, clusters, err)
 		return
 	}
+	if path == "api/brain/suggestions" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		suggestions, err := service.SuggestionsForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, suggestions, err)
+		return
+	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "suggestions" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		switch parts[4] {
+		case "dismiss":
+			suggestion, err := service.DismissSuggestion(parts[3])
+			writeAPIResult(w, suggestion, err)
+		case "review":
+			suggestion, err := service.MarkSuggestionReviewed(parts[3])
+			writeAPIResult(w, suggestion, err)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
 	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "clusters" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -976,6 +1600,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "memory link not found", http.StatusNotFound)
 		case errors.Is(err, ErrClusterNotFound):
 			http.Error(w, "memory cluster not found", http.StatusNotFound)
+		case errors.Is(err, ErrSuggestionNotFound):
+			http.Error(w, "brain suggestion not found", http.StatusNotFound)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -1555,6 +2181,20 @@ func minFloat(left float64, right float64) float64 {
 	return right
 }
 
+func maxFloat(left float64, right float64) float64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
 func deterministicID(prefix string, parts ...string) string {
 	hash := sha1.Sum([]byte(strings.Join(parts, "|")))
 	return prefix + "-" + hex.EncodeToString(hash[:])[:16]
@@ -1633,6 +2273,29 @@ func (s *Service) saveClusters(clusters map[string]MemoryCluster) error {
 	}
 	sortClusters(list)
 	return s.saveBrainJSON(clustersFilename, list)
+}
+
+func (s *Service) loadSuggestions() (map[string]BrainSuggestion, error) {
+	suggestions := []BrainSuggestion{}
+	if err := s.loadBrainJSON(suggestionsFilename, &suggestions); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]BrainSuggestion, len(suggestions))
+	for _, suggestion := range suggestions {
+		if strings.TrimSpace(suggestion.ID) != "" {
+			byID[suggestion.ID] = normalizeSuggestionCollections(suggestion)
+		}
+	}
+	return byID, nil
+}
+
+func (s *Service) saveSuggestions(suggestions map[string]BrainSuggestion) error {
+	list := make([]BrainSuggestion, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		list = append(list, normalizeSuggestionCollections(suggestion))
+	}
+	sortSuggestions(list)
+	return s.saveBrainJSON(suggestionsFilename, list)
 }
 
 func (s *Service) loadBrainJSON(filename string, target interface{}) error {

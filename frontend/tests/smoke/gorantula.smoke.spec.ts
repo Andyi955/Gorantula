@@ -79,6 +79,27 @@ type MemoryClusterPayload = {
   lastActivatedAt: string
 }
 
+type BrainSuggestionPayload = {
+  id: string
+  investigationId: string
+  kind: string
+  status: string
+  title: string
+  summary: string
+  suggestedAction: string
+  score: number
+  priority: string
+  reason: string
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  relatedClusterIds: string[]
+  targetInvestigationIds: string[]
+  createdAt: string
+  updatedAt: string
+  dismissedAt?: string
+  reviewedAt?: string
+}
+
 const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
   const signal: BrainSignalPayload = {
     id: 'brain-signal-smoke-qa',
@@ -143,6 +164,8 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
   let forgotten = false
   let clusterPinned = false
   let clusterHidden = false
+  let suggestionDismissed = false
+  let suggestionReviewed = false
 
   const clusterPayload = (): MemoryClusterPayload => ({
     id: 'brain-cluster-smoke-grid',
@@ -167,6 +190,27 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
     createdAt: '2026-06-05T12:00:00Z',
     updatedAt: '2026-06-05T12:01:00Z',
     lastActivatedAt: '2026-06-05T12:01:00Z',
+  })
+
+  const suggestionPayload = (): BrainSuggestionPayload => ({
+    id: 'brain-suggestion-smoke-next-move',
+    investigationId: signal.investigationId,
+    kind: 'cluster-review',
+    status: suggestionReviewed ? 'reviewed' : 'active',
+    title: 'Review active memory cluster',
+    summary: 'Grid reliability signal has an active memory cluster worth checking before the next investigation step.',
+    suggestedAction: 'Inspect recurring memory cluster',
+    score: 0.86,
+    priority: 'high',
+    reason: 'Grid reliability signal is an active cluster with 2 related investigations.',
+    relatedSignalIds: promoted || forgotten ? [] : [signal.id],
+    relatedMemoryLinkIds: promoted && !forgotten ? [link.id] : [],
+    relatedClusterIds: [clusterPayload().id],
+    targetInvestigationIds: [signal.targetInvestigationId],
+    createdAt: '2026-06-05T12:00:00Z',
+    updatedAt: '2026-06-05T12:01:00Z',
+    dismissedAt: suggestionDismissed ? '2026-06-05T12:03:00Z' : undefined,
+    reviewedAt: suggestionReviewed ? '2026-06-05T12:02:00Z' : undefined,
   })
 
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
@@ -203,6 +247,16 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
       return
     }
 
+    if (request.method() === 'GET' && url.pathname.endsWith('/suggestions')) {
+      const investigationId = url.searchParams.get('investigationId')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(investigationId === signal.investigationId && !suggestionDismissed ? [suggestionPayload()] : []),
+      })
+      return
+    }
+
     if (request.method() === 'PUT' && url.pathname.endsWith(`/${signal.id}/link`)) {
       promoted = true
       await route.fulfill({
@@ -220,6 +274,26 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(link),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith('/suggestions/brain-suggestion-smoke-next-move/review')) {
+      suggestionReviewed = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(suggestionPayload()),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith('/suggestions/brain-suggestion-smoke-next-move/dismiss')) {
+      suggestionDismissed = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...suggestionPayload(), status: 'dismissed' }),
       })
       return
     }
@@ -576,7 +650,21 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
+    await expect(page.getByTestId('brain-health-summary')).toContainText('1 next move')
+
+    await page.getByRole('button', { name: /next moves view/i }).click()
+    const suggestionCard = page.getByTestId('brain-suggestion-card').filter({ hasText: 'Review active memory cluster' })
+    await expect(suggestionCard).toContainText('Cluster Review')
+    await expect(suggestionCard).toContainText('Inspect recurring memory cluster')
+    await expect(suggestionCard).toContainText('Grid reliability signal is an active cluster')
+    await suggestionCard.getByRole('button', { name: /mark reviewed/i }).click()
+    await expect(page.getByText(/reviewed context/i)).toBeVisible()
+    await expect(page.getByTestId('brain-suggestion-card')).toContainText('Reviewed')
+    await page.getByTestId('brain-suggestion-card').getByRole('button', { name: /dismiss/i }).click()
+    await expect(page.getByTestId('brain-suggestion-card')).toHaveCount(0)
+
     const radar = page.getByTestId('brain-map-radar')
+    await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(radar).toBeVisible()
     await expect(radar).toContainText('Memory map')
     await expect(radar).toContainText('QA: Imported Target')
@@ -633,6 +721,9 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
+    await page.getByRole('button', { name: /next moves view/i }).click()
+    await expect(page.getByTestId('brain-suggestion-card')).toHaveCount(0)
+    await expect(page.getByTestId('brain-suggestions-empty-state')).toContainText(/No next moves yet/i)
     await page.getByRole('button', { name: /memory links view/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')

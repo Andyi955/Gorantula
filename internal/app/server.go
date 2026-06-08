@@ -167,4 +167,10 @@ func registerBrainMemoryRoutes(mux *http.ServeMux, brainMemoryService *brainmemo
 	mux.HandleFunc("/api/brain/clusters/", func(w http.ResponseWriter, r *http.Request) {
 		brainmemory.HandleAPI(w, r, brainMemoryService)
 	})
+	mux.HandleFunc("/api/brain/suggestions", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
+	mux.HandleFunc("/api/brain/suggestions/", func(w http.ResponseWriter, r *http.Request) {
+		brainmemory.HandleAPI(w, r, brainMemoryService)
+	})
 }

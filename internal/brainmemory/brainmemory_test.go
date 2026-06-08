@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -551,6 +552,314 @@ func TestClusterPinHideStatePersistsAcrossRecompute(t *testing.T) {
 	}
 }
 
+func TestServiceGeneratesBrainSuggestionsFromMemoryState(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	for _, kind := range []string{
+		SuggestionKindClusterReview,
+		SuggestionKindSourceReview,
+		SuggestionKindRelationshipMotif,
+		SuggestionKindMemoryLinkCompare,
+		SuggestionKindGapReview,
+	} {
+		suggestion := findSuggestion(t, suggestions, kind)
+		if suggestion.ID == "" {
+			t.Fatalf("expected deterministic id for %s", kind)
+		}
+		if suggestion.Status != SuggestionStatusActive {
+			t.Fatalf("expected active suggestion for %s, got %#v", kind, suggestion)
+		}
+		if strings.TrimSpace(suggestion.SuggestedAction) == "" {
+			t.Fatalf("expected suggested action for %s, got %#v", kind, suggestion)
+		}
+		if len(suggestion.TargetInvestigationIDs) == 0 {
+			t.Fatalf("expected target investigations for %s, got %#v", kind, suggestion)
+		}
+	}
+
+	clusterSuggestion := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+	if len(clusterSuggestion.RelatedClusterIDs) == 0 {
+		t.Fatalf("expected cluster suggestion to reference clusters, got %#v", clusterSuggestion)
+	}
+	linkSuggestion := findSuggestion(t, suggestions, SuggestionKindMemoryLinkCompare)
+	if len(linkSuggestion.RelatedMemoryLinkIDs) == 0 {
+		t.Fatalf("expected memory link suggestion to reference links, got %#v", linkSuggestion)
+	}
+	sourceSuggestion := findSuggestion(t, suggestions, SuggestionKindSourceReview)
+	if len(sourceSuggestion.RelatedSignalIDs) == 0 {
+		t.Fatalf("expected source suggestion to reference signals, got %#v", sourceSuggestion)
+	}
+}
+
+func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
+	timestamp := "2026-06-08T10:00:00Z"
+	clusters := []MemoryCluster{
+		{
+			ID:                     "cluster-date",
+			Label:                  "2026-02-28",
+			Summary:                "2026-02-28 links 7 investigations through entity/date recall.",
+			Score:                  0.98,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(7),
+			SignalIDs:              []string{"sig-1", "sig-2", "sig-3", "sig-4", "sig-5", "sig-6", "sig-7", "sig-8"},
+			MemoryLinkIDs:          []string{"link-1", "link-2", "link-3", "link-4", "link-5", "link-6", "link-7"},
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "DATE|2026-02-28",
+				Label:   "2026-02-28",
+			}},
+		},
+		{
+			ID:                     "cluster-broad-person",
+			Label:                  "Donald Trump",
+			Summary:                "Donald Trump links 27 investigations through entity/date recall.",
+			Score:                  0.98,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(27),
+			SignalIDs:              []string{"sig-9", "sig-10", "sig-11"},
+			MemoryLinkIDs:          []string{"link-8"},
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "PERSON|donald trump",
+				Label:   "Donald Trump",
+			}},
+		},
+		{
+			ID:                     "cluster-focused-org",
+			Label:                  "AI data centers",
+			Summary:                "AI data centers links 5 investigations through entity/date recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(5),
+			SignalIDs:              []string{"sig-12", "sig-13"},
+			MemoryLinkIDs:          []string{"link-9"},
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "ORG|ai data centers",
+				Label:   "AI data centers",
+			}},
+		},
+	}
+
+	suggestions := clusterReviewSuggestions("inv-current", clusters, map[string]BrainSuggestion{}, timestamp)
+
+	dateSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-date")
+	if dateSuggestion.Priority == "high" || dateSuggestion.Score >= 0.78 {
+		t.Fatalf("expected pure date cluster to be down-ranked, got %#v", dateSuggestion)
+	}
+	broadPersonSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-broad-person")
+	if broadPersonSuggestion.Priority == "high" || broadPersonSuggestion.Score >= 0.78 {
+		t.Fatalf("expected broad person cluster to be down-ranked, got %#v", broadPersonSuggestion)
+	}
+	focusedSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-focused-org")
+	if focusedSuggestion.Priority != "high" || focusedSuggestion.Score < 0.78 {
+		t.Fatalf("expected focused entity cluster to stay high priority, got %#v", focusedSuggestion)
+	}
+}
+
+func TestClusterReviewSuggestionsUseSpecificTitles(t *testing.T) {
+	timestamp := "2026-06-08T10:00:00Z"
+	clusters := []MemoryCluster{
+		{
+			ID:                     "cluster-timeline",
+			Label:                  "2026-02-28",
+			Summary:                "2026-02-28 links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "DATE|2026-02-28",
+				Label:   "2026-02-28",
+			}},
+		},
+		{
+			ID:                     "cluster-source",
+			Label:                  "intel.example.com",
+			Summary:                "intel.example.com links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewaySourceDomain,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+		},
+		{
+			ID:                     "cluster-relationship",
+			Label:                  "POWER_RISK",
+			Summary:                "POWER_RISK links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayRelationshipTag,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+		},
+		{
+			ID:                     "cluster-entity",
+			Label:                  "AI data centers",
+			Summary:                "AI data centers links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+		},
+	}
+
+	suggestions := clusterReviewSuggestions("inv-current", clusters, map[string]BrainSuggestion{}, timestamp)
+
+	expectedTitles := map[string]string{
+		"cluster-timeline":     "Review 2026-02-28 timeline cluster",
+		"cluster-source":       "Compare intel.example.com source cluster",
+		"cluster-relationship": "Inspect POWER_RISK relationship cluster",
+		"cluster-entity":       "Review AI data centers memory cluster",
+	}
+	for clusterID, expected := range expectedTitles {
+		suggestion := findSuggestionByClusterID(t, suggestions, clusterID)
+		if suggestion.Title != expected {
+			t.Fatalf("expected title %q for %s, got %#v", expected, clusterID, suggestion)
+		}
+	}
+}
+
+func TestBrainSuggestionFeedbackPersistsAcrossRecompute(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	dismissed := findSuggestion(t, suggestions, SuggestionKindSourceReview)
+	if _, err := service.DismissSuggestion(dismissed.ID); err != nil {
+		t.Fatalf("DismissSuggestion failed: %v", err)
+	}
+	reviewed := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+	if _, err := service.MarkSuggestionReviewed(reviewed.ID); err != nil {
+		t.Fatalf("MarkSuggestionReviewed failed: %v", err)
+	}
+
+	recomputed, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation after feedback failed: %v", err)
+	}
+	if hasSuggestionID(recomputed, dismissed.ID) {
+		t.Fatalf("dismissed suggestion should stay hidden after recompute, got %#v", recomputed)
+	}
+	reviewedAgain := findSuggestionByID(t, recomputed, reviewed.ID)
+	if reviewedAgain.ID != reviewed.ID {
+		t.Fatalf("expected reviewed suggestion id to persist, got %q then %q", reviewed.ID, reviewedAgain.ID)
+	}
+	if reviewedAgain.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected reviewed state to persist, got %#v", reviewedAgain)
+	}
+	if strings.TrimSpace(reviewedAgain.ReviewedAt) == "" {
+		t.Fatalf("expected reviewed timestamp, got %#v", reviewedAgain)
+	}
+}
+
+func TestBrainSuggestionsEncodeEmptyCollectionsAsArrays(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	data, err := json.Marshal(suggestions)
+	if err != nil {
+		t.Fatalf("marshal suggestions failed: %v", err)
+	}
+	encoded := string(data)
+	for _, field := range []string{
+		"relatedSignalIds",
+		"relatedMemoryLinkIds",
+		"relatedClusterIds",
+		"targetInvestigationIds",
+	} {
+		if strings.Contains(encoded, `"`+field+`":null`) {
+			t.Fatalf("expected %s to encode as [] instead of null in %s", field, encoded)
+		}
+	}
+}
+
+func TestHandleAPIRoutesBrainSuggestions(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/brain/suggestions?investigationId=inv-current", nil)
+	recorder := httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected suggestions GET 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var suggestions []BrainSuggestion
+	if err := json.Unmarshal(recorder.Body.Bytes(), &suggestions); err != nil {
+		t.Fatalf("decode suggestions failed: %v", err)
+	}
+	if len(suggestions) < 2 {
+		t.Fatalf("expected multiple suggestions, got %#v", suggestions)
+	}
+
+	reviewRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+suggestions[0].ID+"/review", nil)
+	reviewRecorder := httptest.NewRecorder()
+	HandleAPI(reviewRecorder, reviewRequest, service)
+	if reviewRecorder.Code != http.StatusOK {
+		t.Fatalf("expected review PUT 200, got %d body=%s", reviewRecorder.Code, reviewRecorder.Body.String())
+	}
+	var reviewed BrainSuggestion
+	if err := json.Unmarshal(reviewRecorder.Body.Bytes(), &reviewed); err != nil {
+		t.Fatalf("decode reviewed suggestion failed: %v", err)
+	}
+	if reviewed.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected reviewed status, got %#v", reviewed)
+	}
+
+	dismissRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+suggestions[1].ID+"/dismiss", nil)
+	dismissRecorder := httptest.NewRecorder()
+	HandleAPI(dismissRecorder, dismissRequest, service)
+	if dismissRecorder.Code != http.StatusOK {
+		t.Fatalf("expected dismiss PUT 200, got %d body=%s", dismissRecorder.Code, dismissRecorder.Body.String())
+	}
+	var dismissed BrainSuggestion
+	if err := json.Unmarshal(dismissRecorder.Body.Bytes(), &dismissed); err != nil {
+		t.Fatalf("decode dismissed suggestion failed: %v", err)
+	}
+	if dismissed.Status != SuggestionStatusDismissed {
+		t.Fatalf("expected dismissed status, got %#v", dismissed)
+	}
+}
+
 func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
@@ -614,6 +923,96 @@ func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	if err != nil || len(signals) != 0 {
 		t.Fatalf("current case should not activate beta without current beta evidence, got signals=%#v err=%v", signals, err)
 	}
+}
+
+func writeSuggestionFixture(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[ORG:Acme Grid] appears during [DATE:2026-05-20] power stress.",
+			"sourceURL":"https://intel.example.com/current"
+		}}],
+		"edges":[{"source":"current-node","target":"current-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old-strong", "Older Strong Grid"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-strong-node","data":{
+			"summary":"[ORG:Acme Grid] appeared during [DATE:2026-05-20] power stress.",
+			"sourceURL":"https://intel.example.com/strong"
+		}}],
+		"edges":[{"source":"old-strong-node","target":"old-strong-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old-warm", "Older Warm Grid"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-warm-node","data":{
+			"summary":"[ORG:Acme Grid] resurfaced during [DATE:2026-05-21] cooling talks.",
+			"sourceURL":"https://intel.example.com/warm"
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-source-only", "Source Network Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"source-node","data":{
+			"summary":"A source-only archive note with no tagged entities.",
+			"sourceURL":"https://intel.example.com/source"
+		}}],
+		"edges":[]
+	}`, "")
+	return root
+}
+
+func findSuggestion(t *testing.T, suggestions []BrainSuggestion, kind string) BrainSuggestion {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		if suggestion.Kind == kind {
+			return suggestion
+		}
+	}
+	t.Fatalf("expected suggestion kind=%q in %#v", kind, suggestions)
+	return BrainSuggestion{}
+}
+
+func hasSuggestionID(suggestions []BrainSuggestion, id string) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func testClusterMemberIDs(count int) []string {
+	ids := []string{"inv-current"}
+	for index := 1; index < count; index++ {
+		ids = append(ids, "inv-old-"+strconv.Itoa(index))
+	}
+	return ids
+}
+
+func findSuggestionByClusterID(t *testing.T, suggestions []BrainSuggestion, clusterID string) BrainSuggestion {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		for _, candidate := range suggestion.RelatedClusterIDs {
+			if candidate == clusterID {
+				return suggestion
+			}
+		}
+	}
+	t.Fatalf("expected suggestion for cluster %q in %#v", clusterID, suggestions)
+	return BrainSuggestion{}
+}
+
+func findSuggestionByID(t *testing.T, suggestions []BrainSuggestion, id string) BrainSuggestion {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		if suggestion.ID == id {
+			return suggestion
+		}
+	}
+	t.Fatalf("expected suggestion id=%q in %#v", id, suggestions)
+	return BrainSuggestion{}
 }
 
 func TestForgetMemoryLinkRemovesLinkAndDismissesExistingSignal(t *testing.T) {
@@ -713,11 +1112,25 @@ func TestHandleAPIRejectsInvalidBrainRoutes(t *testing.T) {
 		t.Fatalf("expected invalid cluster investigation id to be rejected, got %d", recorder.Code)
 	}
 
+	request = httptest.NewRequest(http.MethodGet, "/api/brain/suggestions?investigationId=../escape", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid suggestion investigation id to be rejected, got %d", recorder.Code)
+	}
+
 	request = httptest.NewRequest(http.MethodPut, "/api/brain/clusters/missing/pin", nil)
 	recorder = httptest.NewRecorder()
 	HandleAPI(recorder, request, service)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected missing cluster to return 404, got %d", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/missing/dismiss", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected missing suggestion to return 404, got %d", recorder.Code)
 	}
 
 	if _, err := os.Stat(filepath.Join(root, "brain")); err == nil {
