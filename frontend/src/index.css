@@ -6185,6 +6185,21 @@ body {
   opacity: 0.62;
 }
 
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-edge {
+  opacity: 0.16;
+  stroke-width: 0.34;
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-edge-hot {
+  opacity: 0.28;
+  stroke-width: 0.46;
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-edge-link,
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-edge-memory {
+  opacity: 0.24;
+}
+
 .forensic-brain-map-regions {
   position: absolute;
   inset: 0;
@@ -6210,8 +6225,9 @@ body {
 }
 
 .forensic-brain-map-radar.is-expanded .forensic-brain-map-region {
-  width: clamp(10rem, 20%, 18rem);
-  min-height: 6.25rem;
+  width: clamp(7.5rem, 13%, 11.5rem);
+  min-height: 4.5rem;
+  opacity: 0.68;
 }
 
 .forensic-brain-map-region-hot {
@@ -6320,7 +6336,69 @@ body {
 }
 
 .forensic-brain-map-radar.is-expanded .forensic-brain-map-node-current.forensic-brain-map-node-positioned {
-  width: clamp(12rem, 22%, 21rem);
+  width: clamp(13rem, 24%, 21rem);
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.forensic-brain-map-node-positioned {
+  z-index: 4;
+  width: clamp(1.45rem, 2vw, 2.05rem);
+  min-height: clamp(1.45rem, 2vw, 2.05rem);
+  grid-template-columns: 1fr;
+  gap: 0;
+  padding: 0;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, currentColor 34%, transparent), transparent 58%),
+    rgba(1, 5, 8, 0.9);
+  box-shadow: 0 0 1.2rem color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.forensic-brain-map-node-positioned::before {
+  inset: 50% auto auto 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  opacity: 0.95;
+  transform: translate(-50%, -50%);
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial::after {
+  content: attr(data-map-label);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.44rem);
+  z-index: 8;
+  max-width: 13rem;
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(1, 5, 8, 0.94);
+  padding: 0.32rem 0.44rem;
+  color: var(--forensic-text);
+  font-size: 0.58rem;
+  font-weight: 950;
+  line-height: 1.18;
+  opacity: 0;
+  pointer-events: none;
+  text-transform: none;
+  transform: translate(-50%, 0.2rem);
+  transition: opacity 140ms ease, transform 140ms ease;
+  white-space: nowrap;
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial:hover::after,
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.is-selected::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial .forensic-brain-map-node-orb {
+  width: 100%;
+  height: 100%;
+  border-width: 2px;
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial .forensic-brain-map-node-copy,
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial .forensic-brain-map-node-badges {
+  display: none;
 }
 
 .forensic-brain-map-node-memory {

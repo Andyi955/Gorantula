@@ -1327,6 +1327,7 @@ export default function BrainSignalsPanel({
 
   const renderBrainMapNode = (node: BrainMapNode) => {
     const isSelected = selectedBrainMapNode?.id === node.id
+    const isSpatialMarker = isBrainMapExpanded && node.kind !== 'current'
     const nodeTypeLabel = node.kind === 'current' ? 'focus' : node.kind
     const gatewayLabel = node.gateways[0] ? formatGateway(node.gateways[0]) : node.kind === 'current' ? 'Live focus' : 'Memory'
 
@@ -1338,10 +1339,14 @@ export default function BrainSignalsPanel({
         aria-label={`Select ${nodeTypeLabel} ${node.kind === 'current' ? node.subtitle : node.title}`}
         aria-pressed={isSelected}
         data-node-kind={node.kind}
+        data-map-density={isSpatialMarker ? 'marker' : 'card'}
+        data-map-label={node.kind === 'current' ? node.subtitle : node.title}
         style={getBrainMapNodeStyle(node)}
+        title={node.kind === 'current' ? node.subtitle : node.title}
         className={[
           'forensic-brain-map-node',
           'forensic-brain-map-node-positioned',
+          isSpatialMarker ? 'forensic-brain-map-node-spatial' : '',
           `forensic-brain-map-node-${node.kind}`,
           `forensic-brain-map-slot-${node.slot}`,
           `forensic-brain-map-tier-${node.tier.toLocaleLowerCase()}`,

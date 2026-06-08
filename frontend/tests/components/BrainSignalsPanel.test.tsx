@@ -1081,6 +1081,9 @@ describe('BrainSignalsPanel', () => {
 
     expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(13)
     expect(within(radar).getByText('Crowded Memory 11')).toBeInTheDocument()
+    expect(within(radar).getByRole('button', { name: /select focus current investigation focus/i })).toHaveAttribute('data-map-density', 'card')
+    expect(within(radar).getByRole('button', { name: /select signal crowded memory 11/i })).toHaveAttribute('data-map-density', 'marker')
+    expect(within(radar).getByRole('button', { name: /select signal crowded memory 11/i })).toHaveClass('forensic-brain-map-node-spatial')
   })
 
   it('adds pan and zoom controls to the expanded brain map', async () => {
