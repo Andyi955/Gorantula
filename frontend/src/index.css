@@ -6288,7 +6288,7 @@ body {
   transform: translate(-50%, -50%);
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-positioned {
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-positioned:not(.forensic-brain-map-node-spatial) {
   width: clamp(10rem, 18%, 18rem);
 }
 
@@ -6341,6 +6341,10 @@ body {
     radial-gradient(circle at 50% 50%, color-mix(in srgb, currentColor 34%, transparent), transparent 58%),
     rgba(1, 5, 8, 0.9);
   box-shadow: 0 0 1.2rem color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.forensic-brain-map-node-positioned {
+  width: clamp(1.45rem, 2vw, 2.05rem);
 }
 
 .forensic-brain-map-node-spatial.forensic-brain-map-node-positioned::before {
