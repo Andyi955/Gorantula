@@ -8048,6 +8048,26 @@ body {
 }
 
 @media (max-width: 1080px) {
+  .forensic-brain-compare-workspace {
+    overflow: auto;
+  }
+
+  .forensic-brain-compare-header,
+  .forensic-brain-compare-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .forensic-brain-compare-grid {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .forensic-brain-compare-case,
+  .forensic-brain-compare-reasons {
+    max-height: none;
+  }
+
   .forensic-settings-command,
   .forensic-settings-workspace {
     padding: 0.6rem;
