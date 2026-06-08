@@ -1367,6 +1367,15 @@ export default function BrainSignalsPanel({
             {brainMapModel.hiddenCount > 0 && <span>{brainMapModel.hiddenCount} folded</span>}
             <strong>{brainMapModel.summary.strongestScore}</strong>
           </div>
+        </div>
+      </div>
+
+      <div className="forensic-brain-map-shell">
+        <div
+          data-testid="brain-map-canvas"
+          className="forensic-brain-map-canvas"
+          aria-label="Current investigation and related memories"
+        >
           <button
             type="button"
             className="forensic-brain-map-expand"
@@ -1377,11 +1386,6 @@ export default function BrainSignalsPanel({
           >
             {isBrainMapExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
-        </div>
-      </div>
-
-      <div className="forensic-brain-map-shell">
-        <div className="forensic-brain-map-canvas" aria-label="Current investigation and related memories">
           <div className="forensic-brain-map-bus" aria-hidden="true">
             <span>Active Recall</span>
             <strong>{brainMapModel.summary.strongestScore}</strong>

@@ -6012,6 +6012,10 @@ body {
 }
 
 .forensic-brain-map-expand {
+  position: absolute;
+  top: 0.58rem;
+  right: 0.58rem;
+  z-index: 8;
   display: inline-flex;
   align-items: center;
   justify-content: center;

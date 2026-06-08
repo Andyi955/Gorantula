@@ -1007,13 +1007,14 @@ describe('BrainSignalsPanel', () => {
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
     const radar = await screen.findByTestId('brain-map-radar')
+    const canvas = within(radar).getByTestId('brain-map-canvas')
     expect(radar).not.toHaveClass('is-expanded')
 
-    await user.click(within(radar).getByRole('button', { name: /expand brain map/i }))
+    await user.click(within(canvas).getByRole('button', { name: /expand brain map/i }))
     expect(radar).toHaveClass('is-expanded')
-    expect(within(radar).getByRole('button', { name: /collapse brain map/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(canvas).getByRole('button', { name: /collapse brain map/i })).toHaveAttribute('aria-pressed', 'true')
 
-    await user.click(within(radar).getByRole('button', { name: /collapse brain map/i }))
+    await user.click(within(canvas).getByRole('button', { name: /collapse brain map/i }))
     expect(radar).not.toHaveClass('is-expanded')
   })
 
