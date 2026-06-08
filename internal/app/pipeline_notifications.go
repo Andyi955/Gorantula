@@ -1,7 +1,6 @@
 package app
 
 import (
-	"log"
 	"strings"
 
 	"spider-agent/internal/pipeline"
@@ -29,7 +28,7 @@ func saveAndBroadcastPipelineProfile(tracker *models.PipelineProgressTracker) {
 		return
 	}
 	if err := pipeline.ProfileStore().Save(profile); err != nil {
-		log.Printf("[PipelineProfile] failed to save profile for %s: %v", profile.RunID, err)
+		appLog("pipeline").Error("failed to save pipeline profile", "run", profile.RunID, "vault", profile.VaultID, "err", err)
 		return
 	}
 	broadcast(models.WSMessage{

@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -76,7 +75,7 @@ func Run() error {
 				json.NewEncoder(w).Encode([]string{})
 				return
 			}
-			log.Printf("[Picker Error] %v", err)
+			appLog("server").Error("file picker failed", "err", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -127,7 +126,7 @@ func Run() error {
 		})
 
 		if err != nil {
-			log.Printf("[Picker Error] %v", err)
+			appLog("server").Error("failed to list vault files", "err", err)
 		}
 
 		// Sort newest first
@@ -145,7 +144,7 @@ func Run() error {
 	})
 
 	address := config.ListenAddress()
-	fmt.Printf("Gorantula Backend running on http://%s\n", address)
+	appLog("server").Info("backend listening", "address", address, "url", "http://"+address)
 	return http.ListenAndServe(address, mux)
 }
 

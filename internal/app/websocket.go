@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,7 +37,7 @@ func broadcast(msg models.WSMessage) {
 	for client := range clients {
 		err := client.WriteJSON(msg)
 		if err != nil {
-			log.Printf("error: %v", err)
+			appLog("websocket").Error("broadcast write failed", "message_type", msg.Type, "err", err)
 			client.Close()
 			delete(clients, client)
 		}
@@ -48,7 +47,7 @@ func broadcast(msg models.WSMessage) {
 func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Upgrade error:", err)
+		appLog("websocket").Warn("websocket upgrade failed", "err", err)
 		return
 	}
 	defer ws.Close()
@@ -62,7 +61,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 		err := ws.ReadJSON(&msg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Printf("error reading json: %v", err)
+				appLog("websocket").Warn("websocket json read failed", "err", err)
 			}
 			clientsMu.Lock()
 			delete(clients, ws)
@@ -151,7 +150,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					// Check if it's a JSON array
 					if strings.HasPrefix(payload, "[") && strings.HasSuffix(payload, "]") {
 						if err := json.Unmarshal([]byte(payload), &filePaths); err != nil {
-							log.Printf("[WS Error] Failed to parse JSON file paths: %v", err)
+							appLog("websocket").Error("failed to parse local crawl file paths", "message_type", msgType, "err", err)
 							filePaths = []string{payload} // Fallback to raw string
 						}
 					} else if strings.Contains(payload, "|") {
@@ -182,7 +181,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					broadcastPipelineCancelled(tracker, "Stopped by operator")
 				}
 			case "CONNECT_DOTS":
-				log.Println("[WS] Received CONNECT_DOTS request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 
 				vaultID := ""
 				if vId, ok := msg["vaultId"].(string); ok {
@@ -192,7 +191,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 				payloadBytes, _ := json.Marshal(msg["payload"])
 				var nodes []models.MemoryNode
 				if err := json.Unmarshal(payloadBytes, &nodes); err != nil {
-					log.Printf("[WS Error] Failed to unmarshal CONNECT_DOTS payload: %v", err)
+					appLog("websocket").Error("failed to unmarshal connect dots payload", "message_type", msgType, "err", err)
 					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid node data sent for analysis"})
 					continue
 				}
@@ -207,7 +206,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 				triggerConnectDotsAnalysis(br, vaultID, nodes, nil, pipeline.ExtractRunMetadata(msg, vaultID, "analysis"))
 			case "CONNECT_DOTS_INCREMENTAL":
-				log.Println("[WS] Received CONNECT_DOTS_INCREMENTAL request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 
 				vaultID := ""
 				if vId, ok := msg["vaultId"].(string); ok {
@@ -217,7 +216,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 				payloadBytes, _ := json.Marshal(msg["payload"])
 				var payload models.IncrementalConnectDotsPayload
 				if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-					log.Printf("[WS Error] Failed to unmarshal CONNECT_DOTS_INCREMENTAL payload: %v", err)
+					appLog("websocket").Error("failed to unmarshal incremental connect dots payload", "message_type", msgType, "err", err)
 					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid incremental node data sent for analysis"})
 					continue
 				}
@@ -251,7 +250,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 				triggerConnectDotsAnalysis(br, vaultID, payload.AllNodes, pendingNodeIDs, pipeline.ExtractRunMetadata(msg, vaultID, "analysis"))
 			case "CHAT_RAG":
-				log.Println("[WS] Received CHAT_RAG request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
 					query, _ := payloadMap["query"].(string)
 					filesIf, _ := payloadMap["files"].([]interface{})
@@ -266,7 +265,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						broadcast(models.WSMessage{Type: "BRAIN_STATE", Payload: "Interrogating Vault..."})
 						response, err := br.InterrogateVault(context.Background(), files, query)
 						if err != nil {
-							log.Printf("[WS Error] InterrogateVault failed: %v", err)
+							appLog("websocket").Error("vault interrogation failed", "message_type", msgType, "files", len(files), "err", err)
 							broadcast(models.WSMessage{Type: "ERROR", Payload: "Vault interrogation failed: " + err.Error()})
 							return
 						}
@@ -274,7 +273,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}()
 				}
 			case "DELETE_VAULT":
-				log.Println("[WS] Received DELETE_VAULT request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 
 				vaultPath := ""
 				if vp, ok := msg["vaultPath"].(string); ok {
@@ -290,7 +289,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 							cleanPath := filepath.Clean(vaultPath)
 							// ensure path starts with abdomen_vault for safety
 							if strings.HasPrefix(strings.ReplaceAll(cleanPath, "\\", "/"), "abdomen_vault/") {
-								log.Printf("[WS] Deleting specific vault file: %s", cleanPath)
+								appLog("websocket").Info("deleting vault file", "message_type", msgType, "path", cleanPath)
 								os.Remove(cleanPath)
 							}
 						}
@@ -299,14 +298,14 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 							go br.Synthesis.PurgeVault(vID)
 						}
 					} else {
-						log.Printf("[WS Error] Invalid DELETE_VAULT payload: %s", vID)
+						appLog("websocket").Warn("invalid delete vault payload", "message_type", msgType, "vault", vID)
 					}
 				}
 			case "SYNC_VAULTS":
-				log.Println("[WS] Received SYNC_VAULTS request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 				if payloadIf, ok := msg["payload"].([]interface{}); ok {
 					activeVaults := make(map[string]bool)
-					log.Printf("[WS] SYNC_VAULTS mapping %d active IDs", len(payloadIf))
+					appLog("websocket").Info("sync vaults mapping active ids", "message_type", msgType, "active_vaults", len(payloadIf))
 					for _, v := range payloadIf {
 						if idStr, ok := v.(string); ok {
 							activeVaults[idStr] = true
@@ -320,7 +319,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}()
 				}
 			case "PULL_NODE":
-				log.Println("[WS] Received PULL_NODE request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
 					sourceVaultID, _ := payloadMap["sourceVaultId"].(string)
 					sourceNodeID, _ := payloadMap["sourceNodeId"].(string)
@@ -329,13 +328,13 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					go func() {
 						err := br.PullNode(context.Background(), sourceVaultID, sourceNodeID, targetVaultID)
 						if err != nil {
-							log.Printf("[WS Error] PullNode failed: %v", err)
+							appLog("websocket").Error("pull node failed", "message_type", msgType, "source_vault", sourceVaultID, "source_node", sourceNodeID, "target_vault", targetVaultID, "err", err)
 							broadcast(models.WSMessage{Type: "ERROR", Payload: "Pull node failed: " + err.Error()})
 						}
 					}()
 				}
 			case "PROCESS_MANUAL_NODE":
-				log.Println("[WS] Received PROCESS_MANUAL_NODE request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 				if payloadMap, ok := msg["payload"].(map[string]interface{}); ok {
 					nodeID, _ := payloadMap["nodeId"].(string)
 					rawText, _ := payloadMap["text"].(string)
@@ -343,7 +342,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					go func() {
 						processedText, err := br.ProcessManualNodeText(context.Background(), rawText)
 						if err != nil {
-							log.Printf("[WS Error] ProcessManualNodeText failed: %v", err)
+							appLog("websocket").Error("manual node processing failed", "message_type", msgType, "node", nodeID, "err", err)
 							broadcast(models.WSMessage{Type: "ERROR", Payload: "Analysis failed: " + err.Error()})
 							return
 						}
@@ -357,23 +356,23 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					}()
 				}
 			case "MERGE_INVESTIGATIONS":
-				log.Println("[WS] Received MERGE_INVESTIGATIONS request")
+				appLog("websocket").Info("received websocket request", "message_type", msgType)
 				payloadBytes, err := json.Marshal(msg["payload"])
 				if err != nil {
-					log.Printf("[WS Error] Failed to marshal MERGE_INVESTIGATIONS payload: %v", err)
+					appLog("websocket").Error("failed to marshal merge investigations payload", "message_type", msgType, "err", err)
 					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid merge payload"})
 					continue
 				}
 				var payload models.MergeInvestigationsPayload
 				if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-					log.Printf("[WS Error] Failed to unmarshal MERGE_INVESTIGATIONS payload: %v", err)
+					appLog("websocket").Error("failed to unmarshal merge investigations payload", "message_type", msgType, "err", err)
 					broadcast(models.WSMessage{Type: "ERROR", Payload: "Invalid merge payload"})
 					continue
 				}
 
 				go func() {
 					if err := br.CreateMergedInvestigation(context.Background(), payload); err != nil {
-						log.Printf("[WS Error] CreateMergedInvestigation failed: %v", err)
+						appLog("websocket").Error("merge investigation failed", "message_type", msgType, "child_vault", payload.ChildVaultID, "err", err)
 						broadcast(models.WSMessage{Type: "ERROR", Payload: "Merge investigation failed: " + err.Error()})
 					}
 				}()
