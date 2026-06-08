@@ -551,6 +551,99 @@ func TestClusterPinHideStatePersistsAcrossRecompute(t *testing.T) {
 	}
 }
 
+func TestServiceGeneratesBrainSuggestionsFromMemoryState(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	for _, kind := range []string{
+		SuggestionKindClusterReview,
+		SuggestionKindSourceReview,
+		SuggestionKindRelationshipMotif,
+		SuggestionKindMemoryLinkCompare,
+		SuggestionKindGapReview,
+	} {
+		suggestion := findSuggestion(t, suggestions, kind)
+		if suggestion.ID == "" {
+			t.Fatalf("expected deterministic id for %s", kind)
+		}
+		if suggestion.Status != SuggestionStatusActive {
+			t.Fatalf("expected active suggestion for %s, got %#v", kind, suggestion)
+		}
+		if strings.TrimSpace(suggestion.SuggestedAction) == "" {
+			t.Fatalf("expected suggested action for %s, got %#v", kind, suggestion)
+		}
+		if len(suggestion.TargetInvestigationIDs) == 0 {
+			t.Fatalf("expected target investigations for %s, got %#v", kind, suggestion)
+		}
+	}
+
+	clusterSuggestion := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+	if len(clusterSuggestion.RelatedClusterIDs) == 0 {
+		t.Fatalf("expected cluster suggestion to reference clusters, got %#v", clusterSuggestion)
+	}
+	linkSuggestion := findSuggestion(t, suggestions, SuggestionKindMemoryLinkCompare)
+	if len(linkSuggestion.RelatedMemoryLinkIDs) == 0 {
+		t.Fatalf("expected memory link suggestion to reference links, got %#v", linkSuggestion)
+	}
+	sourceSuggestion := findSuggestion(t, suggestions, SuggestionKindSourceReview)
+	if len(sourceSuggestion.RelatedSignalIDs) == 0 {
+		t.Fatalf("expected source suggestion to reference signals, got %#v", sourceSuggestion)
+	}
+}
+
+func TestBrainSuggestionFeedbackPersistsAcrossRecompute(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	dismissed := findSuggestion(t, suggestions, SuggestionKindSourceReview)
+	if _, err := service.DismissSuggestion(dismissed.ID); err != nil {
+		t.Fatalf("DismissSuggestion failed: %v", err)
+	}
+	reviewed := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+	if _, err := service.MarkSuggestionReviewed(reviewed.ID); err != nil {
+		t.Fatalf("MarkSuggestionReviewed failed: %v", err)
+	}
+
+	recomputed, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation after feedback failed: %v", err)
+	}
+	if hasSuggestionID(recomputed, dismissed.ID) {
+		t.Fatalf("dismissed suggestion should stay hidden after recompute, got %#v", recomputed)
+	}
+	reviewedAgain := findSuggestionByID(t, recomputed, reviewed.ID)
+	if reviewedAgain.ID != reviewed.ID {
+		t.Fatalf("expected reviewed suggestion id to persist, got %q then %q", reviewed.ID, reviewedAgain.ID)
+	}
+	if reviewedAgain.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected reviewed state to persist, got %#v", reviewedAgain)
+	}
+	if strings.TrimSpace(reviewedAgain.ReviewedAt) == "" {
+		t.Fatalf("expected reviewed timestamp, got %#v", reviewedAgain)
+	}
+}
+
 func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
@@ -614,6 +707,75 @@ func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	if err != nil || len(signals) != 0 {
 		t.Fatalf("current case should not activate beta without current beta evidence, got signals=%#v err=%v", signals, err)
 	}
+}
+
+func writeSuggestionFixture(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[ORG:Acme Grid] appears during [DATE:2026-05-20] power stress.",
+			"sourceURL":"https://intel.example.com/current"
+		}}],
+		"edges":[{"source":"current-node","target":"current-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old-strong", "Older Strong Grid"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-strong-node","data":{
+			"summary":"[ORG:Acme Grid] appeared during [DATE:2026-05-20] power stress.",
+			"sourceURL":"https://intel.example.com/strong"
+		}}],
+		"edges":[{"source":"old-strong-node","target":"old-strong-node","data":{"tag":"POWER_RISK"}}]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old-warm", "Older Warm Grid"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-warm-node","data":{
+			"summary":"[ORG:Acme Grid] resurfaced during [DATE:2026-05-21] cooling talks.",
+			"sourceURL":"https://intel.example.com/warm"
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-source-only", "Source Network Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"source-node","data":{
+			"summary":"A source-only archive note with no tagged entities.",
+			"sourceURL":"https://intel.example.com/source"
+		}}],
+		"edges":[]
+	}`, "")
+	return root
+}
+
+func findSuggestion(t *testing.T, suggestions []BrainSuggestion, kind string) BrainSuggestion {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		if suggestion.Kind == kind {
+			return suggestion
+		}
+	}
+	t.Fatalf("expected suggestion kind=%q in %#v", kind, suggestions)
+	return BrainSuggestion{}
+}
+
+func hasSuggestionID(suggestions []BrainSuggestion, id string) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func findSuggestionByID(t *testing.T, suggestions []BrainSuggestion, id string) BrainSuggestion {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		if suggestion.ID == id {
+			return suggestion
+		}
+	}
+	t.Fatalf("expected suggestion id=%q in %#v", id, suggestions)
+	return BrainSuggestion{}
 }
 
 func TestForgetMemoryLinkRemovesLinkAndDismissesExistingSignal(t *testing.T) {
