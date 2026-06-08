@@ -226,6 +226,14 @@ const installBrainFetch = ({
       const target = clusters.find((candidate) => url.includes(candidate.id)) || cluster
       return Promise.resolve(jsonResponse({ ...target, hidden: false }) as Response)
     }
+    if (method === 'PUT' && url.includes('/api/brain/suggestions/') && url.endsWith('/dismiss')) {
+      const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
+      return Promise.resolve(jsonResponse({ ...target, status: 'dismissed', dismissedAt: '2026-06-06T10:00:00Z' }) as Response)
+    }
+    if (method === 'PUT' && url.includes('/api/brain/suggestions/') && url.endsWith('/review')) {
+      const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
+      return Promise.resolve(jsonResponse({ ...target, status: 'reviewed', reviewedAt: '2026-06-06T10:00:00Z' }) as Response)
+    }
 
     return Promise.resolve(jsonResponse({}, 404) as Response)
   })
@@ -310,6 +318,39 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('1 cluster')
     expect(card).toHaveTextContent('1 signal')
     expect(card).toHaveTextContent('1 link')
+  })
+
+  it('marks next moves reviewed and dismisses them', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ suggestions: [suggestion] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+      />,
+    )
+    await openBrainView(user, /next moves view/i)
+
+    const card = await screen.findByTestId('brain-suggestion-card')
+    await user.click(within(card).getByRole('button', { name: /mark reviewed/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/suggestions/brain-suggestion-next-move/review',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+
+    const reviewedSection = await screen.findByText(/reviewed context/i)
+    expect(reviewedSection).toBeInTheDocument()
+    expect(await screen.findByTestId('brain-suggestion-card')).toHaveTextContent('Reviewed')
+
+    await user.click(within(screen.getByTestId('brain-suggestion-card')).getByRole('button', { name: /dismiss/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/suggestions/brain-suggestion-next-move/dismiss',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByTestId('brain-suggestion-card')).not.toBeInTheDocument()
+    })
   })
 
   it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {

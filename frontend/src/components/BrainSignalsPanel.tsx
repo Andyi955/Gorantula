@@ -6,6 +6,7 @@ import {
   type BoardWorkspaceStateUpdatedDetail,
 } from '../utils/boardWorkspaceEvents'
 import {
+  dismissBrainSuggestion,
   dismissBrainSignal,
   fetchBrainClusters,
   fetchBrainLinks,
@@ -14,6 +15,7 @@ import {
   forgetBrainLink,
   hideBrainCluster,
   promoteBrainSignal,
+  reviewBrainSuggestion,
   toggleBrainClusterPin,
   unhideBrainCluster,
   type BrainSuggestion,
@@ -519,6 +521,34 @@ export default function BrainSignalsPanel({
       setSelectedClusterId(updatedCluster.id)
     } catch {
       setError('Brain cluster unhide failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleDismissSuggestion = async (suggestion: BrainSuggestion) => {
+    setBusyAction(`suggestion-dismiss:${suggestion.id}`)
+    setError(null)
+    try {
+      await dismissBrainSuggestion(suggestion.id)
+      setSuggestions((current) => current.filter((candidate) => candidate.id !== suggestion.id))
+    } catch {
+      setError('Brain suggestion dismiss failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleReviewSuggestion = async (suggestion: BrainSuggestion) => {
+    setBusyAction(`suggestion-review:${suggestion.id}`)
+    setError(null)
+    try {
+      const reviewed = await reviewBrainSuggestion(suggestion.id)
+      setSuggestions((current) =>
+        sortSuggestionsForView(current.map((candidate) => (candidate.id === reviewed.id ? reviewed : candidate))),
+      )
+    } catch {
+      setError('Brain suggestion review failed')
     } finally {
       setBusyAction(null)
     }
@@ -1288,6 +1318,24 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-primary"
+            disabled={isReviewed || busyAction === `suggestion-review:${suggestion.id}`}
+            onClick={() => void handleReviewSuggestion(suggestion)}
+          >
+            <Eye size={13} />
+            Mark Reviewed
+          </button>
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={busyAction === `suggestion-dismiss:${suggestion.id}`}
+            onClick={() => void handleDismissSuggestion(suggestion)}
+          >
+            <X size={13} />
+            Dismiss
+          </button>
           <button
             type="button"
             className="forensic-brain-action forensic-brain-action-secondary"
