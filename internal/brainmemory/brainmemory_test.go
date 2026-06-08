@@ -672,6 +672,68 @@ func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	}
 }
 
+func TestClusterReviewSuggestionsUseSpecificTitles(t *testing.T) {
+	timestamp := "2026-06-08T10:00:00Z"
+	clusters := []MemoryCluster{
+		{
+			ID:                     "cluster-timeline",
+			Label:                  "2026-02-28",
+			Summary:                "2026-02-28 links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "DATE|2026-02-28",
+				Label:   "2026-02-28",
+			}},
+		},
+		{
+			ID:                     "cluster-source",
+			Label:                  "intel.example.com",
+			Summary:                "intel.example.com links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewaySourceDomain,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+		},
+		{
+			ID:                     "cluster-relationship",
+			Label:                  "POWER_RISK",
+			Summary:                "POWER_RISK links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayRelationshipTag,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+		},
+		{
+			ID:                     "cluster-entity",
+			Label:                  "AI data centers",
+			Summary:                "AI data centers links repeated recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(3),
+		},
+	}
+
+	suggestions := clusterReviewSuggestions("inv-current", clusters, map[string]BrainSuggestion{}, timestamp)
+
+	expectedTitles := map[string]string{
+		"cluster-timeline":     "Review 2026-02-28 timeline cluster",
+		"cluster-source":       "Compare intel.example.com source cluster",
+		"cluster-relationship": "Inspect POWER_RISK relationship cluster",
+		"cluster-entity":       "Review AI data centers memory cluster",
+	}
+	for clusterID, expected := range expectedTitles {
+		suggestion := findSuggestionByClusterID(t, suggestions, clusterID)
+		if suggestion.Title != expected {
+			t.Fatalf("expected title %q for %s, got %#v", expected, clusterID, suggestion)
+		}
+	}
+}
+
 func TestBrainSuggestionFeedbackPersistsAcrossRecompute(t *testing.T) {
 	root := writeSuggestionFixture(t)
 	service := NewService(root)

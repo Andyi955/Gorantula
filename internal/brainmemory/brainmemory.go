@@ -742,7 +742,7 @@ func clusterReviewSuggestions(
 			InvestigationID:        investigationID,
 			Kind:                   SuggestionKindClusterReview,
 			Status:                 SuggestionStatusActive,
-			Title:                  "Review active memory cluster",
+			Title:                  clusterSuggestionTitle(cluster),
 			Summary:                cluster.Summary,
 			SuggestedAction:        "Inspect recurring memory cluster",
 			Score:                  score,
@@ -758,6 +758,23 @@ func clusterReviewSuggestions(
 		suggestions = append(suggestions, mergeSuggestionState(suggestion, existing, timestamp))
 	}
 	return suggestions
+}
+
+func clusterSuggestionTitle(cluster MemoryCluster) string {
+	label := strings.TrimSpace(cluster.Label)
+	if label == "" {
+		label = "active"
+	}
+	switch {
+	case clusterIsDateOnlyRecall(cluster):
+		return fmt.Sprintf("Review %s timeline cluster", label)
+	case cluster.DominantGateway == GatewaySourceDomain:
+		return fmt.Sprintf("Compare %s source cluster", label)
+	case cluster.DominantGateway == GatewayRelationshipTag:
+		return fmt.Sprintf("Inspect %s relationship cluster", label)
+	default:
+		return fmt.Sprintf("Review %s memory cluster", label)
+	}
 }
 
 func clusterSuggestionScore(cluster MemoryCluster) float64 {
