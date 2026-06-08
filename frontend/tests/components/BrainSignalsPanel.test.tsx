@@ -452,6 +452,40 @@ describe('BrainSignalsPanel', () => {
     expect(linkedMemory).toHaveTextContent('Entity/Date')
   })
 
+  it('opens a full-screen compare workspace from an active signal', async () => {
+    const user = userEvent.setup()
+    const onOpenInvestigation = vi.fn()
+    installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onOpenInvestigation={onOpenInvestigation}
+      />,
+    )
+    await openBrainView(user, /active signals view/i)
+
+    const card = await screen.findByTestId('brain-signal-card')
+    await user.click(within(card).getByRole('button', { name: /compare memory older substation case/i }))
+
+    const workspace = await screen.findByTestId('brain-compare-workspace')
+    expect(workspace).toHaveTextContent('Brain Compare')
+    expect(workspace).toHaveTextContent('Current Grid Case')
+    expect(workspace).toHaveTextContent('Older Substation Case')
+    expect(workspace).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+    expect(workspace).toHaveTextContent('node-current')
+    expect(workspace).toHaveTextContent('node-older')
+    expect(workspace).toHaveTextContent('Entity/Date')
+    expect(workspace).toHaveTextContent('Review older case')
+
+    await user.click(within(workspace).getByRole('button', { name: /open remembered case/i }))
+    expect(onOpenInvestigation).toHaveBeenCalledWith('inv-older')
+
+    await user.click(within(workspace).getByRole('button', { name: /close brain compare/i }))
+    expect(screen.queryByTestId('brain-compare-workspace')).not.toBeInTheDocument()
+  })
+
   it('renders next moves from brain suggestions', async () => {
     const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [link], clusters: [cluster], suggestions: [suggestion] })
