@@ -568,6 +568,29 @@ describe('BrainSignalsPanel', () => {
     expect(await screen.findByTestId('brain-signal-card')).toHaveTextContent('Older Substation Case')
   })
 
+  it('jumps from a next move to the related living map node', async () => {
+    const user = userEvent.setup()
+    const mapSuggestion = makeSuggestion({
+      id: 'brain-suggestion-map-jump',
+      title: 'Jump to living map',
+      relatedClusterIds: ['cluster-backend'],
+      relatedMemoryLinkIds: [],
+      relatedSignalIds: [],
+    })
+    installBrainFetch({ suggestions: [mapSuggestion], brainMap: backendBrainMap })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const mapMove = screen.getByText('Jump to living map').closest('article') as HTMLElement
+    await user.click(within(mapMove).getByRole('button', { name: /view map/i }))
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    const selectedNode = within(radar).getByTestId('brain-map-selected-node')
+    expect(selectedNode).toHaveTextContent('Memory cluster')
+    expect(selectedNode).toHaveTextContent('Backend Cluster Region')
+  })
+
   it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
     const user = userEvent.setup()
     let signalGenerationComplete = false

@@ -622,6 +622,33 @@ export default function BrainSignalsPanel({
     setActiveBrainView('signals')
   }
 
+  const findBrainMapNodeForSuggestion = (suggestion: BrainSuggestion) => {
+    const clusterIds = suggestion.relatedClusterIds || []
+    const linkIds = suggestion.relatedMemoryLinkIds || []
+    const signalIds = suggestion.relatedSignalIds || []
+    const targetInvestigationIds = suggestion.targetInvestigationIds || []
+
+    return brainMapModel.nodes.find((node) =>
+      (node.clusterId && clusterIds.includes(node.clusterId)) ||
+      (node.linkId && linkIds.includes(node.linkId)) ||
+      (node.signalId && signalIds.includes(node.signalId)) ||
+      (node.targetInvestigationId && targetInvestigationIds.includes(node.targetInvestigationId)),
+    )
+  }
+
+  const handleViewSuggestionMap = (suggestion: BrainSuggestion) => {
+    const node = findBrainMapNodeForSuggestion(suggestion)
+
+    if (!node) {
+      return
+    }
+
+    setGatewayFilter('all')
+    setStrengthFilter('all')
+    setSelectedBrainMapNodeId(node.id)
+    setActiveBrainView('map')
+  }
+
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
     const signal = group.primary
@@ -1445,6 +1472,7 @@ export default function BrainSignalsPanel({
     const canViewCluster = suggestion.relatedClusterIds.length > 0
     const canViewLink = suggestion.relatedMemoryLinkIds.length > 0
     const canViewSignal = suggestion.relatedSignalIds.length > 0
+    const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
 
     return (
@@ -1491,6 +1519,16 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          {canViewMap && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => handleViewSuggestionMap(suggestion)}
+            >
+              <Brain size={13} />
+              View Map
+            </button>
+          )}
           {canViewCluster && (
             <button
               type="button"
