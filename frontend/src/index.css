@@ -5962,10 +5962,15 @@ body {
 }
 
 .forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-app-shell-header,
+.forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-sidebar-shell,
 .forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-sidebar-toggle,
 .forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-statusbar {
   opacity: 0;
   pointer-events: none;
+}
+
+.forensic-app-shell:has(.forensic-brain-map-radar.is-expanded) .forensic-sidebar-shell {
+  visibility: hidden;
 }
 
 .forensic-brain-map-header {
