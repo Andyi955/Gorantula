@@ -1,13 +1,16 @@
 package main
 
 import (
-	"log"
+	"os"
 
 	"spider-agent/internal/app"
+	"spider-agent/internal/logging"
 )
 
 func main() {
+	logging.Configure()
 	if err := app.Run(); err != nil {
-		log.Fatal(err)
+		logging.Logger("startup").Error("gorantula stopped", "err", err)
+		os.Exit(1)
 	}
 }
