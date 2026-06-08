@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"log"
 	"strings"
 
 	"spider-agent/brain"
@@ -114,19 +113,29 @@ func triggerRabbitHoleCrawl(br *brain.Brain, prompt, vaultID string, appendToVau
 	tracker := pipeline.NewTracker(meta, models.RabbitHolePipelineProgressSteps())
 	ctx, cancel := context.WithCancel(context.Background())
 	pipeline.RegisterCancellation(meta, cancel)
-	log.Printf("[RabbitHole] accepted run=%s vault=%s mode=%s append=%t scrapeImages=%t continuationPass=%d priorFindings=%d suggestedQueries=%d", meta.RunID, vaultID, descentMode, appendToVault, scrapeImages, options.ContinuationPass, len(options.PriorFindings), len(options.SuggestedQueries))
+	appLog("rabbit_hole").Info(
+		"rabbit hole crawl accepted",
+		"run", meta.RunID,
+		"vault", vaultID,
+		"mode", descentMode,
+		"append", appendToVault,
+		"scrape_images", scrapeImages,
+		"continuation_pass", options.ContinuationPass,
+		"prior_findings", len(options.PriorFindings),
+		"suggested_queries", len(options.SuggestedQueries),
+	)
 
 	go func() {
 		defer pipeline.ForgetCancellation(meta.RunID)
 		_, err := br.ProcessRabbitHoleForVaultWithRunOptions(ctx, prompt, vaultID, appendToVault, scrapeImages, brain.RabbitHoleDescentMode(descentMode), tracker, options)
 		if err != nil {
 			if pipeline.IsCancellationError(err) {
-				log.Printf("[RabbitHole] cancelled run=%s vault=%s", meta.RunID, vaultID)
+				appLog("rabbit_hole").Info("rabbit hole crawl cancelled", "run", meta.RunID, "vault", vaultID)
 				broadcastPipelineCancelled(tracker, "Stopped by operator")
 				pipeline.ForgetTracker(meta.RunID)
 				return
 			}
-			log.Printf("[RabbitHole] failed run=%s vault=%s err=%v", meta.RunID, vaultID, err)
+			appLog("rabbit_hole").Error("rabbit hole crawl failed", "run", meta.RunID, "vault", vaultID, "err", err)
 			broadcast(tracker.Error("complete", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
 			pipeline.ForgetTracker(meta.RunID)
@@ -136,7 +145,7 @@ func triggerRabbitHoleCrawl(br *brain.Brain, prompt, vaultID string, appendToVau
 			})
 			return
 		}
-		log.Printf("[RabbitHole] profile saved run=%s vault=%s", meta.RunID, vaultID)
+		appLog("rabbit_hole").Info("rabbit hole profile saved", "run", meta.RunID, "vault", vaultID)
 		saveAndBroadcastPipelineProfile(tracker)
 	}()
 }

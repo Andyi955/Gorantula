@@ -46,11 +46,10 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 		return nil, err
 	}
 	personas := GetDefaultPersonas()
-	fmt.Printf("[Brain] Running multi-agent persona analysis with %d personas...\n", len(personas))
+	brainLog("persona").Info("running full-board persona analysis", "personas", len(personas), "nodes", len(nodes), "vault", investigationID)
 
 	findingsText := buildSummaryFirstPersonaFindings(nodes)
-	fmt.Printf("[Brain] Full-board persona evidence prepared for %d nodes across %d personas (%d chars)\n",
-		len(nodes), len(personas), len(findingsText))
+	brainLog("persona").Info("prepared full-board persona evidence", "nodes", len(nodes), "personas", len(personas), "chars", len(findingsText), "vault", investigationID)
 
 	scopeID := b.newTokenUsageScope("persona-full-board")
 	insightsChan := make(chan personaAnalysisResult, len(personas))
@@ -90,7 +89,7 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 		if insight.Confidence > 0 {
 			recordPersonaDiagnostic(progress, result.diagnostic)
 			insights = append(insights, insight)
-			fmt.Printf("[Brain] Persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
+			brainLog("persona").Info("persona completed", "vault", investigationID, "persona", insight.PersonaName, "confidence", insight.Confidence)
 		} else {
 			result.diagnostic.Status = "zero_confidence"
 			result.diagnostic.ErrorCategory = "zero_confidence"
@@ -99,7 +98,7 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 		}
 	}
 
-	fmt.Printf("[Brain] Persona analysis complete. Collected %d insights.\n", len(insights))
+	brainLog("persona").Info("full-board persona analysis complete", "vault", investigationID, "insights", len(insights), "personas", len(personas))
 	tokenSummary := b.summarizeTokenUsageScope(scopeID)
 	b.broadcastTokenUsageSummary(investigationID, "Full-board persona analysis", tokenSummary)
 	b.broadcastPartialPersonaAnalysisWarning(personas, failedPersonas, len(insights))
@@ -144,7 +143,7 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 	if err := checkPipelineContext(ctx); err != nil {
 		return nil, err
 	}
-	fmt.Printf("[Brain] Running incremental persona analysis with %d personas across %d nodes (%d pending)...\n", len(GetDefaultPersonas()), len(nodes), len(pendingNodeIDs))
+	brainLog("persona").Info("running incremental persona analysis", "vault", investigationID, "personas", len(GetDefaultPersonas()), "nodes", len(nodes), "pending_nodes", len(pendingNodeIDs))
 
 	pendingFindings, contextFindings, validPendingNodeIDs := buildIncrementalPersonaFindings(nodes, pendingNodeIDs)
 	if len(validPendingNodeIDs) == 0 {
@@ -188,7 +187,7 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 		if insight.Confidence > 0 {
 			recordPersonaDiagnostic(progress, result.diagnostic)
 			insights = append(insights, insight)
-			fmt.Printf("[Brain] Incremental persona %s completed (confidence: %.2f)\n", insight.PersonaName, insight.Confidence)
+			brainLog("persona").Info("incremental persona completed", "vault", investigationID, "persona", insight.PersonaName, "confidence", insight.Confidence)
 		} else {
 			result.diagnostic.Status = "zero_confidence"
 			result.diagnostic.ErrorCategory = "zero_confidence"
@@ -197,7 +196,7 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 		}
 	}
 
-	fmt.Printf("[Brain] Incremental multi-agent analysis complete. Generated %d valid persona insights.\n", len(insights))
+	brainLog("persona").Info("incremental persona analysis complete", "vault", investigationID, "insights", len(insights), "personas", len(personas))
 	tokenSummary := b.summarizeTokenUsageScope(scopeID)
 	b.broadcastTokenUsageSummary(investigationID, "Incremental persona analysis", tokenSummary)
 	b.broadcastPartialPersonaAnalysisWarning(personas, failedPersonas, len(insights))
@@ -248,34 +247,34 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 			err := fmt.Errorf("no model providers available to run persona analysis")
 			return PersonaInsight{PersonaName: persona.Name, Confidence: 0}, completeExecution("failed", err), err
 		}
-		fmt.Printf("[Brain Warning] Preferred model '%s' unavailable. Using '%s' for Persona '%s'\n", persona.ModelPref, provider.Name(), persona.Name)
+		brainLog("persona").Warn("preferred persona model unavailable; using fallback", "persona", persona.Name, "preferred_provider", persona.ModelPref, "provider", provider.Name())
 	}
 	execution.provider = provider.Name()
 
-	fmt.Printf("[Brain] Running persona %s with model %s\n", persona.Name, provider.Name())
+	brainLog("persona").Info("running persona", "persona", persona.Name, "provider", provider.Name(), "prompt_chars", execution.promptChars)
 
 	var response PersonaJSONResponse
 	err := provider.GenerateJSON(ctx, prompt, &response)
 	if err != nil && shouldRetryPersonaJSON(err) {
 		initialErr := err
 		execution.attemptCount = 2
-		fmt.Printf(
-			"[Brain Warning] Persona JSON retry persona=%q provider=%s promptChars=%d category=%s error=%s\n",
-			persona.Name,
-			provider.Name(),
-			execution.promptChars,
-			categorizePersonaError(initialErr),
-			models.SanitizePipelineDiagnosticText(initialErr.Error()),
+		brainLog("persona").Warn(
+			"persona json retry",
+			"persona", persona.Name,
+			"provider", provider.Name(),
+			"prompt_chars", execution.promptChars,
+			"category", categorizePersonaError(initialErr),
+			"err", models.SanitizePipelineDiagnosticText(initialErr.Error()),
 		)
 		response = PersonaJSONResponse{}
 		retryErr := provider.GenerateJSON(ctx, buildPersonaJSONRetryPrompt(prompt), &response)
 		if retryErr == nil {
 			execution.recoveredErrorCategory = categorizePersonaError(initialErr)
-			fmt.Printf(
-				"[Brain] Persona recovered after JSON retry persona=%q provider=%s promptChars=%d\n",
-				persona.Name,
-				provider.Name(),
-				execution.promptChars,
+			brainLog("persona").Info(
+				"persona recovered after json retry",
+				"persona", persona.Name,
+				"provider", provider.Name(),
+				"prompt_chars", execution.promptChars,
 			)
 			err = nil
 		} else {
@@ -294,43 +293,43 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 			return PersonaInsight{}, completeExecution("failed", wrapped), wrapped
 		}
 		execution.fallbackProvider = fallbackProvider.Name()
-		fmt.Printf(
-			"[Brain Error] Persona fallback attempt persona=%q preferredProvider=%s provider=%s fallbackProvider=%s promptChars=%d category=%s error=%s\n",
-			persona.Name,
-			execution.preferredProvider,
-			provider.Name(),
-			fallbackProvider.Name(),
-			execution.promptChars,
-			categorizePersonaError(err),
-			models.SanitizePipelineDiagnosticText(err.Error()),
+		brainLog("persona").Warn(
+			"persona fallback attempt",
+			"persona", persona.Name,
+			"preferred_provider", execution.preferredProvider,
+			"provider", provider.Name(),
+			"fallback_provider", fallbackProvider.Name(),
+			"prompt_chars", execution.promptChars,
+			"category", categorizePersonaError(err),
+			"err", models.SanitizePipelineDiagnosticText(err.Error()),
 		)
 		response = PersonaJSONResponse{}
 		if fallbackErr := fallbackProvider.GenerateJSON(ctx, prompt, &response); fallbackErr != nil {
 			wrapped := fmt.Errorf("failed to generate persona analysis: %w", err)
 			combinedSummary := models.SanitizePipelineDiagnosticText(fmt.Sprintf("primary error: %v; fallback error: %v", err, fallbackErr))
 			execution.errorSummary = combinedSummary
-			fmt.Printf(
-				"[Brain Error] Persona fallback failed persona=%q preferredProvider=%s provider=%s fallbackProvider=%s promptChars=%d primaryCategory=%s fallbackCategory=%s error=%s\n",
-				persona.Name,
-				execution.preferredProvider,
-				provider.Name(),
-				fallbackProvider.Name(),
-				execution.promptChars,
-				categorizePersonaError(err),
-				categorizePersonaError(fallbackErr),
-				execution.errorSummary,
+			brainLog("persona").Error(
+				"persona fallback failed",
+				"persona", persona.Name,
+				"preferred_provider", execution.preferredProvider,
+				"provider", provider.Name(),
+				"fallback_provider", fallbackProvider.Name(),
+				"prompt_chars", execution.promptChars,
+				"primary_category", categorizePersonaError(err),
+				"fallback_category", categorizePersonaError(fallbackErr),
+				"err", execution.errorSummary,
 			)
 			diagnostic := completeExecution("failed", wrapped)
 			diagnostic.errorSummary = combinedSummary
 			return PersonaInsight{}, diagnostic, wrapped
 		}
 		execution.provider = fallbackProvider.Name()
-		fmt.Printf(
-			"[Brain] Persona recovered using fallback persona=%q preferredProvider=%s provider=%s promptChars=%d\n",
-			persona.Name,
-			execution.preferredProvider,
-			fallbackProvider.Name(),
-			execution.promptChars,
+		brainLog("persona").Info(
+			"persona recovered using fallback",
+			"persona", persona.Name,
+			"preferred_provider", execution.preferredProvider,
+			"provider", fallbackProvider.Name(),
+			"prompt_chars", execution.promptChars,
 		)
 	}
 
@@ -375,18 +374,18 @@ func progressRunID(progress *models.PipelineProgressTracker) string {
 }
 
 func logPersonaFailure(mode, runID, vaultID string, diagnostic models.PipelinePersonaDiagnostic) {
-	fmt.Printf(
-		"[Brain] Persona failed mode=%s run=%s vault=%s persona=%q preferredProvider=%s provider=%s fallbackProvider=%s promptChars=%d category=%s error=%s\n",
-		mode,
-		runID,
-		vaultID,
-		diagnostic.PersonaName,
-		diagnostic.PreferredProvider,
-		diagnostic.Provider,
-		diagnostic.FallbackProvider,
-		diagnostic.PromptChars,
-		diagnostic.ErrorCategory,
-		models.SanitizePipelineDiagnosticText(diagnostic.ErrorSummary),
+	brainLog("persona").Error(
+		"persona failed",
+		"mode", mode,
+		"run", runID,
+		"vault", vaultID,
+		"persona", diagnostic.PersonaName,
+		"preferred_provider", diagnostic.PreferredProvider,
+		"provider", diagnostic.Provider,
+		"fallback_provider", diagnostic.FallbackProvider,
+		"prompt_chars", diagnostic.PromptChars,
+		"category", diagnostic.ErrorCategory,
+		"err", models.SanitizePipelineDiagnosticText(diagnostic.ErrorSummary),
 	)
 }
 

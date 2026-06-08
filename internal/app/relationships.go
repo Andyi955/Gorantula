@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -134,7 +133,7 @@ func buildRelationshipResult(vaultID string, runID string, incremental bool, pen
 func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.MemoryNode, pendingNodeIDs []string, meta pipeline.RunMetadata) {
 	releaseConnectDotsClaim, claimed := claimConnectDotsRun(meta)
 	if !claimed {
-		log.Printf("[WS] Ignoring duplicate CONNECT_DOTS request for active workflow vault=%s run=%s", meta.VaultID, meta.RunID)
+		appLog("relationships").Warn("ignoring duplicate connect dots request", "vault", meta.VaultID, "run", meta.RunID)
 		return
 	}
 
@@ -152,9 +151,9 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}()
 		isIncremental := len(pendingNodeIDs) > 0
 		if isIncremental {
-			log.Printf("[WS] Dispatching incremental persona analysis for %d nodes with %d pending nodes...", len(nodes), len(pendingNodeIDs))
+			appLog("relationships").Info("dispatching incremental persona analysis", "vault", vaultID, "run", meta.RunID, "nodes", len(nodes), "pending_nodes", len(pendingNodeIDs))
 		} else {
-			log.Printf("[WS] Dispatching multi-agent persona analysis for %d nodes...", len(nodes))
+			appLog("relationships").Info("dispatching persona analysis", "vault", vaultID, "run", meta.RunID, "nodes", len(nodes))
 		}
 
 		broadcast(tracker.Start("persona_analysis", "Running multi-agent persona analysis"))
@@ -177,7 +176,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 				pipeline.ForgetTracker(meta.RunID)
 				return
 			}
-			log.Printf("[WS Error] Persona analysis failed: %v", err)
+			appLog("relationships").Error("persona analysis failed", "vault", vaultID, "run", meta.RunID, "incremental", isIncremental, "err", err)
 			broadcast(tracker.Error("persona_analysis", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
 			pipeline.ForgetTracker(meta.RunID)
@@ -192,13 +191,14 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 					validatedConnections = filterConnectionsByPendingNodeIDs(validatedConnections, pendingNodeIDs)
 				}
 				validatedConnections = annotateConnectionsForVault(validatedConnections, vaultID, meta.RunID)
-				log.Printf("[WS] Fallback relationship workflow vault=%s run=%s nodes=%d candidates=%d accepted=%d notes=%s",
-					vaultID,
-					meta.RunID,
-					len(nodes),
-					len(debugRun.Candidates),
-					len(validatedConnections),
-					relationshipDebugSummary(debugRun),
+				appLog("relationships").Info(
+					"fallback relationship workflow complete",
+					"vault", vaultID,
+					"run", meta.RunID,
+					"nodes", len(nodes),
+					"candidates", len(debugRun.Candidates),
+					"accepted", len(validatedConnections),
+					"notes", relationshipDebugSummary(debugRun),
 				)
 				result := buildRelationshipResult(vaultID, meta.RunID, isIncremental, pendingNodeIDs, validatedConnections)
 				investigations.SaveRelationshipResult(result)
@@ -208,7 +208,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 
 		for _, insight := range insights {
-			log.Printf("[WS] Persona %s: nodeIDs=%v, keyFindings=%d", insight.PersonaName, insight.NodeIDs, len(insight.KeyFindings))
+			appLog("relationships").Info("persona insight generated", "vault", vaultID, "run", meta.RunID, "persona", insight.PersonaName, "node_ids", insight.NodeIDs, "key_findings", len(insight.KeyFindings))
 		}
 
 		broadcast(models.WSMessage{Type: "PERSONA_INSIGHTS", Payload: insights})
@@ -221,7 +221,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 			overlapCandidateNodes = filterNodesByIDs(nodes, pendingNodeIDs)
 		}
 
-		log.Printf("[Synthesis] Triggering overlaps check with %d candidate nodes for %d total nodes", len(overlapCandidateNodes), len(nodes))
+		appLog("relationships").Info("triggering overlap scan", "vault", vaultID, "run", meta.RunID, "candidate_nodes", len(overlapCandidateNodes), "total_nodes", len(nodes))
 		broadcast(tracker.Start("overlap_scan", "Scanning for cross-case overlap"))
 		if len(overlapCandidateNodes) > 0 && len(nodes) > 0 {
 			go br.Synthesis.AnalyzeOverlap(ctx, vaultID, overlapCandidateNodes, nodes, br)
@@ -248,7 +248,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 				pipeline.ForgetTracker(meta.RunID)
 				return
 			}
-			log.Printf("[WS Error] Relationship workflow failed: %v", err)
+			appLog("relationships").Error("relationship workflow failed", "vault", vaultID, "run", meta.RunID, "incremental", isIncremental, "err", err)
 			broadcast(tracker.Error("relationship_synthesis", err.Error()))
 			saveAndBroadcastPipelineProfile(tracker)
 			pipeline.ForgetTracker(meta.RunID)
@@ -257,17 +257,18 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		}
 		connections = annotateConnectionsForVault(connections, vaultID, meta.RunID)
 
-		log.Printf("[WS] Relationship workflow complete vault=%s run=%s incremental=%t nodes=%d pending=%d candidates=%d accepted=%d notes=%s",
-			vaultID,
-			meta.RunID,
-			isIncremental,
-			len(nodes),
-			len(pendingNodeIDs),
-			len(debugRun.Candidates),
-			len(connections),
-			relationshipDebugSummary(debugRun),
+		appLog("relationships").Info(
+			"relationship workflow complete",
+			"vault", vaultID,
+			"run", meta.RunID,
+			"incremental", isIncremental,
+			"nodes", len(nodes),
+			"pending_nodes", len(pendingNodeIDs),
+			"candidates", len(debugRun.Candidates),
+			"accepted", len(connections),
+			"notes", relationshipDebugSummary(debugRun),
 		)
-		log.Printf("[WS] Analysis complete. Broadcasting %d connections for vault=%s run=%s.", len(connections), vaultID, meta.RunID)
+		appLog("relationships").Info("broadcasting relationship connections", "vault", vaultID, "run", meta.RunID, "connections", len(connections))
 		broadcast(tracker.Complete("relationship_synthesis", fmt.Sprintf("Found %d relationships", len(connections))))
 		tracker.RecordCounter("relationships", len(connections))
 		result := buildRelationshipResult(vaultID, meta.RunID, isIncremental, pendingNodeIDs, connections)
@@ -300,7 +301,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 					pipeline.ForgetTracker(meta.RunID)
 					return
 				}
-				log.Printf("[WS Error] SynthesizeDiscoveries failed: %v", err)
+				appLog("relationships").Error("discovery synthesis failed", "vault", vaultID, "run", meta.RunID, "err", err)
 				broadcast(tracker.Error("discovery_review", err.Error()))
 				saveAndBroadcastPipelineProfile(tracker)
 				pipeline.ForgetTracker(meta.RunID)
@@ -319,7 +320,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 					pipeline.ForgetTracker(meta.RunID)
 					return
 				}
-				log.Printf("[WS Error] ReviewDiscoveryCandidates failed: %v", err)
+				appLog("relationships").Error("discovery review failed", "vault", vaultID, "run", meta.RunID, "err", err)
 				broadcast(tracker.Error("discovery_review", err.Error()))
 				saveAndBroadcastPipelineProfile(tracker)
 				pipeline.ForgetTracker(meta.RunID)
