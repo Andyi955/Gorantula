@@ -736,6 +736,7 @@ func clusterReviewSuggestions(
 		if len(targetIDs) == 0 {
 			continue
 		}
+		score := clusterSuggestionScore(cluster)
 		suggestion := BrainSuggestion{
 			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindClusterReview, cluster.ID),
 			InvestigationID:        investigationID,
@@ -744,8 +745,8 @@ func clusterReviewSuggestions(
 			Title:                  "Review active memory cluster",
 			Summary:                cluster.Summary,
 			SuggestedAction:        "Inspect recurring memory cluster",
-			Score:                  cluster.Score,
-			Priority:               suggestionPriority(cluster.Score),
+			Score:                  score,
+			Priority:               suggestionPriority(score),
 			Reason:                 fmt.Sprintf("%s is an %s cluster with %d related investigations.", cluster.Label, cluster.Status, len(cluster.MemberInvestigationIDs)),
 			RelatedClusterIDs:      []string{cluster.ID},
 			RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
@@ -757,6 +758,66 @@ func clusterReviewSuggestions(
 		suggestions = append(suggestions, mergeSuggestionState(suggestion, existing, timestamp))
 	}
 	return suggestions
+}
+
+func clusterSuggestionScore(cluster MemoryCluster) float64 {
+	score := cluster.Score
+	if clusterIsDateOnlyRecall(cluster) {
+		score -= 0.30
+	}
+	memberCount := len(cluster.MemberInvestigationIDs)
+	if memberCount >= 25 {
+		score -= 0.24
+	} else if memberCount >= 15 {
+		score -= 0.18
+	}
+	if score < 0.35 {
+		return 0.35
+	}
+	return score
+}
+
+func clusterIsDateOnlyRecall(cluster MemoryCluster) bool {
+	if cluster.DominantGateway != GatewayEntityDate {
+		return false
+	}
+	for _, reason := range cluster.ReasonSamples {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(reason.Value)), "DATE|") {
+			return true
+		}
+	}
+	return looksLikeYearOrISODate(cluster.Label)
+}
+
+func looksLikeYearOrISODate(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) == 4 {
+		for _, ch := range value {
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	if len(value) >= 7 {
+		prefix := value
+		if len(prefix) > 10 {
+			prefix = prefix[:10]
+		}
+		for index, ch := range prefix {
+			if index == 4 || index == 7 {
+				if ch != '-' {
+					return false
+				}
+				continue
+			}
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return len(prefix) == 7 || len(prefix) == 10
+	}
+	return false
 }
 
 func sourceReviewSuggestions(

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -602,6 +603,75 @@ func TestServiceGeneratesBrainSuggestionsFromMemoryState(t *testing.T) {
 	}
 }
 
+func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
+	timestamp := "2026-06-08T10:00:00Z"
+	clusters := []MemoryCluster{
+		{
+			ID:                     "cluster-date",
+			Label:                  "2026-02-28",
+			Summary:                "2026-02-28 links 7 investigations through entity/date recall.",
+			Score:                  0.98,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(7),
+			SignalIDs:              []string{"sig-1", "sig-2", "sig-3", "sig-4", "sig-5", "sig-6", "sig-7", "sig-8"},
+			MemoryLinkIDs:          []string{"link-1", "link-2", "link-3", "link-4", "link-5", "link-6", "link-7"},
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "DATE|2026-02-28",
+				Label:   "2026-02-28",
+			}},
+		},
+		{
+			ID:                     "cluster-broad-person",
+			Label:                  "Donald Trump",
+			Summary:                "Donald Trump links 27 investigations through entity/date recall.",
+			Score:                  0.98,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(27),
+			SignalIDs:              []string{"sig-9", "sig-10", "sig-11"},
+			MemoryLinkIDs:          []string{"link-8"},
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "PERSON|donald trump",
+				Label:   "Donald Trump",
+			}},
+		},
+		{
+			ID:                     "cluster-focused-org",
+			Label:                  "AI data centers",
+			Summary:                "AI data centers links 5 investigations through entity/date recall.",
+			Score:                  0.82,
+			Status:                 "active",
+			DominantGateway:        GatewayEntityDate,
+			MemberInvestigationIDs: testClusterMemberIDs(5),
+			SignalIDs:              []string{"sig-12", "sig-13"},
+			MemoryLinkIDs:          []string{"link-9"},
+			ReasonSamples: []SignalReason{{
+				Gateway: GatewayEntityDate,
+				Value:   "ORG|ai data centers",
+				Label:   "AI data centers",
+			}},
+		},
+	}
+
+	suggestions := clusterReviewSuggestions("inv-current", clusters, map[string]BrainSuggestion{}, timestamp)
+
+	dateSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-date")
+	if dateSuggestion.Priority == "high" || dateSuggestion.Score >= 0.78 {
+		t.Fatalf("expected pure date cluster to be down-ranked, got %#v", dateSuggestion)
+	}
+	broadPersonSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-broad-person")
+	if broadPersonSuggestion.Priority == "high" || broadPersonSuggestion.Score >= 0.78 {
+		t.Fatalf("expected broad person cluster to be down-ranked, got %#v", broadPersonSuggestion)
+	}
+	focusedSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-focused-org")
+	if focusedSuggestion.Priority != "high" || focusedSuggestion.Score < 0.78 {
+		t.Fatalf("expected focused entity cluster to stay high priority, got %#v", focusedSuggestion)
+	}
+}
+
 func TestBrainSuggestionFeedbackPersistsAcrossRecompute(t *testing.T) {
 	root := writeSuggestionFixture(t)
 	service := NewService(root)
@@ -849,6 +919,27 @@ func hasSuggestionID(suggestions []BrainSuggestion, id string) bool {
 		}
 	}
 	return false
+}
+
+func testClusterMemberIDs(count int) []string {
+	ids := []string{"inv-current"}
+	for index := 1; index < count; index++ {
+		ids = append(ids, "inv-old-"+strconv.Itoa(index))
+	}
+	return ids
+}
+
+func findSuggestionByClusterID(t *testing.T, suggestions []BrainSuggestion, clusterID string) BrainSuggestion {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		for _, candidate := range suggestion.RelatedClusterIDs {
+			if candidate == clusterID {
+				return suggestion
+			}
+		}
+	}
+	t.Fatalf("expected suggestion for cluster %q in %#v", clusterID, suggestions)
+	return BrainSuggestion{}
 }
 
 func findSuggestionByID(t *testing.T, suggestions []BrainSuggestion, id string) BrainSuggestion {
