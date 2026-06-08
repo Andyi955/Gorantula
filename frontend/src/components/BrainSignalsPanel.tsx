@@ -68,6 +68,7 @@ interface BrainSignalsPanelProps {
 
 const PRIORITY_SIGNAL_LIMIT = 10
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
+const NEXT_MOVES_PRIORITY_LIMIT = 7
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
@@ -147,6 +148,7 @@ export default function BrainSignalsPanel({
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [showLowerPrioritySignals, setShowLowerPrioritySignals] = useState(false)
+  const [showLowerPrioritySuggestions, setShowLowerPrioritySuggestions] = useState(false)
   const [showOlderMemoryLinks, setShowOlderMemoryLinks] = useState(false)
   const [showHiddenClusters, setShowHiddenClusters] = useState(false)
   const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
@@ -174,6 +176,7 @@ export default function BrainSignalsPanel({
       setIsLoading(false)
       setIsRefreshing(false)
       setShowLowerPrioritySignals(false)
+      setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
       setShowHiddenClusters(false)
       setSelectedMemoryLinkId(null)
@@ -206,6 +209,7 @@ export default function BrainSignalsPanel({
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
       setShowLowerPrioritySignals(false)
+      setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
       setSelectedMemoryLinkId((current) =>
         current && nextLinks.some((link) => link.id === current) ? current : null,
@@ -344,6 +348,14 @@ export default function BrainSignalsPanel({
   const activeSuggestions = useMemo(
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active'),
     [rankedSuggestions],
+  )
+  const prioritySuggestions = useMemo(
+    () => activeSuggestions.slice(0, NEXT_MOVES_PRIORITY_LIMIT),
+    [activeSuggestions],
+  )
+  const lowerPrioritySuggestions = useMemo(
+    () => activeSuggestions.slice(NEXT_MOVES_PRIORITY_LIMIT),
+    [activeSuggestions],
   )
   const reviewedSuggestions = useMemo(
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
@@ -1388,7 +1400,25 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <div className="forensic-brain-suggestion-list">
-              {activeSuggestions.map(renderSuggestionCard)}
+              {prioritySuggestions.map(renderSuggestionCard)}
+              {lowerPrioritySuggestions.length > 0 && (
+                <div data-testid="brain-lower-priority-moves-section" className="forensic-brain-lower-priority">
+                  <button
+                    type="button"
+                    className="forensic-brain-lower-priority-toggle"
+                    aria-expanded={showLowerPrioritySuggestions}
+                    onClick={() => setShowLowerPrioritySuggestions((current) => !current)}
+                  >
+                    {showLowerPrioritySuggestions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {showLowerPrioritySuggestions ? 'Hide' : 'Show'} lower-priority moves ({lowerPrioritySuggestions.length})
+                  </button>
+                  {showLowerPrioritySuggestions && (
+                    <div className="forensic-brain-lower-priority-list">
+                      {lowerPrioritySuggestions.map(renderSuggestionCard)}
+                    </div>
+                  )}
+                </div>
+              )}
               {reviewedSuggestions.length > 0 && (
                 <div className="forensic-brain-reviewed-suggestions">
                   <span className="forensic-brain-panel-kicker">Reviewed context</span>

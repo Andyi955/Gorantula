@@ -378,6 +378,34 @@ describe('BrainSignalsPanel', () => {
     })
   })
 
+  it('caps active next moves and folds lower-priority suggestions', async () => {
+    const user = userEvent.setup()
+    const suggestions = Array.from({ length: 9 }, (_, index) => makeSuggestion({
+      id: `brain-suggestion-${index}`,
+      title: `Next Move Case ${index}`,
+      score: 0.95 - index * 0.04,
+      priority: index < 3 ? 'high' : index < 7 ? 'medium' : 'low',
+      reason: `Next move ${index} has supporting memory context.`,
+      targetInvestigationIds: [`inv-target-${index}`],
+    }))
+    installBrainFetch({ suggestions })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('brain-suggestion-card')).toHaveLength(7)
+    })
+    expect(screen.getByText('Next Move Case 0')).toBeInTheDocument()
+    expect(screen.queryByText('Next Move Case 7')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show lower-priority moves \(2\)/i }))
+
+    expect(screen.getAllByTestId('brain-suggestion-card')).toHaveLength(9)
+    expect(screen.getByText('Next Move Case 7')).toBeInTheDocument()
+    expect(screen.getByText('Next Move Case 8')).toBeInTheDocument()
+  })
+
   it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
     const user = userEvent.setup()
     let signalGenerationComplete = false
