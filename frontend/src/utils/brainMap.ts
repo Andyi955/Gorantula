@@ -1,6 +1,12 @@
-import type { BrainGateway, BrainSignal, BrainSignalReason, MemoryLink } from './brainMemory'
+import type {
+  BrainGateway,
+  BrainSignal,
+  BrainSignalReason,
+  MemoryLink,
+  BrainMapView as BackendBrainMapView,
+} from './brainMemory'
 
-export type BrainMapNodeKind = 'current' | 'memory' | 'signal'
+export type BrainMapNodeKind = 'current' | 'cluster' | 'memory' | 'signal'
 export type BrainMapSlot = 'center' | 'northwest' | 'northeast' | 'southwest' | 'southeast' | 'east'
 export type BrainMapTier = 'Hot' | 'Warm' | 'Weak'
 
@@ -17,9 +23,15 @@ export interface BrainMapNode {
   gateways: BrainGateway[]
   reasons: BrainSignalReason[]
   targetInvestigationId?: string
+  clusterId?: string
   linkId?: string
   signalId?: string
   activationCount?: number
+  relatedSignalIds?: string[]
+  relatedMemoryLinkIds?: string[]
+  memberInvestigationIds?: string[]
+  x?: number
+  y?: number
 }
 
 export interface BrainMapEdge {
@@ -145,6 +157,57 @@ export const buildBrainMapModel = ({
   }
 }
 
+export const buildBrainMapModelFromView = (view: BackendBrainMapView): BrainMapModel => {
+  const nodes = view.nodes.map((node) => ({
+    id: node.id,
+    kind: normalizeNodeKind(node.kind),
+    title: node.title,
+    subtitle: node.subtitle,
+    score: normalizeScore(node.score),
+    scoreLabel: formatBrainMapScore(node.score),
+    tier: getBrainMapTier(node.score),
+    slot: node.kind === 'current' ? 'center' : slotFromMapPosition(node.x, node.y),
+    badges: node.badges || [],
+    gateways: node.gateway ? [node.gateway] : [],
+    reasons: node.reasonSamples || [],
+    targetInvestigationId: node.targetInvestigationId || node.investigationId,
+    clusterId: node.clusterId,
+    linkId: node.linkId,
+    signalId: node.signalId,
+    relatedSignalIds: node.relatedSignalIds || [],
+    relatedMemoryLinkIds: node.relatedMemoryLinkIds || [],
+    memberInvestigationIds: node.memberInvestigationIds || [],
+    x: node.x,
+    y: node.y,
+  }))
+
+  return {
+    nodes,
+    edges: view.edges.map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      strength: getBrainMapTier(edge.score).toLowerCase() as Lowercase<BrainMapTier>,
+      gateway: edge.gateway,
+      score: normalizeScore(edge.score),
+    })),
+    digest: view.digest.map((item) => ({
+      id: item.id,
+      tone: normalizeDigestTone(item.tone),
+      title: item.title,
+      detail: item.detail,
+    })),
+    hiddenCount: 0,
+    summary: {
+      visibleCount: view.summary.visibleNodeCount,
+      strongestScore: formatBrainMapScore(view.summary.strongestScore),
+      autoMemoryCount: 0,
+      activeSignalCount: view.summary.activeSignalCount,
+      linkedMemoryCount: view.summary.linkedMemoryCount,
+    },
+  }
+}
+
 const buildCurrentNode = (
   currentInvestigationId?: string,
   currentInvestigationTitle?: string,
@@ -261,6 +324,36 @@ const buildDigest = (signals: BrainSignal[], links: MemoryLink[]): BrainMapDiges
   }
 
   return digest.slice(0, 3)
+}
+
+const normalizeNodeKind = (kind: string): BrainMapNodeKind => {
+  if (kind === 'cluster' || kind === 'memory' || kind === 'signal') {
+    return kind
+  }
+  return 'current'
+}
+
+const slotFromMapPosition = (x = 50, y = 50): BrainMapSlot => {
+  if (x > 66) {
+    return y < 50 ? 'northeast' : 'southeast'
+  }
+  if (x < 34) {
+    return y < 50 ? 'northwest' : 'southwest'
+  }
+  return y < 50 ? 'northwest' : 'east'
+}
+
+const normalizeDigestTone = (tone: string): BrainMapDigestItem['tone'] => {
+  switch (tone) {
+    case 'hot':
+    case 'high':
+      return 'hot'
+    case 'warm':
+    case 'medium':
+      return 'warm'
+    default:
+      return 'cool'
+  }
 }
 
 const compareByScoreAndDate = (

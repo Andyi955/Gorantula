@@ -10,6 +10,7 @@ import {
   dismissBrainSignal,
   fetchBrainClusters,
   fetchBrainLinks,
+  fetchBrainMap,
   fetchBrainSuggestions,
   fetchBrainSignals,
   forgetBrainLink,
@@ -20,10 +21,11 @@ import {
   unhideBrainCluster,
   type BrainSuggestion,
   type BrainSignal,
+  type BrainMapView,
   type MemoryCluster,
   type MemoryLink,
 } from '../utils/brainMemory'
-import { buildBrainMapModel, type BrainMapNode } from '../utils/brainMap'
+import { buildBrainMapModel, buildBrainMapModelFromView, type BrainMapNode } from '../utils/brainMap'
 import {
   LOW_PRIORITY_SCORE_THRESHOLD,
   buildSignalSummary,
@@ -143,6 +145,7 @@ export default function BrainSignalsPanel({
   const [links, setLinks] = useState<MemoryLink[]>([])
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
+  const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -172,6 +175,7 @@ export default function BrainSignalsPanel({
       setLinks([])
       setClusters([])
       setSuggestions([])
+      setBrainMapView(null)
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
@@ -197,6 +201,12 @@ export default function BrainSignalsPanel({
     try {
       const nextSignals = await fetchBrainSignals(currentInvestigationId)
       const nextLinks = await fetchBrainLinks(currentInvestigationId)
+      let nextBrainMap: BrainMapView | null = null
+      try {
+        nextBrainMap = await fetchBrainMap(currentInvestigationId)
+      } catch {
+        nextBrainMap = null
+      }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
 
@@ -208,6 +218,7 @@ export default function BrainSignalsPanel({
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
+      setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
       setShowLowerPrioritySignals(false)
       setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
@@ -362,7 +373,7 @@ export default function BrainSignalsPanel({
     [rankedSuggestions],
   )
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
-  const brainMapModel = useMemo(
+  const localBrainMapModel = useMemo(
     () => buildBrainMapModel({
       currentInvestigationId: currentInvestigationId || undefined,
       currentInvestigationTitle: activeTitle,
@@ -371,6 +382,13 @@ export default function BrainSignalsPanel({
     }),
     [activeTitle, currentInvestigationId, rankedSignals, rankedLinks],
   )
+  const backendBrainMapModel = useMemo(
+    () => (brainMapView && Array.isArray(brainMapView.nodes) && brainMapView.nodes.length > 0
+      ? buildBrainMapModelFromView(brainMapView)
+      : null),
+    [brainMapView],
+  )
+  const brainMapModel = backendBrainMapModel || localBrainMapModel
   const selectedBrainMapNode = useMemo(
     () =>
       brainMapModel.nodes.find((node) => node.id === selectedBrainMapNodeId) ||

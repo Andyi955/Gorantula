@@ -96,6 +96,107 @@ const suggestion: BrainSuggestion = {
   updatedAt: '2026-06-05T12:00:00Z',
 }
 
+const backendBrainMap = {
+  investigationId: 'inv-current',
+  investigationTitle: 'Current Grid Case',
+  generatedAt: '2026-06-08T10:00:00Z',
+  nodes: [
+    {
+      id: 'brain-map-current',
+      kind: 'current',
+      title: 'Current Grid Case',
+      subtitle: 'Current investigation focus',
+      score: 1,
+      status: 'focus',
+      badges: ['Current'],
+      investigationId: 'inv-current',
+      relatedSignalIds: [],
+      relatedMemoryLinkIds: [],
+      memberInvestigationIds: [],
+      reasonSamples: [],
+      x: 50,
+      y: 50,
+    },
+    {
+      id: 'brain-map-cluster-backend',
+      kind: 'cluster',
+      title: 'Backend Cluster Region',
+      subtitle: 'Backend map payload controls this visible region.',
+      score: 0.88,
+      status: 'active',
+      gateway: 'entity-date',
+      badges: ['Active', 'Entity/date'],
+      clusterId: 'cluster-backend',
+      relatedSignalIds: [signal.id],
+      relatedMemoryLinkIds: [link.id],
+      memberInvestigationIds: ['inv-current', 'inv-older'],
+      reasonSamples: [signal.reasons[0]],
+      x: 22,
+      y: 34,
+    },
+  ],
+  edges: [
+    {
+      id: 'brain-map-edge-backend',
+      kind: 'cluster',
+      from: 'brain-map-current',
+      to: 'brain-map-cluster-backend',
+      label: 'Memory cluster',
+      score: 0.88,
+      gateway: 'entity-date',
+      clusterId: 'cluster-backend',
+    },
+  ],
+  regions: [
+    {
+      id: 'brain-map-region-backend',
+      clusterId: 'cluster-backend',
+      label: 'Backend Cluster Region',
+      status: 'active',
+      score: 0.88,
+      gateway: 'entity-date',
+      nodeIds: ['brain-map-cluster-backend'],
+      memberInvestigationIds: ['inv-current', 'inv-older'],
+      x: 22,
+      y: 34,
+    },
+  ],
+  digest: [
+    {
+      id: 'brain-map-digest-backend',
+      tone: 'hot',
+      title: 'Backend map loaded',
+      detail: 'The Memory Map is using backend graph data.',
+    },
+  ],
+  summary: {
+    visibleNodeCount: 2,
+    edgeCount: 1,
+    clusterCount: 1,
+    linkedMemoryCount: 1,
+    activeSignalCount: 1,
+    suggestionCount: 1,
+    strongestScore: 0.88,
+  },
+}
+
+const emptyBackendBrainMap = {
+  ...backendBrainMap,
+  nodes: [],
+  edges: [],
+  regions: [],
+  digest: [],
+  summary: {
+    visibleNodeCount: 0,
+    edgeCount: 0,
+    clusterCount: 0,
+    linkedMemoryCount: 0,
+    activeSignalCount: 0,
+    suggestionCount: 0,
+    strongestScore: 0,
+  },
+}
+
 const makeLink = (overrides: Partial<MemoryLink> = {}): MemoryLink => {
   const toInvestigationId = overrides.toInvestigationId || 'inv-older'
   const toTitle = overrides.toTitle || 'Older Substation Case'
@@ -181,12 +282,14 @@ const installBrainFetch = ({
   links = [],
   clusters = [],
   suggestions = [],
+  brainMap = emptyBackendBrainMap,
   promoteLink = link,
 }: {
   signals?: BrainSignal[]
   links?: MemoryLink[]
   clusters?: MemoryCluster[]
   suggestions?: BrainSuggestion[]
+  brainMap?: typeof backendBrainMap
   promoteLink?: MemoryLink
 } = {}) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -198,6 +301,9 @@ const installBrainFetch = ({
     }
     if (url.includes('/api/brain/links?')) {
       return Promise.resolve(jsonResponse(links) as Response)
+    }
+    if (url.includes('/api/brain/map?')) {
+      return Promise.resolve(jsonResponse(brainMap) as Response)
     }
     if (url.includes('/api/brain/clusters?')) {
       return Promise.resolve(jsonResponse(clusters) as Response)
@@ -845,6 +951,17 @@ describe('BrainSignalsPanel', () => {
 
     await user.click(within(detail).getByRole('button', { name: /open radar memory auto linked case/i }))
     expect(onOpenInvestigation).toHaveBeenCalledWith('inv-map-auto')
+  })
+
+  it('renders the backend Brain Map graph when available', async () => {
+    installBrainFetch({ brainMap: backendBrainMap })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const radar = await screen.findByTestId('brain-map-radar')
+    expect(radar).toHaveTextContent('Backend Cluster Region')
+    expect(radar).toHaveTextContent('Backend map loaded')
+    expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(2)
   })
 
   it('separates the Brain map, active signal feed, linked-memory archive, and clusters into sub-tabs', async () => {
