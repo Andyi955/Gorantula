@@ -1076,6 +1076,7 @@ describe('BrainSignalsPanel', () => {
     const canvas = within(radar).getByTestId('brain-map-canvas')
     expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(8)
     expect(within(radar).queryByText('Crowded Memory 11')).not.toBeInTheDocument()
+    expect(within(radar).getByRole('button', { name: /select cluster crowded memory 9/i })).toHaveAttribute('data-map-density', 'marker')
 
     await user.click(within(canvas).getByRole('button', { name: /expand brain map/i }))
 

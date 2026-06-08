@@ -481,14 +481,31 @@ export default function BrainSignalsPanel({
     const visibleClusterIds = new Set(
       visibleNodes.map((node) => node.clusterId).filter((clusterId): clusterId is string => Boolean(clusterId)),
     )
+    const visibleRegions = brainMapModel.regions
+      .filter((region) =>
+        visibleClusterIds.has(region.clusterId) || region.nodeIds.some((nodeId) => visibleNodeIds.has(nodeId)),
+      )
+      .map((region) => {
+        const visibleRegionNodes = visibleNodes.filter((node) =>
+          node.clusterId === region.clusterId || region.nodeIds.includes(node.id),
+        )
+
+        if (visibleRegionNodes.length === 0) {
+          return region
+        }
+
+        return {
+          ...region,
+          x: visibleRegionNodes.reduce((sum, node) => sum + (node.x || region.x), 0) / visibleRegionNodes.length,
+          y: visibleRegionNodes.reduce((sum, node) => sum + (node.y || region.y), 0) / visibleRegionNodes.length,
+        }
+      })
 
     return {
       ...brainMapModel,
       nodes: visibleNodes,
       edges: brainMapModel.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)),
-      regions: brainMapModel.regions.filter((region) =>
-        visibleClusterIds.has(region.clusterId) || region.nodeIds.some((nodeId) => visibleNodeIds.has(nodeId)),
-      ),
+      regions: visibleRegions,
       hiddenCount: brainMapModel.hiddenCount + Math.max(0, brainMapModel.nodes.length - visibleNodes.length),
       summary: {
         ...brainMapModel.summary,
@@ -1389,7 +1406,7 @@ export default function BrainSignalsPanel({
 
   const renderBrainMapNode = (node: BrainMapNode) => {
     const isSelected = selectedBrainMapNode?.id === node.id
-    const isSpatialMarker = isBrainMapExpanded && node.kind !== 'current'
+    const isSpatialMarker = node.kind !== 'current'
     const nodeTypeLabel = node.kind === 'current' ? 'focus' : node.kind
     const gatewayLabel = node.gateways[0] ? formatGateway(node.gateways[0]) : node.kind === 'current' ? 'Live focus' : 'Memory'
 

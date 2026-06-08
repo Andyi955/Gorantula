@@ -6197,29 +6197,26 @@ body {
   top: var(--brain-map-y);
   display: grid;
   place-items: center;
-  width: clamp(8.5rem, 26%, 15rem);
-  min-height: 5.25rem;
-  border: 1px dashed rgba(129, 227, 255, 0.18);
-  background:
-    radial-gradient(circle at 50% 50%, rgba(129, 227, 255, 0.12), transparent 64%),
-    rgba(2, 8, 12, 0.28);
-  color: var(--forensic-text-muted);
-  text-align: center;
-  transform: translate(-50%, -50%);
-}
-
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-region {
-  width: clamp(6.5rem, 10vw, 9.5rem);
-  min-height: clamp(4rem, 6vw, 6.25rem);
+  width: clamp(7.25rem, 11vw, 12rem);
+  min-height: clamp(4.5rem, 7vw, 7rem);
   border: 0;
   border-radius: 999px;
   background:
     radial-gradient(circle at 50% 50%, color-mix(in srgb, currentColor 14%, transparent), transparent 68%),
     radial-gradient(circle at 50% 50%, rgba(0, 255, 65, 0.08), transparent 76%);
+  color: var(--forensic-text-muted);
+  opacity: 0.42;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.forensic-brain-map-radar.is-expanded .forensic-brain-map-region {
+  width: clamp(8.5rem, 12vw, 13.5rem);
+  min-height: clamp(5rem, 8vw, 8rem);
   opacity: 0.5;
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-region::before {
+.forensic-brain-map-region::before {
   content: '';
   position: absolute;
   inset: 20%;
@@ -6228,32 +6225,30 @@ body {
   filter: blur(1.2rem);
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-region span {
+.forensic-brain-map-region span {
   position: relative;
   align-self: center;
   max-width: 72%;
   color: color-mix(in srgb, currentColor 58%, transparent);
   font-size: 0.42rem;
   letter-spacing: 0.12em;
+  opacity: 0;
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-region strong {
+.forensic-brain-map-region strong {
   display: none;
 }
 
 .forensic-brain-map-region-hot {
-  border-color: rgba(0, 255, 65, 0.28);
-  background:
-    radial-gradient(circle at 50% 50%, rgba(0, 255, 65, 0.14), transparent 66%),
-    rgba(2, 8, 12, 0.3);
+  color: #74ff95;
 }
 
 .forensic-brain-map-region-warm {
-  border-color: rgba(129, 227, 255, 0.24);
+  color: #81e3ff;
 }
 
 .forensic-brain-map-region-weak {
-  border-color: rgba(255, 215, 106, 0.2);
+  color: #ffd76a;
 }
 
 .forensic-brain-map-region span,
@@ -6262,22 +6257,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.forensic-brain-map-region span {
-  align-self: end;
-  color: var(--forensic-text-faint);
-  font-size: 0.48rem;
-  font-weight: 950;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.forensic-brain-map-region strong {
-  align-self: start;
-  color: #74ff95;
-  font-size: 0.58rem;
-  font-weight: 950;
 }
 
 .forensic-brain-map-node {
@@ -6350,7 +6329,7 @@ body {
   width: clamp(13rem, 24%, 21rem);
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.forensic-brain-map-node-positioned {
+.forensic-brain-map-node-spatial.forensic-brain-map-node-positioned {
   z-index: 4;
   width: clamp(1.45rem, 2vw, 2.05rem);
   min-height: clamp(1.45rem, 2vw, 2.05rem);
@@ -6364,7 +6343,7 @@ body {
   box-shadow: 0 0 1.2rem color-mix(in srgb, currentColor 18%, transparent);
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.forensic-brain-map-node-positioned::before {
+.forensic-brain-map-node-spatial.forensic-brain-map-node-positioned::before {
   inset: 50% auto auto 50%;
   width: 0.42rem;
   height: 0.42rem;
@@ -6373,7 +6352,7 @@ body {
   transform: translate(-50%, -50%);
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial::after {
+.forensic-brain-map-node-spatial::after {
   content: attr(data-map-label);
   position: absolute;
   left: 50%;
@@ -6395,20 +6374,20 @@ body {
   white-space: nowrap;
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial:hover::after,
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial.is-selected::after {
+.forensic-brain-map-node-spatial:hover::after,
+.forensic-brain-map-node-spatial.is-selected::after {
   opacity: 1;
   transform: translate(-50%, 0);
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial .forensic-brain-map-node-orb {
+.forensic-brain-map-node-spatial .forensic-brain-map-node-orb {
   width: 100%;
   height: 100%;
   border-width: 2px;
 }
 
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial .forensic-brain-map-node-copy,
-.forensic-brain-map-radar.is-expanded .forensic-brain-map-node-spatial .forensic-brain-map-node-badges {
+.forensic-brain-map-node-spatial .forensic-brain-map-node-copy,
+.forensic-brain-map-node-spatial .forensic-brain-map-node-badges {
   display: none;
 }
 
