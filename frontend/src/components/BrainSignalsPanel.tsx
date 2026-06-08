@@ -2028,19 +2028,6 @@ export default function BrainSignalsPanel({
           </div>
         )}
 
-        {node.reasons.length > 0 ? (
-          <div className="forensic-brain-map-selected-reasons">
-            {node.reasons.slice(0, 3).map((reason, index) => (
-              <p key={`${node.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
-                <strong>{formatGateway(reason.gateway)}</strong>
-                {reason.detail || reason.label}
-              </p>
-            ))}
-          </div>
-        ) : (
-          <p className="forensic-brain-map-selected-empty">Signals and saved memories radiate from this case.</p>
-        )}
-
         {node.kind !== 'current' && (
           <div className="forensic-brain-map-selected-actions">
             <button
@@ -2104,6 +2091,19 @@ export default function BrainSignalsPanel({
               </button>
             )}
           </div>
+        )}
+
+        {node.reasons.length > 0 ? (
+          <div className="forensic-brain-map-selected-reasons">
+            {node.reasons.slice(0, 3).map((reason, index) => (
+              <p key={`${node.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
+                <strong>{formatGateway(reason.gateway)}</strong>
+                {reason.detail || reason.label}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="forensic-brain-map-selected-empty">Signals and saved memories radiate from this case.</p>
         )}
       </section>
     )
