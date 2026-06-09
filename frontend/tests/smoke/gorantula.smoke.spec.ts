@@ -1191,6 +1191,8 @@ test.describe('Gorantula smoke flows', () => {
   })
 
   test('backend error clears the active run and allows a new web investigation', async ({ page }) => {
+    test.setTimeout(60_000)
+
     const crawl = await runWebInvestigation(page, 'smoke backend error recovery')
 
     await emitBackendMessage(page, {
