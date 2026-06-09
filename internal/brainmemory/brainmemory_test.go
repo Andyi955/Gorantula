@@ -807,6 +807,75 @@ func TestBrainSuggestionsEncodeEmptyCollectionsAsArrays(t *testing.T) {
 	}
 }
 
+func TestServiceBuildsBrainAttentionSummary(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	reviewed := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+	if _, err := service.MarkSuggestionReviewed(reviewed.ID); err != nil {
+		t.Fatalf("MarkSuggestionReviewed failed: %v", err)
+	}
+
+	attention, err := service.AttentionForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AttentionForInvestigation failed: %v", err)
+	}
+	if attention.InvestigationID != "inv-current" {
+		t.Fatalf("expected attention for inv-current, got %#v", attention)
+	}
+	if attention.OverallScore <= 0 {
+		t.Fatalf("expected non-zero attention score, got %#v", attention)
+	}
+	if attention.DominantState == "" {
+		t.Fatalf("expected dominant state, got %#v", attention)
+	}
+	if attention.Counts.LinkedMemories == 0 {
+		t.Fatalf("expected linked memories in counts, got %#v", attention.Counts)
+	}
+	if attention.Counts.ReviewedNextMoves == 0 {
+		t.Fatalf("expected reviewed next move feedback in counts, got %#v", attention.Counts)
+	}
+	if len(attention.MemoryStrengths) == 0 {
+		t.Fatalf("expected memory strengths, got %#v", attention)
+	}
+	if len(attention.Items) == 0 {
+		t.Fatalf("expected attention items, got %#v", attention)
+	}
+
+	strength := findMemoryStrength(t, attention.MemoryStrengths, "inv-old-strong")
+	if strength.Score < 0.8 {
+		t.Fatalf("expected strong reinforced memory score, got %#v", strength)
+	}
+	if strength.State != BrainMemoryStateReinforced && strength.State != BrainMemoryStateHot {
+		t.Fatalf("expected reinforced or hot memory state, got %#v", strength)
+	}
+	if strength.ActivationCount < 3 {
+		t.Fatalf("expected repeated activation count, got %#v", strength)
+	}
+	if len(strength.ReasonSamples) == 0 {
+		t.Fatalf("expected strength reason samples, got %#v", strength)
+	}
+
+	item := findAttentionItem(t, attention.Items, AttentionKindMemoryReinforced)
+	if item.Score < 0.8 {
+		t.Fatalf("expected reinforced attention item to stay high score, got %#v", item)
+	}
+	if item.TargetInvestigationID == "" {
+		t.Fatalf("expected attention item to point at target memory, got %#v", item)
+	}
+}
+
 func TestServiceBuildsBrainMapView(t *testing.T) {
 	root := writeSuggestionFixture(t)
 	service := NewService(root)
@@ -1038,6 +1107,37 @@ func writeSuggestionFixture(t *testing.T) string {
 	return root
 }
 
+func TestHandleAPIRoutesBrainAttention(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.SuggestionsForInvestigation("inv-current"); err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/brain/attention?investigationId=inv-current", nil)
+	recorder := httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected attention GET 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var attention BrainAttentionSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &attention); err != nil {
+		t.Fatalf("decode attention failed: %v", err)
+	}
+	if attention.InvestigationID != "inv-current" {
+		t.Fatalf("expected attention for inv-current, got %#v", attention)
+	}
+	if len(attention.Items) == 0 {
+		t.Fatalf("expected attention route to include items, got %#v", attention)
+	}
+}
+
 func findSuggestion(t *testing.T, suggestions []BrainSuggestion, kind string) BrainSuggestion {
 	t.Helper()
 	for _, suggestion := range suggestions {
@@ -1106,6 +1206,28 @@ func findSuggestionByID(t *testing.T, suggestions []BrainSuggestion, id string) 
 	}
 	t.Fatalf("expected suggestion id=%q in %#v", id, suggestions)
 	return BrainSuggestion{}
+}
+
+func findMemoryStrength(t *testing.T, strengths []BrainMemoryStrength, targetID string) BrainMemoryStrength {
+	t.Helper()
+	for _, strength := range strengths {
+		if strength.TargetInvestigationID == targetID {
+			return strength
+		}
+	}
+	t.Fatalf("expected memory strength for target %q in %#v", targetID, strengths)
+	return BrainMemoryStrength{}
+}
+
+func findAttentionItem(t *testing.T, items []BrainAttentionItem, kind string) BrainAttentionItem {
+	t.Helper()
+	for _, item := range items {
+		if item.Kind == kind {
+			return item
+		}
+	}
+	t.Fatalf("expected attention item kind=%q in %#v", kind, items)
+	return BrainAttentionItem{}
 }
 
 func TestForgetMemoryLinkRemovesLinkAndDismissesExistingSignal(t *testing.T) {
@@ -1210,6 +1332,13 @@ func TestHandleAPIRejectsInvalidBrainRoutes(t *testing.T) {
 	HandleAPI(recorder, request, service)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid suggestion investigation id to be rejected, got %d", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/brain/attention?investigationId=../escape", nil)
+	recorder = httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid attention investigation id to be rejected, got %d", recorder.Code)
 	}
 
 	request = httptest.NewRequest(http.MethodPut, "/api/brain/clusters/missing/pin", nil)
