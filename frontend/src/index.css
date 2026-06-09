@@ -6048,6 +6048,37 @@ body {
   color: var(--forensic-accent);
 }
 
+.forensic-brain-strength-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+  border-top: 1px solid rgba(129, 227, 255, 0.1);
+  padding-top: 0.56rem;
+}
+
+.forensic-brain-strength-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  max-width: 100%;
+  min-height: 1.7rem;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  background: rgba(129, 227, 255, 0.045);
+  padding: 0 0.48rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.forensic-brain-strength-row strong {
+  overflow: hidden;
+  max-width: 13rem;
+  color: var(--forensic-text);
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .forensic-brain-map-radar {
   flex: 0 0 auto;
   border-bottom: 1px solid rgba(129, 227, 255, 0.14);

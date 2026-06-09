@@ -45,6 +45,7 @@ import {
   toggleBrainClusterPin,
   unhideBrainCluster,
   type BrainAttentionSummary,
+  type BrainMemoryStrength,
   type BrainSuggestion,
   type BrainSignal,
   type BrainSignalReason,
@@ -257,6 +258,18 @@ const formatAttentionKind = (kind: string) => {
     default:
       return kind.replace(/-/g, ' ')
   }
+}
+
+const formatStrengthSummary = (strength?: BrainMemoryStrength) => {
+  if (!strength) {
+    return []
+  }
+
+  return [
+    `Strength: ${formatAttentionState(strength.state)}`,
+    `Memory score: ${formatScore(strength.score)}`,
+    strength.activationCount > 0 ? formatActivationCount(strength.activationCount) : '',
+  ].filter(Boolean)
 }
 
 const uniqueStrings = (items: Array<string | undefined>) => Array.from(new Set(
@@ -611,6 +624,33 @@ export default function BrainSignalsPanel({
     () => allLinkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
     [allLinkGroups, selectedMemoryLinkId],
   )
+  const memoryStrengthByLinkId = useMemo(() => {
+    const map = new Map<string, BrainMemoryStrength>()
+    attentionSummary?.memoryStrengths.forEach((strength) => {
+      if (strength.linkId) {
+        map.set(strength.linkId, strength)
+      }
+    })
+    return map
+  }, [attentionSummary])
+  const memoryStrengthBySignalId = useMemo(() => {
+    const map = new Map<string, BrainMemoryStrength>()
+    attentionSummary?.memoryStrengths.forEach((strength) => {
+      if (strength.signalId) {
+        map.set(strength.signalId, strength)
+      }
+    })
+    return map
+  }, [attentionSummary])
+  const memoryStrengthByClusterId = useMemo(() => {
+    const map = new Map<string, BrainMemoryStrength>()
+    attentionSummary?.memoryStrengths.forEach((strength) => {
+      if (strength.clusterId) {
+        map.set(strength.clusterId, strength)
+      }
+    })
+    return map
+  }, [attentionSummary])
   const selectedCompareContext = useMemo<BrainCompareContext | null>(() => {
     if (!compareSelection) {
       return null
@@ -624,6 +664,7 @@ export default function BrainSignalsPanel({
         return null
       }
       const signal = group.primary
+      const strength = memoryStrengthBySignalId.get(signal.id)
       return {
         kindLabel: 'Active signal',
         title: signal.targetTitle,
@@ -636,6 +677,7 @@ export default function BrainSignalsPanel({
         gateways: uniqueStrings(group.gateways.map(formatGateway)),
         targetInvestigationId: signal.targetInvestigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatCountLabel(group.signals.length, 'signal'),
           ...relatedClustersForSignalGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
         ],
@@ -651,6 +693,7 @@ export default function BrainSignalsPanel({
       }
       const link = group.primary
       const currentIsFrom = link.fromInvestigationId === currentInvestigationId
+      const strength = memoryStrengthByLinkId.get(link.id)
       return {
         kindLabel: 'Durable memory link',
         title: currentIsFrom ? link.toTitle : link.fromTitle,
@@ -663,6 +706,7 @@ export default function BrainSignalsPanel({
         gateways: uniqueStrings(group.gateways.map(formatGateway)),
         targetInvestigationId: currentIsFrom ? link.toInvestigationId : link.fromInvestigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatMemoryLinkType(group.promotionType),
           formatActivationCount(group.activationCount),
           ...relatedClustersForLinkGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
@@ -676,6 +720,7 @@ export default function BrainSignalsPanel({
         return null
       }
       const targetMember = cluster.members.find((member) => member.investigationId !== currentInvestigationId)
+      const strength = memoryStrengthByClusterId.get(cluster.id)
       return {
         kindLabel: 'Memory cluster',
         title: cluster.label,
@@ -691,6 +736,7 @@ export default function BrainSignalsPanel({
         ]),
         targetInvestigationId: targetMember?.investigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatClusterStatus(cluster.status),
           formatClusterMemberCount(cluster),
           formatCountLabel(getClusterSignalCount(cluster), 'signal'),
@@ -718,6 +764,10 @@ export default function BrainSignalsPanel({
         relatedSignals[0]?.targetTitle ||
         suggestion.targetInvestigationIds[0] ||
         'Related memory context'
+      const strength =
+        (relatedLinks[0] ? memoryStrengthByLinkId.get(relatedLinks[0].id) : undefined) ||
+        (relatedClusters[0] ? memoryStrengthByClusterId.get(relatedClusters[0].id) : undefined) ||
+        (relatedSignals[0] ? memoryStrengthBySignalId.get(relatedSignals[0].id) : undefined)
       return {
         kindLabel: formatSuggestionKind(suggestion.kind),
         title: suggestion.title,
@@ -736,6 +786,7 @@ export default function BrainSignalsPanel({
           relatedSignals[0]?.targetInvestigationId ||
           relatedLinks[0]?.toInvestigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatCountLabel(relatedClusters.length, 'cluster'),
           formatCountLabel(relatedSignals.length, 'signal'),
           formatCountLabel(relatedLinks.length, 'memory link'),
@@ -747,6 +798,13 @@ export default function BrainSignalsPanel({
     if (!node) {
       return null
     }
+    const nodeStrength = node.linkId
+      ? memoryStrengthByLinkId.get(node.linkId)
+      : node.signalId
+        ? memoryStrengthBySignalId.get(node.signalId)
+        : node.clusterId
+          ? memoryStrengthByClusterId.get(node.clusterId)
+          : undefined
 
     return {
       kindLabel: node.kind === 'current'
@@ -766,6 +824,7 @@ export default function BrainSignalsPanel({
       gateways: uniqueStrings(node.gateways.map(formatGateway)),
       targetInvestigationId: node.targetInvestigationId,
       relatedSummary: [
+        ...formatStrengthSummary(nodeStrength),
         ...node.badges,
         formatCountLabel(node.relatedSignalIds?.length || 0, 'signal'),
         formatCountLabel(node.relatedMemoryLinkIds?.length || 0, 'memory link'),
@@ -777,6 +836,9 @@ export default function BrainSignalsPanel({
     allSignalGroups,
     compareSelection,
     currentInvestigationId,
+    memoryStrengthByClusterId,
+    memoryStrengthByLinkId,
+    memoryStrengthBySignalId,
     rankedClusters,
     rankedLinks,
     rankedSignals,
@@ -2357,6 +2419,16 @@ export default function BrainSignalsPanel({
             </article>
           ))}
         </div>
+        {attentionSummary.memoryStrengths.length > 0 && (
+          <div className="forensic-brain-strength-row" aria-label="Top memory strengths">
+            {attentionSummary.memoryStrengths.slice(0, 3).map((strength) => (
+              <span key={strength.id}>
+                <strong>{strength.title}</strong>
+                {formatAttentionState(strength.state)} / {formatScore(strength.score)}
+              </span>
+            ))}
+          </div>
+        )}
       </section>
     )
   }

@@ -566,6 +566,7 @@ describe('BrainSignalsPanel', () => {
       clusters: [cluster],
       suggestions: [suggestion],
       brainMap: backendBrainMap,
+      attention: attentionSummary,
     })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
@@ -579,7 +580,10 @@ describe('BrainSignalsPanel', () => {
     await openBrainView(user, /memory links view/i)
     const linkCard = await screen.findByTestId('brain-link-card')
     await user.click(within(linkCard).getByRole('button', { name: /compare memory link older substation case/i }))
-    expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Durable memory link')
+    const linkCompare = await screen.findByTestId('brain-compare-workspace')
+    expect(linkCompare).toHaveTextContent('Durable memory link')
+    expect(linkCompare).toHaveTextContent('Strength: Reinforced')
+    expect(linkCompare).toHaveTextContent('Memory score: 91%')
     await user.click(screen.getByRole('button', { name: /close brain compare/i }))
 
     await openBrainView(user, /memory clusters view/i)
@@ -1158,6 +1162,8 @@ describe('BrainSignalsPanel', () => {
     expect(attention).toHaveTextContent('Memory reinforced')
     expect(attention).toHaveTextContent('Older Substation Case has fired 4 time(s).')
     expect(attention).toHaveTextContent('Compare linked memory')
+    expect(attention).toHaveTextContent('Older Substation Case')
+    expect(attention).toHaveTextContent('Reinforced / 91%')
   })
 
   it('renders a readable brain map with digest and selected memory detail', async () => {
