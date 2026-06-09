@@ -363,6 +363,107 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
     }
   }
 
+  const attentionPayload = () => ({
+    investigationId: signal.investigationId,
+    investigationTitle: signal.investigationTitle,
+    generatedAt: '2026-06-05T12:02:00Z',
+    overallScore: promoted && !forgotten ? 0.94 : 0.86,
+    dominantState: promoted && !forgotten ? 'reinforced' : 'hot',
+    counts: {
+      activeSignals: promoted || forgotten ? 0 : 1,
+      linkedMemories: promoted && !forgotten ? 1 : 0,
+      memoryClusters: forgotten ? 0 : 1,
+      activeNextMoves: suggestionDismissed ? 0 : 1,
+      reviewedNextMoves: suggestionReviewed ? 1 : 0,
+      reinforcedMemories: promoted && !forgotten ? 1 : 0,
+      dormantMemories: 0,
+      autoLinkedMemories: promoted && !forgotten ? 1 : 0,
+      manualLinkedMemory: 0,
+    },
+    memoryStrengths: [
+      promoted && !forgotten
+        ? {
+            id: 'brain-strength-smoke-link',
+            kind: 'memory-link',
+            title: link.toTitle,
+            score: 0.94,
+            state: 'reinforced',
+            targetInvestigationId: link.toInvestigationId,
+            linkId: link.id,
+            gateway: 'entity-date',
+            gateways: link.gateways,
+            reasonSamples: link.reasons,
+            activationCount: 4,
+            signalCount: 0,
+            memoryLinkCount: 1,
+            clusterMemberCount: 0,
+            lastActivatedAt: '2026-06-05T12:02:00Z',
+            suggestedAction: 'Compare linked memory',
+            relatedSignalIds: [signal.id],
+            relatedMemoryLinkIds: [link.id],
+            memberInvestigationIds: [],
+          }
+        : {
+            id: 'brain-strength-smoke-signal',
+            kind: 'active-signal',
+            title: signal.targetTitle,
+            score: 0.86,
+            state: 'hot',
+            targetInvestigationId: signal.targetInvestigationId,
+            signalId: signal.id,
+            gateway: 'entity-date',
+            gateways: signal.gateways,
+            reasonSamples: signal.reasons,
+            activationCount: 1,
+            signalCount: 1,
+            memoryLinkCount: 0,
+            clusterMemberCount: 0,
+            lastActivatedAt: '2026-06-05T12:02:00Z',
+            suggestedAction: signal.suggestedAction,
+            relatedSignalIds: [signal.id],
+            relatedMemoryLinkIds: [],
+            memberInvestigationIds: [],
+          },
+    ],
+    items: [
+      promoted && !forgotten
+        ? {
+            id: 'brain-attention-smoke-link',
+            kind: 'memory-reinforced',
+            tone: 'reinforced',
+            title: 'Memory reinforced',
+            detail: `${link.toTitle} has fired 4 time(s).`,
+            score: 0.94,
+            suggestedAction: 'Compare linked memory',
+            targetInvestigationId: link.toInvestigationId,
+            linkId: link.id,
+            relatedSignalIds: [signal.id],
+            relatedMemoryLinkIds: [link.id],
+            relatedClusterIds: [],
+            memberInvestigationIds: [],
+            reasonSamples: link.reasons,
+            updatedAt: '2026-06-05T12:02:00Z',
+          }
+        : {
+            id: 'brain-attention-smoke-signal',
+            kind: 'signal-firing',
+            tone: 'hot',
+            title: 'Signal firing',
+            detail: `${signal.targetTitle} is firing through entity/date.`,
+            score: 0.86,
+            suggestedAction: signal.suggestedAction,
+            targetInvestigationId: signal.targetInvestigationId,
+            signalId: signal.id,
+            relatedSignalIds: [signal.id],
+            relatedMemoryLinkIds: [],
+            relatedClusterIds: [],
+            memberInvestigationIds: [],
+            reasonSamples: signal.reasons,
+            updatedAt: '2026-06-05T12:02:00Z',
+          },
+    ],
+  })
+
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -429,6 +530,35 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
             suggestionCount: 0,
             strongestScore: 0,
           },
+        }),
+      })
+      return
+    }
+
+    if (request.method() === 'GET' && url.pathname.endsWith('/attention')) {
+      const investigationId = url.searchParams.get('investigationId')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(investigationId === signal.investigationId && !forgotten ? attentionPayload() : {
+          investigationId: investigationId || '',
+          investigationTitle: '',
+          generatedAt: '2026-06-05T12:02:00Z',
+          overallScore: 0,
+          dominantState: 'dormant',
+          counts: {
+            activeSignals: 0,
+            linkedMemories: 0,
+            memoryClusters: 0,
+            activeNextMoves: 0,
+            reviewedNextMoves: 0,
+            reinforcedMemories: 0,
+            dormantMemories: 0,
+            autoLinkedMemories: 0,
+            manualLinkedMemory: 0,
+          },
+          memoryStrengths: [],
+          items: [],
         }),
       })
       return
@@ -828,6 +958,8 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 next move')
+    await expect(page.getByTestId('brain-attention-summary')).toContainText('Hot memory attention')
+    await expect(page.getByTestId('brain-attention-summary')).toContainText('Signal firing')
 
     await page.getByRole('button', { name: /next moves view/i }).click()
     const suggestionCard = page.getByTestId('brain-suggestion-card').filter({ hasText: 'Review active memory cluster' })
@@ -902,6 +1034,9 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-link-card')).toContainText('Cluster: Grid reliability signal')
     await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 memory group')
+    await expect(page.getByTestId('brain-health-summary')).toContainText('1 reinforced memory')
+    await expect(page.getByTestId('brain-attention-summary')).toContainText('Reinforced memory attention')
+    await expect(page.getByTestId('brain-attention-summary')).toContainText('QA: Source Case has fired 4 time(s).')
     await expect(radar.getByRole('button', { name: /select memory qa: source case/i })).toBeVisible()
 
     await page.reload()
@@ -923,6 +1058,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
     await expect(page.getByTestId('brain-link-card')).toContainText('Cluster: Grid reliability signal')
+    await expect(page.getByTestId('brain-attention-summary')).toContainText('Reinforced memory attention')
     await page.getByRole('button', { name: /memory clusters view/i }).click()
     const restoredCluster = page.getByTestId('brain-cluster-card').filter({ hasText: 'Grid reliability signal' })
     await expect(restoredCluster).toContainText('Pinned')
