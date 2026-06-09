@@ -117,7 +117,7 @@ const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
-type BrainView = 'map' | 'moves' | 'signals' | 'links' | 'clusters'
+type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters'
 
 type BrainCompareSelection =
   | { kind: 'signal'; id: string }
@@ -315,7 +315,7 @@ export default function BrainSignalsPanel({
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
-  const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
+  const [activeBrainView, setActiveBrainView] = useState<BrainView>('focus')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
@@ -1072,6 +1072,54 @@ export default function BrainSignalsPanel({
     setGatewayFilter('all')
     setStrengthFilter('all')
     setActiveBrainView('signals')
+  }
+
+  const focusCompareSelection = (): BrainCompareSelection | null => {
+    const focus = attentionSummary?.focus
+    if (!focus) {
+      return null
+    }
+    if (focus.linkId && rankedLinks.some((link) => link.id === focus.linkId)) {
+      return { kind: 'link', id: focus.linkId }
+    }
+    if (focus.clusterId && rankedClusters.some((cluster) => cluster.id === focus.clusterId)) {
+      return { kind: 'cluster', id: focus.clusterId }
+    }
+    if (focus.signalId && rankedSignals.some((signal) => signal.id === focus.signalId)) {
+      return { kind: 'signal', id: focus.signalId }
+    }
+    return null
+  }
+
+  const handleInspectFocus = () => {
+    const focus = attentionSummary?.focus
+    if (!focus) {
+      return
+    }
+    setGatewayFilter('all')
+    setStrengthFilter('all')
+    if (focus.clusterId) {
+      setSelectedClusterId(focus.clusterId)
+      setActiveBrainView('clusters')
+      return
+    }
+    if (focus.linkId) {
+      setSelectedMemoryLinkId(focus.linkId)
+      setActiveBrainView('links')
+      return
+    }
+    if (focus.signalId) {
+      setActiveBrainView('signals')
+      return
+    }
+    setActiveBrainView('map')
+  }
+
+  const handleCompareFocus = () => {
+    const selection = focusCompareSelection()
+    if (selection) {
+      setCompareSelection(selection)
+    }
   }
 
   const resetBrainMapViewport = () => {
@@ -2338,6 +2386,110 @@ export default function BrainSignalsPanel({
     </div>
   )
 
+  const renderFocusView = () => {
+    const focus = attentionSummary?.focus
+    const compareSelection = focusCompareSelection()
+    const sourceLabel = focus?.clusterId
+      ? 'View Cluster'
+      : focus?.linkId
+        ? 'View Link'
+        : focus?.signalId
+          ? 'View Signal'
+          : 'View Map'
+    const canOpenTarget = !!focus?.targetInvestigationId && !!onOpenInvestigation
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-focus">
+        <section data-testid="brain-focus-view" className="forensic-brain-focus-panel" aria-label="Brain focus narrative">
+          {!currentInvestigationId ? (
+            <div className="forensic-brain-empty">
+              Select an investigation to generate a Brain focus summary.
+            </div>
+          ) : isLoading ? (
+            <div className="forensic-brain-empty">
+              Reading Brain focus...
+            </div>
+          ) : !focus ? (
+            <div className="forensic-brain-empty">
+              No Brain focus yet. Run or refresh Brain after memory signals form.
+            </div>
+          ) : (
+            <>
+              {focus.supportingFacts.length > 0 && (
+                <div className="forensic-brain-focus-facts" aria-label="Supporting Brain context">
+                  {focus.supportingFacts.slice(0, 5).map((fact) => (
+                    <span key={`focus:fact:${fact}`}>{fact}</span>
+                  ))}
+                </div>
+              )}
+
+              <div className="forensic-brain-focus-hero">
+                <div>
+                  <span className="forensic-brain-panel-kicker">Brain focus</span>
+                  <h3>{focus.headline}</h3>
+                  <p>{focus.summary}</p>
+                </div>
+                <strong>{formatScore(attentionSummary?.overallScore ?? 0)}</strong>
+              </div>
+
+              <div className="forensic-brain-focus-grid">
+                <article>
+                  <span>Why it matters</span>
+                  <p>{focus.whyItMatters}</p>
+                </article>
+                <article>
+                  <span>Best next move</span>
+                  <p>{focus.recommendedAction}</p>
+                </article>
+              </div>
+
+              <div className="forensic-brain-focus-actions">
+                <button
+                  type="button"
+                  className="forensic-brain-action forensic-brain-action-primary"
+                  disabled={!compareSelection}
+                  onClick={handleCompareFocus}
+                >
+                  <Maximize2 size={13} />
+                  Compare Focus
+                </button>
+                <button
+                  type="button"
+                  className="forensic-brain-action forensic-brain-action-primary"
+                  onClick={handleInspectFocus}
+                >
+                  <ExternalLink size={13} />
+                  {sourceLabel}
+                </button>
+                <button
+                  type="button"
+                  className="forensic-brain-action forensic-brain-action-secondary"
+                  disabled={!canOpenTarget}
+                  onClick={() => {
+                    if (focus.targetInvestigationId) {
+                      onOpenInvestigation?.(focus.targetInvestigationId)
+                    }
+                  }}
+                >
+                  <ExternalLink size={13} />
+                  Open Remembered Case
+                </button>
+                <button
+                  type="button"
+                  className="forensic-brain-action forensic-brain-action-secondary"
+                  onClick={() => setActiveBrainView('map')}
+                >
+                  <Brain size={13} />
+                  View Map
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    )
+  }
+
   const renderBrainHealth = () => (
     <div data-testid="brain-health-summary" className="forensic-brain-health-strip" aria-label="Brain memory health">
       <div>
@@ -2834,6 +2986,7 @@ export default function BrainSignalsPanel({
   }
 
   const brainViewOptions: Array<{ view: BrainView; label: string; detail: string }> = [
+    { view: 'focus', label: 'Focus', detail: attentionSummary?.focus ? formatAttentionState(attentionSummary.dominantState) : 'summary' },
     { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
     { view: 'moves', label: 'Next Moves', detail: `${activeSuggestions.length} active` },
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
@@ -2856,7 +3009,9 @@ export default function BrainSignalsPanel({
         </div>
         <div className="forensic-brain-command-actions">
           <span className="forensic-brain-status">
-            {activeSuggestions.length} moves / {allSignalGroups.length} active / {allLinkGroups.length} linked / {visibleClusters.length} clusters
+            {attentionSummary?.focus
+              ? `Focus: ${formatAttentionState(attentionSummary.dominantState)} / ${formatScore(attentionSummary.overallScore)}`
+              : 'Brain focus pending'}
           </span>
           {renderBrainAttentionTrigger()}
           <button
@@ -2894,6 +3049,7 @@ export default function BrainSignalsPanel({
       {renderBrainAttentionPanel()}
 
       <div className="forensic-brain-active-view">
+        {activeBrainView === 'focus' && renderFocusView()}
         {activeBrainView === 'map' && (
           <div className="forensic-brain-view forensic-brain-view-map">
             {renderBrainHealth()}

@@ -852,6 +852,21 @@ func TestServiceBuildsBrainAttentionSummary(t *testing.T) {
 	if len(attention.Items) == 0 {
 		t.Fatalf("expected attention items, got %#v", attention)
 	}
+	if strings.TrimSpace(attention.Focus.Headline) == "" {
+		t.Fatalf("expected focus narrative headline, got %#v", attention.Focus)
+	}
+	if !strings.Contains(attention.Focus.Summary, "Current Grid Case") {
+		t.Fatalf("expected focus narrative to name current investigation, got %#v", attention.Focus)
+	}
+	if strings.TrimSpace(attention.Focus.WhyItMatters) == "" {
+		t.Fatalf("expected focus narrative why-it-matters text, got %#v", attention.Focus)
+	}
+	if strings.TrimSpace(attention.Focus.RecommendedAction) == "" {
+		t.Fatalf("expected focus narrative recommended action, got %#v", attention.Focus)
+	}
+	if len(attention.Focus.SupportingFacts) == 0 {
+		t.Fatalf("expected focus narrative supporting facts, got %#v", attention.Focus)
+	}
 
 	strength := findMemoryStrength(t, attention.MemoryStrengths, "inv-old-strong")
 	if strength.Score < 0.8 {
@@ -1135,6 +1150,9 @@ func TestHandleAPIRoutesBrainAttention(t *testing.T) {
 	}
 	if len(attention.Items) == 0 {
 		t.Fatalf("expected attention route to include items, got %#v", attention)
+	}
+	if strings.TrimSpace(attention.Focus.Headline) == "" {
+		t.Fatalf("expected attention route to include focus narrative, got %#v", attention.Focus)
 	}
 }
 

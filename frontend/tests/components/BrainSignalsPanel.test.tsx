@@ -161,6 +161,18 @@ const attentionSummary: BrainAttentionSummary = {
       updatedAt: '2026-06-09T09:00:00Z',
     },
   ],
+  focus: {
+    headline: 'Older Substation Case is the strongest remembered case right now',
+    summary: 'Current Grid Case is strongly connected to older memory Older Substation Case through entity/date recall.',
+    whyItMatters: 'Repeated clues include Northgate Substation A-17. It has fired 4 times.',
+    recommendedAction: 'Compare linked memory',
+    supportingFacts: ['91% attention strength', 'Strongest gateway: entity/date', '2 active firings'],
+    primaryKind: 'memory-link',
+    primaryTitle: 'Older Substation Case',
+    primaryGateway: 'entity-date',
+    targetInvestigationId: 'inv-older',
+    linkId: link.id,
+  },
 }
 
 const backendBrainMap = {
@@ -1113,6 +1125,7 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('summarizes brain memory health across active and linked memory', async () => {
+    const user = userEvent.setup()
     const sourceSignal = makeSignal({
       id: 'brain-signal-health-source',
       targetInvestigationId: 'inv-health-source',
@@ -1138,6 +1151,7 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const health = await screen.findByTestId('brain-health-summary')
     expect(health).toHaveTextContent('2 firing cases')
     expect(health).toHaveTextContent('2 memory groups')
@@ -1150,6 +1164,7 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const health = await screen.findByTestId('brain-health-summary')
     expect(health).toHaveTextContent('Reinforced')
     expect(health).toHaveTextContent('91%')
@@ -1171,6 +1186,20 @@ describe('BrainSignalsPanel', () => {
 
     await user.click(within(attention).getByRole('button', { name: /close brain attention summary/i }))
     expect(screen.queryByTestId('brain-attention-summary')).not.toBeInTheDocument()
+  })
+
+  it('opens with a plain language Brain focus view', async () => {
+    installBrainFetch({ attention: attentionSummary })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    expect(await screen.findByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
+    const focus = await screen.findByTestId('brain-focus-view')
+    expect(focus).toHaveTextContent('Older Substation Case is the strongest remembered case right now')
+    expect(focus).toHaveTextContent('Current Grid Case is strongly connected to older memory Older Substation Case')
+    expect(focus).toHaveTextContent('Repeated clues include Northgate Substation A-17')
+    expect(focus).toHaveTextContent('Compare linked memory')
+    expect(focus).toHaveTextContent('91% attention strength')
   })
 
   it('renders a readable brain map with digest and selected memory detail', async () => {
@@ -1207,6 +1236,7 @@ describe('BrainSignalsPanel', () => {
       />,
     )
 
+    await openBrainView(user, /memory map view/i)
     const radar = await screen.findByTestId('brain-map-radar')
     expect(radar).toHaveTextContent('Memory map')
     expect(radar).toHaveTextContent('Current Grid Case')
@@ -1230,10 +1260,12 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('renders the backend Brain Map graph when available', async () => {
+    const user = userEvent.setup()
     installBrainFetch({ brainMap: backendBrainMap })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const radar = await screen.findByTestId('brain-map-radar')
     expect(radar).toHaveTextContent('Backend Cluster Region')
     expect(radar).toHaveTextContent('Backend map loaded')
@@ -1248,15 +1280,17 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('renders living map regions and pathways from backend graph coordinates', async () => {
+    const user = userEvent.setup()
     installBrainFetch({ brainMap: backendBrainMap })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const radar = await screen.findByTestId('brain-map-radar')
     expect(within(radar).getByTestId('brain-map-graph-region')).toHaveTextContent('Backend Cluster Region')
     expect(within(radar).getByTestId('brain-map-graph-edge')).toHaveAttribute('data-edge-kind', 'cluster')
 
-    await userEvent.click(within(radar).getByRole('button', { name: /select cluster backend cluster region/i }))
+    await user.click(within(radar).getByRole('button', { name: /select cluster backend cluster region/i }))
     expect(within(radar).getByTestId('brain-map-selected-node')).toHaveTextContent('Memory cluster')
   })
 
@@ -1266,6 +1300,7 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const radar = await screen.findByTestId('brain-map-radar')
     const canvas = within(radar).getByTestId('brain-map-canvas')
     expect(radar).not.toHaveClass('is-expanded')
@@ -1284,6 +1319,7 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const radar = await screen.findByTestId('brain-map-radar')
     const canvas = within(radar).getByTestId('brain-map-canvas')
     expect(within(radar).getAllByTestId('brain-map-node')).toHaveLength(8)
@@ -1306,6 +1342,7 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    await openBrainView(user, /memory map view/i)
     const radar = await screen.findByTestId('brain-map-radar')
     const canvas = within(radar).getByTestId('brain-map-canvas')
     await user.click(within(canvas).getByRole('button', { name: /expand brain map/i }))
@@ -1353,6 +1390,10 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
+    expect(await screen.findByTestId('brain-focus-view')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
+    await openBrainView(user, /memory map view/i)
     expect(await screen.findByTestId('brain-map-radar')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /memory map view/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()

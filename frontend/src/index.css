@@ -5892,6 +5892,7 @@ body {
 }
 
 .forensic-brain-view-map,
+.forensic-brain-view-focus,
 .forensic-brain-view-moves,
 .forensic-brain-view-signals,
 .forensic-brain-view-links,
@@ -5900,6 +5901,7 @@ body {
   flex-direction: column;
 }
 
+.forensic-brain-view-focus .forensic-brain-focus-panel,
 .forensic-brain-view-map .forensic-brain-map-radar,
 .forensic-brain-view-moves .forensic-brain-panel,
 .forensic-brain-view-signals .forensic-brain-panel,
@@ -5918,6 +5920,123 @@ body {
 .forensic-brain-view-map .forensic-brain-map-shell {
   flex: 1 1 0;
   height: auto;
+}
+
+.forensic-brain-focus-panel {
+  flex: 1 1 0;
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 0.75rem;
+  overflow: auto;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.14);
+  background:
+    radial-gradient(circle at 14% 0%, rgba(129, 227, 255, 0.1), transparent 22rem),
+    radial-gradient(circle at 92% 12%, rgba(0, 255, 65, 0.07), transparent 20rem),
+    rgba(2, 6, 10, 0.74);
+  padding: 0.95rem;
+}
+
+.forensic-brain-focus-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  border-left: 3px solid var(--forensic-accent);
+  background:
+    linear-gradient(90deg, rgba(129, 227, 255, 0.08), transparent 62%),
+    rgba(1, 4, 7, 0.82);
+  padding: 1rem;
+}
+
+.forensic-brain-focus-hero h3 {
+  margin: 0.22rem 0 0;
+  max-width: 70rem;
+  color: var(--forensic-text);
+  font-size: clamp(1.1rem, 1.4vw, 1.55rem);
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+.forensic-brain-focus-hero p {
+  margin: 0.58rem 0 0;
+  max-width: 78rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.forensic-brain-focus-hero > strong {
+  border: 1px solid rgba(0, 255, 65, 0.28);
+  background: rgba(0, 255, 65, 0.08);
+  padding: 0.5rem 0.62rem;
+  color: #8dffa9;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.forensic-brain-focus-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.forensic-brain-focus-grid article {
+  min-width: 0;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  background: rgba(1, 5, 8, 0.72);
+  padding: 0.82rem;
+}
+
+.forensic-brain-focus-grid span {
+  display: block;
+  color: #ff6f9f;
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-focus-grid p {
+  margin: 0.42rem 0 0;
+  color: var(--forensic-text);
+  font-size: 0.8rem;
+  font-weight: 850;
+  line-height: 1.5;
+}
+
+.forensic-brain-focus-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  border-left: 3px solid var(--forensic-accent);
+  background:
+    linear-gradient(90deg, rgba(255, 45, 117, 0.08), transparent 32%),
+    rgba(1, 5, 8, 0.74);
+  padding: 0.52rem 0.62rem;
+}
+
+.forensic-brain-focus-facts span {
+  min-height: 1.85rem;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  background: rgba(129, 227, 255, 0.055);
+  padding: 0.48rem 0.56rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.forensic-brain-focus-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(8.5rem, 1fr));
+  gap: 0.5rem;
+}
+
+.forensic-brain-focus-actions .forensic-brain-action {
+  justify-content: center;
 }
 
 .forensic-brain-filter-bar {
@@ -10775,6 +10894,20 @@ body {
   .forensic-brain-health-strip,
   .forensic-brain-map-side {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .forensic-brain-focus-panel {
+    padding: 0.62rem;
+  }
+
+  .forensic-brain-focus-hero,
+  .forensic-brain-focus-grid,
+  .forensic-brain-focus-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .forensic-brain-focus-hero > strong {
+    justify-self: start;
   }
 
   .forensic-brain-attention-trigger {

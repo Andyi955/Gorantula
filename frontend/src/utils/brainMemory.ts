@@ -157,6 +157,21 @@ export interface BrainAttentionItem {
   updatedAt?: string
 }
 
+export interface BrainFocusNarrative {
+  headline: string
+  summary: string
+  whyItMatters: string
+  recommendedAction: string
+  supportingFacts: string[]
+  primaryKind?: string
+  primaryTitle?: string
+  primaryGateway?: BrainGateway
+  targetInvestigationId?: string
+  clusterId?: string
+  signalId?: string
+  linkId?: string
+}
+
 export interface BrainAttentionSummary {
   investigationId: string
   investigationTitle: string
@@ -166,6 +181,7 @@ export interface BrainAttentionSummary {
   counts: BrainAttentionCounts
   memoryStrengths: BrainMemoryStrength[]
   items: BrainAttentionItem[]
+  focus: BrainFocusNarrative
 }
 
 export interface BrainMapNode {
@@ -278,6 +294,20 @@ const normalizeBrainSuggestion = (suggestion: BrainSuggestion): BrainSuggestion 
 
 const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttentionSummary => ({
   ...summary,
+  focus: {
+    headline: summary.focus?.headline || 'No strong Brain focus yet',
+    summary: summary.focus?.summary || 'Run or refresh Brain after this investigation creates memory signals.',
+    whyItMatters: summary.focus?.whyItMatters || 'Gorantula will surface repeated evidence once enough memory context exists.',
+    recommendedAction: summary.focus?.recommendedAction || 'Continue the investigation',
+    supportingFacts: asStringArray(summary.focus?.supportingFacts),
+    primaryKind: summary.focus?.primaryKind,
+    primaryTitle: summary.focus?.primaryTitle,
+    primaryGateway: summary.focus?.primaryGateway,
+    targetInvestigationId: summary.focus?.targetInvestigationId,
+    clusterId: summary.focus?.clusterId,
+    signalId: summary.focus?.signalId,
+    linkId: summary.focus?.linkId,
+  },
   memoryStrengths: Array.isArray(summary.memoryStrengths)
     ? summary.memoryStrengths.map((strength) => ({
         ...strength,
