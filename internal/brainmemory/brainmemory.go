@@ -3345,6 +3345,10 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string) 
 
 	gateways := uniqueGateways(reasons)
 	score := scoreReasons(reasons)
+	if broadContextOnlyReasons(reasons) {
+		reasons = annotateBroadContextReasons(reasons)
+		score = minFloat(score, 0.28)
+	}
 	signal := BrainSignal{
 		InvestigationID:       current.ID,
 		InvestigationTitle:    current.Title,
@@ -3353,7 +3357,7 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string) 
 		Score:                 score,
 		Gateways:              gateways,
 		Reasons:               reasons,
-		SuggestedAction:       suggestedAction(gateways),
+		SuggestedAction:       suggestedActionForSignal(gateways, reasons),
 		CreatedAt:             timestamp,
 		UpdatedAt:             timestamp,
 	}
@@ -3606,6 +3610,71 @@ func scoreReasons(reasons []SignalReason) float64 {
 		return 0.98
 	}
 	return score
+}
+
+func broadContextOnlyReasons(reasons []SignalReason) bool {
+	if len(reasons) == 0 {
+		return false
+	}
+	for _, reason := range reasons {
+		if reason.Gateway != GatewayEntityDate || !isBroadEntityDateReason(reason) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBroadEntityDateReason(reason SignalReason) bool {
+	value := strings.ToUpper(strings.TrimSpace(reason.Value))
+	switch {
+	case strings.HasPrefix(value, "LOC|"):
+		return true
+	case strings.HasPrefix(value, "DATE|"):
+		return broadDateLabel(nonEmptyString(reason.Label, strings.TrimPrefix(value, "DATE|")))
+	default:
+		return false
+	}
+}
+
+func broadDateLabel(label string) bool {
+	label = strings.TrimSpace(label)
+	if len(label) == 4 && numericString(label) {
+		return true
+	}
+	if len(label) == 7 && label[4] == '-' && numericString(label[:4]) && numericString(label[5:]) {
+		return true
+	}
+	return false
+}
+
+func numericString(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func annotateBroadContextReasons(reasons []SignalReason) []SignalReason {
+	annotated := make([]SignalReason, 0, len(reasons))
+	for _, reason := range reasons {
+		if isBroadEntityDateReason(reason) && !strings.Contains(strings.ToLower(reason.Detail), "broad context") {
+			reason.Detail = reason.Detail + " This is a broad context match and needs bridge evidence before it should guide the investigation."
+		}
+		annotated = append(annotated, reason)
+	}
+	return annotated
+}
+
+func suggestedActionForSignal(gateways []string, reasons []SignalReason) string {
+	if broadContextOnlyReasons(reasons) {
+		return "Look for bridge evidence"
+	}
+	return suggestedAction(gateways)
 }
 
 func suggestedAction(gateways []string) string {

@@ -220,6 +220,43 @@ func TestServiceKeepsNoisyDateSourceSignalsManual(t *testing.T) {
 	}
 }
 
+func TestServiceDampensBroadContextOnlySignals(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "China Robot Supply Chain"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[LOC:China] appears in a robotics supply-chain investigation."
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Olympics Broadcast Rights"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{
+			"summary":"[LOC:China] appears in an Olympics broadcasting investigation."
+		}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("expected broad context signal to remain visible for context, got %#v", signals)
+	}
+	signal := signals[0]
+	if signal.Score >= 0.35 {
+		t.Fatalf("expected broad context-only signal to be dampened below weak threshold, got %.2f", signal.Score)
+	}
+	if !strings.Contains(signal.SuggestedAction, "bridge evidence") {
+		t.Fatalf("expected bridge-evidence guidance for broad context signal, got %q", signal.SuggestedAction)
+	}
+	if !strings.Contains(strings.Join(signal.ReasonTexts(), " "), "broad context") {
+		t.Fatalf("expected reason text to explain broad context distance, got %#v", signal.Reasons)
+	}
+}
+
 func TestServiceAutoPromotesRepeatedMeaningfulWarmSignals(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Warm Case"), `{
