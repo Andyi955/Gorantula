@@ -236,6 +236,21 @@ type BrainAttentionItem struct {
 	UpdatedAt              string         `json:"updatedAt,omitempty"`
 }
 
+type BrainFocusNarrative struct {
+	Headline              string   `json:"headline"`
+	Summary               string   `json:"summary"`
+	WhyItMatters          string   `json:"whyItMatters"`
+	RecommendedAction     string   `json:"recommendedAction"`
+	SupportingFacts       []string `json:"supportingFacts"`
+	PrimaryKind           string   `json:"primaryKind,omitempty"`
+	PrimaryTitle          string   `json:"primaryTitle,omitempty"`
+	PrimaryGateway        string   `json:"primaryGateway,omitempty"`
+	TargetInvestigationID string   `json:"targetInvestigationId,omitempty"`
+	ClusterID             string   `json:"clusterId,omitempty"`
+	SignalID              string   `json:"signalId,omitempty"`
+	LinkID                string   `json:"linkId,omitempty"`
+}
+
 type BrainAttentionSummary struct {
 	InvestigationID    string                `json:"investigationId"`
 	InvestigationTitle string                `json:"investigationTitle"`
@@ -245,6 +260,7 @@ type BrainAttentionSummary struct {
 	Counts             BrainAttentionCounts  `json:"counts"`
 	MemoryStrengths    []BrainMemoryStrength `json:"memoryStrengths"`
 	Items              []BrainAttentionItem  `json:"items"`
+	Focus              BrainFocusNarrative   `json:"focus"`
 }
 
 type BrainMapView struct {
@@ -1383,6 +1399,7 @@ func buildBrainAttentionSummary(
 	if len(strengths) > 0 {
 		overallScore = strengths[0].Score
 	}
+	focus := buildBrainFocusNarrative(record, strengths, items, counts)
 	return BrainAttentionSummary{
 		InvestigationID:    record.ID,
 		InvestigationTitle: investigationRecordTitle(record),
@@ -1392,6 +1409,189 @@ func buildBrainAttentionSummary(
 		Counts:             counts,
 		MemoryStrengths:    strengths,
 		Items:              items,
+		Focus:              focus,
+	}
+}
+
+func buildBrainFocusNarrative(
+	record models.InvestigationRecord,
+	strengths []BrainMemoryStrength,
+	items []BrainAttentionItem,
+	counts BrainAttentionCounts,
+) BrainFocusNarrative {
+	currentTitle := investigationRecordTitle(record)
+	if len(strengths) == 0 && len(items) == 0 {
+		return BrainFocusNarrative{
+			Headline:          "No strong Brain focus yet",
+			Summary:           fmt.Sprintf("%s has not activated a strong older memory yet.", currentTitle),
+			WhyItMatters:      "The Brain will summarize older cases once repeated entities, source domains, or relationship patterns appear.",
+			RecommendedAction: "Continue the investigation",
+			SupportingFacts:   []string{"No active Brain firings yet"},
+		}
+	}
+
+	if len(strengths) > 0 {
+		strength := strengths[0]
+		return BrainFocusNarrative{
+			Headline:              focusHeadline(strength),
+			Summary:               focusSummary(currentTitle, strength),
+			WhyItMatters:          focusWhyItMatters(strength),
+			RecommendedAction:     focusRecommendedAction(items, strength.SuggestedAction),
+			SupportingFacts:       focusSupportingFacts(strength, counts),
+			PrimaryKind:           strength.Kind,
+			PrimaryTitle:          strength.Title,
+			PrimaryGateway:        nonEmptyString(strength.Gateway, firstGateway(strength.Gateways)),
+			TargetInvestigationID: strength.TargetInvestigationID,
+			ClusterID:             strength.ClusterID,
+			SignalID:              strength.SignalID,
+			LinkID:                strength.LinkID,
+		}
+	}
+
+	item := items[0]
+	return BrainFocusNarrative{
+		Headline:              item.Title,
+		Summary:               fmt.Sprintf("%s has an active Brain cue: %s.", currentTitle, item.Detail),
+		WhyItMatters:          firstReasonDetail(item.ReasonSamples, "This is currently the clearest Brain cue for the investigation."),
+		RecommendedAction:     nonEmptyString(item.SuggestedAction, "Review this Brain cue"),
+		SupportingFacts:       focusItemSupportingFacts(item, counts),
+		PrimaryKind:           item.Kind,
+		PrimaryTitle:          item.Title,
+		TargetInvestigationID: item.TargetInvestigationID,
+		ClusterID:             item.ClusterID,
+		SignalID:              item.SignalID,
+		LinkID:                item.LinkID,
+	}
+}
+
+func focusHeadline(strength BrainMemoryStrength) string {
+	switch strength.Kind {
+	case "memory-cluster":
+		return fmt.Sprintf("%s is the main recurring pattern right now", strength.Title)
+	case "memory-link":
+		return fmt.Sprintf("%s is the strongest remembered case right now", strength.Title)
+	case "active-signal":
+		return fmt.Sprintf("%s is the strongest older case firing right now", strength.Title)
+	default:
+		return fmt.Sprintf("%s is the strongest Brain memory right now", nonEmptyString(strength.Title, "A memory"))
+	}
+}
+
+func focusSummary(currentTitle string, strength BrainMemoryStrength) string {
+	gateway := formatGatewayName(nonEmptyString(strength.Gateway, firstGateway(strength.Gateways)))
+	switch strength.Kind {
+	case "memory-cluster":
+		if strength.ClusterMemberCount > 0 {
+			return fmt.Sprintf("%s is activating the %s memory cluster across %s through %s recall.", currentTitle, strength.Title, focusCountLabel(strength.ClusterMemberCount, "related investigation", "related investigations"), gateway)
+		}
+		return fmt.Sprintf("%s is activating the %s memory cluster through %s recall.", currentTitle, strength.Title, gateway)
+	case "memory-link":
+		return fmt.Sprintf("%s is strongly connected to older memory %s through %s recall.", currentTitle, strength.Title, gateway)
+	case "active-signal":
+		return fmt.Sprintf("%s is firing against older case %s through %s recall.", currentTitle, strength.Title, gateway)
+	default:
+		return fmt.Sprintf("%s is connected to %s through %s recall.", currentTitle, strength.Title, gateway)
+	}
+}
+
+func focusWhyItMatters(strength BrainMemoryStrength) string {
+	parts := make([]string, 0, 3)
+	labels := focusReasonLabels(strength.ReasonSamples, 3)
+	if len(labels) > 0 {
+		parts = append(parts, fmt.Sprintf("Repeated clues include %s.", humanJoin(labels)))
+	}
+	if strength.ActivationCount > 1 {
+		parts = append(parts, fmt.Sprintf("It has fired %d times.", strength.ActivationCount))
+	}
+	if strength.ClusterMemberCount > 1 {
+		parts = append(parts, fmt.Sprintf("It links %d investigations.", strength.ClusterMemberCount))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "It is currently the highest-scoring Brain memory for this investigation.")
+	}
+	return strings.Join(parts, " ")
+}
+
+func focusRecommendedAction(items []BrainAttentionItem, fallback string) string {
+	for _, item := range items {
+		if item.SuggestedAction = strings.TrimSpace(item.SuggestedAction); item.SuggestedAction != "" {
+			return item.SuggestedAction
+		}
+	}
+	return nonEmptyString(fallback, "Compare the strongest memory before continuing")
+}
+
+func focusSupportingFacts(strength BrainMemoryStrength, counts BrainAttentionCounts) []string {
+	facts := []string{
+		fmt.Sprintf("%d%% attention strength", int(normalizeMapScore(strength.Score)*100+0.5)),
+	}
+	if gateway := nonEmptyString(strength.Gateway, firstGateway(strength.Gateways)); gateway != "" {
+		facts = append(facts, "Strongest gateway: "+formatGatewayName(gateway))
+	}
+	if counts.ActiveSignals > 0 {
+		facts = append(facts, focusCountLabel(counts.ActiveSignals, "active firing", "active firings"))
+	}
+	if counts.LinkedMemories > 0 {
+		facts = append(facts, focusCountLabel(counts.LinkedMemories, "durable memory", "durable memories"))
+	}
+	if counts.MemoryClusters > 0 {
+		facts = append(facts, focusCountLabel(counts.MemoryClusters, "memory cluster", "memory clusters"))
+	}
+	return cleanStringSet(facts)
+}
+
+func focusItemSupportingFacts(item BrainAttentionItem, counts BrainAttentionCounts) []string {
+	facts := []string{
+		fmt.Sprintf("%d%% attention strength", int(normalizeMapScore(item.Score)*100+0.5)),
+	}
+	if counts.ActiveSignals > 0 {
+		facts = append(facts, focusCountLabel(counts.ActiveSignals, "active firing", "active firings"))
+	}
+	if counts.ActiveNextMoves > 0 {
+		facts = append(facts, focusCountLabel(counts.ActiveNextMoves, "active next move", "active next moves"))
+	}
+	return cleanStringSet(facts)
+}
+
+func focusReasonLabels(reasons []SignalReason, limit int) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	labels := make([]string, 0, limit)
+	seen := map[string]bool{}
+	for _, reason := range reasons {
+		label := nonEmptyString(reason.Label, strings.TrimPrefix(reason.Value, strings.ToUpper(reason.Gateway)+"|"))
+		label = strings.Trim(label, `" `)
+		if label == "" || seen[strings.ToLower(label)] {
+			continue
+		}
+		seen[strings.ToLower(label)] = true
+		labels = append(labels, label)
+		if len(labels) >= limit {
+			break
+		}
+	}
+	return labels
+}
+
+func focusCountLabel(count int, singular string, plural string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %s", count, plural)
+}
+
+func humanJoin(values []string) string {
+	cleaned := cleanStringSet(values)
+	switch len(cleaned) {
+	case 0:
+		return ""
+	case 1:
+		return cleaned[0]
+	case 2:
+		return cleaned[0] + " and " + cleaned[1]
+	default:
+		return strings.Join(cleaned[:len(cleaned)-1], ", ") + ", and " + cleaned[len(cleaned)-1]
 	}
 }
 
