@@ -10,6 +10,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
+  Bell,
   Brain,
   ChevronDown,
   ChevronUp,
@@ -65,7 +66,6 @@ import {
   LOW_PRIORITY_SCORE_THRESHOLD,
   buildSignalSummary,
   clusterMatchesFilters,
-  dominantGatewayLabel,
   formatActivationCount,
   formatClusterGatewayCount,
   formatClusterMemberCount,
@@ -316,6 +316,7 @@ export default function BrainSignalsPanel({
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
+  const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
   const [isBrainMapDragging, setIsBrainMapDragging] = useState(false)
@@ -356,6 +357,7 @@ export default function BrainSignalsPanel({
       setSelectedClusterId(null)
       setSelectedBrainMapNodeId(null)
       setCompareSelection(null)
+      setIsAttentionOpen(false)
       return
     }
 
@@ -857,12 +859,9 @@ export default function BrainSignalsPanel({
       ...rankedClusters.filter((cluster) => !cluster.hidden).map((cluster) => cluster.score),
     ]
     const strongestScore = scores.length > 0 ? Math.max(...scores) : 0
-    const autoMemoryCount = rankedLinks.filter((link) => link.promotionType === 'auto').length
     const counts = attentionSummary?.counts
     const linkedMemoryCount = counts?.linkedMemories ?? allLinkGroups.length
     const activeSignalCount = counts?.activeSignals ?? allSignalGroups.length
-    const reinforcedCount = counts?.reinforcedMemories ?? 0
-    const dormantCount = counts?.dormantMemories ?? 0
 
     return {
       attentionState: formatAttentionState(attentionSummary?.dominantState || ''),
@@ -871,13 +870,8 @@ export default function BrainSignalsPanel({
       memoryGroups: formatCountLabel(linkedMemoryCount, 'memory group'),
       memoryClusters: formatCountLabel(counts?.memoryClusters ?? rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
       nextMoves: formatCountLabel(counts?.activeNextMoves ?? activeSuggestions.length, 'next move'),
-      autoMemory: `${counts?.autoLinkedMemories ?? autoMemoryCount} auto`,
-      reinforced: formatCountLabel(reinforcedCount, 'reinforced memory'),
-      fading: formatCountLabel(dormantCount, 'fading memory'),
-      strongestScore: formatScore(attentionSummary?.overallScore ?? strongestScore),
-      dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
     }
-  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, attentionSummary, rankedClusters, rankedLinks])
+  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, attentionSummary, rankedClusters])
 
   useEffect(() => {
     if (!selectedBrainMapNodeId) {
@@ -2347,10 +2341,6 @@ export default function BrainSignalsPanel({
   const renderBrainHealth = () => (
     <div data-testid="brain-health-summary" className="forensic-brain-health-strip" aria-label="Brain memory health">
       <div>
-        <span>Attention</span>
-        <strong>{brainHealth.attentionState}</strong>
-      </div>
-      <div>
         <span>Firing Cases</span>
         <strong>{brainHealth.firingCases}</strong>
       </div>
@@ -2367,69 +2357,95 @@ export default function BrainSignalsPanel({
         <strong>{brainHealth.nextMoves}</strong>
       </div>
       <div>
-        <span>Reinforced</span>
-        <strong>{brainHealth.reinforced}</strong>
+        <span>Attention</span>
+        <strong>{brainHealth.attentionState}</strong>
       </div>
       <div>
-        <span>Auto Memory</span>
-        <strong>{brainHealth.autoMemory}</strong>
-      </div>
-      <div>
-        <span>Cooling</span>
-        <strong>{brainHealth.fading}</strong>
-      </div>
-      <div>
-        <span>Strength</span>
+        <span>Top Strength</span>
         <strong>{brainHealth.attentionScore}</strong>
-      </div>
-      <div>
-        <span>Dominant Gateway</span>
-        <strong>{brainHealth.dominantGateway}</strong>
       </div>
     </div>
   )
 
-  const renderBrainAttentionPanel = () => {
+  const renderBrainAttentionTrigger = () => {
     if (!attentionSummary || attentionSummary.items.length === 0) {
       return null
     }
 
+    const topItem = attentionSummary.items[0]
+
     return (
-      <section
-        data-testid="brain-attention-summary"
-        className="forensic-brain-attention-summary"
-        aria-label="Brain attention summary"
+      <button
+        type="button"
+        className={`forensic-brain-attention-trigger ${isAttentionOpen ? 'is-open' : ''}`}
+        aria-label={`${isAttentionOpen ? 'Hide' : 'Show'} brain attention summary`}
+        aria-expanded={isAttentionOpen}
+        aria-controls="brain-attention-popover"
+        onClick={() => setIsAttentionOpen((current) => !current)}
       >
-        <div className="forensic-brain-attention-head">
-          <div>
-            <span className="forensic-brain-panel-kicker">What matters now</span>
-            <h3>{formatAttentionState(attentionSummary.dominantState)} memory attention</h3>
+        <Bell size={14} />
+        <span>
+          <strong>{formatAttentionState(attentionSummary.dominantState)}</strong>
+          <small>{topItem.title}</small>
+        </span>
+        <b>{formatScore(attentionSummary.overallScore)}</b>
+      </button>
+    )
+  }
+
+  const renderBrainAttentionPanel = () => {
+    if (!attentionSummary || attentionSummary.items.length === 0 || !isAttentionOpen) {
+      return null
+    }
+
+    return (
+      <div className="forensic-brain-attention-popover" id="brain-attention-popover">
+        <section
+          data-testid="brain-attention-summary"
+          className="forensic-brain-attention-summary"
+          aria-label="Brain attention summary"
+        >
+          <div className="forensic-brain-attention-head">
+            <div>
+              <span className="forensic-brain-panel-kicker">What matters now</span>
+              <h3>{formatAttentionState(attentionSummary.dominantState)} memory attention</h3>
+            </div>
+            <div className="forensic-brain-attention-head-actions">
+              <strong>{formatScore(attentionSummary.overallScore)}</strong>
+              <button
+                type="button"
+                aria-label="Close brain attention summary"
+                className="forensic-brain-attention-close"
+                onClick={() => setIsAttentionOpen(false)}
+              >
+                <X size={13} />
+              </button>
+            </div>
           </div>
-          <strong>{formatScore(attentionSummary.overallScore)}</strong>
-        </div>
-        <div className="forensic-brain-attention-items">
-          {attentionSummary.items.slice(0, 3).map((item) => (
-            <article key={item.id} className={`forensic-brain-attention-item forensic-brain-attention-${item.tone}`}>
-              <span>{formatAttentionKind(item.kind)}</span>
-              <strong>{item.title}</strong>
-              <p>{item.detail}</p>
-              {item.suggestedAction && (
-                <small>{item.suggestedAction}</small>
-              )}
-            </article>
-          ))}
-        </div>
-        {attentionSummary.memoryStrengths.length > 0 && (
-          <div className="forensic-brain-strength-row" aria-label="Top memory strengths">
-            {attentionSummary.memoryStrengths.slice(0, 3).map((strength) => (
-              <span key={strength.id}>
-                <strong>{strength.title}</strong>
-                {formatAttentionState(strength.state)} / {formatScore(strength.score)}
-              </span>
+          <div className="forensic-brain-attention-items">
+            {attentionSummary.items.slice(0, 3).map((item) => (
+              <article key={item.id} className={`forensic-brain-attention-item forensic-brain-attention-${item.tone}`}>
+                <span>{formatAttentionKind(item.kind)}</span>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+                {item.suggestedAction && (
+                  <small>{item.suggestedAction}</small>
+                )}
+              </article>
             ))}
           </div>
-        )}
-      </section>
+          {attentionSummary.memoryStrengths.length > 0 && (
+            <div className="forensic-brain-strength-row" aria-label="Top memory strengths">
+              {attentionSummary.memoryStrengths.slice(0, 3).map((strength) => (
+                <span key={strength.id}>
+                  <strong>{strength.title}</strong>
+                  {formatAttentionState(strength.state)} / {formatScore(strength.score)}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     )
   }
 
@@ -2842,6 +2858,7 @@ export default function BrainSignalsPanel({
           <span className="forensic-brain-status">
             {activeSuggestions.length} moves / {allSignalGroups.length} active / {allLinkGroups.length} linked / {visibleClusters.length} clusters
           </span>
+          {renderBrainAttentionTrigger()}
           <button
             type="button"
             aria-label="Refresh brain signals"

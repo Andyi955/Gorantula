@@ -1141,22 +1141,26 @@ describe('BrainSignalsPanel', () => {
     const health = await screen.findByTestId('brain-health-summary')
     expect(health).toHaveTextContent('2 firing cases')
     expect(health).toHaveTextContent('2 memory groups')
-    expect(health).toHaveTextContent('1 auto')
     expect(health).toHaveTextContent('92%')
-    expect(health).toHaveTextContent('Entity/Date')
   })
 
   it('renders backend attention summary when available', async () => {
+    const user = userEvent.setup()
     installBrainFetch({ attention: attentionSummary })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
     const health = await screen.findByTestId('brain-health-summary')
     expect(health).toHaveTextContent('Reinforced')
-    expect(health).toHaveTextContent('1 reinforced memory')
-    expect(health).toHaveTextContent('1 fading memory')
     expect(health).toHaveTextContent('91%')
 
+    const trigger = screen.getByRole('button', { name: /show brain attention summary/i })
+    expect(trigger).toHaveTextContent('Reinforced')
+    expect(trigger).toHaveTextContent('Memory reinforced')
+    expect(trigger).toHaveTextContent('91%')
+    expect(screen.queryByTestId('brain-attention-summary')).not.toBeInTheDocument()
+
+    await user.click(trigger)
     const attention = await screen.findByTestId('brain-attention-summary')
     expect(attention).toHaveTextContent('What matters now')
     expect(attention).toHaveTextContent('Memory reinforced')
@@ -1164,6 +1168,9 @@ describe('BrainSignalsPanel', () => {
     expect(attention).toHaveTextContent('Compare linked memory')
     expect(attention).toHaveTextContent('Older Substation Case')
     expect(attention).toHaveTextContent('Reinforced / 91%')
+
+    await user.click(within(attention).getByRole('button', { name: /close brain attention summary/i }))
+    expect(screen.queryByTestId('brain-attention-summary')).not.toBeInTheDocument()
   })
 
   it('renders a readable brain map with digest and selected memory detail', async () => {
