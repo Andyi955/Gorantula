@@ -101,6 +101,73 @@ export interface BrainSuggestion {
   reviewedAt?: string
 }
 
+export interface BrainAttentionCounts {
+  activeSignals: number
+  linkedMemories: number
+  memoryClusters: number
+  activeNextMoves: number
+  reviewedNextMoves: number
+  reinforcedMemories: number
+  dormantMemories: number
+  autoLinkedMemories: number
+  manualLinkedMemory: number
+}
+
+export interface BrainMemoryStrength {
+  id: string
+  kind: 'memory-link' | 'memory-cluster' | 'active-signal' | string
+  title: string
+  score: number
+  state: 'reinforced' | 'hot' | 'warm' | 'fading' | 'dormant' | string
+  targetInvestigationId?: string
+  clusterId?: string
+  signalId?: string
+  linkId?: string
+  gateway?: BrainGateway
+  gateways: BrainGateway[]
+  reasonSamples: BrainSignalReason[]
+  activationCount: number
+  signalCount: number
+  memoryLinkCount: number
+  clusterMemberCount: number
+  lastActivatedAt?: string
+  suggestedAction: string
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  memberInvestigationIds: string[]
+}
+
+export interface BrainAttentionItem {
+  id: string
+  kind: 'memory-reinforced' | 'cluster-active' | 'next-move-ready' | 'signal-firing' | string
+  tone: string
+  title: string
+  detail: string
+  score: number
+  suggestedAction: string
+  targetInvestigationId?: string
+  clusterId?: string
+  signalId?: string
+  linkId?: string
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  relatedClusterIds: string[]
+  memberInvestigationIds: string[]
+  reasonSamples: BrainSignalReason[]
+  updatedAt?: string
+}
+
+export interface BrainAttentionSummary {
+  investigationId: string
+  investigationTitle: string
+  generatedAt: string
+  overallScore: number
+  dominantState: 'reinforced' | 'hot' | 'warm' | 'fading' | 'dormant' | string
+  counts: BrainAttentionCounts
+  memoryStrengths: BrainMemoryStrength[]
+  items: BrainAttentionItem[]
+}
+
 export interface BrainMapNode {
   id: string
   kind: 'current' | 'cluster' | 'memory' | 'signal' | string
@@ -209,6 +276,30 @@ const normalizeBrainSuggestion = (suggestion: BrainSuggestion): BrainSuggestion 
   targetInvestigationIds: asStringArray(suggestion.targetInvestigationIds),
 })
 
+const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttentionSummary => ({
+  ...summary,
+  memoryStrengths: Array.isArray(summary.memoryStrengths)
+    ? summary.memoryStrengths.map((strength) => ({
+        ...strength,
+        gateways: asStringArray(strength.gateways),
+        relatedSignalIds: asStringArray(strength.relatedSignalIds),
+        relatedMemoryLinkIds: asStringArray(strength.relatedMemoryLinkIds),
+        memberInvestigationIds: asStringArray(strength.memberInvestigationIds),
+        reasonSamples: Array.isArray(strength.reasonSamples) ? strength.reasonSamples : [],
+      }))
+    : [],
+  items: Array.isArray(summary.items)
+    ? summary.items.map((item) => ({
+        ...item,
+        relatedSignalIds: asStringArray(item.relatedSignalIds),
+        relatedMemoryLinkIds: asStringArray(item.relatedMemoryLinkIds),
+        relatedClusterIds: asStringArray(item.relatedClusterIds),
+        memberInvestigationIds: asStringArray(item.memberInvestigationIds),
+        reasonSamples: Array.isArray(item.reasonSamples) ? item.reasonSamples : [],
+      }))
+    : [],
+})
+
 export const fetchBrainSignals = (investigationId: string) =>
   requestJSON<BrainSignal[]>(`${API_BASE}/signals?investigationId=${encodeURIComponent(investigationId)}`)
 
@@ -227,6 +318,12 @@ export const fetchBrainSuggestions = async (investigationId: string) => {
   )
   return suggestions.map(normalizeBrainSuggestion)
 }
+
+export const fetchBrainAttention = async (investigationId: string) => (
+  normalizeAttentionSummary(await requestJSON<BrainAttentionSummary>(
+    `${API_BASE}/attention?investigationId=${encodeURIComponent(investigationId)}`,
+  ))
+)
 
 export const dismissBrainSignal = (signalId: string) =>
   requestJSON<BrainSignal>(`${API_BASE}/signals/${encodeURIComponent(signalId)}/dismiss`, {

@@ -32,6 +32,7 @@ import {
 import {
   dismissBrainSuggestion,
   dismissBrainSignal,
+  fetchBrainAttention,
   fetchBrainClusters,
   fetchBrainLinks,
   fetchBrainMap,
@@ -43,6 +44,7 @@ import {
   reviewBrainSuggestion,
   toggleBrainClusterPin,
   unhideBrainCluster,
+  type BrainAttentionSummary,
   type BrainSuggestion,
   type BrainSignal,
   type BrainSignalReason,
@@ -225,6 +227,38 @@ const formatSuggestionKind = (kind: string) => {
   }
 }
 
+const formatAttentionState = (state: string) => {
+  switch (state) {
+    case 'reinforced':
+      return 'Reinforced'
+    case 'hot':
+      return 'Hot'
+    case 'warm':
+      return 'Warm'
+    case 'fading':
+      return 'Fading'
+    case 'dormant':
+      return 'Dormant'
+    default:
+      return state ? state.replace(/-/g, ' ') : 'Dormant'
+  }
+}
+
+const formatAttentionKind = (kind: string) => {
+  switch (kind) {
+    case 'memory-reinforced':
+      return 'Memory reinforced'
+    case 'cluster-active':
+      return 'Cluster active'
+    case 'next-move-ready':
+      return 'Next move ready'
+    case 'signal-firing':
+      return 'Signal firing'
+    default:
+      return kind.replace(/-/g, ' ')
+  }
+}
+
 const uniqueStrings = (items: Array<string | undefined>) => Array.from(new Set(
   items.filter((item): item is string => Boolean(item)),
 ))
@@ -255,6 +289,7 @@ export default function BrainSignalsPanel({
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
+  const [attentionSummary, setAttentionSummary] = useState<BrainAttentionSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -296,6 +331,7 @@ export default function BrainSignalsPanel({
       setClusters([])
       setSuggestions([])
       setBrainMapView(null)
+      setAttentionSummary(null)
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
@@ -330,6 +366,12 @@ export default function BrainSignalsPanel({
       }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
+      let nextAttention: BrainAttentionSummary | null = null
+      try {
+        nextAttention = await fetchBrainAttention(currentInvestigationId)
+      } catch {
+        nextAttention = null
+      }
 
       if (requestIdRef.current !== requestId) {
         return
@@ -340,6 +382,7 @@ export default function BrainSignalsPanel({
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
       setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
+      setAttentionSummary(nextAttention)
       setShowLowerPrioritySignals(false)
       setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
@@ -753,17 +796,26 @@ export default function BrainSignalsPanel({
     ]
     const strongestScore = scores.length > 0 ? Math.max(...scores) : 0
     const autoMemoryCount = rankedLinks.filter((link) => link.promotionType === 'auto').length
+    const counts = attentionSummary?.counts
+    const linkedMemoryCount = counts?.linkedMemories ?? allLinkGroups.length
+    const activeSignalCount = counts?.activeSignals ?? allSignalGroups.length
+    const reinforcedCount = counts?.reinforcedMemories ?? 0
+    const dormantCount = counts?.dormantMemories ?? 0
 
     return {
-      firingCases: formatCountLabel(allSignalGroups.length, 'firing case'),
-      memoryGroups: formatCountLabel(allLinkGroups.length, 'memory group'),
-      memoryClusters: formatCountLabel(rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
-      nextMoves: formatCountLabel(activeSuggestions.length, 'next move'),
-      autoMemory: `${autoMemoryCount} auto`,
-      strongestScore: formatScore(strongestScore),
+      attentionState: formatAttentionState(attentionSummary?.dominantState || ''),
+      attentionScore: formatScore(attentionSummary?.overallScore ?? strongestScore),
+      firingCases: formatCountLabel(activeSignalCount, 'firing case'),
+      memoryGroups: formatCountLabel(linkedMemoryCount, 'memory group'),
+      memoryClusters: formatCountLabel(counts?.memoryClusters ?? rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
+      nextMoves: formatCountLabel(counts?.activeNextMoves ?? activeSuggestions.length, 'next move'),
+      autoMemory: `${counts?.autoLinkedMemories ?? autoMemoryCount} auto`,
+      reinforced: formatCountLabel(reinforcedCount, 'reinforced memory'),
+      fading: formatCountLabel(dormantCount, 'fading memory'),
+      strongestScore: formatScore(attentionSummary?.overallScore ?? strongestScore),
       dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
     }
-  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, rankedClusters, rankedLinks])
+  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, attentionSummary, rankedClusters, rankedLinks])
 
   useEffect(() => {
     if (!selectedBrainMapNodeId) {
@@ -2233,6 +2285,10 @@ export default function BrainSignalsPanel({
   const renderBrainHealth = () => (
     <div data-testid="brain-health-summary" className="forensic-brain-health-strip" aria-label="Brain memory health">
       <div>
+        <span>Attention</span>
+        <strong>{brainHealth.attentionState}</strong>
+      </div>
+      <div>
         <span>Firing Cases</span>
         <strong>{brainHealth.firingCases}</strong>
       </div>
@@ -2249,12 +2305,20 @@ export default function BrainSignalsPanel({
         <strong>{brainHealth.nextMoves}</strong>
       </div>
       <div>
+        <span>Reinforced</span>
+        <strong>{brainHealth.reinforced}</strong>
+      </div>
+      <div>
         <span>Auto Memory</span>
         <strong>{brainHealth.autoMemory}</strong>
       </div>
       <div>
-        <span>Strongest</span>
-        <strong>{brainHealth.strongestScore}</strong>
+        <span>Cooling</span>
+        <strong>{brainHealth.fading}</strong>
+      </div>
+      <div>
+        <span>Strength</span>
+        <strong>{brainHealth.attentionScore}</strong>
       </div>
       <div>
         <span>Dominant Gateway</span>
@@ -2262,6 +2326,40 @@ export default function BrainSignalsPanel({
       </div>
     </div>
   )
+
+  const renderBrainAttentionPanel = () => {
+    if (!attentionSummary || attentionSummary.items.length === 0) {
+      return null
+    }
+
+    return (
+      <section
+        data-testid="brain-attention-summary"
+        className="forensic-brain-attention-summary"
+        aria-label="Brain attention summary"
+      >
+        <div className="forensic-brain-attention-head">
+          <div>
+            <span className="forensic-brain-panel-kicker">What matters now</span>
+            <h3>{formatAttentionState(attentionSummary.dominantState)} memory attention</h3>
+          </div>
+          <strong>{formatScore(attentionSummary.overallScore)}</strong>
+        </div>
+        <div className="forensic-brain-attention-items">
+          {attentionSummary.items.slice(0, 3).map((item) => (
+            <article key={item.id} className={`forensic-brain-attention-item forensic-brain-attention-${item.tone}`}>
+              <span>{formatAttentionKind(item.kind)}</span>
+              <strong>{item.title}</strong>
+              <p>{item.detail}</p>
+              {item.suggestedAction && (
+                <small>{item.suggestedAction}</small>
+              )}
+            </article>
+          ))}
+        </div>
+      </section>
+    )
+  }
 
   const renderSuggestionCard = (suggestion: BrainSuggestion) => {
     const canOpenTarget = suggestion.targetInvestigationIds.length > 0 && !!onOpenInvestigation
@@ -2703,6 +2801,8 @@ export default function BrainSignalsPanel({
           </button>
         ))}
       </nav>
+
+      {renderBrainAttentionPanel()}
 
       <div className="forensic-brain-active-view">
         {activeBrainView === 'map' && (
