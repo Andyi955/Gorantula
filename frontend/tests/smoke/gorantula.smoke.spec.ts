@@ -469,6 +469,35 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
           whyItMatters: 'Repeated clues include Grid reliability signal. It has fired 4 times.',
           recommendedAction: 'Compare linked memory',
           supportingFacts: ['94% attention strength', 'Strongest gateway: entity/date', '1 durable memory'],
+          guidance: [
+            {
+              kind: 'next-action',
+              tone: 'primary',
+              title: 'Best next move',
+              detail: 'Compare linked memory',
+              actionLabel: 'Compare linked memory',
+              targetInvestigationId: link.toInvestigationId,
+              linkId: link.id,
+            },
+            {
+              kind: 'evidence-trail',
+              tone: 'context',
+              title: 'Why this fired',
+              detail: 'Repeated clues include Grid reliability signal. It has fired 4 times.',
+              actionLabel: 'Inspect reason trail',
+              targetInvestigationId: link.toInvestigationId,
+              linkId: link.id,
+            },
+            {
+              kind: 'caution',
+              tone: 'steady',
+              title: 'What to watch',
+              detail: 'This memory is strong enough to guide attention, but the underlying evidence should still be checked before acting.',
+              actionLabel: 'Check evidence',
+              targetInvestigationId: link.toInvestigationId,
+              linkId: link.id,
+            },
+          ],
           primaryKind: 'memory-link',
           primaryTitle: link.toTitle,
           primaryGateway: 'entity-date',
@@ -481,6 +510,35 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
           whyItMatters: 'Repeated clues include Grid reliability signal.',
           recommendedAction: signal.suggestedAction,
           supportingFacts: ['86% attention strength', 'Strongest gateway: entity/date', '1 active firing'],
+          guidance: [
+            {
+              kind: 'next-action',
+              tone: 'primary',
+              title: 'Best next move',
+              detail: signal.suggestedAction,
+              actionLabel: 'Compare or promote',
+              targetInvestigationId: signal.targetInvestigationId,
+              signalId: signal.id,
+            },
+            {
+              kind: 'evidence-trail',
+              tone: 'context',
+              title: 'Why this fired',
+              detail: 'Repeated clues include Grid reliability signal.',
+              actionLabel: 'Inspect reason trail',
+              targetInvestigationId: signal.targetInvestigationId,
+              signalId: signal.id,
+            },
+            {
+              kind: 'caution',
+              tone: 'caution',
+              title: 'What to watch',
+              detail: 'This firing is not a durable memory link yet. Compare the evidence before treating it as remembered context.',
+              actionLabel: 'Promote only after review',
+              targetInvestigationId: signal.targetInvestigationId,
+              signalId: signal.id,
+            },
+          ],
           primaryKind: 'active-signal',
           primaryTitle: signal.targetTitle,
           primaryGateway: 'entity-date',
@@ -986,6 +1044,8 @@ test.describe('Gorantula smoke flows', () => {
     await expect(focusView).toContainText('QA: Source Case is the strongest older case firing right now')
     await expect(focusView).toContainText('Grid reliability signal')
     await expect(focusView).toContainText('86% attention strength')
+    await expect(focusView).toContainText('Brain guidance')
+    await expect(focusView).toContainText('What to watch')
     await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 next move')
