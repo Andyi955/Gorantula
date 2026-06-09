@@ -462,6 +462,31 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
             updatedAt: '2026-06-05T12:02:00Z',
           },
     ],
+    focus: promoted && !forgotten
+      ? {
+          headline: `${link.toTitle} is the strongest remembered case right now`,
+          summary: `${signal.investigationTitle} is strongly connected to older memory ${link.toTitle} through entity/date recall.`,
+          whyItMatters: 'Repeated clues include Grid reliability signal. It has fired 4 times.',
+          recommendedAction: 'Compare linked memory',
+          supportingFacts: ['94% attention strength', 'Strongest gateway: entity/date', '1 durable memory'],
+          primaryKind: 'memory-link',
+          primaryTitle: link.toTitle,
+          primaryGateway: 'entity-date',
+          targetInvestigationId: link.toInvestigationId,
+          linkId: link.id,
+        }
+      : {
+          headline: `${signal.targetTitle} is the strongest older case firing right now`,
+          summary: `${signal.investigationTitle} is firing against older case ${signal.targetTitle} through entity/date recall.`,
+          whyItMatters: 'Repeated clues include Grid reliability signal.',
+          recommendedAction: signal.suggestedAction,
+          supportingFacts: ['86% attention strength', 'Strongest gateway: entity/date', '1 active firing'],
+          primaryKind: 'active-signal',
+          primaryTitle: signal.targetTitle,
+          primaryGateway: 'entity-date',
+          targetInvestigationId: signal.targetInvestigationId,
+          signalId: signal.id,
+        },
   })
 
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
@@ -956,6 +981,12 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    await expect(page.getByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
+    const focusView = page.getByTestId('brain-focus-view')
+    await expect(focusView).toContainText('QA: Source Case is the strongest older case firing right now')
+    await expect(focusView).toContainText('Grid reliability signal')
+    await expect(focusView).toContainText('86% attention strength')
+    await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 next move')
     await expect(page.getByRole('button', { name: /show brain attention summary/i })).toContainText('Hot')
