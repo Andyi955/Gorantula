@@ -60,6 +60,9 @@ const (
 	BrainGuidanceKindNextAction    = "next-action"
 	BrainGuidanceKindEvidenceTrail = "evidence-trail"
 	BrainGuidanceKindCaution       = "caution"
+	BrainGuidanceKindGap           = "gap"
+	BrainGuidanceKindFreshness     = "freshness"
+	BrainGuidanceKindFollowUp      = "follow-up"
 )
 
 var (
@@ -1544,17 +1547,7 @@ func focusStrengthGuidance(
 			SignalID:              strength.SignalID,
 			LinkID:                strength.LinkID,
 		},
-		{
-			Kind:                  BrainGuidanceKindCaution,
-			Tone:                  focusCautionTone(strength, counts),
-			Title:                 "What to watch",
-			Detail:                focusCautionDetail(currentTitle, strength, counts),
-			ActionLabel:           focusCautionActionLabel(strength, counts),
-			TargetInvestigationID: strength.TargetInvestigationID,
-			ClusterID:             strength.ClusterID,
-			SignalID:              strength.SignalID,
-			LinkID:                strength.LinkID,
-		},
+		focusThinkingGuidanceCard(currentTitle, strength, counts),
 	}
 }
 
@@ -1600,6 +1593,69 @@ func focusItemGuidance(
 			LinkID:                item.LinkID,
 		},
 	}
+}
+
+func focusThinkingGuidanceCard(currentTitle string, strength BrainMemoryStrength, counts BrainAttentionCounts) BrainGuidanceCard {
+	card := BrainGuidanceCard{
+		TargetInvestigationID: strength.TargetInvestigationID,
+		ClusterID:             strength.ClusterID,
+		SignalID:              strength.SignalID,
+		LinkID:                strength.LinkID,
+	}
+	switch {
+	case strengthNeedsBridgeEvidence(strength):
+		card.Kind = BrainGuidanceKindGap
+		card.Tone = "caution"
+		card.Title = "Needs bridge evidence"
+		card.Detail = "This memory shares broad context, but not enough bridge evidence yet. Find a source, relationship, date, or named actor that connects the cases before treating it as relevant."
+		card.ActionLabel = "Find bridge evidence"
+	case strengthNeedsFreshnessCheck(strength):
+		card.Kind = BrainGuidanceKindFreshness
+		card.Tone = "caution"
+		card.Title = "Check freshness"
+		card.Detail = "This memory is useful but may be stale. Look for newer sources before using it to guide the current investigation."
+		card.ActionLabel = "Find newer source"
+	case strengthReadyForFocusedFollowUp(strength, counts):
+		card.Kind = BrainGuidanceKindFollowUp
+		card.Tone = "primary"
+		card.Title = "Focused follow-up ready"
+		card.Detail = "This memory is strong enough to justify a user-approved focused Rabbit Hole pass on the repeated pattern."
+		card.ActionLabel = "Prepare focused Rabbit Hole"
+	default:
+		card.Kind = BrainGuidanceKindCaution
+		card.Tone = focusCautionTone(strength, counts)
+		card.Title = "What to watch"
+		card.Detail = focusCautionDetail(currentTitle, strength, counts)
+		card.ActionLabel = focusCautionActionLabel(strength, counts)
+	}
+	return card
+}
+
+func strengthNeedsBridgeEvidence(strength BrainMemoryStrength) bool {
+	if strings.Contains(strings.ToLower(strength.SuggestedAction), "bridge evidence") {
+		return true
+	}
+	for _, reason := range strength.ReasonSamples {
+		detail := strings.ToLower(reason.Detail)
+		if strings.Contains(detail, "broad context") || strings.Contains(detail, "bridge evidence") {
+			return true
+		}
+	}
+	return false
+}
+
+func strengthNeedsFreshnessCheck(strength BrainMemoryStrength) bool {
+	return (strength.State == BrainMemoryStateDormant || strength.State == BrainMemoryStateFading) && strength.Score >= 0.45
+}
+
+func strengthReadyForFocusedFollowUp(strength BrainMemoryStrength, counts BrainAttentionCounts) bool {
+	if strength.Score < 0.78 {
+		return false
+	}
+	return strength.ActivationCount >= 3 ||
+		strength.ClusterMemberCount >= 3 ||
+		strength.MemoryLinkCount >= 2 ||
+		counts.ActiveNextMoves > 0
 }
 
 func focusPrimaryActionLabel(strength BrainMemoryStrength) string {

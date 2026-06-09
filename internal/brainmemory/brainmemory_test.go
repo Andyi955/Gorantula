@@ -915,9 +915,9 @@ func TestServiceBuildsBrainAttentionSummary(t *testing.T) {
 	if !strings.Contains(evidenceGuidance.Detail, "Repeated clues") {
 		t.Fatalf("expected evidence-trail guidance to explain the repeated evidence, got %#v", evidenceGuidance)
 	}
-	cautionGuidance := findFocusGuidance(t, attention.Focus.Guidance, BrainGuidanceKindCaution)
-	if strings.TrimSpace(cautionGuidance.Detail) == "" {
-		t.Fatalf("expected caution guidance to explain what to watch, got %#v", cautionGuidance)
+	thinkingGuidance := findFocusThinkingGuidance(t, attention.Focus.Guidance)
+	if strings.TrimSpace(thinkingGuidance.Detail) == "" {
+		t.Fatalf("expected thinking guidance to explain what to watch, got %#v", thinkingGuidance)
 	}
 
 	strength := findMemoryStrength(t, attention.MemoryStrengths, "inv-old-strong")
@@ -940,6 +940,54 @@ func TestServiceBuildsBrainAttentionSummary(t *testing.T) {
 	}
 	if item.TargetInvestigationID == "" {
 		t.Fatalf("expected attention item to point at target memory, got %#v", item)
+	}
+}
+
+func TestServiceBuildsBrainThinkingGuidance(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.SuggestionsForInvestigation("inv-current"); err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	attention, err := service.AttentionForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AttentionForInvestigation failed: %v", err)
+	}
+	followUp := findFocusGuidance(t, attention.Focus.Guidance, BrainGuidanceKindFollowUp)
+	if !strings.Contains(followUp.Detail, "focused Rabbit Hole") {
+		t.Fatalf("expected focused Rabbit Hole follow-up guidance, got %#v", followUp)
+	}
+
+	broadRoot := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, broadRoot, rootRecord("inv-current", "China Robot Supply Chain"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{"summary":"[LOC:China] appears in a robotics supply-chain investigation."}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, broadRoot, rootRecord("inv-old", "Olympics Broadcast Rights"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{"summary":"[LOC:China] appears in an Olympics broadcasting investigation."}}],
+		"edges":[]
+	}`, "")
+	broadService := NewService(broadRoot)
+	if _, err := broadService.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals for broad context failed: %v", err)
+	}
+	broadAttention, err := broadService.AttentionForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AttentionForInvestigation for broad context failed: %v", err)
+	}
+	gap := findFocusGuidance(t, broadAttention.Focus.Guidance, BrainGuidanceKindGap)
+	if !strings.Contains(gap.Detail, "bridge evidence") {
+		t.Fatalf("expected bridge-evidence gap guidance, got %#v", gap)
 	}
 }
 
@@ -1308,6 +1356,18 @@ func findFocusGuidance(t *testing.T, cards []BrainGuidanceCard, kind string) Bra
 		}
 	}
 	t.Fatalf("expected focus guidance kind=%q in %#v", kind, cards)
+	return BrainGuidanceCard{}
+}
+
+func findFocusThinkingGuidance(t *testing.T, cards []BrainGuidanceCard) BrainGuidanceCard {
+	t.Helper()
+	for _, card := range cards {
+		switch card.Kind {
+		case BrainGuidanceKindCaution, BrainGuidanceKindGap, BrainGuidanceKindFreshness, BrainGuidanceKindFollowUp:
+			return card
+		}
+	}
+	t.Fatalf("expected focus thinking guidance in %#v", cards)
 	return BrainGuidanceCard{}
 }
 
