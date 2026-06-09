@@ -187,11 +187,11 @@ const attentionSummary: BrainAttentionSummary = {
         linkId: link.id,
       },
       {
-        kind: 'caution',
-        tone: 'steady',
-        title: 'What to watch',
-        detail: 'This memory is strong enough to guide attention, but the underlying evidence should still be checked before acting.',
-        actionLabel: 'Check evidence',
+        kind: 'follow-up',
+        tone: 'primary',
+        title: 'Focused follow-up ready',
+        detail: 'This memory is strong enough to justify a user-approved focused Rabbit Hole pass on the repeated pattern.',
+        actionLabel: 'Prepare focused Rabbit Hole',
         targetInvestigationId: 'inv-older',
         linkId: link.id,
       },
@@ -1232,8 +1232,8 @@ describe('BrainSignalsPanel', () => {
     expect(focus).toHaveTextContent('Brain guidance')
     expect(focus).toHaveTextContent('Best next move')
     expect(focus).toHaveTextContent('Why this fired')
-    expect(focus).toHaveTextContent('What to watch')
-    expect(focus).toHaveTextContent('Check evidence')
+    expect(focus).toHaveTextContent('Focused follow-up ready')
+    expect(focus).toHaveTextContent('Prepare focused Rabbit Hole')
   })
 
   it('renders a readable brain map with digest and selected memory detail', async () => {

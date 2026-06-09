@@ -489,11 +489,11 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
               linkId: link.id,
             },
             {
-              kind: 'caution',
-              tone: 'steady',
-              title: 'What to watch',
-              detail: 'This memory is strong enough to guide attention, but the underlying evidence should still be checked before acting.',
-              actionLabel: 'Check evidence',
+              kind: 'follow-up',
+              tone: 'primary',
+              title: 'Focused follow-up ready',
+              detail: 'This memory is strong enough to justify a user-approved focused Rabbit Hole pass on the repeated pattern.',
+              actionLabel: 'Prepare focused Rabbit Hole',
               targetInvestigationId: link.toInvestigationId,
               linkId: link.id,
             },
@@ -530,11 +530,11 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
               signalId: signal.id,
             },
             {
-              kind: 'caution',
+              kind: 'gap',
               tone: 'caution',
-              title: 'What to watch',
-              detail: 'This firing is not a durable memory link yet. Compare the evidence before treating it as remembered context.',
-              actionLabel: 'Promote only after review',
+              title: 'Needs bridge evidence',
+              detail: 'This memory shares broad context, but not enough bridge evidence yet.',
+              actionLabel: 'Find bridge evidence',
               targetInvestigationId: signal.targetInvestigationId,
               signalId: signal.id,
             },
@@ -1045,7 +1045,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(focusView).toContainText('Grid reliability signal')
     await expect(focusView).toContainText('86% attention strength')
     await expect(focusView).toContainText('Brain guidance')
-    await expect(focusView).toContainText('What to watch')
+    await expect(focusView).toContainText('Needs bridge evidence')
     await page.getByRole('button', { name: /memory map view/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 next move')
@@ -1146,6 +1146,7 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    await expect(page.getByTestId('brain-focus-view')).toContainText('Focused follow-up ready')
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
     await page.getByRole('button', { name: /next moves view/i }).click()
     await expect(page.getByTestId('brain-suggestion-card')).toHaveCount(0)
