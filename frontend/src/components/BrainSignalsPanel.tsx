@@ -45,6 +45,7 @@ import {
   unhideBrainCluster,
   type BrainSuggestion,
   type BrainSignal,
+  type BrainSignalReason,
   type BrainMapView,
   type MemoryCluster,
   type MemoryLink,
@@ -114,6 +115,27 @@ const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
 type BrainView = 'map' | 'moves' | 'signals' | 'links' | 'clusters'
+
+type BrainCompareSelection =
+  | { kind: 'signal'; id: string }
+  | { kind: 'link'; id: string }
+  | { kind: 'cluster'; id: string }
+  | { kind: 'suggestion'; id: string }
+  | { kind: 'map-node'; id: string }
+
+interface BrainCompareContext {
+  kindLabel: string
+  title: string
+  subtitle: string
+  score: number
+  currentTitle: string
+  rememberedTitle: string
+  suggestedAction: string
+  reasons: BrainSignalReason[]
+  gateways: string[]
+  targetInvestigationId?: string
+  relatedSummary: string[]
+}
 
 const gatewayFilterOptions: Array<{ value: GatewayFilter; label: string }> = [
   { value: 'all', label: 'All Gateways' },
@@ -203,6 +225,26 @@ const formatSuggestionKind = (kind: string) => {
   }
 }
 
+const uniqueStrings = (items: Array<string | undefined>) => Array.from(new Set(
+  items.filter((item): item is string => Boolean(item)),
+))
+
+const mergeCompareReasons = (...reasonGroups: Array<BrainSignalReason[] | undefined>) => {
+  const seen = new Set<string>()
+  const reasons: BrainSignalReason[] = []
+
+  reasonGroups.flatMap((group) => group || []).forEach((reason) => {
+    const key = `${reason.gateway}:${reason.value}:${reason.detail || reason.label}`
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    reasons.push(reason)
+  })
+
+  return reasons
+}
+
 export default function BrainSignalsPanel({
   currentInvestigationId,
   currentInvestigationTitle,
@@ -224,6 +266,7 @@ export default function BrainSignalsPanel({
   const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
+  const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
@@ -263,6 +306,7 @@ export default function BrainSignalsPanel({
       setSelectedMemoryLinkId(null)
       setSelectedClusterId(null)
       setSelectedBrainMapNodeId(null)
+      setCompareSelection(null)
       return
     }
 
@@ -524,6 +568,178 @@ export default function BrainSignalsPanel({
     () => allLinkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
     [allLinkGroups, selectedMemoryLinkId],
   )
+  const selectedCompareContext = useMemo<BrainCompareContext | null>(() => {
+    if (!compareSelection) {
+      return null
+    }
+
+    if (compareSelection.kind === 'signal') {
+      const group = allSignalGroups.find((candidate) =>
+        candidate.signals.some((signal) => signal.id === compareSelection.id),
+      )
+      if (!group) {
+        return null
+      }
+      const signal = group.primary
+      return {
+        kindLabel: 'Active signal',
+        title: signal.targetTitle,
+        subtitle: 'Memory fired because this older case overlaps the current investigation.',
+        score: group.score,
+        currentTitle: signal.investigationTitle || activeTitle,
+        rememberedTitle: signal.targetTitle,
+        suggestedAction: signal.suggestedAction,
+        reasons: group.reasons,
+        gateways: uniqueStrings(group.gateways.map(formatGateway)),
+        targetInvestigationId: signal.targetInvestigationId,
+        relatedSummary: [
+          formatCountLabel(group.signals.length, 'signal'),
+          ...relatedClustersForSignalGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
+        ],
+      }
+    }
+
+    if (compareSelection.kind === 'link') {
+      const group = allLinkGroups.find((candidate) =>
+        candidate.links.some((link) => link.id === compareSelection.id),
+      )
+      if (!group) {
+        return null
+      }
+      const link = group.primary
+      const currentIsFrom = link.fromInvestigationId === currentInvestigationId
+      return {
+        kindLabel: 'Durable memory link',
+        title: currentIsFrom ? link.toTitle : link.fromTitle,
+        subtitle: 'This relationship has already been promoted into durable Brain memory.',
+        score: group.score,
+        currentTitle: currentIsFrom ? link.fromTitle : link.toTitle,
+        rememberedTitle: currentIsFrom ? link.toTitle : link.fromTitle,
+        suggestedAction: link.suggestedAction,
+        reasons: group.reasons,
+        gateways: uniqueStrings(group.gateways.map(formatGateway)),
+        targetInvestigationId: currentIsFrom ? link.toInvestigationId : link.fromInvestigationId,
+        relatedSummary: [
+          formatMemoryLinkType(group.promotionType),
+          formatActivationCount(group.activationCount),
+          ...relatedClustersForLinkGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
+        ],
+      }
+    }
+
+    if (compareSelection.kind === 'cluster') {
+      const cluster = rankedClusters.find((candidate) => candidate.id === compareSelection.id)
+      if (!cluster) {
+        return null
+      }
+      const targetMember = cluster.members.find((member) => member.investigationId !== currentInvestigationId)
+      return {
+        kindLabel: 'Memory cluster',
+        title: cluster.label,
+        subtitle: cluster.summary,
+        score: cluster.score,
+        currentTitle: activeTitle,
+        rememberedTitle: targetMember?.title || formatClusterMemberCount(cluster),
+        suggestedAction: 'Inspect recurring memory cluster',
+        reasons: cluster.reasonSamples,
+        gateways: uniqueStrings([
+          formatGateway(cluster.dominantGateway),
+          ...Object.keys(cluster.gatewayCounts || {}).map(formatGateway),
+        ]),
+        targetInvestigationId: targetMember?.investigationId,
+        relatedSummary: [
+          formatClusterStatus(cluster.status),
+          formatClusterMemberCount(cluster),
+          formatCountLabel(getClusterSignalCount(cluster), 'signal'),
+          formatCountLabel(getClusterLinkCount(cluster), 'memory link'),
+        ],
+      }
+    }
+
+    if (compareSelection.kind === 'suggestion') {
+      const suggestion = rankedSuggestions.find((candidate) => candidate.id === compareSelection.id)
+      if (!suggestion) {
+        return null
+      }
+      const relatedSignals = rankedSignals.filter((signal) => suggestion.relatedSignalIds.includes(signal.id))
+      const relatedLinks = rankedLinks.filter((link) => suggestion.relatedMemoryLinkIds.includes(link.id))
+      const relatedClusters = rankedClusters.filter((cluster) => suggestion.relatedClusterIds.includes(cluster.id))
+      const reasons = mergeCompareReasons(
+        relatedSignals.flatMap((signal) => signal.reasons),
+        relatedLinks.flatMap((link) => link.reasons),
+        relatedClusters.flatMap((cluster) => cluster.reasonSamples),
+      )
+      const rememberedTitle =
+        relatedClusters[0]?.label ||
+        relatedLinks[0]?.toTitle ||
+        relatedSignals[0]?.targetTitle ||
+        suggestion.targetInvestigationIds[0] ||
+        'Related memory context'
+      return {
+        kindLabel: formatSuggestionKind(suggestion.kind),
+        title: suggestion.title,
+        subtitle: suggestion.summary,
+        score: suggestion.score,
+        currentTitle: activeTitle,
+        rememberedTitle,
+        suggestedAction: suggestion.suggestedAction,
+        reasons,
+        gateways: uniqueStrings([
+          ...reasons.map((reason) => formatGateway(reason.gateway)),
+          ...relatedClusters.map((cluster) => formatGateway(cluster.dominantGateway)),
+        ]),
+        targetInvestigationId:
+          suggestion.targetInvestigationIds[0] ||
+          relatedSignals[0]?.targetInvestigationId ||
+          relatedLinks[0]?.toInvestigationId,
+        relatedSummary: [
+          formatCountLabel(relatedClusters.length, 'cluster'),
+          formatCountLabel(relatedSignals.length, 'signal'),
+          formatCountLabel(relatedLinks.length, 'memory link'),
+        ],
+      }
+    }
+
+    const node = renderedBrainMapModel.nodes.find((candidate) => candidate.id === compareSelection.id)
+    if (!node) {
+      return null
+    }
+
+    return {
+      kindLabel: node.kind === 'current'
+        ? 'Map focus'
+        : node.kind === 'memory'
+          ? 'Linked memory'
+          : node.kind === 'cluster'
+            ? 'Memory cluster'
+            : 'Active signal',
+      title: node.kind === 'current' ? node.subtitle : node.title,
+      subtitle: node.subtitle,
+      score: node.score,
+      currentTitle: activeTitle,
+      rememberedTitle: node.kind === 'current' ? activeTitle : node.title,
+      suggestedAction: node.kind === 'current' ? 'Review active memory movement' : 'Inspect selected memory object',
+      reasons: node.reasons,
+      gateways: uniqueStrings(node.gateways.map(formatGateway)),
+      targetInvestigationId: node.targetInvestigationId,
+      relatedSummary: [
+        ...node.badges,
+        formatCountLabel(node.relatedSignalIds?.length || 0, 'signal'),
+        formatCountLabel(node.relatedMemoryLinkIds?.length || 0, 'memory link'),
+      ],
+    }
+  }, [
+    activeTitle,
+    allLinkGroups,
+    allSignalGroups,
+    compareSelection,
+    currentInvestigationId,
+    rankedClusters,
+    rankedLinks,
+    rankedSignals,
+    rankedSuggestions,
+    renderedBrainMapModel.nodes,
+  ])
   const brainMapViewportStyle = useMemo(() => ({
     '--brain-map-scale': Number(brainMapViewport.scale.toFixed(2)).toString(),
     '--brain-map-pan-x': `${brainMapViewport.x}%`,
@@ -568,6 +784,12 @@ export default function BrainSignalsPanel({
       setSelectedClusterId(null)
     }
   }, [rankedClusters, selectedClusterId])
+
+  useEffect(() => {
+    if (compareSelection && !selectedCompareContext) {
+      setCompareSelection(null)
+    }
+  }, [compareSelection, selectedCompareContext])
 
   const handleDismiss = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
@@ -848,6 +1070,290 @@ export default function BrainSignalsPanel({
     setActiveBrainView('map')
   }
 
+  const renderCompareWorkspace = (context: BrainCompareContext) => {
+    const currentNodeIds = uniqueStrings(context.reasons.flatMap((reason) => reason.currentNodeIds))
+    const rememberedNodeIds = uniqueStrings(context.reasons.flatMap((reason) => reason.targetNodeIds))
+    const canOpenRememberedCase = !!context.targetInvestigationId && !!onOpenInvestigation
+    const renderSourceActions = () => {
+      if (!compareSelection) {
+        return null
+      }
+
+      if (compareSelection.kind === 'signal') {
+        const group = allSignalGroups.find((candidate) =>
+          candidate.signals.some((signal) => signal.id === compareSelection.id),
+        )
+
+        if (!group) {
+          return null
+        }
+
+        return (
+          <>
+            <button
+              type="button"
+              aria-label="Promote signal memory"
+              className="forensic-brain-action forensic-brain-action-primary"
+              disabled={busyAction === `promote:${group.key}`}
+              onClick={() => {
+                void handlePromote(group)
+                setCompareSelection(null)
+              }}
+            >
+              <Link2 size={13} />
+              Promote Link
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss signal memory"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `dismiss:${group.key}`}
+              onClick={() => {
+                void handleDismiss(group)
+                setCompareSelection(null)
+              }}
+            >
+              <X size={13} />
+              Dismiss Signal
+            </button>
+          </>
+        )
+      }
+
+      if (compareSelection.kind === 'suggestion') {
+        const suggestion = rankedSuggestions.find((candidate) => candidate.id === compareSelection.id)
+
+        if (!suggestion) {
+          return null
+        }
+
+        return (
+          <>
+            <button
+              type="button"
+              aria-label="Mark move reviewed"
+              className="forensic-brain-action forensic-brain-action-primary"
+              disabled={suggestion.status === 'reviewed' || busyAction === `suggestion-review:${suggestion.id}`}
+              onClick={() => {
+                void handleReviewSuggestion(suggestion)
+                setCompareSelection(null)
+              }}
+            >
+              <Eye size={13} />
+              Mark Reviewed
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss move"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `suggestion-dismiss:${suggestion.id}`}
+              onClick={() => {
+                void handleDismissSuggestion(suggestion)
+                setCompareSelection(null)
+              }}
+            >
+              <X size={13} />
+              Dismiss Move
+            </button>
+          </>
+        )
+      }
+
+      if (compareSelection.kind === 'link') {
+        const group = allLinkGroups.find((candidate) =>
+          candidate.links.some((link) => link.id === compareSelection.id),
+        )
+
+        if (!group) {
+          return null
+        }
+
+        return (
+          <button
+            type="button"
+            aria-label="Forget compared memory link"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={busyAction === `forget:${group.key}`}
+            onClick={() => {
+              void handleForgetLinkGroup(group)
+              setCompareSelection(null)
+            }}
+          >
+            <Trash2 size={13} />
+            Forget Link
+          </button>
+        )
+      }
+
+      if (compareSelection.kind === 'cluster') {
+        const cluster = rankedClusters.find((candidate) => candidate.id === compareSelection.id)
+
+        if (!cluster) {
+          return null
+        }
+
+        return (
+          <>
+            <button
+              type="button"
+              aria-label={`${cluster.pinned ? 'Unpin' : 'Pin'} compared cluster`}
+              className="forensic-brain-action"
+              disabled={busyAction === `cluster-pin:${cluster.id}`}
+              onClick={() => void handleToggleClusterPin(cluster)}
+            >
+              <Pin size={13} />
+              {cluster.pinned ? 'Unpin' : 'Pin'}
+            </button>
+            <button
+              type="button"
+              aria-label="Hide compared cluster"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={busyAction === `cluster-hide:${cluster.id}`}
+              onClick={() => {
+                void handleHideCluster(cluster)
+                setCompareSelection(null)
+              }}
+            >
+              <EyeOff size={13} />
+              Hide Cluster
+            </button>
+          </>
+        )
+      }
+
+      return null
+    }
+
+    return (
+      <section
+        data-testid="brain-compare-workspace"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Brain Compare for ${context.title}`}
+        className="forensic-brain-compare-workspace"
+      >
+        <header className="forensic-brain-compare-header">
+          <div>
+            <span className="forensic-brain-panel-kicker">Brain Compare</span>
+            <h3>{context.title}</h3>
+            <p>{context.subtitle}</p>
+          </div>
+          <div className="forensic-brain-compare-header-actions">
+            <strong>{formatScore(context.score)}</strong>
+            <button
+              type="button"
+              aria-label="Close Brain Compare"
+              className="forensic-brain-detail-close"
+              onClick={() => setCompareSelection(null)}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </header>
+
+        <div className="forensic-brain-compare-grid">
+          <section className="forensic-brain-compare-case forensic-brain-compare-current">
+            <span className="forensic-brain-card-label">Current investigation</span>
+            <h4>{context.currentTitle}</h4>
+            <p>Evidence currently firing the Brain memory system.</p>
+            <dl>
+              <div>
+                <dt>Matched nodes</dt>
+                <dd>{formatNodeIds(currentNodeIds)}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="forensic-brain-compare-reasons">
+            <div className="forensic-brain-compare-reason-head">
+              <span className="forensic-brain-card-label">{context.kindLabel}</span>
+              <h4>Why this fired</h4>
+            </div>
+            <div className="forensic-brain-chip-row">
+              {context.gateways.map((gateway) => (
+                <span key={`compare:gateway:${gateway}`} className="forensic-brain-chip">
+                  {gateway}
+                </span>
+              ))}
+              {context.relatedSummary.map((item) => (
+                <span key={`compare:summary:${item}`} className="forensic-brain-chip">
+                  {item}
+                </span>
+              ))}
+            </div>
+            {context.reasons.length > 0 ? (
+              <div className="forensic-brain-compare-reason-list">
+                {context.reasons.slice(0, 8).map((reason, index) => (
+                  <article key={`compare:reason:${reason.gateway}:${reason.value}:${index}`}>
+                    <strong>{formatGateway(reason.gateway)}</strong>
+                    <p>{reason.detail || reason.label}</p>
+                    <dl>
+                      <div>
+                        <dt>Current</dt>
+                        <dd>{formatNodeIds(reason.currentNodeIds)}</dd>
+                      </div>
+                      <div>
+                        <dt>Remembered</dt>
+                        <dd>{formatNodeIds(reason.targetNodeIds)}</dd>
+                      </div>
+                    </dl>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="forensic-brain-compare-empty">
+                This object has no node-level reason trail yet, but it is still connected to the current Brain memory view.
+              </p>
+            )}
+          </section>
+
+          <section className="forensic-brain-compare-case forensic-brain-compare-memory">
+            <span className="forensic-brain-card-label">Remembered context</span>
+            <h4>{context.rememberedTitle}</h4>
+            <p>Prior memory or cluster context being compared with the current investigation.</p>
+            <dl>
+              <div>
+                <dt>Matched nodes</dt>
+                <dd>{formatNodeIds(rememberedNodeIds)}</dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+
+        <footer className="forensic-brain-compare-footer">
+          <div>
+            <span className="forensic-brain-card-label">Decision</span>
+            <strong>{context.suggestedAction}</strong>
+          </div>
+          <div className="forensic-brain-compare-actions">
+            {renderSourceActions()}
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              disabled={!canOpenRememberedCase}
+              onClick={() => {
+                if (context.targetInvestigationId) {
+                  onOpenInvestigation?.(context.targetInvestigationId)
+                }
+              }}
+            >
+              <ExternalLink size={13} />
+              Open Remembered Case
+            </button>
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              onClick={() => setCompareSelection(null)}
+            >
+              <X size={13} />
+              Close
+            </button>
+          </div>
+        </footer>
+      </section>
+    )
+  }
+
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
     const signal = group.primary
@@ -946,6 +1452,15 @@ export default function BrainSignalsPanel({
               <div className="forensic-brain-card-actions">
                 <button
                   type="button"
+                  aria-label={`Compare memory ${signal.targetTitle}`}
+                  onClick={() => setCompareSelection({ kind: 'signal', id: signal.id })}
+                  className="forensic-brain-action forensic-brain-action-primary"
+                >
+                  <Maximize2 size={13} />
+                  Compare
+                </button>
+                <button
+                  type="button"
                   aria-label={`Promote signal for ${signal.targetTitle}`}
                   onClick={() => void handlePromote(group)}
                   disabled={busyAction === `promote:${group.key}`}
@@ -1028,6 +1543,17 @@ export default function BrainSignalsPanel({
           ))}
         </div>
       )}
+      <div className="forensic-brain-link-card-actions">
+        <button
+          type="button"
+          aria-label={`Compare memory link ${link.toTitle}`}
+          className="forensic-brain-action forensic-brain-action-primary"
+          onClick={() => setCompareSelection({ kind: 'link', id: link.id })}
+        >
+          <Maximize2 size={13} />
+          Compare
+        </button>
+      </div>
     </article>
     )
   }
@@ -1080,6 +1606,15 @@ export default function BrainSignalsPanel({
           <p className="forensic-brain-detail-compressed">{relatedMemoryText} compressed into this memory case.</p>
         )}
         <div className="forensic-brain-detail-actions">
+          <button
+            type="button"
+            aria-label={`Compare memory link ${link.toTitle}`}
+            className="forensic-brain-action forensic-brain-action-primary"
+            onClick={() => setCompareSelection({ kind: 'link', id: link.id })}
+          >
+            <Maximize2 size={13} />
+            Compare
+          </button>
           <button
             type="button"
             aria-label={`Open memory link ${link.toTitle}`}
@@ -1189,6 +1724,17 @@ export default function BrainSignalsPanel({
         </div>
 
         <div className="forensic-brain-cluster-actions">
+          {!isHidden && (
+            <button
+              type="button"
+              aria-label={`Compare cluster ${cluster.label}`}
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setCompareSelection({ kind: 'cluster', id: cluster.id })}
+            >
+              <Maximize2 size={13} />
+              Compare
+            </button>
+          )}
           {!isHidden && (
             <button
               type="button"
@@ -1482,21 +2028,17 @@ export default function BrainSignalsPanel({
           </div>
         )}
 
-        {node.reasons.length > 0 ? (
-          <div className="forensic-brain-map-selected-reasons">
-            {node.reasons.slice(0, 3).map((reason, index) => (
-              <p key={`${node.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
-                <strong>{formatGateway(reason.gateway)}</strong>
-                {reason.detail || reason.label}
-              </p>
-            ))}
-          </div>
-        ) : (
-          <p className="forensic-brain-map-selected-empty">Signals and saved memories radiate from this case.</p>
-        )}
-
         {node.kind !== 'current' && (
           <div className="forensic-brain-map-selected-actions">
+            <button
+              type="button"
+              aria-label={`Compare map memory ${node.title}`}
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setCompareSelection({ kind: 'map-node', id: node.id })}
+            >
+              <Maximize2 size={13} />
+              Compare
+            </button>
             {targetInvestigationId && (
               <button
                 type="button"
@@ -1549,6 +2091,19 @@ export default function BrainSignalsPanel({
               </button>
             )}
           </div>
+        )}
+
+        {node.reasons.length > 0 ? (
+          <div className="forensic-brain-map-selected-reasons">
+            {node.reasons.slice(0, 3).map((reason, index) => (
+              <p key={`${node.id}:reason:${reason.gateway}:${reason.value}:${index}`}>
+                <strong>{formatGateway(reason.gateway)}</strong>
+                {reason.detail || reason.label}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="forensic-brain-map-selected-empty">Signals and saved memories radiate from this case.</p>
         )}
       </section>
     )
@@ -1760,6 +2315,15 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          <button
+            type="button"
+            aria-label={`Compare next move ${suggestion.title}`}
+            className="forensic-brain-action forensic-brain-action-primary"
+            onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
+          >
+            <Maximize2 size={13} />
+            Compare
+          </button>
           {canViewMap && (
             <button
               type="button"
@@ -2154,6 +2718,8 @@ export default function BrainSignalsPanel({
       </div>
 
       {activeBrainView === 'links' && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
+
+      {selectedCompareContext && renderCompareWorkspace(selectedCompareContext)}
 
       {error && (
         <div data-testid="brain-error-state" role="alert" className="forensic-brain-error">
