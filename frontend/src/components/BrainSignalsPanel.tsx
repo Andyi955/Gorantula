@@ -10,6 +10,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
+  Bell,
   Brain,
   ChevronDown,
   ChevronUp,
@@ -32,6 +33,7 @@ import {
 import {
   dismissBrainSuggestion,
   dismissBrainSignal,
+  fetchBrainAttention,
   fetchBrainClusters,
   fetchBrainLinks,
   fetchBrainMap,
@@ -43,6 +45,8 @@ import {
   reviewBrainSuggestion,
   toggleBrainClusterPin,
   unhideBrainCluster,
+  type BrainAttentionSummary,
+  type BrainMemoryStrength,
   type BrainSuggestion,
   type BrainSignal,
   type BrainSignalReason,
@@ -62,7 +66,6 @@ import {
   LOW_PRIORITY_SCORE_THRESHOLD,
   buildSignalSummary,
   clusterMatchesFilters,
-  dominantGatewayLabel,
   formatActivationCount,
   formatClusterGatewayCount,
   formatClusterMemberCount,
@@ -225,6 +228,50 @@ const formatSuggestionKind = (kind: string) => {
   }
 }
 
+const formatAttentionState = (state: string) => {
+  switch (state) {
+    case 'reinforced':
+      return 'Reinforced'
+    case 'hot':
+      return 'Hot'
+    case 'warm':
+      return 'Warm'
+    case 'fading':
+      return 'Fading'
+    case 'dormant':
+      return 'Dormant'
+    default:
+      return state ? state.replace(/-/g, ' ') : 'Dormant'
+  }
+}
+
+const formatAttentionKind = (kind: string) => {
+  switch (kind) {
+    case 'memory-reinforced':
+      return 'Memory reinforced'
+    case 'cluster-active':
+      return 'Cluster active'
+    case 'next-move-ready':
+      return 'Next move ready'
+    case 'signal-firing':
+      return 'Signal firing'
+    default:
+      return kind.replace(/-/g, ' ')
+  }
+}
+
+const formatStrengthSummary = (strength?: BrainMemoryStrength) => {
+  if (!strength) {
+    return []
+  }
+
+  return [
+    `Strength: ${formatAttentionState(strength.state)}`,
+    `Memory score: ${formatScore(strength.score)}`,
+    strength.activationCount > 0 ? formatActivationCount(strength.activationCount) : '',
+  ].filter(Boolean)
+}
+
 const uniqueStrings = (items: Array<string | undefined>) => Array.from(new Set(
   items.filter((item): item is string => Boolean(item)),
 ))
@@ -255,6 +302,7 @@ export default function BrainSignalsPanel({
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
+  const [attentionSummary, setAttentionSummary] = useState<BrainAttentionSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -268,6 +316,7 @@ export default function BrainSignalsPanel({
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('map')
+  const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
   const [isBrainMapDragging, setIsBrainMapDragging] = useState(false)
@@ -296,6 +345,7 @@ export default function BrainSignalsPanel({
       setClusters([])
       setSuggestions([])
       setBrainMapView(null)
+      setAttentionSummary(null)
       setError(null)
       setIsLoading(false)
       setIsRefreshing(false)
@@ -307,6 +357,7 @@ export default function BrainSignalsPanel({
       setSelectedClusterId(null)
       setSelectedBrainMapNodeId(null)
       setCompareSelection(null)
+      setIsAttentionOpen(false)
       return
     }
 
@@ -330,6 +381,12 @@ export default function BrainSignalsPanel({
       }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
+      let nextAttention: BrainAttentionSummary | null = null
+      try {
+        nextAttention = await fetchBrainAttention(currentInvestigationId)
+      } catch {
+        nextAttention = null
+      }
 
       if (requestIdRef.current !== requestId) {
         return
@@ -340,6 +397,7 @@ export default function BrainSignalsPanel({
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
       setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
+      setAttentionSummary(nextAttention)
       setShowLowerPrioritySignals(false)
       setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
@@ -568,6 +626,33 @@ export default function BrainSignalsPanel({
     () => allLinkGroups.find((group) => group.links.some((link) => link.id === selectedMemoryLinkId)) || null,
     [allLinkGroups, selectedMemoryLinkId],
   )
+  const memoryStrengthByLinkId = useMemo(() => {
+    const map = new Map<string, BrainMemoryStrength>()
+    attentionSummary?.memoryStrengths.forEach((strength) => {
+      if (strength.linkId) {
+        map.set(strength.linkId, strength)
+      }
+    })
+    return map
+  }, [attentionSummary])
+  const memoryStrengthBySignalId = useMemo(() => {
+    const map = new Map<string, BrainMemoryStrength>()
+    attentionSummary?.memoryStrengths.forEach((strength) => {
+      if (strength.signalId) {
+        map.set(strength.signalId, strength)
+      }
+    })
+    return map
+  }, [attentionSummary])
+  const memoryStrengthByClusterId = useMemo(() => {
+    const map = new Map<string, BrainMemoryStrength>()
+    attentionSummary?.memoryStrengths.forEach((strength) => {
+      if (strength.clusterId) {
+        map.set(strength.clusterId, strength)
+      }
+    })
+    return map
+  }, [attentionSummary])
   const selectedCompareContext = useMemo<BrainCompareContext | null>(() => {
     if (!compareSelection) {
       return null
@@ -581,6 +666,7 @@ export default function BrainSignalsPanel({
         return null
       }
       const signal = group.primary
+      const strength = memoryStrengthBySignalId.get(signal.id)
       return {
         kindLabel: 'Active signal',
         title: signal.targetTitle,
@@ -593,6 +679,7 @@ export default function BrainSignalsPanel({
         gateways: uniqueStrings(group.gateways.map(formatGateway)),
         targetInvestigationId: signal.targetInvestigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatCountLabel(group.signals.length, 'signal'),
           ...relatedClustersForSignalGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
         ],
@@ -608,6 +695,7 @@ export default function BrainSignalsPanel({
       }
       const link = group.primary
       const currentIsFrom = link.fromInvestigationId === currentInvestigationId
+      const strength = memoryStrengthByLinkId.get(link.id)
       return {
         kindLabel: 'Durable memory link',
         title: currentIsFrom ? link.toTitle : link.fromTitle,
@@ -620,6 +708,7 @@ export default function BrainSignalsPanel({
         gateways: uniqueStrings(group.gateways.map(formatGateway)),
         targetInvestigationId: currentIsFrom ? link.toInvestigationId : link.fromInvestigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatMemoryLinkType(group.promotionType),
           formatActivationCount(group.activationCount),
           ...relatedClustersForLinkGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
@@ -633,6 +722,7 @@ export default function BrainSignalsPanel({
         return null
       }
       const targetMember = cluster.members.find((member) => member.investigationId !== currentInvestigationId)
+      const strength = memoryStrengthByClusterId.get(cluster.id)
       return {
         kindLabel: 'Memory cluster',
         title: cluster.label,
@@ -648,6 +738,7 @@ export default function BrainSignalsPanel({
         ]),
         targetInvestigationId: targetMember?.investigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatClusterStatus(cluster.status),
           formatClusterMemberCount(cluster),
           formatCountLabel(getClusterSignalCount(cluster), 'signal'),
@@ -675,6 +766,10 @@ export default function BrainSignalsPanel({
         relatedSignals[0]?.targetTitle ||
         suggestion.targetInvestigationIds[0] ||
         'Related memory context'
+      const strength =
+        (relatedLinks[0] ? memoryStrengthByLinkId.get(relatedLinks[0].id) : undefined) ||
+        (relatedClusters[0] ? memoryStrengthByClusterId.get(relatedClusters[0].id) : undefined) ||
+        (relatedSignals[0] ? memoryStrengthBySignalId.get(relatedSignals[0].id) : undefined)
       return {
         kindLabel: formatSuggestionKind(suggestion.kind),
         title: suggestion.title,
@@ -693,6 +788,7 @@ export default function BrainSignalsPanel({
           relatedSignals[0]?.targetInvestigationId ||
           relatedLinks[0]?.toInvestigationId,
         relatedSummary: [
+          ...formatStrengthSummary(strength),
           formatCountLabel(relatedClusters.length, 'cluster'),
           formatCountLabel(relatedSignals.length, 'signal'),
           formatCountLabel(relatedLinks.length, 'memory link'),
@@ -704,6 +800,13 @@ export default function BrainSignalsPanel({
     if (!node) {
       return null
     }
+    const nodeStrength = node.linkId
+      ? memoryStrengthByLinkId.get(node.linkId)
+      : node.signalId
+        ? memoryStrengthBySignalId.get(node.signalId)
+        : node.clusterId
+          ? memoryStrengthByClusterId.get(node.clusterId)
+          : undefined
 
     return {
       kindLabel: node.kind === 'current'
@@ -723,6 +826,7 @@ export default function BrainSignalsPanel({
       gateways: uniqueStrings(node.gateways.map(formatGateway)),
       targetInvestigationId: node.targetInvestigationId,
       relatedSummary: [
+        ...formatStrengthSummary(nodeStrength),
         ...node.badges,
         formatCountLabel(node.relatedSignalIds?.length || 0, 'signal'),
         formatCountLabel(node.relatedMemoryLinkIds?.length || 0, 'memory link'),
@@ -734,6 +838,9 @@ export default function BrainSignalsPanel({
     allSignalGroups,
     compareSelection,
     currentInvestigationId,
+    memoryStrengthByClusterId,
+    memoryStrengthByLinkId,
+    memoryStrengthBySignalId,
     rankedClusters,
     rankedLinks,
     rankedSignals,
@@ -752,18 +859,19 @@ export default function BrainSignalsPanel({
       ...rankedClusters.filter((cluster) => !cluster.hidden).map((cluster) => cluster.score),
     ]
     const strongestScore = scores.length > 0 ? Math.max(...scores) : 0
-    const autoMemoryCount = rankedLinks.filter((link) => link.promotionType === 'auto').length
+    const counts = attentionSummary?.counts
+    const linkedMemoryCount = counts?.linkedMemories ?? allLinkGroups.length
+    const activeSignalCount = counts?.activeSignals ?? allSignalGroups.length
 
     return {
-      firingCases: formatCountLabel(allSignalGroups.length, 'firing case'),
-      memoryGroups: formatCountLabel(allLinkGroups.length, 'memory group'),
-      memoryClusters: formatCountLabel(rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
-      nextMoves: formatCountLabel(activeSuggestions.length, 'next move'),
-      autoMemory: `${autoMemoryCount} auto`,
-      strongestScore: formatScore(strongestScore),
-      dominantGateway: dominantGatewayLabel(allSignalGroups, allLinkGroups),
+      attentionState: formatAttentionState(attentionSummary?.dominantState || ''),
+      attentionScore: formatScore(attentionSummary?.overallScore ?? strongestScore),
+      firingCases: formatCountLabel(activeSignalCount, 'firing case'),
+      memoryGroups: formatCountLabel(linkedMemoryCount, 'memory group'),
+      memoryClusters: formatCountLabel(counts?.memoryClusters ?? rankedClusters.filter((cluster) => !cluster.hidden).length, 'memory cluster'),
+      nextMoves: formatCountLabel(counts?.activeNextMoves ?? activeSuggestions.length, 'next move'),
     }
-  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, rankedClusters, rankedLinks])
+  }, [activeSuggestions.length, allSignalGroups, allLinkGroups, attentionSummary, rankedClusters])
 
   useEffect(() => {
     if (!selectedBrainMapNodeId) {
@@ -2249,19 +2357,97 @@ export default function BrainSignalsPanel({
         <strong>{brainHealth.nextMoves}</strong>
       </div>
       <div>
-        <span>Auto Memory</span>
-        <strong>{brainHealth.autoMemory}</strong>
+        <span>Attention</span>
+        <strong>{brainHealth.attentionState}</strong>
       </div>
       <div>
-        <span>Strongest</span>
-        <strong>{brainHealth.strongestScore}</strong>
-      </div>
-      <div>
-        <span>Dominant Gateway</span>
-        <strong>{brainHealth.dominantGateway}</strong>
+        <span>Top Strength</span>
+        <strong>{brainHealth.attentionScore}</strong>
       </div>
     </div>
   )
+
+  const renderBrainAttentionTrigger = () => {
+    if (!attentionSummary || attentionSummary.items.length === 0) {
+      return null
+    }
+
+    const topItem = attentionSummary.items[0]
+
+    return (
+      <button
+        type="button"
+        className={`forensic-brain-attention-trigger ${isAttentionOpen ? 'is-open' : ''}`}
+        aria-label={`${isAttentionOpen ? 'Hide' : 'Show'} brain attention summary`}
+        aria-expanded={isAttentionOpen}
+        aria-controls="brain-attention-popover"
+        onClick={() => setIsAttentionOpen((current) => !current)}
+      >
+        <Bell size={14} />
+        <span>
+          <strong>{formatAttentionState(attentionSummary.dominantState)}</strong>
+          <small>{topItem.title}</small>
+        </span>
+        <b>{formatScore(attentionSummary.overallScore)}</b>
+      </button>
+    )
+  }
+
+  const renderBrainAttentionPanel = () => {
+    if (!attentionSummary || attentionSummary.items.length === 0 || !isAttentionOpen) {
+      return null
+    }
+
+    return (
+      <div className="forensic-brain-attention-popover" id="brain-attention-popover">
+        <section
+          data-testid="brain-attention-summary"
+          className="forensic-brain-attention-summary"
+          aria-label="Brain attention summary"
+        >
+          <div className="forensic-brain-attention-head">
+            <div>
+              <span className="forensic-brain-panel-kicker">What matters now</span>
+              <h3>{formatAttentionState(attentionSummary.dominantState)} memory attention</h3>
+            </div>
+            <div className="forensic-brain-attention-head-actions">
+              <strong>{formatScore(attentionSummary.overallScore)}</strong>
+              <button
+                type="button"
+                aria-label="Close brain attention summary"
+                className="forensic-brain-attention-close"
+                onClick={() => setIsAttentionOpen(false)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+          <div className="forensic-brain-attention-items">
+            {attentionSummary.items.slice(0, 3).map((item) => (
+              <article key={item.id} className={`forensic-brain-attention-item forensic-brain-attention-${item.tone}`}>
+                <span>{formatAttentionKind(item.kind)}</span>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+                {item.suggestedAction && (
+                  <small>{item.suggestedAction}</small>
+                )}
+              </article>
+            ))}
+          </div>
+          {attentionSummary.memoryStrengths.length > 0 && (
+            <div className="forensic-brain-strength-row" aria-label="Top memory strengths">
+              {attentionSummary.memoryStrengths.slice(0, 3).map((strength) => (
+                <span key={strength.id}>
+                  <strong>{strength.title}</strong>
+                  {formatAttentionState(strength.state)} / {formatScore(strength.score)}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
 
   const renderSuggestionCard = (suggestion: BrainSuggestion) => {
     const canOpenTarget = suggestion.targetInvestigationIds.length > 0 && !!onOpenInvestigation
@@ -2672,6 +2858,7 @@ export default function BrainSignalsPanel({
           <span className="forensic-brain-status">
             {activeSuggestions.length} moves / {allSignalGroups.length} active / {allLinkGroups.length} linked / {visibleClusters.length} clusters
           </span>
+          {renderBrainAttentionTrigger()}
           <button
             type="button"
             aria-label="Refresh brain signals"
@@ -2703,6 +2890,8 @@ export default function BrainSignalsPanel({
           </button>
         ))}
       </nav>
+
+      {renderBrainAttentionPanel()}
 
       <div className="forensic-brain-active-view">
         {activeBrainView === 'map' && (

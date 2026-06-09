@@ -1,7 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
-import type { BrainSignal, BrainSuggestion, MemoryCluster, MemoryLink } from '../../src/utils/brainMemory'
+import type {
+  BrainAttentionSummary,
+  BrainSignal,
+  BrainSuggestion,
+  MemoryCluster,
+  MemoryLink,
+} from '../../src/utils/brainMemory'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 
 const signal: BrainSignal = {
@@ -94,6 +100,67 @@ const suggestion: BrainSuggestion = {
   targetInvestigationIds: ['inv-older'],
   createdAt: '2026-06-05T12:00:00Z',
   updatedAt: '2026-06-05T12:00:00Z',
+}
+
+const attentionSummary: BrainAttentionSummary = {
+  investigationId: 'inv-current',
+  investigationTitle: 'Current Grid Case',
+  generatedAt: '2026-06-09T10:00:00Z',
+  overallScore: 0.91,
+  dominantState: 'reinforced',
+  counts: {
+    activeSignals: 2,
+    linkedMemories: 2,
+    memoryClusters: 1,
+    activeNextMoves: 1,
+    reviewedNextMoves: 1,
+    reinforcedMemories: 1,
+    dormantMemories: 1,
+    autoLinkedMemories: 1,
+    manualLinkedMemory: 1,
+  },
+  memoryStrengths: [
+    {
+      id: 'brain-strength-link-alpha',
+      kind: 'memory-link',
+      title: 'Older Substation Case',
+      score: 0.91,
+      state: 'reinforced',
+      targetInvestigationId: 'inv-older',
+      linkId: link.id,
+      gateway: 'entity-date',
+      gateways: ['entity-date'],
+      reasonSamples: [signal.reasons[0]],
+      activationCount: 4,
+      signalCount: 0,
+      memoryLinkCount: 1,
+      clusterMemberCount: 0,
+      lastActivatedAt: '2026-06-09T09:00:00Z',
+      suggestedAction: 'Compare linked memory',
+      relatedSignalIds: [signal.id],
+      relatedMemoryLinkIds: [link.id],
+      memberInvestigationIds: [],
+    },
+  ],
+  items: [
+    {
+      id: 'brain-attention-reinforced',
+      kind: 'memory-reinforced',
+      tone: 'reinforced',
+      title: 'Memory reinforced',
+      detail: 'Older Substation Case has fired 4 time(s).',
+      score: 0.91,
+      suggestedAction: 'Compare linked memory',
+      targetInvestigationId: 'inv-older',
+      linkId: link.id,
+      relatedSignalIds: [signal.id],
+      relatedMemoryLinkIds: [link.id],
+      relatedClusterIds: [],
+      memberInvestigationIds: [],
+      reasonSamples: [signal.reasons[0]],
+      updatedAt: '2026-06-09T09:00:00Z',
+    },
+  ],
 }
 
 const backendBrainMap = {
@@ -331,6 +398,7 @@ const installBrainFetch = ({
   clusters = [],
   suggestions = [],
   brainMap = emptyBackendBrainMap,
+  attention = null,
   promoteLink = link,
 }: {
   signals?: BrainSignal[]
@@ -338,6 +406,7 @@ const installBrainFetch = ({
   clusters?: MemoryCluster[]
   suggestions?: BrainSuggestion[]
   brainMap?: typeof backendBrainMap
+  attention?: BrainAttentionSummary | null
   promoteLink?: MemoryLink
 } = {}) => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -358,6 +427,9 @@ const installBrainFetch = ({
     }
     if (url.includes('/api/brain/suggestions?')) {
       return Promise.resolve(jsonResponse(suggestions) as Response)
+    }
+    if (url.includes('/api/brain/attention?') && attention) {
+      return Promise.resolve(jsonResponse(attention) as Response)
     }
     if (method === 'PUT' && url.endsWith('/dismiss')) {
       return Promise.resolve(jsonResponse({ ...signal, dismissed: true }) as Response)
@@ -494,6 +566,7 @@ describe('BrainSignalsPanel', () => {
       clusters: [cluster],
       suggestions: [suggestion],
       brainMap: backendBrainMap,
+      attention: attentionSummary,
     })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
@@ -507,7 +580,10 @@ describe('BrainSignalsPanel', () => {
     await openBrainView(user, /memory links view/i)
     const linkCard = await screen.findByTestId('brain-link-card')
     await user.click(within(linkCard).getByRole('button', { name: /compare memory link older substation case/i }))
-    expect(await screen.findByTestId('brain-compare-workspace')).toHaveTextContent('Durable memory link')
+    const linkCompare = await screen.findByTestId('brain-compare-workspace')
+    expect(linkCompare).toHaveTextContent('Durable memory link')
+    expect(linkCompare).toHaveTextContent('Strength: Reinforced')
+    expect(linkCompare).toHaveTextContent('Memory score: 91%')
     await user.click(screen.getByRole('button', { name: /close brain compare/i }))
 
     await openBrainView(user, /memory clusters view/i)
@@ -1065,9 +1141,36 @@ describe('BrainSignalsPanel', () => {
     const health = await screen.findByTestId('brain-health-summary')
     expect(health).toHaveTextContent('2 firing cases')
     expect(health).toHaveTextContent('2 memory groups')
-    expect(health).toHaveTextContent('1 auto')
     expect(health).toHaveTextContent('92%')
-    expect(health).toHaveTextContent('Entity/Date')
+  })
+
+  it('renders backend attention summary when available', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ attention: attentionSummary })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const health = await screen.findByTestId('brain-health-summary')
+    expect(health).toHaveTextContent('Reinforced')
+    expect(health).toHaveTextContent('91%')
+
+    const trigger = screen.getByRole('button', { name: /show brain attention summary/i })
+    expect(trigger).toHaveTextContent('Reinforced')
+    expect(trigger).toHaveTextContent('Memory reinforced')
+    expect(trigger).toHaveTextContent('91%')
+    expect(screen.queryByTestId('brain-attention-summary')).not.toBeInTheDocument()
+
+    await user.click(trigger)
+    const attention = await screen.findByTestId('brain-attention-summary')
+    expect(attention).toHaveTextContent('What matters now')
+    expect(attention).toHaveTextContent('Memory reinforced')
+    expect(attention).toHaveTextContent('Older Substation Case has fired 4 time(s).')
+    expect(attention).toHaveTextContent('Compare linked memory')
+    expect(attention).toHaveTextContent('Older Substation Case')
+    expect(attention).toHaveTextContent('Reinforced / 91%')
+
+    await user.click(within(attention).getByRole('button', { name: /close brain attention summary/i }))
+    expect(screen.queryByTestId('brain-attention-summary')).not.toBeInTheDocument()
   })
 
   it('renders a readable brain map with digest and selected memory detail', async () => {

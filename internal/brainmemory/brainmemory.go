@@ -45,6 +45,17 @@ const (
 	SuggestionStatusActive    = "active"
 	SuggestionStatusDismissed = "dismissed"
 	SuggestionStatusReviewed  = "reviewed"
+
+	BrainMemoryStateReinforced = "reinforced"
+	BrainMemoryStateHot        = "hot"
+	BrainMemoryStateWarm       = "warm"
+	BrainMemoryStateFading     = "fading"
+	BrainMemoryStateDormant    = "dormant"
+
+	AttentionKindMemoryReinforced = "memory-reinforced"
+	AttentionKindClusterActive    = "cluster-active"
+	AttentionKindNextMoveReady    = "next-move-ready"
+	AttentionKindSignalFiring     = "signal-firing"
 )
 
 var (
@@ -167,6 +178,73 @@ type BrainSuggestion struct {
 	UpdatedAt              string   `json:"updatedAt"`
 	DismissedAt            string   `json:"dismissedAt,omitempty"`
 	ReviewedAt             string   `json:"reviewedAt,omitempty"`
+}
+
+type BrainAttentionCounts struct {
+	ActiveSignals      int `json:"activeSignals"`
+	LinkedMemories     int `json:"linkedMemories"`
+	MemoryClusters     int `json:"memoryClusters"`
+	ActiveNextMoves    int `json:"activeNextMoves"`
+	ReviewedNextMoves  int `json:"reviewedNextMoves"`
+	ReinforcedMemories int `json:"reinforcedMemories"`
+	DormantMemories    int `json:"dormantMemories"`
+	AutoLinkedMemories int `json:"autoLinkedMemories"`
+	ManualLinkedMemory int `json:"manualLinkedMemory"`
+}
+
+type BrainMemoryStrength struct {
+	ID                     string         `json:"id"`
+	Kind                   string         `json:"kind"`
+	Title                  string         `json:"title"`
+	Score                  float64        `json:"score"`
+	State                  string         `json:"state"`
+	TargetInvestigationID  string         `json:"targetInvestigationId,omitempty"`
+	ClusterID              string         `json:"clusterId,omitempty"`
+	SignalID               string         `json:"signalId,omitempty"`
+	LinkID                 string         `json:"linkId,omitempty"`
+	Gateway                string         `json:"gateway,omitempty"`
+	Gateways               []string       `json:"gateways"`
+	ReasonSamples          []SignalReason `json:"reasonSamples"`
+	ActivationCount        int            `json:"activationCount"`
+	SignalCount            int            `json:"signalCount"`
+	MemoryLinkCount        int            `json:"memoryLinkCount"`
+	ClusterMemberCount     int            `json:"clusterMemberCount"`
+	LastActivatedAt        string         `json:"lastActivatedAt,omitempty"`
+	SuggestedAction        string         `json:"suggestedAction"`
+	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
+	MemberInvestigationIDs []string       `json:"memberInvestigationIds"`
+}
+
+type BrainAttentionItem struct {
+	ID                     string         `json:"id"`
+	Kind                   string         `json:"kind"`
+	Tone                   string         `json:"tone"`
+	Title                  string         `json:"title"`
+	Detail                 string         `json:"detail"`
+	Score                  float64        `json:"score"`
+	SuggestedAction        string         `json:"suggestedAction"`
+	TargetInvestigationID  string         `json:"targetInvestigationId,omitempty"`
+	ClusterID              string         `json:"clusterId,omitempty"`
+	SignalID               string         `json:"signalId,omitempty"`
+	LinkID                 string         `json:"linkId,omitempty"`
+	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
+	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
+	MemberInvestigationIDs []string       `json:"memberInvestigationIds"`
+	ReasonSamples          []SignalReason `json:"reasonSamples"`
+	UpdatedAt              string         `json:"updatedAt,omitempty"`
+}
+
+type BrainAttentionSummary struct {
+	InvestigationID    string                `json:"investigationId"`
+	InvestigationTitle string                `json:"investigationTitle"`
+	GeneratedAt        string                `json:"generatedAt"`
+	OverallScore       float64               `json:"overallScore"`
+	DominantState      string                `json:"dominantState"`
+	Counts             BrainAttentionCounts  `json:"counts"`
+	MemoryStrengths    []BrainMemoryStrength `json:"memoryStrengths"`
+	Items              []BrainAttentionItem  `json:"items"`
 }
 
 type BrainMapView struct {
@@ -747,6 +825,46 @@ func (s *Service) MarkSuggestionReviewed(suggestionID string) (BrainSuggestion, 
 	return s.setSuggestionStatus(suggestionID, SuggestionStatusReviewed)
 }
 
+func (s *Service) AttentionForInvestigation(investigationID string) (BrainAttentionSummary, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return BrainAttentionSummary{}, models.ErrInvalidInvestigationID
+	}
+	record, err := s.store.LoadMetadata(investigationID)
+	if err != nil {
+		return BrainAttentionSummary{}, err
+	}
+	signals, err := s.loadSignals()
+	if err != nil {
+		return BrainAttentionSummary{}, err
+	}
+	links, err := s.loadLinks()
+	if err != nil {
+		return BrainAttentionSummary{}, err
+	}
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return BrainAttentionSummary{}, err
+	}
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return BrainAttentionSummary{}, err
+	}
+
+	activeSignals := activeSignalsForInvestigation(signals, investigationID)
+	activeLinks := linksForInvestigationMap(links, investigationID)
+	visibleClusters := clustersForInvestigationMap(clusters, investigationID)
+	visibleSuggestions := visibleSuggestionsForInvestigation(suggestions, investigationID)
+	return buildBrainAttentionSummary(
+		record,
+		activeSignals,
+		activeLinks,
+		visibleClusters,
+		visibleSuggestions,
+		time.Now().UTC(),
+	), nil
+}
+
 func (s *Service) MapForInvestigation(investigationID string) (BrainMapView, error) {
 	investigationID = strings.TrimSpace(investigationID)
 	if !models.ValidInvestigationID(investigationID) {
@@ -1220,6 +1338,492 @@ func buildBrainMapDigest(
 		return digest[:3]
 	}
 	return digest
+}
+
+func buildBrainAttentionSummary(
+	record models.InvestigationRecord,
+	signals []BrainSignal,
+	links []MemoryLink,
+	clusters []MemoryCluster,
+	suggestions []BrainSuggestion,
+	now time.Time,
+) BrainAttentionSummary {
+	sortSignals(signals)
+	sortLinksForMap(links)
+	sortClusters(clusters)
+	sortSuggestions(suggestions)
+
+	strengths := buildBrainMemoryStrengths(record.ID, signals, links, clusters, suggestions, now)
+	items := buildBrainAttentionItems(record.ID, signals, links, clusters, suggestions, strengths, now)
+	counts := BrainAttentionCounts{
+		ActiveSignals:      len(signals),
+		LinkedMemories:     len(links),
+		MemoryClusters:     len(clusters),
+		AutoLinkedMemories: countMemoryLinksByPromotion(links, promotionTypeAuto),
+		ManualLinkedMemory: countMemoryLinksByPromotion(links, promotionTypeManual),
+	}
+	for _, suggestion := range suggestions {
+		switch suggestion.Status {
+		case SuggestionStatusReviewed:
+			counts.ReviewedNextMoves++
+		case SuggestionStatusActive, "":
+			counts.ActiveNextMoves++
+		}
+	}
+	for _, strength := range strengths {
+		switch strength.State {
+		case BrainMemoryStateReinforced:
+			counts.ReinforcedMemories++
+		case BrainMemoryStateDormant, BrainMemoryStateFading:
+			counts.DormantMemories++
+		}
+	}
+
+	overallScore := 0.0
+	if len(strengths) > 0 {
+		overallScore = strengths[0].Score
+	}
+	return BrainAttentionSummary{
+		InvestigationID:    record.ID,
+		InvestigationTitle: investigationRecordTitle(record),
+		GeneratedAt:        now.UTC().Format(time.RFC3339),
+		OverallScore:       normalizeMapScore(overallScore),
+		DominantState:      dominantBrainMemoryState(strengths),
+		Counts:             counts,
+		MemoryStrengths:    strengths,
+		Items:              items,
+	}
+}
+
+func buildBrainMemoryStrengths(
+	currentInvestigationID string,
+	signals []BrainSignal,
+	links []MemoryLink,
+	clusters []MemoryCluster,
+	suggestions []BrainSuggestion,
+	now time.Time,
+) []BrainMemoryStrength {
+	reviewedLinks, reviewedClusters, reviewedSignals := reviewedSuggestionReferences(suggestions)
+	strengths := make([]BrainMemoryStrength, 0, len(links)+len(clusters)+len(signals))
+	for _, link := range links {
+		targetID, targetTitle := memoryLinkTargetForMap(link, currentInvestigationID)
+		lastActivatedAt := nonEmptyString(link.LastFiredAt, link.UpdatedAt, link.CreatedAt)
+		score := memoryStrengthScore(link.Score, link.ActivationCount, lastActivatedAt, now)
+		if reviewedLinks[link.ID] {
+			score += 0.06
+		}
+		if link.PromotionType == promotionTypeManual {
+			score += 0.04
+		}
+		score = normalizeMapScore(score)
+		strengths = append(strengths, BrainMemoryStrength{
+			ID:                    deterministicID("brain-strength", currentInvestigationID, "link", link.ID),
+			Kind:                  "memory-link",
+			Title:                 nonEmptyString(targetTitle, targetID, "Linked memory"),
+			Score:                 score,
+			State:                 brainMemoryState(score, link.ActivationCount, lastActivatedAt, now),
+			TargetInvestigationID: targetID,
+			LinkID:                link.ID,
+			Gateway:               firstGateway(link.Gateways),
+			Gateways:              cleanStringSet(link.Gateways),
+			ReasonSamples:         limitSignalReasons(link.Reasons, 3),
+			ActivationCount:       maxInt(1, link.ActivationCount),
+			MemoryLinkCount:       1,
+			LastActivatedAt:       lastActivatedAt,
+			SuggestedAction:       nonEmptyString(link.SuggestedAction, "Compare linked memory"),
+			RelatedSignalIDs:      cleanStringSet([]string{link.SignalID}),
+			RelatedMemoryLinkIDs:  []string{link.ID},
+		})
+	}
+	for _, cluster := range clusters {
+		if cluster.Hidden {
+			continue
+		}
+		lastActivatedAt := nonEmptyString(cluster.LastActivatedAt, cluster.UpdatedAt, cluster.CreatedAt)
+		score := memoryStrengthScore(cluster.Score, len(cluster.SignalIDs)+len(cluster.MemoryLinkIDs), lastActivatedAt, now)
+		if reviewedClusters[cluster.ID] {
+			score += 0.06
+		}
+		if cluster.Pinned {
+			score += 0.05
+		}
+		score = normalizeMapScore(score)
+		strengths = append(strengths, BrainMemoryStrength{
+			ID:                     deterministicID("brain-strength", currentInvestigationID, "cluster", cluster.ID),
+			Kind:                   "memory-cluster",
+			Title:                  nonEmptyString(cluster.Label, "Memory cluster"),
+			Score:                  score,
+			State:                  brainMemoryState(score, len(cluster.SignalIDs)+len(cluster.MemoryLinkIDs), lastActivatedAt, now),
+			ClusterID:              cluster.ID,
+			Gateway:                cluster.DominantGateway,
+			Gateways:               cleanStringSet(mapKeysWithPositiveCounts(cluster.GatewayCounts)),
+			ReasonSamples:          limitSignalReasons(cluster.ReasonSamples, 3),
+			ActivationCount:        len(cluster.SignalIDs) + len(cluster.MemoryLinkIDs),
+			SignalCount:            len(cluster.SignalIDs),
+			MemoryLinkCount:        len(cluster.MemoryLinkIDs),
+			ClusterMemberCount:     len(cluster.MemberInvestigationIDs),
+			LastActivatedAt:        lastActivatedAt,
+			SuggestedAction:        "Inspect recurring memory cluster",
+			RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
+			RelatedMemoryLinkIDs:   cleanStringSet(cluster.MemoryLinkIDs),
+			MemberInvestigationIDs: cleanStringSet(cluster.MemberInvestigationIDs),
+		})
+	}
+	for _, signal := range signals {
+		lastActivatedAt := nonEmptyString(signal.LastFiredAt, signal.UpdatedAt, signal.CreatedAt)
+		score := memoryStrengthScore(signal.Score*0.88, signal.ActivationCount, lastActivatedAt, now)
+		if reviewedSignals[signal.ID] {
+			score += 0.05
+		}
+		score = normalizeMapScore(score)
+		strengths = append(strengths, BrainMemoryStrength{
+			ID:                    deterministicID("brain-strength", currentInvestigationID, "signal", signal.ID),
+			Kind:                  "active-signal",
+			Title:                 nonEmptyString(signal.TargetTitle, signal.TargetInvestigationID, "Active signal"),
+			Score:                 score,
+			State:                 brainMemoryState(score, signal.ActivationCount, lastActivatedAt, now),
+			TargetInvestigationID: signal.TargetInvestigationID,
+			SignalID:              signal.ID,
+			Gateway:               firstGateway(signal.Gateways),
+			Gateways:              cleanStringSet(signal.Gateways),
+			ReasonSamples:         limitSignalReasons(signal.Reasons, 3),
+			ActivationCount:       maxInt(1, signal.ActivationCount),
+			SignalCount:           1,
+			LastActivatedAt:       lastActivatedAt,
+			SuggestedAction:       nonEmptyString(signal.SuggestedAction, "Review older case"),
+			RelatedSignalIDs:      []string{signal.ID},
+		})
+	}
+	sortBrainMemoryStrengths(strengths)
+	if len(strengths) > 12 {
+		return strengths[:12]
+	}
+	return strengths
+}
+
+func buildBrainAttentionItems(
+	currentInvestigationID string,
+	signals []BrainSignal,
+	links []MemoryLink,
+	clusters []MemoryCluster,
+	suggestions []BrainSuggestion,
+	strengths []BrainMemoryStrength,
+	now time.Time,
+) []BrainAttentionItem {
+	items := make([]BrainAttentionItem, 0, 5)
+	if strength, ok := firstStrengthByStateAndKind(strengths, BrainMemoryStateReinforced, "memory-link"); ok {
+		items = append(items, BrainAttentionItem{
+			ID:                    deterministicID("brain-attention", currentInvestigationID, AttentionKindMemoryReinforced, strength.ID),
+			Kind:                  AttentionKindMemoryReinforced,
+			Tone:                  strength.State,
+			Title:                 "Memory reinforced",
+			Detail:                fmt.Sprintf("%s has fired %d time(s).", strength.Title, strength.ActivationCount),
+			Score:                 strength.Score,
+			SuggestedAction:       strength.SuggestedAction,
+			TargetInvestigationID: strength.TargetInvestigationID,
+			ClusterID:             strength.ClusterID,
+			SignalID:              strength.SignalID,
+			LinkID:                strength.LinkID,
+			RelatedSignalIDs:      cleanStringSet(strength.RelatedSignalIDs),
+			RelatedMemoryLinkIDs:  cleanStringSet(strength.RelatedMemoryLinkIDs),
+			ReasonSamples:         limitSignalReasons(strength.ReasonSamples, 3),
+			UpdatedAt:             strength.LastActivatedAt,
+		})
+	}
+	if len(clusters) > 0 {
+		cluster := clusters[0]
+		if !cluster.Hidden {
+			items = append(items, BrainAttentionItem{
+				ID:                     deterministicID("brain-attention", currentInvestigationID, AttentionKindClusterActive, cluster.ID),
+				Kind:                   AttentionKindClusterActive,
+				Tone:                   cluster.Status,
+				Title:                  "Cluster region active",
+				Detail:                 fmt.Sprintf("%s links %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
+				Score:                  normalizeMapScore(cluster.Score),
+				SuggestedAction:        "Inspect recurring memory cluster",
+				ClusterID:              cluster.ID,
+				RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
+				RelatedMemoryLinkIDs:   cleanStringSet(cluster.MemoryLinkIDs),
+				MemberInvestigationIDs: cleanStringSet(cluster.MemberInvestigationIDs),
+				ReasonSamples:          limitSignalReasons(cluster.ReasonSamples, 3),
+				UpdatedAt:              nonEmptyString(cluster.LastActivatedAt, cluster.UpdatedAt, cluster.CreatedAt, now.UTC().Format(time.RFC3339)),
+			})
+		}
+	}
+	if len(suggestions) > 0 {
+		for _, suggestion := range suggestions {
+			if suggestion.Status != SuggestionStatusActive && suggestion.Status != "" {
+				continue
+			}
+			items = append(items, BrainAttentionItem{
+				ID:                     deterministicID("brain-attention", currentInvestigationID, AttentionKindNextMoveReady, suggestion.ID),
+				Kind:                   AttentionKindNextMoveReady,
+				Tone:                   suggestion.Priority,
+				Title:                  "Next move ready",
+				Detail:                 suggestion.Title,
+				Score:                  normalizeMapScore(suggestion.Score),
+				SuggestedAction:        suggestion.SuggestedAction,
+				TargetInvestigationID:  firstString(suggestion.TargetInvestigationIDs),
+				RelatedSignalIDs:       cleanStringSet(suggestion.RelatedSignalIDs),
+				RelatedMemoryLinkIDs:   cleanStringSet(suggestion.RelatedMemoryLinkIDs),
+				RelatedClusterIDs:      cleanStringSet(suggestion.RelatedClusterIDs),
+				MemberInvestigationIDs: cleanStringSet(suggestion.TargetInvestigationIDs),
+				UpdatedAt:              suggestion.UpdatedAt,
+			})
+			break
+		}
+	}
+	if len(signals) > 0 {
+		signal := signals[0]
+		items = append(items, BrainAttentionItem{
+			ID:                    deterministicID("brain-attention", currentInvestigationID, AttentionKindSignalFiring, signal.ID),
+			Kind:                  AttentionKindSignalFiring,
+			Tone:                  mapStatusForScore(signal.Score),
+			Title:                 "Signal firing",
+			Detail:                fmt.Sprintf("%s is firing through %s.", signal.TargetTitle, formatGatewayName(firstGateway(signal.Gateways))),
+			Score:                 normalizeMapScore(signal.Score),
+			SuggestedAction:       nonEmptyString(signal.SuggestedAction, "Review older case"),
+			TargetInvestigationID: signal.TargetInvestigationID,
+			SignalID:              signal.ID,
+			RelatedSignalIDs:      []string{signal.ID},
+			ReasonSamples:         limitSignalReasons(signal.Reasons, 3),
+			UpdatedAt:             nonEmptyString(signal.LastFiredAt, signal.UpdatedAt, signal.CreatedAt),
+		})
+	}
+	sortBrainAttentionItems(items)
+	if len(items) > 5 {
+		return items[:5]
+	}
+	return items
+}
+
+func countMemoryLinksByPromotion(links []MemoryLink, promotionType string) int {
+	count := 0
+	for _, link := range links {
+		if link.PromotionType == promotionType {
+			count++
+		}
+	}
+	return count
+}
+
+func visibleSuggestionsForInvestigation(suggestions map[string]BrainSuggestion, investigationID string) []BrainSuggestion {
+	result := make([]BrainSuggestion, 0)
+	for _, suggestion := range suggestions {
+		if suggestion.InvestigationID != investigationID || suggestion.Status == SuggestionStatusDismissed {
+			continue
+		}
+		result = append(result, normalizeSuggestionCollections(suggestion))
+	}
+	sortSuggestions(result)
+	return result
+}
+
+func reviewedSuggestionReferences(suggestions []BrainSuggestion) (map[string]bool, map[string]bool, map[string]bool) {
+	linkIDs := map[string]bool{}
+	clusterIDs := map[string]bool{}
+	signalIDs := map[string]bool{}
+	for _, suggestion := range suggestions {
+		if suggestion.Status != SuggestionStatusReviewed {
+			continue
+		}
+		for _, id := range suggestion.RelatedMemoryLinkIDs {
+			if id = strings.TrimSpace(id); id != "" {
+				linkIDs[id] = true
+			}
+		}
+		for _, id := range suggestion.RelatedClusterIDs {
+			if id = strings.TrimSpace(id); id != "" {
+				clusterIDs[id] = true
+			}
+		}
+		for _, id := range suggestion.RelatedSignalIDs {
+			if id = strings.TrimSpace(id); id != "" {
+				signalIDs[id] = true
+			}
+		}
+	}
+	return linkIDs, clusterIDs, signalIDs
+}
+
+func memoryStrengthScore(baseScore float64, activationCount int, lastActivatedAt string, now time.Time) float64 {
+	score := normalizeMapScore(baseScore)
+	if activationCount > 0 {
+		score += minFloat(0.18, float64(activationCount)*0.035)
+	}
+	score += recencyStrengthBoost(lastActivatedAt, now)
+	return normalizeMapScore(score)
+}
+
+func recencyStrengthBoost(timestamp string, now time.Time) float64 {
+	timestamp = strings.TrimSpace(timestamp)
+	if timestamp == "" {
+		return 0
+	}
+	parsed, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return 0
+	}
+	age := now.Sub(parsed)
+	switch {
+	case age <= 7*24*time.Hour:
+		return 0.08
+	case age <= 30*24*time.Hour:
+		return 0.04
+	case age <= 90*24*time.Hour:
+		return 0.01
+	default:
+		return -0.08
+	}
+}
+
+func brainMemoryState(score float64, activationCount int, lastActivatedAt string, now time.Time) string {
+	score = normalizeMapScore(score)
+	if activationCount >= 3 && score >= 0.82 {
+		return BrainMemoryStateReinforced
+	}
+	if memoryIsDormant(lastActivatedAt, now) && score < 0.68 {
+		return BrainMemoryStateDormant
+	}
+	if memoryIsFading(lastActivatedAt, now) && score < 0.78 {
+		return BrainMemoryStateFading
+	}
+	if score >= 0.75 {
+		return BrainMemoryStateHot
+	}
+	if score >= 0.5 {
+		return BrainMemoryStateWarm
+	}
+	return BrainMemoryStateDormant
+}
+
+func memoryIsFading(timestamp string, now time.Time) bool {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(timestamp))
+	return err == nil && now.Sub(parsed) > 30*24*time.Hour
+}
+
+func memoryIsDormant(timestamp string, now time.Time) bool {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(timestamp))
+	return err == nil && now.Sub(parsed) > 90*24*time.Hour
+}
+
+func sortBrainMemoryStrengths(strengths []BrainMemoryStrength) {
+	sort.SliceStable(strengths, func(i, j int) bool {
+		if brainMemoryStateRank(strengths[i].State) != brainMemoryStateRank(strengths[j].State) {
+			return brainMemoryStateRank(strengths[i].State) < brainMemoryStateRank(strengths[j].State)
+		}
+		if strengths[i].Score == strengths[j].Score {
+			if strengths[i].ActivationCount == strengths[j].ActivationCount {
+				return strengths[i].Title < strengths[j].Title
+			}
+			return strengths[i].ActivationCount > strengths[j].ActivationCount
+		}
+		return strengths[i].Score > strengths[j].Score
+	})
+}
+
+func brainMemoryStateRank(state string) int {
+	switch state {
+	case BrainMemoryStateReinforced:
+		return 0
+	case BrainMemoryStateHot:
+		return 1
+	case BrainMemoryStateWarm:
+		return 2
+	case BrainMemoryStateFading:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func sortBrainAttentionItems(items []BrainAttentionItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if attentionKindRank(items[i].Kind) != attentionKindRank(items[j].Kind) {
+			return attentionKindRank(items[i].Kind) < attentionKindRank(items[j].Kind)
+		}
+		if items[i].Score == items[j].Score {
+			return items[i].Title < items[j].Title
+		}
+		return items[i].Score > items[j].Score
+	})
+}
+
+func attentionKindRank(kind string) int {
+	switch kind {
+	case AttentionKindMemoryReinforced:
+		return 0
+	case AttentionKindClusterActive:
+		return 1
+	case AttentionKindNextMoveReady:
+		return 2
+	case AttentionKindSignalFiring:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func dominantBrainMemoryState(strengths []BrainMemoryStrength) string {
+	if len(strengths) == 0 {
+		return BrainMemoryStateDormant
+	}
+	return strengths[0].State
+}
+
+func firstStrengthByState(strengths []BrainMemoryStrength, state string) (BrainMemoryStrength, bool) {
+	for _, strength := range strengths {
+		if strength.State == state {
+			return strength, true
+		}
+	}
+	return BrainMemoryStrength{}, false
+}
+
+func firstStrengthByStateAndKind(strengths []BrainMemoryStrength, state string, kind string) (BrainMemoryStrength, bool) {
+	for _, strength := range strengths {
+		if strength.State == state && strength.Kind == kind {
+			return strength, true
+		}
+	}
+	return BrainMemoryStrength{}, false
+}
+
+func firstString(values []string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func mapKeysWithPositiveCounts(counts map[string]int) []string {
+	keys := make([]string, 0, len(counts))
+	for key, count := range counts {
+		if strings.TrimSpace(key) != "" && count > 0 {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func limitSignalReasons(reasons []SignalReason, limit int) []SignalReason {
+	if limit <= 0 || len(reasons) == 0 {
+		return []SignalReason{}
+	}
+	result := make([]SignalReason, 0, minInt(limit, len(reasons)))
+	for _, reason := range reasons {
+		if strings.TrimSpace(reason.Gateway) == "" && strings.TrimSpace(reason.Label) == "" && strings.TrimSpace(reason.Detail) == "" {
+			continue
+		}
+		result = append(result, reason)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result
 }
 
 func nonEmptyString(values ...string) string {
@@ -2085,6 +2689,15 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		}
 		suggestions, err := service.SuggestionsForInvestigation(r.URL.Query().Get("investigationId"))
 		writeAPIResult(w, suggestions, err)
+		return
+	}
+	if path == "api/brain/attention" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		attention, err := service.AttentionForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, attention, err)
 		return
 	}
 
