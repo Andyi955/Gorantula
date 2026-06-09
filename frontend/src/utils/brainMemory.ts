@@ -174,7 +174,7 @@ export interface BrainFocusNarrative {
 }
 
 export interface BrainGuidanceCard {
-  kind: 'next-action' | 'evidence-trail' | 'caution' | string
+  kind: 'next-action' | 'evidence-trail' | 'caution' | 'gap' | 'freshness' | 'follow-up' | string
   tone: 'primary' | 'context' | 'caution' | 'steady' | 'neutral' | string
   title: string
   detail: string
