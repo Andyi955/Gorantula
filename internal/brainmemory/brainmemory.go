@@ -56,6 +56,10 @@ const (
 	AttentionKindClusterActive    = "cluster-active"
 	AttentionKindNextMoveReady    = "next-move-ready"
 	AttentionKindSignalFiring     = "signal-firing"
+
+	BrainGuidanceKindNextAction    = "next-action"
+	BrainGuidanceKindEvidenceTrail = "evidence-trail"
+	BrainGuidanceKindCaution       = "caution"
 )
 
 var (
@@ -237,18 +241,31 @@ type BrainAttentionItem struct {
 }
 
 type BrainFocusNarrative struct {
-	Headline              string   `json:"headline"`
-	Summary               string   `json:"summary"`
-	WhyItMatters          string   `json:"whyItMatters"`
-	RecommendedAction     string   `json:"recommendedAction"`
-	SupportingFacts       []string `json:"supportingFacts"`
-	PrimaryKind           string   `json:"primaryKind,omitempty"`
-	PrimaryTitle          string   `json:"primaryTitle,omitempty"`
-	PrimaryGateway        string   `json:"primaryGateway,omitempty"`
-	TargetInvestigationID string   `json:"targetInvestigationId,omitempty"`
-	ClusterID             string   `json:"clusterId,omitempty"`
-	SignalID              string   `json:"signalId,omitempty"`
-	LinkID                string   `json:"linkId,omitempty"`
+	Headline              string              `json:"headline"`
+	Summary               string              `json:"summary"`
+	WhyItMatters          string              `json:"whyItMatters"`
+	RecommendedAction     string              `json:"recommendedAction"`
+	SupportingFacts       []string            `json:"supportingFacts"`
+	Guidance              []BrainGuidanceCard `json:"guidance"`
+	PrimaryKind           string              `json:"primaryKind,omitempty"`
+	PrimaryTitle          string              `json:"primaryTitle,omitempty"`
+	PrimaryGateway        string              `json:"primaryGateway,omitempty"`
+	TargetInvestigationID string              `json:"targetInvestigationId,omitempty"`
+	ClusterID             string              `json:"clusterId,omitempty"`
+	SignalID              string              `json:"signalId,omitempty"`
+	LinkID                string              `json:"linkId,omitempty"`
+}
+
+type BrainGuidanceCard struct {
+	Kind                  string `json:"kind"`
+	Tone                  string `json:"tone"`
+	Title                 string `json:"title"`
+	Detail                string `json:"detail"`
+	ActionLabel           string `json:"actionLabel"`
+	TargetInvestigationID string `json:"targetInvestigationId,omitempty"`
+	ClusterID             string `json:"clusterId,omitempty"`
+	SignalID              string `json:"signalId,omitempty"`
+	LinkID                string `json:"linkId,omitempty"`
 }
 
 type BrainAttentionSummary struct {
@@ -1427,17 +1444,21 @@ func buildBrainFocusNarrative(
 			WhyItMatters:      "The Brain will summarize older cases once repeated entities, source domains, or relationship patterns appear.",
 			RecommendedAction: "Continue the investigation",
 			SupportingFacts:   []string{"No active Brain firings yet"},
+			Guidance:          emptyFocusGuidance(currentTitle),
 		}
 	}
 
 	if len(strengths) > 0 {
 		strength := strengths[0]
+		recommendedAction := focusRecommendedAction(items, strength.SuggestedAction)
+		whyItMatters := focusWhyItMatters(strength)
 		return BrainFocusNarrative{
 			Headline:              focusHeadline(strength),
 			Summary:               focusSummary(currentTitle, strength),
-			WhyItMatters:          focusWhyItMatters(strength),
-			RecommendedAction:     focusRecommendedAction(items, strength.SuggestedAction),
+			WhyItMatters:          whyItMatters,
+			RecommendedAction:     recommendedAction,
 			SupportingFacts:       focusSupportingFacts(strength, counts),
+			Guidance:              focusStrengthGuidance(currentTitle, strength, counts, recommendedAction, whyItMatters),
 			PrimaryKind:           strength.Kind,
 			PrimaryTitle:          strength.Title,
 			PrimaryGateway:        nonEmptyString(strength.Gateway, firstGateway(strength.Gateways)),
@@ -1449,12 +1470,15 @@ func buildBrainFocusNarrative(
 	}
 
 	item := items[0]
+	itemWhy := firstReasonDetail(item.ReasonSamples, "This is currently the clearest Brain cue for the investigation.")
+	itemAction := nonEmptyString(item.SuggestedAction, "Review this Brain cue")
 	return BrainFocusNarrative{
 		Headline:              item.Title,
 		Summary:               fmt.Sprintf("%s has an active Brain cue: %s.", currentTitle, item.Detail),
-		WhyItMatters:          firstReasonDetail(item.ReasonSamples, "This is currently the clearest Brain cue for the investigation."),
-		RecommendedAction:     nonEmptyString(item.SuggestedAction, "Review this Brain cue"),
+		WhyItMatters:          itemWhy,
+		RecommendedAction:     itemAction,
 		SupportingFacts:       focusItemSupportingFacts(item, counts),
+		Guidance:              focusItemGuidance(currentTitle, item, counts, itemAction, itemWhy),
 		PrimaryKind:           item.Kind,
 		PrimaryTitle:          item.Title,
 		TargetInvestigationID: item.TargetInvestigationID,
@@ -1462,6 +1486,181 @@ func buildBrainFocusNarrative(
 		SignalID:              item.SignalID,
 		LinkID:                item.LinkID,
 	}
+}
+
+func emptyFocusGuidance(currentTitle string) []BrainGuidanceCard {
+	return []BrainGuidanceCard{
+		{
+			Kind:        BrainGuidanceKindNextAction,
+			Tone:        "neutral",
+			Title:       "Keep building the case",
+			Detail:      fmt.Sprintf("%s needs more tagged evidence or relationships before older memories can fire reliably.", currentTitle),
+			ActionLabel: "Continue investigation",
+		},
+		{
+			Kind:        BrainGuidanceKindEvidenceTrail,
+			Tone:        "neutral",
+			Title:       "No reason trail yet",
+			Detail:      "Brain guidance appears after shared entities, dates, source domains, or relationship tags connect this case to older work.",
+			ActionLabel: "Add evidence",
+		},
+		{
+			Kind:        BrainGuidanceKindCaution,
+			Tone:        "caution",
+			Title:       "Nothing to trust yet",
+			Detail:      "Avoid treating the Brain as certain until it can show the evidence path behind a memory.",
+			ActionLabel: "Wait for signals",
+		},
+	}
+}
+
+func focusStrengthGuidance(
+	currentTitle string,
+	strength BrainMemoryStrength,
+	counts BrainAttentionCounts,
+	recommendedAction string,
+	whyItMatters string,
+) []BrainGuidanceCard {
+	return []BrainGuidanceCard{
+		{
+			Kind:                  BrainGuidanceKindNextAction,
+			Tone:                  "primary",
+			Title:                 "Best next move",
+			Detail:                nonEmptyString(recommendedAction, "Compare the strongest memory before continuing."),
+			ActionLabel:           focusPrimaryActionLabel(strength),
+			TargetInvestigationID: strength.TargetInvestigationID,
+			ClusterID:             strength.ClusterID,
+			SignalID:              strength.SignalID,
+			LinkID:                strength.LinkID,
+		},
+		{
+			Kind:                  BrainGuidanceKindEvidenceTrail,
+			Tone:                  "context",
+			Title:                 "Why this fired",
+			Detail:                nonEmptyString(whyItMatters, "This is the strongest explainable Brain memory for the current investigation."),
+			ActionLabel:           "Inspect reason trail",
+			TargetInvestigationID: strength.TargetInvestigationID,
+			ClusterID:             strength.ClusterID,
+			SignalID:              strength.SignalID,
+			LinkID:                strength.LinkID,
+		},
+		{
+			Kind:                  BrainGuidanceKindCaution,
+			Tone:                  focusCautionTone(strength, counts),
+			Title:                 "What to watch",
+			Detail:                focusCautionDetail(currentTitle, strength, counts),
+			ActionLabel:           focusCautionActionLabel(strength, counts),
+			TargetInvestigationID: strength.TargetInvestigationID,
+			ClusterID:             strength.ClusterID,
+			SignalID:              strength.SignalID,
+			LinkID:                strength.LinkID,
+		},
+	}
+}
+
+func focusItemGuidance(
+	currentTitle string,
+	item BrainAttentionItem,
+	counts BrainAttentionCounts,
+	recommendedAction string,
+	whyItMatters string,
+) []BrainGuidanceCard {
+	return []BrainGuidanceCard{
+		{
+			Kind:                  BrainGuidanceKindNextAction,
+			Tone:                  "primary",
+			Title:                 "Best next move",
+			Detail:                nonEmptyString(recommendedAction, "Review this Brain cue before scanning the full feed."),
+			ActionLabel:           "Inspect cue",
+			TargetInvestigationID: item.TargetInvestigationID,
+			ClusterID:             item.ClusterID,
+			SignalID:              item.SignalID,
+			LinkID:                item.LinkID,
+		},
+		{
+			Kind:                  BrainGuidanceKindEvidenceTrail,
+			Tone:                  "context",
+			Title:                 "Why this fired",
+			Detail:                nonEmptyString(whyItMatters, item.Detail),
+			ActionLabel:           "Inspect reason trail",
+			TargetInvestigationID: item.TargetInvestigationID,
+			ClusterID:             item.ClusterID,
+			SignalID:              item.SignalID,
+			LinkID:                item.LinkID,
+		},
+		{
+			Kind:                  BrainGuidanceKindCaution,
+			Tone:                  "caution",
+			Title:                 "What to watch",
+			Detail:                focusItemCautionDetail(currentTitle, item, counts),
+			ActionLabel:           "Check supporting evidence",
+			TargetInvestigationID: item.TargetInvestigationID,
+			ClusterID:             item.ClusterID,
+			SignalID:              item.SignalID,
+			LinkID:                item.LinkID,
+		},
+	}
+}
+
+func focusPrimaryActionLabel(strength BrainMemoryStrength) string {
+	switch strength.Kind {
+	case "memory-cluster":
+		return "Inspect cluster"
+	case "memory-link":
+		return "Compare linked memory"
+	case "active-signal":
+		if strength.LinkID == "" {
+			return "Compare or promote"
+		}
+		return "Review signal"
+	default:
+		return "Compare focus"
+	}
+}
+
+func focusCautionTone(strength BrainMemoryStrength, counts BrainAttentionCounts) string {
+	if counts.ActiveSignals > 12 || strength.ActivationCount < 2 || (counts.LinkedMemories == 0 && strength.LinkID == "") {
+		return "caution"
+	}
+	return "steady"
+}
+
+func focusCautionDetail(currentTitle string, strength BrainMemoryStrength, counts BrainAttentionCounts) string {
+	switch {
+	case counts.ActiveSignals > 12:
+		return fmt.Sprintf("%s has many memories firing at once. Start with this focus before scanning the full signal list.", currentTitle)
+	case counts.LinkedMemories == 0 && strength.LinkID == "":
+		return "This firing is not a durable memory link yet. Compare the evidence before treating it as remembered context."
+	case strength.ActivationCount < 2:
+		return "This is an early firing. Verify the underlying evidence before letting it steer the investigation."
+	case len(focusReasonLabels(strength.ReasonSamples, 2)) < 2:
+		return "The reason trail is thin. Look for another source, date, entity, or relationship before relying on it."
+	default:
+		return "This memory is strong enough to guide attention, but the underlying evidence should still be checked before acting."
+	}
+}
+
+func focusCautionActionLabel(strength BrainMemoryStrength, counts BrainAttentionCounts) string {
+	switch {
+	case counts.ActiveSignals > 12:
+		return "Stay with top focus"
+	case counts.LinkedMemories == 0 && strength.LinkID == "":
+		return "Promote only after review"
+	case strength.ActivationCount < 2:
+		return "Verify first"
+	default:
+		return "Check evidence"
+	}
+}
+
+func focusItemCautionDetail(currentTitle string, item BrainAttentionItem, counts BrainAttentionCounts) string {
+	if counts.ActiveNextMoves > 1 {
+		return fmt.Sprintf("%s has multiple Brain cues available. Treat this as the first recommended one, not the whole story.", currentTitle)
+	}
+	if len(item.ReasonSamples) == 0 {
+		return "This cue has limited reason samples. Inspect the related memory before acting on it."
+	}
+	return "This cue is grounded in current Brain memory, but it should still be checked against the underlying evidence."
 }
 
 func focusHeadline(strength BrainMemoryStrength) string {

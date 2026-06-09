@@ -163,9 +163,22 @@ export interface BrainFocusNarrative {
   whyItMatters: string
   recommendedAction: string
   supportingFacts: string[]
+  guidance: BrainGuidanceCard[]
   primaryKind?: string
   primaryTitle?: string
   primaryGateway?: BrainGateway
+  targetInvestigationId?: string
+  clusterId?: string
+  signalId?: string
+  linkId?: string
+}
+
+export interface BrainGuidanceCard {
+  kind: 'next-action' | 'evidence-trail' | 'caution' | string
+  tone: 'primary' | 'context' | 'caution' | 'steady' | 'neutral' | string
+  title: string
+  detail: string
+  actionLabel: string
   targetInvestigationId?: string
   clusterId?: string
   signalId?: string
@@ -300,6 +313,16 @@ const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttenti
     whyItMatters: summary.focus?.whyItMatters || 'Gorantula will surface repeated evidence once enough memory context exists.',
     recommendedAction: summary.focus?.recommendedAction || 'Continue the investigation',
     supportingFacts: asStringArray(summary.focus?.supportingFacts),
+    guidance: Array.isArray(summary.focus?.guidance)
+      ? summary.focus.guidance.map((card) => ({
+          ...card,
+          kind: card.kind || 'guidance',
+          tone: card.tone || 'neutral',
+          title: card.title || 'Brain guidance',
+          detail: card.detail || 'Review the current Brain focus before continuing.',
+          actionLabel: card.actionLabel || 'Review',
+        }))
+      : [],
     primaryKind: summary.focus?.primaryKind,
     primaryTitle: summary.focus?.primaryTitle,
     primaryGateway: summary.focus?.primaryGateway,

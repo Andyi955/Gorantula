@@ -867,6 +867,21 @@ func TestServiceBuildsBrainAttentionSummary(t *testing.T) {
 	if len(attention.Focus.SupportingFacts) == 0 {
 		t.Fatalf("expected focus narrative supporting facts, got %#v", attention.Focus)
 	}
+	if len(attention.Focus.Guidance) < 3 {
+		t.Fatalf("expected focus narrative guidance cards, got %#v", attention.Focus.Guidance)
+	}
+	nextGuidance := findFocusGuidance(t, attention.Focus.Guidance, BrainGuidanceKindNextAction)
+	if strings.TrimSpace(nextGuidance.Title) == "" || strings.TrimSpace(nextGuidance.Detail) == "" {
+		t.Fatalf("expected next-action guidance to be explainable, got %#v", nextGuidance)
+	}
+	evidenceGuidance := findFocusGuidance(t, attention.Focus.Guidance, BrainGuidanceKindEvidenceTrail)
+	if !strings.Contains(evidenceGuidance.Detail, "Repeated clues") {
+		t.Fatalf("expected evidence-trail guidance to explain the repeated evidence, got %#v", evidenceGuidance)
+	}
+	cautionGuidance := findFocusGuidance(t, attention.Focus.Guidance, BrainGuidanceKindCaution)
+	if strings.TrimSpace(cautionGuidance.Detail) == "" {
+		t.Fatalf("expected caution guidance to explain what to watch, got %#v", cautionGuidance)
+	}
 
 	strength := findMemoryStrength(t, attention.MemoryStrengths, "inv-old-strong")
 	if strength.Score < 0.8 {
@@ -1246,6 +1261,17 @@ func findAttentionItem(t *testing.T, items []BrainAttentionItem, kind string) Br
 	}
 	t.Fatalf("expected attention item kind=%q in %#v", kind, items)
 	return BrainAttentionItem{}
+}
+
+func findFocusGuidance(t *testing.T, cards []BrainGuidanceCard, kind string) BrainGuidanceCard {
+	t.Helper()
+	for _, card := range cards {
+		if card.Kind == kind {
+			return card
+		}
+	}
+	t.Fatalf("expected focus guidance kind=%q in %#v", kind, cards)
+	return BrainGuidanceCard{}
 }
 
 func TestForgetMemoryLinkRemovesLinkAndDismissesExistingSignal(t *testing.T) {
