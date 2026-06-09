@@ -167,6 +167,35 @@ const attentionSummary: BrainAttentionSummary = {
     whyItMatters: 'Repeated clues include Northgate Substation A-17. It has fired 4 times.',
     recommendedAction: 'Compare linked memory',
     supportingFacts: ['91% attention strength', 'Strongest gateway: entity/date', '2 active firings'],
+    guidance: [
+      {
+        kind: 'next-action',
+        tone: 'primary',
+        title: 'Best next move',
+        detail: 'Compare linked memory',
+        actionLabel: 'Compare linked memory',
+        targetInvestigationId: 'inv-older',
+        linkId: link.id,
+      },
+      {
+        kind: 'evidence-trail',
+        tone: 'context',
+        title: 'Why this fired',
+        detail: 'Repeated clues include Northgate Substation A-17. It has fired 4 times.',
+        actionLabel: 'Inspect reason trail',
+        targetInvestigationId: 'inv-older',
+        linkId: link.id,
+      },
+      {
+        kind: 'caution',
+        tone: 'steady',
+        title: 'What to watch',
+        detail: 'This memory is strong enough to guide attention, but the underlying evidence should still be checked before acting.',
+        actionLabel: 'Check evidence',
+        targetInvestigationId: 'inv-older',
+        linkId: link.id,
+      },
+    ],
     primaryKind: 'memory-link',
     primaryTitle: 'Older Substation Case',
     primaryGateway: 'entity-date',
@@ -1200,6 +1229,11 @@ describe('BrainSignalsPanel', () => {
     expect(focus).toHaveTextContent('Repeated clues include Northgate Substation A-17')
     expect(focus).toHaveTextContent('Compare linked memory')
     expect(focus).toHaveTextContent('91% attention strength')
+    expect(focus).toHaveTextContent('Brain guidance')
+    expect(focus).toHaveTextContent('Best next move')
+    expect(focus).toHaveTextContent('Why this fired')
+    expect(focus).toHaveTextContent('What to watch')
+    expect(focus).toHaveTextContent('Check evidence')
   })
 
   it('renders a readable brain map with digest and selected memory detail', async () => {

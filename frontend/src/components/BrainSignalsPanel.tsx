@@ -2432,16 +2432,36 @@ export default function BrainSignalsPanel({
                 <strong>{formatScore(attentionSummary?.overallScore ?? 0)}</strong>
               </div>
 
-              <div className="forensic-brain-focus-grid">
-                <article>
-                  <span>Why it matters</span>
-                  <p>{focus.whyItMatters}</p>
-                </article>
-                <article>
-                  <span>Best next move</span>
-                  <p>{focus.recommendedAction}</p>
-                </article>
-              </div>
+              {focus.guidance.length > 0 ? (
+                <section className="forensic-brain-guidance" aria-label="Brain guidance">
+                  <span className="forensic-brain-panel-kicker">Brain guidance</span>
+                  <div className="forensic-brain-guidance-grid">
+                    {focus.guidance.slice(0, 3).map((card) => (
+                      <article
+                        key={`focus:guidance:${card.kind}:${card.title}`}
+                        className={`forensic-brain-guidance-card is-${card.tone || 'neutral'}`}
+                      >
+                        <div>
+                          <span>{card.title}</span>
+                          <p>{card.detail}</p>
+                        </div>
+                        {card.actionLabel && <strong>{card.actionLabel}</strong>}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : (
+                <div className="forensic-brain-focus-grid">
+                  <article>
+                    <span>Why it matters</span>
+                    <p>{focus.whyItMatters}</p>
+                  </article>
+                  <article>
+                    <span>Best next move</span>
+                    <p>{focus.recommendedAction}</p>
+                  </article>
+                </div>
+              )}
 
               <div className="forensic-brain-focus-actions">
                 <button
