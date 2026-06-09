@@ -2415,6 +2415,14 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <>
+              {focus.supportingFacts.length > 0 && (
+                <div className="forensic-brain-focus-facts" aria-label="Supporting Brain context">
+                  {focus.supportingFacts.slice(0, 5).map((fact) => (
+                    <span key={`focus:fact:${fact}`}>{fact}</span>
+                  ))}
+                </div>
+              )}
+
               <div className="forensic-brain-focus-hero">
                 <div>
                   <span className="forensic-brain-panel-kicker">Brain focus</span>
@@ -2434,14 +2442,6 @@ export default function BrainSignalsPanel({
                   <p>{focus.recommendedAction}</p>
                 </article>
               </div>
-
-              {focus.supportingFacts.length > 0 && (
-                <div className="forensic-brain-focus-facts" aria-label="Supporting Brain context">
-                  {focus.supportingFacts.slice(0, 5).map((fact) => (
-                    <span key={`focus:fact:${fact}`}>{fact}</span>
-                  ))}
-                </div>
-              )}
 
               <div className="forensic-brain-focus-actions">
                 <button

@@ -6009,7 +6009,14 @@ body {
 .forensic-brain-focus-facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.42rem;
+  gap: 0.45rem;
+  align-items: center;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  border-left: 3px solid var(--forensic-accent);
+  background:
+    linear-gradient(90deg, rgba(255, 45, 117, 0.08), transparent 32%),
+    rgba(1, 5, 8, 0.74);
+  padding: 0.52rem 0.62rem;
 }
 
 .forensic-brain-focus-facts span {
