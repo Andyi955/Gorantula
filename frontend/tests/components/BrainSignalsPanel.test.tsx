@@ -93,6 +93,10 @@ const suggestion: BrainSuggestion = {
   summary: 'Acme Grid has an active memory cluster worth checking.',
   suggestedAction: 'Inspect recurring memory cluster',
   score: 0.86,
+  thinkingGateway: 'inspect-pattern',
+  thinkingLabel: 'Inspect pattern',
+  thinkingReason: 'This memory region is strong enough for a user-approved focused Rabbit Hole pass.',
+  actionMode: 'launch-follow-up',
   priority: 'high',
   reason: 'Acme Grid is an active cluster with 3 related investigations.',
   relatedSignalIds: [signal.id],
@@ -801,6 +805,63 @@ describe('BrainSignalsPanel', () => {
       descentMode: 'guided',
     }))
     expect(screen.queryByTestId('brain-followup-launcher')).not.toBeInTheDocument()
+  })
+
+  it('shows thinking gateway cues and blocks non-launchable next moves', async () => {
+    const user = userEvent.setup()
+    const contradictionSuggestion = makeSuggestion({
+      id: 'brain-suggestion-contradiction',
+      kind: 'contradiction-review',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Verify conflicting claim',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.88,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+    })
+    const gapSuggestion = makeSuggestion({
+      id: 'brain-suggestion-gap',
+      kind: 'gap-review',
+      title: 'Find missing bridge evidence',
+      summary: 'Broad context fired, but there is not enough bridge evidence yet.',
+      suggestedAction: 'Find bridge evidence',
+      relevance: 'distant-echo',
+      relevanceLabel: 'Distant Echo',
+      thinkingGateway: 'fill-gap',
+      thinkingLabel: 'Fill memory gap',
+      thinkingReason: 'This cue needs sharper bridge evidence before it should steer a Rabbit Hole follow-up.',
+      actionMode: 'fill-gap',
+      priority: 'medium',
+      score: 0.54,
+      reason: 'Active firings need bridge evidence before they become durable memory.',
+    })
+    installBrainFetch({ suggestions: [contradictionSuggestion, gapSuggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const contradictionCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Verify possible contradiction'),
+    )
+    expect(contradictionCard).toBeTruthy()
+    expect(within(contradictionCard as HTMLElement).getByText('Verify contradiction')).toBeInTheDocument()
+    expect(within(contradictionCard as HTMLElement).getByText(/could challenge the current explanation/i)).toBeInTheDocument()
+    expect(within(contradictionCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole verify possible contradiction/i })).not.toBeInTheDocument()
+    expect(within(contradictionCard as HTMLElement).getByText('Verify before Rabbit Hole')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show lower-priority moves \(1\)/i }))
+    const gapCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Find missing bridge evidence'),
+    )
+    expect(gapCard).toBeTruthy()
+    expect(within(gapCard as HTMLElement).getByText('Fill memory gap')).toBeInTheDocument()
+    expect(within(gapCard as HTMLElement).getByText(/needs sharper bridge evidence/i)).toBeInTheDocument()
+    expect(within(gapCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole find missing bridge evidence/i })).not.toBeInTheDocument()
+    expect(within(gapCard as HTMLElement).getByText('Find bridge before Rabbit Hole')).toBeInTheDocument()
   })
 
   it('cancels a prepared focused follow-up without launching', async () => {

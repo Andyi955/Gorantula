@@ -243,8 +243,25 @@ const formatSuggestionKind = (kind: string) => {
       return 'Memory Link'
     case 'gap-review':
       return 'Gap Review'
+    case 'contradiction-review':
+      return 'Contradiction Review'
     default:
       return kind.replace(/-/g, ' ')
+  }
+}
+
+const formatSuggestionActionNote = (suggestion: BrainSuggestion) => {
+  switch (suggestion.actionMode) {
+    case 'verify':
+      return 'Verify before Rabbit Hole'
+    case 'fill-gap':
+      return 'Find bridge before Rabbit Hole'
+    case 'inspect':
+      return 'Inspect before Rabbit Hole'
+    case 'compare':
+      return 'Compare before Rabbit Hole'
+    default:
+      return 'Compare before Rabbit Hole'
   }
 }
 
@@ -2884,7 +2901,7 @@ export default function BrainSignalsPanel({
     const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
     const relevance = normalizeRelevance(suggestion.relevance)
-    const canPrepareFollowUp = !isSpeculativeRelevance(suggestion.relevance)
+    const canPrepareFollowUp = suggestion.actionMode === 'launch-follow-up' && !isSpeculativeRelevance(suggestion.relevance)
     const followUpAction = followUpsBySourceId.get(suggestion.id)
     const followUpLabel = followUpAction?.status === 'prepared'
       ? 'Review Rabbit Hole'
@@ -2904,6 +2921,11 @@ export default function BrainSignalsPanel({
             <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
               {formatRelevance(suggestion)}
             </span>
+            {suggestion.thinkingLabel && (
+              <span className={`forensic-brain-thinking-chip forensic-brain-thinking-${suggestion.actionMode || 'compare'}`}>
+                {suggestion.thinkingLabel}
+              </span>
+            )}
             <strong>{suggestion.priority}</strong>
           </div>
           <h4>{suggestion.title}</h4>
@@ -2911,6 +2933,7 @@ export default function BrainSignalsPanel({
           <div className="forensic-brain-suggestion-reason">
             <span>Why it matters</span>
             <strong>{suggestion.reason}</strong>
+            {suggestion.thinkingReason && <em>{suggestion.thinkingReason}</em>}
             {suggestion.relevanceReason && <em>{suggestion.relevanceReason}</em>}
           </div>
           <div className="forensic-brain-chip-row" aria-label="Related memory objects">
@@ -2959,7 +2982,7 @@ export default function BrainSignalsPanel({
             </button>
           ) : (
             <span className="forensic-brain-action-note">
-              Compare before Rabbit Hole
+              {formatSuggestionActionNote(suggestion)}
             </span>
           )}
           <button
