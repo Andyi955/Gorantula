@@ -102,6 +102,10 @@ export interface BrainSuggestion {
   relevance?: BrainRelevance
   relevanceLabel?: string
   relevanceReason?: string
+  thinkingGateway?: string
+  thinkingLabel?: string
+  thinkingReason?: string
+  actionMode?: 'compare' | 'verify' | 'fill-gap' | 'inspect' | 'launch-follow-up' | string
   priority: 'high' | 'medium' | 'low' | string
   reason: string
   relatedSignalIds: string[]

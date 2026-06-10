@@ -22,6 +22,7 @@ const (
 	GatewayEntityDate      = "entity-date"
 	GatewaySourceDomain    = "source-domain"
 	GatewayRelationshipTag = "relationship-tag"
+	GatewayContradiction   = "contradiction"
 
 	brainDirectoryName  = "brain"
 	signalsFilename     = "signals.json"
@@ -37,11 +38,23 @@ const (
 	repeatedPromotionScoreThreshold  = 0.75
 	repeatedPromotionActivationCount = 3
 
-	SuggestionKindClusterReview     = "cluster-review"
-	SuggestionKindSourceReview      = "source-review"
-	SuggestionKindRelationshipMotif = "relationship-motif"
-	SuggestionKindMemoryLinkCompare = "memory-link-compare"
-	SuggestionKindGapReview         = "gap-review"
+	SuggestionKindClusterReview       = "cluster-review"
+	SuggestionKindSourceReview        = "source-review"
+	SuggestionKindRelationshipMotif   = "relationship-motif"
+	SuggestionKindMemoryLinkCompare   = "memory-link-compare"
+	SuggestionKindGapReview           = "gap-review"
+	SuggestionKindContradictionReview = "contradiction-review"
+
+	ThinkingGatewayCompareBridge = "compare-bridge"
+	ThinkingGatewayContradiction = "verify-contradiction"
+	ThinkingGatewayGap           = "fill-gap"
+	ThinkingGatewayPattern       = "inspect-pattern"
+
+	SuggestionActionCompare        = "compare"
+	SuggestionActionVerify         = "verify"
+	SuggestionActionFillGap        = "fill-gap"
+	SuggestionActionInspect        = "inspect"
+	SuggestionActionLaunchFollowUp = "launch-follow-up"
 
 	SuggestionStatusActive    = "active"
 	SuggestionStatusDismissed = "dismissed"
@@ -85,8 +98,9 @@ var (
 	ErrFollowUpNotFound   = errors.New("brain follow-up action not found")
 	ErrInvalidFollowUp    = errors.New("invalid brain follow-up request")
 
-	taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
-	spacePattern        = regexp.MustCompile(`\s+`)
+	taggedEntityPattern        = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
+	taggedContradictionPattern = regexp.MustCompile(`\[(CONTRADICTION|CONFLICT):([^\]]+)]`)
+	spacePattern               = regexp.MustCompile(`\s+`)
 )
 
 type SignalReason struct {
@@ -201,6 +215,10 @@ type BrainSuggestion struct {
 	Relevance              string   `json:"relevance,omitempty"`
 	RelevanceLabel         string   `json:"relevanceLabel,omitempty"`
 	RelevanceReason        string   `json:"relevanceReason,omitempty"`
+	ThinkingGateway        string   `json:"thinkingGateway,omitempty"`
+	ThinkingLabel          string   `json:"thinkingLabel,omitempty"`
+	ThinkingReason         string   `json:"thinkingReason,omitempty"`
+	ActionMode             string   `json:"actionMode,omitempty"`
 	Priority               string   `json:"priority"`
 	Reason                 string   `json:"reason"`
 	RelatedSignalIDs       []string `json:"relatedSignalIds"`
@@ -453,11 +471,12 @@ type signalEvidence struct {
 }
 
 type memoryProfile struct {
-	ID               string
-	Title            string
-	Entities         map[string]signalEvidence
-	SourceDomains    map[string]signalEvidence
-	RelationshipTags map[string]signalEvidence
+	ID                string
+	Title             string
+	Entities          map[string]signalEvidence
+	SourceDomains     map[string]signalEvidence
+	RelationshipTags  map[string]signalEvidence
+	ContradictionCues map[string]signalEvidence
 }
 
 type persistedBoard struct {
@@ -521,6 +540,7 @@ type reasonRelevanceStats struct {
 	BroadEntityCount      int
 	SourceCount           int
 	RelationshipCount     int
+	ContradictionCount    int
 	ReasonCount           int
 }
 
@@ -995,6 +1015,9 @@ func (s *Service) PrepareFollowUp(request PrepareFollowUpRequest) (BrainFollowUp
 		return BrainFollowUpAction{}, ErrSuggestionNotFound
 	}
 	suggestion = normalizeSuggestionCollections(suggestion)
+	if !suggestionAllowsFocusedFollowUp(suggestion) {
+		return BrainFollowUpAction{}, ErrInvalidFollowUp
+	}
 
 	signals, err := s.loadSignals()
 	if err != nil {
@@ -1047,6 +1070,17 @@ func (s *Service) PrepareFollowUp(request PrepareFollowUpRequest) (BrainFollowUp
 		return BrainFollowUpAction{}, err
 	}
 	return action, nil
+}
+
+func suggestionAllowsFocusedFollowUp(suggestion BrainSuggestion) bool {
+	suggestion = routeSuggestionThinking(suggestion)
+	if suggestion.ActionMode != SuggestionActionLaunchFollowUp {
+		return false
+	}
+	if normalizeRelevance(suggestion.Relevance) == RelevanceDistantEcho || normalizeRelevance(suggestion.Relevance) == RelevanceBackgroundNoise {
+		return false
+	}
+	return len(suggestion.TargetInvestigationIDs) > 0
 }
 
 func (s *Service) LaunchFollowUp(actionID string) (BrainFollowUpAction, error) {
@@ -2694,6 +2728,7 @@ func buildBrainSuggestions(
 	visibleClusters := clustersForInvestigationMap(clusters, investigationID)
 
 	suggestions := make([]BrainSuggestion, 0)
+	suggestions = append(suggestions, contradictionReviewSuggestions(investigationID, activeSignals, existing, timestamp)...)
 	suggestions = append(suggestions, clusterReviewSuggestions(investigationID, visibleClusters, existing, timestamp)...)
 	suggestions = append(suggestions, sourceReviewSuggestions(investigationID, activeSignals, existing, timestamp)...)
 	suggestions = append(suggestions, relationshipMotifSuggestions(investigationID, activeSignals, visibleClusters, existing, timestamp)...)
@@ -2702,6 +2737,70 @@ func buildBrainSuggestions(
 		suggestions = append(suggestions, gapSuggestion)
 	}
 	sortSuggestions(suggestions)
+	return suggestions
+}
+
+func contradictionReviewSuggestions(
+	investigationID string,
+	signals []BrainSignal,
+	existing map[string]BrainSuggestion,
+	timestamp string,
+) []BrainSuggestion {
+	type contradictionGroup struct {
+		label     string
+		score     float64
+		relevance relevanceCalibration
+		signalIDs []string
+		targetIDs []string
+	}
+	groups := make(map[string]contradictionGroup)
+	for _, signal := range signals {
+		for _, reason := range signal.Reasons {
+			if reason.Gateway != GatewayContradiction {
+				continue
+			}
+			group := groups[reason.Value]
+			group.label = nonEmptyString(reason.Label, reason.Value)
+			group.score = maxFloat(group.score, signal.Score)
+			group.relevance = mergeSignalGroupRelevance(group.relevance, signal)
+			group.signalIDs = append(group.signalIDs, signal.ID)
+			group.targetIDs = append(group.targetIDs, signal.TargetInvestigationID)
+			groups[reason.Value] = group
+		}
+	}
+	suggestions := make([]BrainSuggestion, 0, len(groups))
+	for value, group := range groups {
+		relevance := group.relevance
+		if relevance.Class == "" {
+			relevance = relevanceCalibration{
+				Class:  RelevancePossibleBridge,
+				Label:  relevanceLabel(RelevancePossibleBridge),
+				Reason: "This contradiction cue needs verification before it can steer the investigation.",
+				Score:  normalizeMapScore(group.score),
+			}
+		}
+		score := calibrateStrengthScoreForRelevance(maxFloat(group.score, 0.62), relevance.Class)
+		suggestion := BrainSuggestion{
+			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindContradictionReview, value),
+			InvestigationID:        investigationID,
+			Kind:                   SuggestionKindContradictionReview,
+			Status:                 SuggestionStatusActive,
+			Title:                  "Verify possible contradiction",
+			Summary:                fmt.Sprintf("Contradiction cue %q appears in active Brain firings.", group.label),
+			SuggestedAction:        "Verify conflicting claim",
+			Score:                  score,
+			Relevance:              relevance.Class,
+			RelevanceLabel:         relevance.Label,
+			RelevanceReason:        relevance.Reason,
+			Priority:               suggestionPriority(score),
+			Reason:                 fmt.Sprintf("%s may conflict with remembered evidence and needs verification.", group.label),
+			RelatedSignalIDs:       cleanStringSet(group.signalIDs),
+			TargetInvestigationIDs: cleanStringSet(group.targetIDs),
+			CreatedAt:              timestamp,
+			UpdatedAt:              timestamp,
+		}
+		suggestions = append(suggestions, mergeSuggestionState(suggestion, existing, timestamp))
+	}
 	return suggestions
 }
 
@@ -3550,10 +3649,97 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 }
 
 func normalizeSuggestionCollections(suggestion BrainSuggestion) BrainSuggestion {
+	suggestion = routeSuggestionThinking(suggestion)
 	suggestion.RelatedSignalIDs = cleanStringSet(suggestion.RelatedSignalIDs)
 	suggestion.RelatedMemoryLinkIDs = cleanStringSet(suggestion.RelatedMemoryLinkIDs)
 	suggestion.RelatedClusterIDs = cleanStringSet(suggestion.RelatedClusterIDs)
 	suggestion.TargetInvestigationIDs = cleanStringSet(suggestion.TargetInvestigationIDs)
+	return suggestion
+}
+
+func routeSuggestionThinking(suggestion BrainSuggestion) BrainSuggestion {
+	if strings.TrimSpace(suggestion.ThinkingGateway) != "" &&
+		strings.TrimSpace(suggestion.ThinkingLabel) != "" &&
+		strings.TrimSpace(suggestion.ThinkingReason) != "" &&
+		strings.TrimSpace(suggestion.ActionMode) != "" {
+		return suggestion
+	}
+
+	relevance := normalizeRelevance(suggestion.Relevance)
+	combined := strings.ToLower(strings.Join([]string{
+		suggestion.Kind,
+		suggestion.Title,
+		suggestion.Summary,
+		suggestion.SuggestedAction,
+		suggestion.Reason,
+		suggestion.RelevanceReason,
+	}, " "))
+	speculative := relevance == RelevanceDistantEcho || relevance == RelevanceBackgroundNoise
+	actionText := strings.ToLower(strings.Join([]string{
+		suggestion.Title,
+		suggestion.SuggestedAction,
+		suggestion.Reason,
+	}, " "))
+
+	switch {
+	case suggestion.Kind == SuggestionKindContradictionReview || strings.Contains(combined, "contradiction") || strings.Contains(combined, "conflict"):
+		return applySuggestionThinking(suggestion, ThinkingGatewayContradiction, SuggestionActionVerify, "Verify contradiction", "This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.")
+	case suggestion.Kind == SuggestionKindGapReview || speculative || strings.Contains(actionText, "bridge evidence") || strings.Contains(actionText, "missing"):
+		return applySuggestionThinking(suggestion, ThinkingGatewayGap, SuggestionActionFillGap, "Fill memory gap", "This cue needs sharper bridge evidence before it should steer a Rabbit Hole follow-up.")
+	case suggestion.Kind == SuggestionKindRelationshipMotif:
+		if suggestionLaunchReady(suggestion) {
+			return applySuggestionThinking(suggestion, ThinkingGatewayPattern, SuggestionActionLaunchFollowUp, "Inspect pattern", "A repeated relationship pattern is strong enough for a user-approved focused Rabbit Hole pass.")
+		}
+		return applySuggestionThinking(suggestion, ThinkingGatewayPattern, SuggestionActionInspect, "Inspect pattern", "A repeated relationship pattern is visible, but it should be inspected before follow-up work.")
+	case suggestion.Kind == SuggestionKindClusterReview:
+		if suggestionLaunchReady(suggestion) {
+			return applySuggestionThinking(suggestion, ThinkingGatewayPattern, SuggestionActionLaunchFollowUp, "Inspect pattern", "This memory region is strong enough for a user-approved focused Rabbit Hole pass.")
+		}
+		return applySuggestionThinking(suggestion, ThinkingGatewayPattern, SuggestionActionInspect, "Inspect pattern", "This memory region should be inspected before it becomes an active follow-up.")
+	case suggestion.Kind == SuggestionKindMemoryLinkCompare:
+		if suggestionLaunchReady(suggestion) {
+			return applySuggestionThinking(suggestion, ThinkingGatewayCompareBridge, SuggestionActionLaunchFollowUp, "Compare bridge", "This durable memory bridge is strong enough for a focused follow-up after review.")
+		}
+		return applySuggestionThinking(suggestion, ThinkingGatewayCompareBridge, SuggestionActionCompare, "Compare bridge", "This durable memory bridge should be compared before launching follow-up work.")
+	case suggestion.Kind == SuggestionKindSourceReview:
+		return applySuggestionThinking(suggestion, ThinkingGatewayCompareBridge, SuggestionActionCompare, "Compare bridge", "A repeated source domain is useful context, but it needs comparison before it becomes a follow-up.")
+	default:
+		return applySuggestionThinking(suggestion, ThinkingGatewayCompareBridge, SuggestionActionCompare, "Compare bridge", "Review this Brain cue before deciding whether it deserves follow-up work.")
+	}
+}
+
+func suggestionLaunchReady(suggestion BrainSuggestion) bool {
+	relevance := normalizeRelevance(suggestion.Relevance)
+	if relevance == RelevanceDistantEcho || relevance == RelevanceBackgroundNoise {
+		return false
+	}
+	if len(suggestion.TargetInvestigationIDs) == 0 {
+		return false
+	}
+	if suggestion.Score < 0.78 {
+		return false
+	}
+	switch suggestion.Kind {
+	case SuggestionKindClusterReview, SuggestionKindRelationshipMotif, SuggestionKindMemoryLinkCompare:
+		return true
+	default:
+		return false
+	}
+}
+
+func applySuggestionThinking(suggestion BrainSuggestion, gateway string, actionMode string, label string, reason string) BrainSuggestion {
+	if strings.TrimSpace(suggestion.ThinkingGateway) == "" {
+		suggestion.ThinkingGateway = gateway
+	}
+	if strings.TrimSpace(suggestion.ThinkingLabel) == "" {
+		suggestion.ThinkingLabel = label
+	}
+	if strings.TrimSpace(suggestion.ThinkingReason) == "" {
+		suggestion.ThinkingReason = reason
+	}
+	if strings.TrimSpace(suggestion.ActionMode) == "" {
+		suggestion.ActionMode = actionMode
+	}
 	return suggestion
 }
 
@@ -3977,11 +4163,12 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 
 func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile, error) {
 	profile := memoryProfile{
-		ID:               record.ID,
-		Title:            displayTitle(record),
-		Entities:         make(map[string]signalEvidence),
-		SourceDomains:    make(map[string]signalEvidence),
-		RelationshipTags: make(map[string]signalEvidence),
+		ID:                record.ID,
+		Title:             displayTitle(record),
+		Entities:          make(map[string]signalEvidence),
+		SourceDomains:     make(map[string]signalEvidence),
+		RelationshipTags:  make(map[string]signalEvidence),
+		ContradictionCues: make(map[string]signalEvidence),
 	}
 
 	rawBoard, err := s.store.LoadJSON(record.ID, models.InvestigationBoardFilename)
@@ -4012,6 +4199,9 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		}, "\n")
 		for _, entity := range extractTaggedEntityEvidence(searchableText, nodeID) {
 			profile.Entities[entity.Value] = mergeEvidence(profile.Entities[entity.Value], entity.Evidence)
+		}
+		for _, cue := range extractTaggedContradictionEvidence(searchableText, nodeID) {
+			profile.ContradictionCues[cue.Value] = mergeEvidence(profile.ContradictionCues[cue.Value], cue.Evidence)
 		}
 		for _, sourceURL := range append([]string{node.Data.SourceURL}, node.Data.SourceURLs...) {
 			if domain := sourceDomain(sourceURL); domain != "" {
@@ -4104,11 +4294,41 @@ func extractTaggedEntityEvidence(text string, nodeID string) []extractedEvidence
 	return result
 }
 
+func extractTaggedContradictionEvidence(text string, nodeID string) []extractedEvidence {
+	matches := taggedContradictionPattern.FindAllStringSubmatch(text, -1)
+	result := make([]extractedEvidence, 0, len(matches))
+	seen := make(map[string]struct{})
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		label := normalizeDisplayText(match[2])
+		value := normalizeKey(label)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, extractedEvidence{
+			Value: value,
+			Evidence: signalEvidence{
+				Label:   label,
+				Kind:    GatewayContradiction,
+				NodeIDs: []string{nodeID},
+			},
+		})
+	}
+	return result
+}
+
 func buildSignal(current memoryProfile, target memoryProfile, timestamp string) (BrainSignal, bool) {
 	reasons := make([]SignalReason, 0)
 	reasons = append(reasons, matchingEntityReasons(current, target)...)
 	reasons = append(reasons, matchingSourceReasons(current, target)...)
 	reasons = append(reasons, matchingRelationshipReasons(current, target)...)
+	reasons = append(reasons, matchingContradictionReasons(current, target)...)
 	if len(reasons) == 0 {
 		return BrainSignal{}, false
 	}
@@ -4145,6 +4365,9 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string) 
 
 func shouldAutoPromoteSignal(signal BrainSignal) bool {
 	if signal.Dismissed || signal.Linked || len(signal.Gateways) < 2 {
+		return false
+	}
+	if signal.HasGateway(GatewayContradiction) {
 		return false
 	}
 	if normalizeRelevance(signal.Relevance) == RelevanceDistantEcho || normalizeRelevance(signal.Relevance) == RelevanceBackgroundNoise {
@@ -4380,6 +4603,25 @@ func matchingRelationshipReasons(current memoryProfile, target memoryProfile) []
 	return limitReasons(reasons, 3)
 }
 
+func matchingContradictionReasons(current memoryProfile, target memoryProfile) []SignalReason {
+	reasons := make([]SignalReason, 0)
+	for value, currentEvidence := range current.ContradictionCues {
+		targetEvidence, ok := target.ContradictionCues[value]
+		if !ok {
+			continue
+		}
+		reasons = append(reasons, SignalReason{
+			Gateway:        GatewayContradiction,
+			Value:          value,
+			Label:          currentEvidence.Label,
+			Detail:         fmt.Sprintf("Contradiction cue %q appears in both investigations and needs verification.", currentEvidence.Label),
+			CurrentNodeIDs: cleanStringSet(currentEvidence.NodeIDs),
+			TargetNodeIDs:  cleanStringSet(targetEvidence.NodeIDs),
+		})
+	}
+	return limitReasons(reasons, 2)
+}
+
 func scoreReasons(reasons []SignalReason) float64 {
 	score := 0.0
 	seen := make(map[string]bool)
@@ -4392,6 +4634,8 @@ func scoreReasons(reasons []SignalReason) float64 {
 				score += 0.24
 			case GatewayRelationshipTag:
 				score += 0.30
+			case GatewayContradiction:
+				score += 0.36
 			}
 			seen[reason.Gateway] = true
 		} else {
@@ -4418,13 +4662,16 @@ func calibrateSignalRelevance(reasons []SignalReason, score float64) relevanceCa
 	case stats.RelationshipCount > 0 && (stats.MeaningfulEntityCount > 0 || stats.SourceCount > 0):
 		class = RelevanceStrongMemory
 		reason = "A repeated relationship pattern is backed by another gateway."
+	case stats.ContradictionCount > 0 && (stats.MeaningfulEntityCount > 0 || stats.SourceCount > 0 || stats.RelationshipCount > 0):
+		class = RelevanceStrongMemory
+		reason = "A contradiction cue is backed by another gateway and needs verification."
 	case stats.MeaningfulEntityCount > 0 && stats.SourceCount > 0:
 		class = RelevanceStrongMemory
 		reason = "A named clue and a shared source domain both connect these investigations."
 	case stats.MeaningfulEntityCount >= 2 && score >= 0.55:
 		class = RelevanceStrongMemory
 		reason = "Multiple specific named clues connect these investigations."
-	case stats.RelationshipCount > 0 || stats.SourceCount > 0 || stats.MeaningfulEntityCount > 0:
+	case stats.RelationshipCount > 0 || stats.SourceCount > 0 || stats.MeaningfulEntityCount > 0 || stats.ContradictionCount > 0:
 		class = RelevancePossibleBridge
 		reason = "A usable bridge exists, but it needs comparison before it should steer the investigation."
 	default:
@@ -4472,6 +4719,8 @@ func analyzeReasonRelevance(reasons []SignalReason) reasonRelevanceStats {
 			stats.SourceCount++
 		case GatewayRelationshipTag:
 			stats.RelationshipCount++
+		case GatewayContradiction:
+			stats.ContradictionCount++
 		}
 	}
 	return stats
@@ -4558,6 +4807,8 @@ func suggestedActionForSignal(gateways []string, reasons []SignalReason) string 
 func suggestedAction(gateways []string) string {
 	for _, gateway := range gateways {
 		switch gateway {
+		case GatewayContradiction:
+			return "Verify conflicting claim"
 		case GatewayRelationshipTag:
 			return "Inspect repeated relationship pattern"
 		case GatewaySourceDomain:
@@ -4593,6 +4844,8 @@ func gatewayRank(gateway string) int {
 		return 1
 	case GatewayRelationshipTag:
 		return 2
+	case GatewayContradiction:
+		return 3
 	default:
 		return 9
 	}
