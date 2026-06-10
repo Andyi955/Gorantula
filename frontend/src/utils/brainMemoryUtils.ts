@@ -1,4 +1,4 @@
-import type { BrainGateway, BrainSignal, MemoryCluster, MemoryLink } from './brainMemory'
+import type { BrainGateway, BrainRelevance, BrainSignal, MemoryCluster, MemoryLink } from './brainMemory'
 
 export type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
 export type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
@@ -8,6 +8,9 @@ export interface BrainSignalGroup {
   primary: BrainSignal
   signals: BrainSignal[]
   score: number
+  relevance: BrainRelevance
+  relevanceLabel: string
+  relevanceReason?: string
   reasons: BrainSignal['reasons']
   gateways: BrainGateway[]
 }
@@ -37,10 +40,49 @@ export const gatewayClassNames: Record<string, string> = {
 
 export const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
 
+export const relevanceLabels: Record<string, string> = {
+  'strong-memory': 'Strong Memory',
+  'possible-bridge': 'Possible Bridge',
+  'distant-echo': 'Distant Echo',
+  'background-noise': 'Background Noise',
+}
+
 export const formatGateway = (gateway: BrainGateway) =>
   gatewayLabels[gateway] || String(gateway).replace(/[-_]+/g, ' ')
 
 export const formatScore = (score: number) => `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`
+
+export const normalizeRelevance = (relevance?: BrainRelevance) => (
+  relevance === 'strong-memory' ||
+  relevance === 'possible-bridge' ||
+  relevance === 'distant-echo' ||
+  relevance === 'background-noise'
+    ? relevance
+    : 'possible-bridge'
+)
+
+export const formatRelevance = (item: { relevance?: BrainRelevance; relevanceLabel?: string }) =>
+  item.relevanceLabel || relevanceLabels[normalizeRelevance(item.relevance)] || 'Possible Bridge'
+
+export const relevanceRank = (relevance?: BrainRelevance) => {
+  switch (normalizeRelevance(relevance)) {
+  case 'strong-memory':
+    return 0
+  case 'possible-bridge':
+    return 1
+  case 'distant-echo':
+    return 2
+  case 'background-noise':
+    return 3
+  default:
+    return 1
+  }
+}
+
+export const isSpeculativeRelevance = (relevance?: BrainRelevance) => {
+  const normalized = normalizeRelevance(relevance)
+  return normalized === 'distant-echo' || normalized === 'background-noise'
+}
 
 export const formatActivationCount = (activationCount?: number) => {
   const count = Math.max(1, Math.round(activationCount || 1))
@@ -82,6 +124,11 @@ export const getScoreTierKey = (score: number): StrengthFilter => getScoreTier(s
 
 export const sortByScore = <T extends { score: number; createdAt?: string }>(items: T[]) =>
   [...items].sort((left, right) => {
+    const leftRelevance = relevanceRank((left as { relevance?: BrainRelevance }).relevance)
+    const rightRelevance = relevanceRank((right as { relevance?: BrainRelevance }).relevance)
+    if (leftRelevance !== rightRelevance) {
+      return leftRelevance - rightRelevance
+    }
     if (right.score !== left.score) {
       return right.score - left.score
     }
@@ -95,6 +142,10 @@ export const sortClusters = (items: MemoryCluster[]) =>
     }
     if (left.hidden !== right.hidden) {
       return left.hidden ? 1 : -1
+    }
+    const relevanceDelta = relevanceRank(left.relevance) - relevanceRank(right.relevance)
+    if (relevanceDelta !== 0) {
+      return relevanceDelta
     }
     if (right.score !== left.score) {
       return right.score - left.score
@@ -234,11 +285,18 @@ export const groupSignalsByOlderCase = (signals: BrainSignal[]): BrainSignalGrou
         primary,
         signals: rankedGroupSignals,
         score: primary.score,
+        relevance: normalizeRelevance(primary.relevance),
+        relevanceLabel: formatRelevance(primary),
+        relevanceReason: primary.relevanceReason,
         reasons: uniqueReasons(rankedGroupSignals),
         gateways: uniqueGateways(rankedGroupSignals),
       }
     })
     .sort((left, right) => {
+      const relevanceDelta = relevanceRank(left.relevance) - relevanceRank(right.relevance)
+      if (relevanceDelta !== 0) {
+        return relevanceDelta
+      }
       if (right.score !== left.score) {
         return right.score - left.score
       }

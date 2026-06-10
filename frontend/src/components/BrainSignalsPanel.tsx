@@ -80,6 +80,7 @@ import {
   formatGateway,
   formatGatewayCount,
   formatMemoryLinkType,
+  formatRelevance,
   formatNodeIds,
   formatScore,
   formatTimestamp,
@@ -92,7 +93,10 @@ import {
   getScoreTier,
   groupMemoryLinksByOlderCase,
   groupSignalsByOlderCase,
+  isSpeculativeRelevance,
   matchesBrainFilters,
+  normalizeRelevance,
+  relevanceRank,
   relatedClustersForLinkGroup,
   relatedClustersForSignalGroup,
   sortByScore,
@@ -179,6 +183,10 @@ const sortSuggestionsForView = (items: BrainSuggestion[]) => [...items].sort((le
   if (statusDelta !== 0) {
     return statusDelta
   }
+  const relevanceDelta = relevanceRank(left.relevance) - relevanceRank(right.relevance)
+  if (relevanceDelta !== 0) {
+    return relevanceDelta
+  }
   const priorityDelta = suggestionPriorityRank(left.priority) - suggestionPriorityRank(right.priority)
   if (priorityDelta !== 0) {
     return priorityDelta
@@ -207,6 +215,11 @@ const compareBrainMapDisplayNodes = (left: BrainMapNode, right: BrainMapNode) =>
 
   if (kindDelta !== 0) {
     return kindDelta
+  }
+
+  const relevanceDelta = relevanceRank(left.relevance) - relevanceRank(right.relevance)
+  if (relevanceDelta !== 0) {
+    return relevanceDelta
   }
 
   const scoreDelta = right.score - left.score
@@ -517,7 +530,7 @@ export default function BrainSignalsPanel({
     const lowerPriority: BrainSignalGroup[] = []
 
     signalGroups.forEach((group) => {
-      if (group.score >= LOW_PRIORITY_SCORE_THRESHOLD && priority.length < PRIORITY_SIGNAL_LIMIT) {
+      if (!isSpeculativeRelevance(group.relevance) && group.score >= LOW_PRIORITY_SCORE_THRESHOLD && priority.length < PRIORITY_SIGNAL_LIMIT) {
         priority.push(group)
       } else {
         lowerPriority.push(group)
@@ -554,14 +567,23 @@ export default function BrainSignalsPanel({
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active'),
     [rankedSuggestions],
   )
-  const prioritySuggestions = useMemo(
-    () => activeSuggestions.slice(0, NEXT_MOVES_PRIORITY_LIMIT),
-    [activeSuggestions],
-  )
-  const lowerPrioritySuggestions = useMemo(
-    () => activeSuggestions.slice(NEXT_MOVES_PRIORITY_LIMIT),
-    [activeSuggestions],
-  )
+  const { prioritySuggestions, lowerPrioritySuggestions } = useMemo(() => {
+    const priority: BrainSuggestion[] = []
+    const lowerPriority: BrainSuggestion[] = []
+
+    activeSuggestions.forEach((suggestion) => {
+      if (!isSpeculativeRelevance(suggestion.relevance) && priority.length < NEXT_MOVES_PRIORITY_LIMIT) {
+        priority.push(suggestion)
+      } else {
+        lowerPriority.push(suggestion)
+      }
+    })
+
+    return {
+      prioritySuggestions: priority,
+      lowerPrioritySuggestions: lowerPriority,
+    }
+  }, [activeSuggestions])
   const reviewedSuggestions = useMemo(
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
     [rankedSuggestions],
@@ -704,6 +726,7 @@ export default function BrainSignalsPanel({
         targetInvestigationId: signal.targetInvestigationId,
         relatedSummary: [
           ...formatStrengthSummary(strength),
+          formatRelevance(signal),
           formatCountLabel(group.signals.length, 'signal'),
           ...relatedClustersForSignalGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
         ],
@@ -733,6 +756,7 @@ export default function BrainSignalsPanel({
         targetInvestigationId: currentIsFrom ? link.toInvestigationId : link.fromInvestigationId,
         relatedSummary: [
           ...formatStrengthSummary(strength),
+          formatRelevance(link),
           formatMemoryLinkType(group.promotionType),
           formatActivationCount(group.activationCount),
           ...relatedClustersForLinkGroup(group, rankedClusters).map((cluster) => `Cluster: ${cluster.label}`),
@@ -763,6 +787,7 @@ export default function BrainSignalsPanel({
         targetInvestigationId: targetMember?.investigationId,
         relatedSummary: [
           ...formatStrengthSummary(strength),
+          formatRelevance(cluster),
           formatClusterStatus(cluster.status),
           formatClusterMemberCount(cluster),
           formatCountLabel(getClusterSignalCount(cluster), 'signal'),
@@ -813,6 +838,7 @@ export default function BrainSignalsPanel({
           relatedLinks[0]?.toInvestigationId,
         relatedSummary: [
           ...formatStrengthSummary(strength),
+          formatRelevance(suggestion),
           formatCountLabel(relatedClusters.length, 'cluster'),
           formatCountLabel(relatedSignals.length, 'signal'),
           formatCountLabel(relatedLinks.length, 'memory link'),
@@ -851,6 +877,7 @@ export default function BrainSignalsPanel({
       targetInvestigationId: node.targetInvestigationId,
       relatedSummary: [
         ...formatStrengthSummary(nodeStrength),
+        node.relevanceLabel || formatRelevance(node),
         ...node.badges,
         formatCountLabel(node.relatedSignalIds?.length || 0, 'signal'),
         formatCountLabel(node.relatedMemoryLinkIds?.length || 0, 'memory link'),
@@ -1621,6 +1648,8 @@ export default function BrainSignalsPanel({
     const gatewayCounts = getGatewayCounts(group)
     const signalSummary = buildSignalSummary(group)
     const relatedClusters = relatedClustersForSignalGroup(group, rankedClusters)
+    const relevance = normalizeRelevance(group.relevance)
+    const relevanceLabel = group.relevanceLabel || formatRelevance(signal)
 
     return (
       <article
@@ -1628,7 +1657,7 @@ export default function BrainSignalsPanel({
         data-testid="brain-signal-card"
         data-signal-id={signal.id}
         data-signal-group={group.key}
-        className="forensic-brain-signal-card"
+        className={`forensic-brain-signal-card forensic-brain-relevance-${relevance}`}
       >
         <div className="forensic-brain-card-rail" aria-hidden="true">
           <div className="forensic-brain-rail-scope">
@@ -1657,6 +1686,9 @@ export default function BrainSignalsPanel({
             <div className="forensic-brain-card-identity">
               <span className="forensic-brain-card-label">Older case fired</span>
               <h4>{signal.targetTitle}</h4>
+              <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
+                {relevanceLabel}
+              </span>
               {relatedFiringText && (
                 <span className="forensic-brain-card-group-count">{relatedFiringText}</span>
               )}
@@ -1691,6 +1723,9 @@ export default function BrainSignalsPanel({
               <div className="forensic-brain-signal-summary">
                 <span>Why it fired</span>
                 <strong>{signalSummary}</strong>
+                {group.relevanceReason && (
+                  <em>{group.relevanceReason}</em>
+                )}
               </div>
 
               <div className="forensic-brain-reason-stack">
@@ -1760,9 +1795,10 @@ export default function BrainSignalsPanel({
     const link = group.primary
     const relatedMemoryText = getRelatedMemoryText(group.links.length)
     const relatedClusters = relatedClustersForLinkGroup(group, rankedClusters)
+    const relevance = normalizeRelevance(link.relevance)
 
     return (
-    <article key={group.key} data-testid="brain-link-card" className="forensic-brain-link-card">
+    <article key={group.key} data-testid="brain-link-card" className={`forensic-brain-link-card forensic-brain-relevance-${relevance}`}>
       <button
         type="button"
         className="forensic-brain-link-open"
@@ -1780,6 +1816,7 @@ export default function BrainSignalsPanel({
             {formatMemoryLinkType(group.promotionType)}
           </span>
           <span>{formatActivationCount(group.activationCount)}</span>
+          <span>{formatRelevance(link)}</span>
           {relatedMemoryText && <span>{relatedMemoryText}</span>}
         </span>
         <span className="forensic-brain-link-preview">{group.reasons[0]?.detail || link.suggestedAction}</span>
@@ -1821,6 +1858,7 @@ export default function BrainSignalsPanel({
   const renderMemoryLinkDetail = (group: MemoryLinkGroup) => {
     const link = group.primary
     const relatedMemoryText = getRelatedMemoryText(group.links.length)
+    const relevance = formatRelevance(link)
 
     return (
     <aside
@@ -1856,6 +1894,10 @@ export default function BrainSignalsPanel({
         <div>
           <span>Activation Count</span>
           <strong>{formatActivationCount(group.activationCount)}</strong>
+        </div>
+        <div>
+          <span>Relevance</span>
+          <strong>{relevance}</strong>
         </div>
       </div>
 
@@ -1951,6 +1993,7 @@ export default function BrainSignalsPanel({
     const statusLabel = formatClusterStatus(cluster.status)
     const signalCount = getClusterSignalCount(cluster)
     const linkCount = getClusterLinkCount(cluster)
+    const relevance = normalizeRelevance(cluster.relevance)
 
     return (
       <article
@@ -1958,6 +2001,7 @@ export default function BrainSignalsPanel({
         data-testid={isHidden ? 'brain-hidden-cluster-card' : 'brain-cluster-card'}
         className={[
           'forensic-brain-cluster-card',
+          `forensic-brain-relevance-${relevance}`,
           cluster.pinned ? 'is-pinned' : '',
           isHidden ? 'is-hidden' : '',
         ].filter(Boolean).join(' ')}
@@ -1968,6 +2012,7 @@ export default function BrainSignalsPanel({
             <div className="forensic-brain-cluster-card-badges">
               {cluster.pinned && <span>Pinned</span>}
               <span>{statusLabel}</span>
+              <span>{formatRelevance(cluster)}</span>
               <strong>{formatScore(cluster.score)}</strong>
             </div>
           </div>
@@ -2074,6 +2119,10 @@ export default function BrainSignalsPanel({
           <strong>{formatScore(cluster.score)}</strong>
         </div>
         <div>
+          <span>Relevance</span>
+          <strong>{formatRelevance(cluster)}</strong>
+        </div>
+        <div>
           <span>Status</span>
           <strong>{formatClusterStatus(cluster.status)}</strong>
         </div>
@@ -2082,6 +2131,14 @@ export default function BrainSignalsPanel({
           <strong>{formatGateway(cluster.dominantGateway)}</strong>
         </div>
       </div>
+
+      {(cluster.summary || cluster.relevanceReason) && (
+        <div className="forensic-brain-detail-section">
+          <span>Calibration</span>
+          {cluster.summary && <p>{cluster.summary}</p>}
+          {cluster.relevanceReason && <p>{cluster.relevanceReason}</p>}
+        </div>
+      )}
 
       <div className="forensic-brain-detail-section">
         <span>Member Investigations</span>
@@ -2594,8 +2651,14 @@ export default function BrainSignalsPanel({
               <div className="forensic-brain-focus-hero">
                 <div>
                   <span className="forensic-brain-panel-kicker">Brain focus</span>
+                  {focus.relevance && (
+                    <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${normalizeRelevance(focus.relevance)}`}>
+                      {focus.relevanceLabel || formatRelevance(focus)}
+                    </span>
+                  )}
                   <h3>{focus.headline}</h3>
                   <p>{focus.summary}</p>
+                  {focus.relevanceReason && <p>{focus.relevanceReason}</p>}
                 </div>
                 <strong>{formatScore(attentionSummary?.overallScore ?? 0)}</strong>
               </div>
@@ -2820,6 +2883,8 @@ export default function BrainSignalsPanel({
     const canViewSignal = suggestion.relatedSignalIds.length > 0
     const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
+    const relevance = normalizeRelevance(suggestion.relevance)
+    const canPrepareFollowUp = !isSpeculativeRelevance(suggestion.relevance)
     const followUpAction = followUpsBySourceId.get(suggestion.id)
     const followUpLabel = followUpAction?.status === 'prepared'
       ? 'Review Rabbit Hole'
@@ -2831,11 +2896,14 @@ export default function BrainSignalsPanel({
       <article
         key={suggestion.id}
         data-testid="brain-suggestion-card"
-        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} ${isReviewed ? 'is-reviewed' : ''}`}
+        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} forensic-brain-relevance-${relevance} ${isReviewed ? 'is-reviewed' : ''}`}
       >
         <div className="forensic-brain-suggestion-main">
           <div className="forensic-brain-suggestion-topline">
             <span>{formatSuggestionKind(suggestion.kind)}</span>
+            <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
+              {formatRelevance(suggestion)}
+            </span>
             <strong>{suggestion.priority}</strong>
           </div>
           <h4>{suggestion.title}</h4>
@@ -2843,6 +2911,7 @@ export default function BrainSignalsPanel({
           <div className="forensic-brain-suggestion-reason">
             <span>Why it matters</span>
             <strong>{suggestion.reason}</strong>
+            {suggestion.relevanceReason && <em>{suggestion.relevanceReason}</em>}
           </div>
           <div className="forensic-brain-chip-row" aria-label="Related memory objects">
             {suggestion.relatedClusterIds.length > 0 && (
@@ -2871,22 +2940,28 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
-          <button
-            type="button"
-            aria-label={`Prepare focused Rabbit Hole ${suggestion.title}`}
-            className="forensic-brain-action forensic-brain-action-primary"
-            disabled={busyAction === `followup-prepare:${suggestion.id}` || followUpAction?.status === 'launched'}
-            onClick={() => {
-              if (followUpAction?.status === 'prepared') {
-                setPendingFollowUp(followUpAction)
-                return
-              }
-              void handlePrepareFollowUp(suggestion)
-            }}
-          >
-            <Rocket size={13} />
-            {followUpLabel}
-          </button>
+          {canPrepareFollowUp ? (
+            <button
+              type="button"
+              aria-label={`Prepare focused Rabbit Hole ${suggestion.title}`}
+              className="forensic-brain-action forensic-brain-action-primary"
+              disabled={busyAction === `followup-prepare:${suggestion.id}` || followUpAction?.status === 'launched'}
+              onClick={() => {
+                if (followUpAction?.status === 'prepared') {
+                  setPendingFollowUp(followUpAction)
+                  return
+                }
+                void handlePrepareFollowUp(suggestion)
+              }}
+            >
+              <Rocket size={13} />
+              {followUpLabel}
+            </button>
+          ) : (
+            <span className="forensic-brain-action-note">
+              Compare before Rabbit Hole
+            </span>
+          )}
           <button
             type="button"
             aria-label={`Compare next move ${suggestion.title}`}

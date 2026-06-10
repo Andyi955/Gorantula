@@ -17,6 +17,8 @@ export interface BrainMapNode {
   subtitle: string
   score: number
   scoreLabel: string
+  relevance?: string
+  relevanceLabel?: string
   tier: BrainMapTier
   slot: BrainMapSlot
   badges: string[]
@@ -52,6 +54,8 @@ export interface BrainMapRegion {
   status: string
   score: number
   scoreLabel: string
+  relevance?: string
+  relevanceLabel?: string
   tier: BrainMapTier
   gateway?: BrainGateway
   nodeIds: string[]
@@ -65,6 +69,8 @@ export interface BrainMapDigestItem {
   tone: 'hot' | 'warm' | 'cool'
   title: string
   detail: string
+  relevance?: string
+  relevanceLabel?: string
 }
 
 export interface BrainMapModel {
@@ -204,6 +210,8 @@ export const buildBrainMapModelFromView = (view: BackendBrainMapView): BrainMapM
     subtitle: node.subtitle,
     score: normalizeScore(node.score),
     scoreLabel: formatBrainMapScore(node.score),
+    relevance: node.relevance,
+    relevanceLabel: node.relevanceLabel,
     tier: getBrainMapTier(node.score),
     slot: node.kind === 'current' ? 'center' : slotFromMapPosition(node.x, node.y),
     badges: node.badges || [],
@@ -226,6 +234,8 @@ export const buildBrainMapModelFromView = (view: BackendBrainMapView): BrainMapM
     status: region.status,
     score: normalizeScore(region.score),
     scoreLabel: formatBrainMapScore(region.score),
+    relevance: region.relevance,
+    relevanceLabel: region.relevanceLabel,
     tier: getBrainMapTier(region.score),
     gateway: region.gateway,
     nodeIds: region.nodeIds || [],
@@ -253,6 +263,8 @@ export const buildBrainMapModelFromView = (view: BackendBrainMapView): BrainMapM
       tone: normalizeDigestTone(item.tone),
       title: item.title,
       detail: item.detail,
+      relevance: item.relevance,
+      relevanceLabel: item.relevanceLabel,
     })),
     hiddenCount: 0,
     summary: {
@@ -298,9 +310,11 @@ const buildMemoryNode = (item: RankedMapItem, slot: BrainMapSlot): BrainMapNode 
       subtitle: item.link.reasons[0]?.detail || item.link.suggestedAction,
       score: normalizeScore(item.link.score),
       scoreLabel: formatBrainMapScore(item.link.score),
+      relevance: item.link.relevance,
+      relevanceLabel: item.link.relevanceLabel,
       tier: getBrainMapTier(item.link.score),
       slot,
-      badges,
+      badges: [...badges, ...(item.link.relevanceLabel ? [item.link.relevanceLabel] : [])],
       gateways: item.link.gateways,
       reasons: item.link.reasons,
       targetInvestigationId: item.link.toInvestigationId,
@@ -318,10 +332,13 @@ const buildMemoryNode = (item: RankedMapItem, slot: BrainMapSlot): BrainMapNode 
     subtitle: item.signal.reasons[0]?.detail || item.signal.suggestedAction,
     score: normalizeScore(item.signal.score),
     scoreLabel: formatBrainMapScore(item.signal.score),
+    relevance: item.signal.relevance,
+    relevanceLabel: item.signal.relevanceLabel,
     tier: getBrainMapTier(item.signal.score),
     slot,
     badges: [
       'Signal',
+      ...(item.signal.relevanceLabel ? [item.signal.relevanceLabel] : []),
       ...(activationCount && activationCount > 1 ? [`${activationCount} firings`] : []),
     ],
     gateways: item.signal.gateways,
@@ -344,6 +361,8 @@ const buildDigest = (signals: BrainSignal[], links: MemoryLink[]): BrainMapDiges
       tone: 'hot',
       title: 'Auto memory created',
       detail: `${autoLink.toTitle} became a durable memory.`,
+      relevance: autoLink.relevance,
+      relevanceLabel: autoLink.relevanceLabel,
     })
   }
 
@@ -357,6 +376,8 @@ const buildDigest = (signals: BrainSignal[], links: MemoryLink[]): BrainMapDiges
       tone: 'warm',
       title: 'Memory reinforced',
       detail: `${reinforcedLink.toTitle} reached ${reinforcedLink.activationCount} activations.`,
+      relevance: reinforcedLink.relevance,
+      relevanceLabel: reinforcedLink.relevanceLabel,
     })
   }
 
@@ -377,6 +398,8 @@ const buildDigest = (signals: BrainSignal[], links: MemoryLink[]): BrainMapDiges
       tone: 'cool',
       title: 'Signal fired',
       detail: `${recentSignal.targetTitle} fired through ${formatGatewayLabel(recentSignal.gateways[0])}.`,
+      relevance: recentSignal.relevance,
+      relevanceLabel: recentSignal.relevanceLabel,
     })
   }
 

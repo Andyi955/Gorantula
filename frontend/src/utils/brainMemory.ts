@@ -1,6 +1,7 @@
 const API_BASE = 'http://localhost:8080/api/brain'
 
 export type BrainGateway = 'entity-date' | 'source-domain' | 'relationship-tag' | string
+export type BrainRelevance = 'strong-memory' | 'possible-bridge' | 'distant-echo' | 'background-noise' | string
 
 export interface BrainSignalReason {
   gateway: BrainGateway
@@ -18,6 +19,9 @@ export interface BrainSignal {
   targetInvestigationId: string
   targetTitle: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   gateways: BrainGateway[]
   reasons: BrainSignalReason[]
   suggestedAction: string
@@ -38,6 +42,9 @@ export interface MemoryLink {
   toInvestigationId: string
   toTitle: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   gateways: BrainGateway[]
   reasons: BrainSignalReason[]
   suggestedAction: string
@@ -59,6 +66,9 @@ export interface MemoryCluster {
   label: string
   summary: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   status: 'active' | 'warm' | 'dormant' | string
   dominantGateway: BrainGateway
   gatewayCounts: Record<string, number>
@@ -89,6 +99,9 @@ export interface BrainSuggestion {
   summary: string
   suggestedAction: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   priority: 'high' | 'medium' | 'low' | string
   reason: string
   relatedSignalIds: string[]
@@ -147,6 +160,9 @@ export interface BrainMemoryStrength {
   kind: 'memory-link' | 'memory-cluster' | 'active-signal' | string
   title: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   state: 'reinforced' | 'hot' | 'warm' | 'fading' | 'dormant' | string
   targetInvestigationId?: string
   clusterId?: string
@@ -173,6 +189,9 @@ export interface BrainAttentionItem {
   title: string
   detail: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   suggestedAction: string
   targetInvestigationId?: string
   clusterId?: string
@@ -196,6 +215,9 @@ export interface BrainFocusNarrative {
   primaryKind?: string
   primaryTitle?: string
   primaryGateway?: BrainGateway
+  relevance?: BrainRelevance
+  relevanceLabel?: string
+  relevanceReason?: string
   targetInvestigationId?: string
   clusterId?: string
   signalId?: string
@@ -232,6 +254,8 @@ export interface BrainMapNode {
   title: string
   subtitle: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
   status: string
   gateway?: BrainGateway
   gatewayCounts?: Record<string, number>
@@ -268,6 +292,8 @@ export interface BrainMapRegion {
   label: string
   status: string
   score: number
+  relevance?: BrainRelevance
+  relevanceLabel?: string
   gateway: BrainGateway
   nodeIds: string[]
   memberInvestigationIds: string[]
@@ -280,6 +306,8 @@ export interface BrainMapDigestItem {
   tone: 'hot' | 'warm' | 'cool' | 'weak' | 'high' | 'medium' | 'low' | string
   title: string
   detail: string
+  relevance?: BrainRelevance
+  relevanceLabel?: string
 }
 
 export interface BrainMapSummary {
