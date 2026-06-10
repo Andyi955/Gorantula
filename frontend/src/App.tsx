@@ -691,6 +691,7 @@ const isFiniteConfidence = (value: unknown): value is number =>
 
 type FocusedFollowUpLaunchNotice = {
   title: string
+  investigationId: string
 }
 
 function App() {
@@ -1495,6 +1496,22 @@ function App() {
     clearPipelineStepTransitions()
   }, [clearPipelineStepTransitions, currentInvestigationId])
 
+  useEffect(() => {
+    if (!focusedFollowUpLaunchNotice || !activePipelineRun) {
+      return
+    }
+    if (activePipelineRun.vaultId !== focusedFollowUpLaunchNotice.investigationId) {
+      return
+    }
+    if (
+      activePipelineRun.status === 'complete' ||
+      activePipelineRun.status === 'error' ||
+      activePipelineRun.status === 'cancelled'
+    ) {
+      setFocusedFollowUpLaunchNotice(null)
+    }
+  }, [activePipelineRun?.status, activePipelineRun?.vaultId, focusedFollowUpLaunchNotice])
+
   useEffect(() => () => {
     clearQaPipelineDemoTimers()
   }, [clearQaPipelineDemoTimers])
@@ -1511,6 +1528,7 @@ function App() {
       runId: activePipelineRun.runId,
       vaultId: activePipelineRun.vaultId,
     }))
+    setFocusedFollowUpLaunchNotice(null)
   }, [activePipelineRun, socketConfig.ready, socketConfig.socket])
 
   useEffect(() => {
@@ -2125,6 +2143,7 @@ function App() {
     if (launchedInvestigationId) {
       setFocusedFollowUpLaunchNotice({
         title: action.title || 'Focused Brain follow-up',
+        investigationId: launchedInvestigationId,
       })
     }
   }, [runSpider])

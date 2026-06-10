@@ -435,6 +435,62 @@ describe('App', () => {
     expect(within(crawlConsole).queryByTestId('brain-followup-spider-handoff')).not.toBeInTheDocument()
   })
 
+  it('clears the Brain follow-up handoff when the launched run is stopped', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-1880000000000', topic: 'Current Memory Case' }]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^brain$/i }))
+    await user.click(await screen.findByRole('button', { name: /launch mock focused follow-up/i }))
+
+    const rabbitMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    const crawlConsole = await screen.findByTestId('spider-crawl-console')
+    expect(within(crawlConsole).getByTestId('brain-followup-spider-handoff')).toHaveTextContent('Guided Rabbit Hole')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: rabbitMessage.runId,
+        vaultId: rabbitMessage.vaultId,
+        mode: 'rabbit-hole',
+        stepId: 'focused_followup',
+        stepLabel: 'Running focused follow-up',
+        status: 'running',
+        completedSteps: 2,
+        totalSteps: 8,
+        elapsedMs: 2400,
+      })
+    })
+
+    await user.click(await screen.findByRole('button', { name: /stop current investigation/i }))
+
+    const stopMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(stopMessage).toEqual({
+      type: 'STOP_PIPELINE',
+      runId: rabbitMessage.runId,
+      vaultId: rabbitMessage.vaultId,
+    })
+    expect(within(crawlConsole).queryByTestId('brain-followup-spider-handoff')).not.toBeInTheDocument()
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /^web$/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'fresh normal investigation')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const webMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(webMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL',
+      payload: 'fresh normal investigation',
+    }))
+  })
+
   it('unmounts the spider visualizer when switching to detective board', async () => {
     const user = userEvent.setup()
 
