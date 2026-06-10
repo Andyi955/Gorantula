@@ -88,6 +88,10 @@ type BrainSuggestionPayload = {
   summary: string
   suggestedAction: string
   score: number
+  thinkingGateway?: string
+  thinkingLabel?: string
+  thinkingReason?: string
+  actionMode?: string
   priority: string
   reason: string
   relatedSignalIds: string[]
@@ -225,6 +229,10 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
     summary: 'Grid reliability signal has an active memory cluster worth checking before the next investigation step.',
     suggestedAction: 'Inspect recurring memory cluster',
     score: 0.86,
+    thinkingGateway: 'inspect-pattern',
+    thinkingLabel: 'Inspect pattern',
+    thinkingReason: 'This memory region is strong enough for a user-approved focused Rabbit Hole pass.',
+    actionMode: 'launch-follow-up',
     priority: 'high',
     reason: 'Grid reliability signal is an active cluster with 2 related investigations.',
     relatedSignalIds: promoted || forgotten ? [] : [signal.id],
