@@ -2,6 +2,7 @@ package brainmemory
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -745,6 +746,161 @@ func TestServiceGeneratesBrainSuggestionsFromMemoryState(t *testing.T) {
 	}
 }
 
+func TestBrainSuggestionsRouteThinkingGateways(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	clusterSuggestion := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+	if clusterSuggestion.ThinkingGateway != ThinkingGatewayPattern {
+		t.Fatalf("expected cluster review thinking gateway pattern, got %#v", clusterSuggestion)
+	}
+	if clusterSuggestion.ActionMode != SuggestionActionLaunchFollowUp {
+		t.Fatalf("expected strong cluster review to allow focused follow-up, got %#v", clusterSuggestion)
+	}
+
+	sourceSuggestion := findSuggestion(t, suggestions, SuggestionKindSourceReview)
+	if sourceSuggestion.ThinkingGateway != ThinkingGatewayCompareBridge {
+		t.Fatalf("expected source review to route through compare bridge, got %#v", sourceSuggestion)
+	}
+	if sourceSuggestion.ActionMode != SuggestionActionCompare {
+		t.Fatalf("expected source review to compare before launch, got %#v", sourceSuggestion)
+	}
+
+	linkSuggestion := findSuggestion(t, suggestions, SuggestionKindMemoryLinkCompare)
+	if linkSuggestion.ThinkingGateway == "" || linkSuggestion.ThinkingReason == "" {
+		t.Fatalf("expected memory link suggestion to include thinking metadata, got %#v", linkSuggestion)
+	}
+}
+
+func TestBrainGapSuggestionsDoNotPrepareFollowUps(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "China Robotics Supply Chain"), `{
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"title":"Robot supply chain",
+				"summary":"[LOC:China] appears in a robotics supply note.",
+				"fullText":"[LOC:China] appears in a robotics supply note.",
+				"sourceURL":"https://broad.example.com/robotics"
+			}
+		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Olympics Broadcast Rights"), `{
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"title":"Olympics broadcast rights",
+				"summary":"[LOC:China] appears in a sports broadcast note.",
+				"fullText":"[LOC:China] appears in a sports broadcast note.",
+				"sourceURL":"https://broad.example.com/sports"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	gapSuggestion := findSuggestion(t, suggestions, SuggestionKindGapReview)
+	if gapSuggestion.ThinkingGateway != ThinkingGatewayGap {
+		t.Fatalf("expected gap thinking gateway for distant echo, got %#v", gapSuggestion)
+	}
+	if gapSuggestion.ActionMode != SuggestionActionFillGap {
+		t.Fatalf("expected gap suggestion to require bridge evidence, got %#v", gapSuggestion)
+	}
+	if !strings.Contains(strings.ToLower(gapSuggestion.ThinkingReason), "bridge") {
+		t.Fatalf("expected gap thinking reason to mention bridge evidence, got %#v", gapSuggestion)
+	}
+
+	_, err = service.PrepareFollowUp(PrepareFollowUpRequest{
+		InvestigationID: "inv-current",
+		SourceKind:      FollowUpSourceSuggestion,
+		SourceID:        gapSuggestion.ID,
+	})
+	if !errors.Is(err, ErrInvalidFollowUp) {
+		t.Fatalf("expected gap suggestion to reject focused follow-up preparation, got %v", err)
+	}
+}
+
+func TestBrainContradictionCueCreatesVerifySuggestion(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Supplier Denial"), `{
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"title":"Current denial",
+				"summary":"[ORG:Acme Grid] denies using [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"fullText":"[ORG:Acme Grid] denies using [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"sourceURL":"https://intel.example.com/current-denial"
+			}
+		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Supplier Evidence"), `{
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"title":"Older supplier evidence",
+				"summary":"Prior evidence ties [ORG:Acme Grid] to [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"fullText":"Prior evidence ties [ORG:Acme Grid] to [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"sourceURL":"https://intel.example.com/archive-supplier"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 || !signals[0].HasGateway(GatewayContradiction) {
+		t.Fatalf("expected contradiction gateway signal, got %#v", signals)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	contradiction := findSuggestion(t, suggestions, SuggestionKindContradictionReview)
+	if contradiction.ThinkingGateway != ThinkingGatewayContradiction {
+		t.Fatalf("expected contradiction thinking gateway, got %#v", contradiction)
+	}
+	if contradiction.ActionMode != SuggestionActionVerify {
+		t.Fatalf("expected contradiction suggestion to verify instead of launch, got %#v", contradiction)
+	}
+	if !strings.Contains(strings.ToLower(contradiction.SuggestedAction), "verify") {
+		t.Fatalf("expected verify suggested action, got %#v", contradiction)
+	}
+
+	_, err = service.PrepareFollowUp(PrepareFollowUpRequest{
+		InvestigationID: "inv-current",
+		SourceKind:      FollowUpSourceSuggestion,
+		SourceID:        contradiction.ID,
+	})
+	if !errors.Is(err, ErrInvalidFollowUp) {
+		t.Fatalf("expected contradiction suggestion to reject focused follow-up preparation, got %v", err)
+	}
+}
+
 func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	timestamp := "2026-06-08T10:00:00Z"
 	clusters := []MemoryCluster{
@@ -1287,16 +1443,7 @@ func TestServicePreparesAndPersistsFocusedFollowUpAction(t *testing.T) {
 		t.Fatalf("expected launched action to persist, got %#v", actions)
 	}
 
-	sourceSuggestion := findSuggestion(t, suggestions, SuggestionKindSourceReview)
-	cancelled, err := service.PrepareFollowUp(PrepareFollowUpRequest{
-		InvestigationID: "inv-current",
-		SourceKind:      FollowUpSourceSuggestion,
-		SourceID:        sourceSuggestion.ID,
-	})
-	if err != nil {
-		t.Fatalf("PrepareFollowUp for source suggestion failed: %v", err)
-	}
-	cancelled, err = service.CancelFollowUp(cancelled.ID)
+	cancelled, err := service.CancelFollowUp(action.ID)
 	if err != nil {
 		t.Fatalf("CancelFollowUp failed: %v", err)
 	}
