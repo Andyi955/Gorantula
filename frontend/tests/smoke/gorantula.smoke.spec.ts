@@ -1315,6 +1315,10 @@ test.describe('Gorantula smoke flows', () => {
     expect(crawl.descentMode).toBe('guided')
     expect(crawl.payload).toContain('Focused Rabbit Hole follow-up.')
     expect(crawl.payload).toContain('Grid reliability signal')
+    const console = crawlConsole(page)
+    await expect(console.getByTestId('brain-followup-spider-handoff')).toContainText('Brain follow-up active')
+    await expect(console.getByTestId('brain-followup-spider-handoff')).toContainText('Guided Rabbit Hole')
+    await expect(console.getByRole('button', { name: /^guided$/i })).toHaveClass(/forensic-spider-guided-followup-active/)
   })
 
   test('backend error clears the active run and allows a new web investigation', async ({ page }) => {
