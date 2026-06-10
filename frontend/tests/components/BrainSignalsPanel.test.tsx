@@ -416,6 +416,9 @@ const makeSignal = (overrides: Partial<BrainSignal> = {}): BrainSignal => {
     targetInvestigationId,
     targetTitle,
     score,
+    relevance: overrides.relevance,
+    relevanceLabel: overrides.relevanceLabel,
+    relevanceReason: overrides.relevanceReason,
     createdAt,
     updatedAt: overrides.updatedAt || createdAt,
     reasons: overrides.reasons || [
@@ -897,7 +900,18 @@ describe('BrainSignalsPanel', () => {
       reason: `Next move ${index} has supporting memory context.`,
       targetInvestigationIds: [`inv-target-${index}`],
     }))
-    installBrainFetch({ suggestions })
+    const distantSuggestion = makeSuggestion({
+      id: 'brain-suggestion-distant',
+      title: 'Inspect distant bridge echo',
+      score: 0.99,
+      priority: 'high',
+      relevance: 'distant-echo',
+      relevanceLabel: 'Distant Echo',
+      relevanceReason: 'This is a speculative echo until a stronger bridge appears.',
+      suggestedAction: 'Inspect speculative bridge',
+      relatedSignalIds: [signal.id],
+    })
+    installBrainFetch({ suggestions: [...suggestions, distantSuggestion] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
     await openBrainView(user, /next moves view/i)
@@ -906,11 +920,19 @@ describe('BrainSignalsPanel', () => {
       expect(screen.getAllByTestId('brain-suggestion-card')).toHaveLength(7)
     })
     expect(screen.getByText('Next Move Case 0')).toBeInTheDocument()
+    expect(screen.queryByText('Inspect distant bridge echo')).not.toBeInTheDocument()
     expect(screen.queryByText('Next Move Case 7')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /show lower-priority moves \(2\)/i }))
+    await user.click(screen.getByRole('button', { name: /show lower-priority moves \(3\)/i }))
 
-    expect(screen.getAllByTestId('brain-suggestion-card')).toHaveLength(9)
+    expect(screen.getAllByTestId('brain-suggestion-card')).toHaveLength(10)
+    const distantCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Inspect distant bridge echo'),
+    )
+    expect(distantCard).toBeTruthy()
+    expect(within(distantCard as HTMLElement).getByText('Distant Echo')).toBeInTheDocument()
+    expect(within(distantCard as HTMLElement).getByText('Compare before Rabbit Hole')).toBeInTheDocument()
+    expect(within(distantCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole inspect distant bridge echo/i })).not.toBeInTheDocument()
     expect(screen.getByText('Next Move Case 7')).toBeInTheDocument()
     expect(screen.getByText('Next Move Case 8')).toBeInTheDocument()
   })
@@ -1857,8 +1879,27 @@ describe('BrainSignalsPanel', () => {
       ],
       suggestedAction: 'Compare source domain',
     })
+    const distantSignal = makeSignal({
+      id: 'brain-signal-distant-echo',
+      targetInvestigationId: 'inv-distant',
+      targetTitle: 'Distant Olympics Echo',
+      score: 0.93,
+      relevance: 'distant-echo',
+      relevanceLabel: 'Distant Echo',
+      relevanceReason: 'A broad clue is echoing with one extra bridge. Keep it visible, but treat it as speculative.',
+      suggestedAction: 'Inspect speculative bridge',
+      gateways: ['entity-date', 'source-domain'],
+      reasons: [
+        {
+          ...signal.reasons[0],
+          value: 'LOC|china',
+          label: 'China',
+          detail: 'Shared LOC "China" appears in both investigations. Treat this as a distant echo until a stronger bridge appears.',
+        },
+      ],
+    })
 
-    installBrainFetch({ signals: [signal, duplicateSignal, ...highSignals, weakSignal], links: [] })
+    installBrainFetch({ signals: [signal, duplicateSignal, ...highSignals, distantSignal, weakSignal], links: [] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
     await openBrainView(user, /active signals view/i)
@@ -1878,12 +1919,15 @@ describe('BrainSignalsPanel', () => {
     const gatewayRow = within(groupedOlderCards[0]).getByLabelText('Signal gateways')
     expect(within(gatewayRow).getAllByText('Entity/Date')).toHaveLength(1)
     expect(within(gatewayRow).getAllByText('Source Domain x2')).toHaveLength(1)
+    expect(screen.queryByText('Distant Olympics Echo')).not.toBeInTheDocument()
     expect(screen.queryByText('Weak Domain Case')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /show lower-priority signals \(3\)/i }))
+    await user.click(screen.getByRole('button', { name: /show lower-priority signals \(4\)/i }))
 
+    expect(screen.getByText('Distant Olympics Echo')).toBeInTheDocument()
+    expect(screen.getByText('Distant Echo')).toBeInTheDocument()
     expect(screen.getByText('Weak Domain Case')).toBeInTheDocument()
-    expect(screen.getAllByTestId('brain-signal-card')).toHaveLength(13)
+    expect(screen.getAllByTestId('brain-signal-card')).toHaveLength(14)
   })
 
   it('dismisses every signal in a grouped older case', async () => {

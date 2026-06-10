@@ -7292,6 +7292,21 @@ body {
   opacity: 0.58;
 }
 
+.forensic-brain-action-note {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  border: 1px solid rgba(246, 200, 121, 0.22);
+  background: rgba(246, 200, 121, 0.055);
+  padding: 0 0.72rem;
+  color: #ffe0a6;
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .forensic-brain-refresh-spin {
   animation: forensic-brain-spin 900ms linear infinite;
 }
@@ -7708,6 +7723,62 @@ body {
   color: #ffe0a6;
 }
 
+.forensic-brain-relevance-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(129, 227, 255, 0.06);
+  padding: 0.22rem 0.38rem;
+  color: var(--forensic-accent);
+  font-size: 0.55rem;
+  font-style: normal;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.forensic-brain-relevance-chip-strong-memory {
+  border-color: rgba(0, 255, 65, 0.46);
+  background: rgba(0, 255, 65, 0.08);
+  color: #7cff91;
+}
+
+.forensic-brain-relevance-chip-possible-bridge {
+  border-color: rgba(129, 227, 255, 0.42);
+  background: rgba(129, 227, 255, 0.08);
+  color: var(--forensic-accent);
+}
+
+.forensic-brain-relevance-chip-distant-echo {
+  border-color: rgba(246, 200, 121, 0.42);
+  background: rgba(246, 200, 121, 0.075);
+  color: #ffe0a6;
+}
+
+.forensic-brain-relevance-chip-background-noise {
+  border-color: rgba(154, 166, 180, 0.28);
+  background: rgba(154, 166, 180, 0.06);
+  color: rgba(204, 218, 232, 0.78);
+}
+
+.forensic-brain-suggestion-topline .forensic-brain-relevance-chip {
+  color: var(--forensic-accent);
+}
+
+.forensic-brain-suggestion-topline .forensic-brain-relevance-chip-strong-memory {
+  color: #7cff91;
+}
+
+.forensic-brain-suggestion-topline .forensic-brain-relevance-chip-distant-echo {
+  color: #ffe0a6;
+}
+
+.forensic-brain-suggestion-topline .forensic-brain-relevance-chip-background-noise {
+  color: rgba(204, 218, 232, 0.78);
+}
+
 .forensic-brain-cluster-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -8062,6 +8133,14 @@ body {
   font-size: 0.78rem;
   font-weight: 900;
   line-height: 1.35;
+}
+
+.forensic-brain-signal-summary em,
+.forensic-brain-suggestion-reason em {
+  color: rgba(204, 218, 232, 0.72);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.45;
 }
 
 .forensic-brain-reason-stack {
