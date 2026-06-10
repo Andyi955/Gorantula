@@ -34,6 +34,7 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
+import type { BrainFollowUpAction } from './utils/brainMemory'
 import {
   BOARD_RESTORE_COMPLETE_EVENT,
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
@@ -688,6 +689,11 @@ const formatWorkspaceTimestamp = (investigationId: string | null) => {
 const isFiniteConfidence = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
 
+type FocusedFollowUpLaunchNotice = {
+  title: string
+  investigationId: string
+}
+
 function App() {
   const initialInvestigationsRef = useRef<InvestigationRecord[] | null>(null)
   if (initialInvestigationsRef.current === null) {
@@ -698,6 +704,7 @@ function App() {
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<SpiderOperationMode>('web')
   const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
+  const [focusedFollowUpLaunchNotice, setFocusedFollowUpLaunchNotice] = useState<FocusedFollowUpLaunchNotice | null>(null)
   const [imageScrapingEnabled, setImageScrapingEnabled] = useState(() => readImageScrapingPreference())
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
@@ -1489,6 +1496,22 @@ function App() {
     clearPipelineStepTransitions()
   }, [clearPipelineStepTransitions, currentInvestigationId])
 
+  useEffect(() => {
+    if (!focusedFollowUpLaunchNotice || !activePipelineRun) {
+      return
+    }
+    if (activePipelineRun.vaultId !== focusedFollowUpLaunchNotice.investigationId) {
+      return
+    }
+    if (
+      activePipelineRun.status === 'complete' ||
+      activePipelineRun.status === 'error' ||
+      activePipelineRun.status === 'cancelled'
+    ) {
+      setFocusedFollowUpLaunchNotice(null)
+    }
+  }, [activePipelineRun?.status, activePipelineRun?.vaultId, focusedFollowUpLaunchNotice])
+
   useEffect(() => () => {
     clearQaPipelineDemoTimers()
   }, [clearQaPipelineDemoTimers])
@@ -1505,6 +1528,7 @@ function App() {
       runId: activePipelineRun.runId,
       vaultId: activePipelineRun.vaultId,
     }))
+    setFocusedFollowUpLaunchNotice(null)
   }, [activePipelineRun, socketConfig.ready, socketConfig.socket])
 
   useEffect(() => {
@@ -2016,13 +2040,21 @@ function App() {
     return () => window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
   }, [])
 
-  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: SpiderOperationMode) => {
+  const runSpider = useCallback((
+    customPrompt?: string,
+    customLabel?: string,
+    overrideMode?: SpiderOperationMode,
+    overrideRabbitHoleDescentMode?: 'guided' | 'max',
+  ) => {
     const inputValue = crawlInputRef.current?.value || '';
     const textToRun = customPrompt || inputValue || prompt;
     const labelToUse = customLabel || textToRun;
     const modeToUse = overrideMode || crawlMode;
     const shouldScrapeImages = modeToUse !== 'local' && imageScrapingEnabled
     if (socketConfig.socket && socketConfig.ready && textToRun) {
+      if (!customPrompt) {
+        setFocusedFollowUpLaunchNotice(null)
+      }
       const id = `inv-${Date.now()}`
       const runId = createPipelineRunId()
       const localPaths = modeToUse === 'local' ? parseLocalCrawlPaths(textToRun) : []
@@ -2045,7 +2077,7 @@ function App() {
       const crawlMessage = modeToUse === 'local'
         ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
         : modeToUse === 'rabbit-hole'
-          ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: rabbitHoleDescentMode }
+          ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: overrideRabbitHoleDescentMode || rabbitHoleDescentMode }
           : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
       socketConfig.socket.send(JSON.stringify(crawlMessage))
       if (modeToUse === 'local') {
@@ -2094,6 +2126,27 @@ function App() {
     setRabbitHoleGatekeeper(null)
     setActiveTab('spider')
   }, [currentInvestigation?.topic, currentInvestigationId, imageScrapingEnabled, prompt, rabbitHoleGatekeeper, socketConfig.ready, socketConfig.socket])
+
+  const handleLaunchFocusedRabbitHole = useCallback((action: BrainFollowUpAction) => {
+    const promptToRun = action.prompt || action.summary || action.title
+    if (!promptToRun) {
+      return
+    }
+    setCrawlMode('rabbit-hole')
+    setRabbitHoleDescentMode('guided')
+    const launchedInvestigationId = runSpider(
+      promptToRun,
+      action.title || 'Focused Brain follow-up',
+      'rabbit-hole',
+      'guided',
+    )
+    if (launchedInvestigationId) {
+      setFocusedFollowUpLaunchNotice({
+        title: action.title || 'Focused Brain follow-up',
+        investigationId: launchedInvestigationId,
+      })
+    }
+  }, [runSpider])
 
   const finishRabbitHoleDescent = useCallback(() => {
     if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
@@ -2779,6 +2832,7 @@ function App() {
                           type="button"
                           onClick={() => {
                             setCrawlMode('web')
+                            setFocusedFollowUpLaunchNotice(null)
                             setQaLocalIngestionDemoRequest(null)
                           }}
                           className={crawlMode === 'web' ? 'forensic-spider-mode-active' : ''}
@@ -2789,6 +2843,7 @@ function App() {
                           type="button"
                           onClick={() => {
                             setCrawlMode('rabbit-hole')
+                            setFocusedFollowUpLaunchNotice(null)
                             setQaLocalIngestionDemoRequest(null)
                           }}
                           className={crawlMode === 'rabbit-hole' ? 'forensic-spider-mode-active' : ''}
@@ -2799,6 +2854,7 @@ function App() {
                           type="button"
                           onClick={() => {
                             setCrawlMode('local')
+                            setFocusedFollowUpLaunchNotice(null)
                             setQaLocalIngestionDemoRequest(null)
                           }}
                           className={crawlMode === 'local' ? 'forensic-spider-mode-active' : ''}
@@ -2810,14 +2866,20 @@ function App() {
                         <div className="forensic-spider-mode-toggle forensic-spider-rabbit-descent-toggle" role="group" aria-label="Rabbit Hole descent">
                           <button
                             type="button"
-                            onClick={() => setRabbitHoleDescentMode('guided')}
-                            className={rabbitHoleDescentMode === 'guided' ? 'forensic-spider-mode-active' : ''}
+                            onClick={() => {
+                              setRabbitHoleDescentMode('guided')
+                              setFocusedFollowUpLaunchNotice(null)
+                            }}
+                            className={`${rabbitHoleDescentMode === 'guided' ? 'forensic-spider-mode-active' : ''} ${focusedFollowUpLaunchNotice ? 'forensic-spider-guided-followup-active' : ''}`}
                           >
                             GUIDED
                           </button>
                           <button
                             type="button"
-                            onClick={() => setRabbitHoleDescentMode('max')}
+                            onClick={() => {
+                              setRabbitHoleDescentMode('max')
+                              setFocusedFollowUpLaunchNotice(null)
+                            }}
                             className={rabbitHoleDescentMode === 'max' ? 'forensic-spider-mode-active' : ''}
                           >
                             MAX DESCENT
@@ -2829,6 +2891,20 @@ function App() {
 
                   <section className="forensic-spider-console-panel forensic-spider-console-panel-command">
                     <div className="forensic-spider-console-label">Command</div>
+                    {focusedFollowUpLaunchNotice && crawlMode === 'rabbit-hole' && (
+                      <div
+                        data-testid="brain-followup-spider-handoff"
+                        className="forensic-spider-brain-followup-handoff"
+                        aria-live="polite"
+                      >
+                        <div>
+                          <span>Brain follow-up active</span>
+                          <strong>Guided Rabbit Hole</strong>
+                        </div>
+                        <p>{focusedFollowUpLaunchNotice.title}</p>
+                        <small>Prompt sent to guided descent</small>
+                      </div>
+                    )}
                     <div className="forensic-spider-command-input-wrap">
                       <input
                         ref={crawlInputRef}
@@ -2836,6 +2912,7 @@ function App() {
                         value={prompt}
                         onChange={(e) => {
                           setPrompt(e.target.value)
+                          setFocusedFollowUpLaunchNotice(null)
                           if (crawlMode === 'local') {
                             setQaLocalIngestionDemoRequest(null)
                           }
@@ -2987,6 +3064,7 @@ function App() {
                   currentInvestigationId={currentInvestigationId}
                   currentInvestigationTitle={currentInvestigation?.displayTopic || currentInvestigation?.topic || null}
                   onOpenInvestigation={handleOpenBrainInvestigation}
+                  onLaunchFocusedRabbitHole={handleLaunchFocusedRabbitHole}
                 />
               </Suspense>
             )}

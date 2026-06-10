@@ -1119,6 +1119,140 @@ func TestHandleAPIRoutesBrainSuggestions(t *testing.T) {
 	}
 }
 
+func TestServicePreparesAndPersistsFocusedFollowUpAction(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	suggestion := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+
+	action, err := service.PrepareFollowUp(PrepareFollowUpRequest{
+		InvestigationID: "inv-current",
+		SourceKind:      FollowUpSourceSuggestion,
+		SourceID:        suggestion.ID,
+	})
+	if err != nil {
+		t.Fatalf("PrepareFollowUp failed: %v", err)
+	}
+	if action.Status != FollowUpStatusPrepared {
+		t.Fatalf("expected prepared status, got %#v", action)
+	}
+	if action.DescentMode != "guided" {
+		t.Fatalf("expected guided Rabbit Hole descent, got %#v", action)
+	}
+	if !strings.Contains(action.Prompt, "Current Grid Case") || !strings.Contains(action.Prompt, "Acme Grid") {
+		t.Fatalf("expected prompt to include current case and repeated clue, got %q", action.Prompt)
+	}
+	if len(action.RelatedClusterIDs) == 0 || len(action.TargetInvestigationIDs) == 0 {
+		t.Fatalf("expected persisted reason references, got %#v", action)
+	}
+
+	launched, err := service.LaunchFollowUp(action.ID)
+	if err != nil {
+		t.Fatalf("LaunchFollowUp failed: %v", err)
+	}
+	if launched.Status != FollowUpStatusLaunched || strings.TrimSpace(launched.LaunchedAt) == "" {
+		t.Fatalf("expected launched action with timestamp, got %#v", launched)
+	}
+
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 1 || actions[0].Status != FollowUpStatusLaunched {
+		t.Fatalf("expected launched action to persist, got %#v", actions)
+	}
+
+	sourceSuggestion := findSuggestion(t, suggestions, SuggestionKindSourceReview)
+	cancelled, err := service.PrepareFollowUp(PrepareFollowUpRequest{
+		InvestigationID: "inv-current",
+		SourceKind:      FollowUpSourceSuggestion,
+		SourceID:        sourceSuggestion.ID,
+	})
+	if err != nil {
+		t.Fatalf("PrepareFollowUp for source suggestion failed: %v", err)
+	}
+	cancelled, err = service.CancelFollowUp(cancelled.ID)
+	if err != nil {
+		t.Fatalf("CancelFollowUp failed: %v", err)
+	}
+	if cancelled.Status != FollowUpStatusCancelled || strings.TrimSpace(cancelled.CancelledAt) == "" {
+		t.Fatalf("expected cancelled action with timestamp, got %#v", cancelled)
+	}
+}
+
+func TestHandleAPIRoutesBrainFollowUps(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	suggestion := findSuggestion(t, suggestions, SuggestionKindClusterReview)
+
+	request := httptest.NewRequest(
+		http.MethodPut,
+		"/api/brain/followups/prepare",
+		strings.NewReader(`{"investigationId":"inv-current","sourceKind":"suggestion","sourceId":"`+suggestion.ID+`"}`),
+	)
+	recorder := httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected follow-up prepare 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var action BrainFollowUpAction
+	if err := json.Unmarshal(recorder.Body.Bytes(), &action); err != nil {
+		t.Fatalf("decode follow-up action failed: %v", err)
+	}
+	if action.Status != FollowUpStatusPrepared {
+		t.Fatalf("expected prepared follow-up action, got %#v", action)
+	}
+
+	launchRequest := httptest.NewRequest(http.MethodPut, "/api/brain/followups/"+action.ID+"/launch", nil)
+	launchRecorder := httptest.NewRecorder()
+	HandleAPI(launchRecorder, launchRequest, service)
+	if launchRecorder.Code != http.StatusOK {
+		t.Fatalf("expected follow-up launch 200, got %d body=%s", launchRecorder.Code, launchRecorder.Body.String())
+	}
+	var launched BrainFollowUpAction
+	if err := json.Unmarshal(launchRecorder.Body.Bytes(), &launched); err != nil {
+		t.Fatalf("decode launched action failed: %v", err)
+	}
+	if launched.Status != FollowUpStatusLaunched {
+		t.Fatalf("expected launched status, got %#v", launched)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/brain/followups?investigationId=inv-current", nil)
+	listRecorder := httptest.NewRecorder()
+	HandleAPI(listRecorder, listRequest, service)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("expected follow-up list 200, got %d body=%s", listRecorder.Code, listRecorder.Body.String())
+	}
+	var actions []BrainFollowUpAction
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &actions); err != nil {
+		t.Fatalf("decode follow-up list failed: %v", err)
+	}
+	if len(actions) != 1 || actions[0].Status != FollowUpStatusLaunched {
+		t.Fatalf("expected launched action in list, got %#v", actions)
+	}
+}
+
 func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{

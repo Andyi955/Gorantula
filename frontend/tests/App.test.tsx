@@ -151,10 +151,31 @@ vi.mock('../src/components/BrainSignalsPanel', () => ({
     currentInvestigationId,
     currentInvestigationTitle,
     onOpenInvestigation,
+    onLaunchFocusedRabbitHole,
   }: {
     currentInvestigationId?: string | null
     currentInvestigationTitle?: string | null
     onOpenInvestigation?: (investigationId: string) => void
+    onLaunchFocusedRabbitHole?: (action: {
+      id: string
+      investigationId: string
+      investigationTitle: string
+      sourceKind: string
+      sourceId: string
+      status: string
+      title: string
+      summary: string
+      prompt: string
+      descentMode: string
+      suggestedAction: string
+      targetInvestigationIds: string[]
+      relatedSignalIds: string[]
+      relatedMemoryLinkIds: string[]
+      relatedClusterIds: string[]
+      reasonSamples: unknown[]
+      createdAt: string
+      updatedAt: string
+    }) => void
   }) => (
     <div data-testid="mock-brain-panel">
       BrainSignalsPanel
@@ -162,6 +183,31 @@ vi.mock('../src/components/BrainSignalsPanel', () => ({
       <span data-testid="mock-brain-current-title">{currentInvestigationTitle || 'untitled'}</span>
       <button type="button" onClick={() => onOpenInvestigation?.('inv-1770000000000')}>
         Open mock brain target
+      </button>
+      <button
+        type="button"
+        onClick={() => onLaunchFocusedRabbitHole?.({
+          id: 'brain-followup-app-test',
+          investigationId: currentInvestigationId || 'inv-current',
+          investigationTitle: currentInvestigationTitle || 'Current Memory Case',
+          sourceKind: 'suggestion',
+          sourceId: 'brain-suggestion-app-test',
+          status: 'launched',
+          title: 'Focused Rabbit Hole: supply chain bottleneck',
+          summary: 'Review repeated robotics supply chain cues.',
+          prompt: 'Focused Rabbit Hole follow-up.\nRepeated clues: robotics supply chain bottleneck.',
+          descentMode: 'guided',
+          suggestedAction: 'Launch focused Rabbit Hole',
+          targetInvestigationIds: ['inv-older'],
+          relatedSignalIds: [],
+          relatedMemoryLinkIds: [],
+          relatedClusterIds: [],
+          reasonSamples: [],
+          createdAt: '2026-06-10T10:00:00Z',
+          updatedAt: '2026-06-10T10:00:00Z',
+        })}
+      >
+        Launch mock focused follow-up
       </button>
     </div>
   ),
@@ -349,6 +395,100 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByTestId('mock-board-investigation-id')).toHaveTextContent('inv-1770000000000')
     })
+  })
+
+  it('shows a guided Rabbit Hole handoff after launching a Brain follow-up', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-1880000000000', topic: 'Current Memory Case' }]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^brain$/i }))
+    await user.click(await screen.findByRole('button', { name: /launch mock focused follow-up/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL_RABBIT_HOLE',
+      payload: expect.stringContaining('Focused Rabbit Hole follow-up.'),
+      descentMode: 'guided',
+    }))
+
+    const crawlConsole = await screen.findByTestId('spider-crawl-console')
+    const handoff = within(crawlConsole).getByTestId('brain-followup-spider-handoff')
+    expect(handoff).toHaveTextContent('Brain follow-up active')
+    expect(handoff).toHaveTextContent('Guided Rabbit Hole')
+    expect(handoff).toHaveTextContent('Focused Rabbit Hole: supply chain bottleneck')
+    expect(handoff).toHaveTextContent('Prompt sent to guided descent')
+    expect(screen.getByTestId('mock-spider-operation-mode')).toHaveTextContent('rabbit-hole')
+    expect(within(crawlConsole).getByRole('button', { name: /^guided$/i }))
+      .toHaveClass('forensic-spider-guided-followup-active')
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /max descent/i }))
+    expect(within(crawlConsole).queryByTestId('brain-followup-spider-handoff')).not.toBeInTheDocument()
+  })
+
+  it('clears the Brain follow-up handoff when the launched run is stopped', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'gorantula_investigations',
+      JSON.stringify([{ id: 'inv-1880000000000', topic: 'Current Memory Case' }]),
+    )
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^brain$/i }))
+    await user.click(await screen.findByRole('button', { name: /launch mock focused follow-up/i }))
+
+    const rabbitMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    const crawlConsole = await screen.findByTestId('spider-crawl-console')
+    expect(within(crawlConsole).getByTestId('brain-followup-spider-handoff')).toHaveTextContent('Guided Rabbit Hole')
+
+    act(() => {
+      WebSocketMock.instances[0]?.emit('PIPELINE_PROGRESS', {
+        runId: rabbitMessage.runId,
+        vaultId: rabbitMessage.vaultId,
+        mode: 'rabbit-hole',
+        stepId: 'focused_followup',
+        stepLabel: 'Running focused follow-up',
+        status: 'running',
+        completedSteps: 2,
+        totalSteps: 8,
+        elapsedMs: 2400,
+      })
+    })
+
+    await user.click(await screen.findByRole('button', { name: /stop current investigation/i }))
+
+    const stopMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(stopMessage).toEqual({
+      type: 'STOP_PIPELINE',
+      runId: rabbitMessage.runId,
+      vaultId: rabbitMessage.vaultId,
+    })
+    expect(within(crawlConsole).queryByTestId('brain-followup-spider-handoff')).not.toBeInTheDocument()
+
+    await user.click(within(crawlConsole).getByRole('button', { name: /^web$/i }))
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'fresh normal investigation')
+    await user.click(within(crawlConsole).getByRole('button', { name: /execute/i }))
+
+    const webMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(webMessage).toEqual(expect.objectContaining({
+      type: 'CRAWL',
+      payload: 'fresh normal investigation',
+    }))
   })
 
   it('unmounts the spider visualizer when switching to detective board', async () => {

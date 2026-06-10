@@ -22,6 +22,7 @@ import {
   Minimize2,
   Pin,
   RefreshCw,
+  Rocket,
   Trash2,
   X,
 } from 'lucide-react'
@@ -33,19 +34,24 @@ import {
 import {
   dismissBrainSuggestion,
   dismissBrainSignal,
+  cancelBrainFollowUp,
   fetchBrainAttention,
   fetchBrainClusters,
+  fetchBrainFollowUps,
   fetchBrainLinks,
   fetchBrainMap,
   fetchBrainSuggestions,
   fetchBrainSignals,
   forgetBrainLink,
   hideBrainCluster,
+  launchBrainFollowUp,
+  prepareBrainFollowUp,
   promoteBrainSignal,
   reviewBrainSuggestion,
   toggleBrainClusterPin,
   unhideBrainCluster,
   type BrainAttentionSummary,
+  type BrainFollowUpAction,
   type BrainMemoryStrength,
   type BrainSuggestion,
   type BrainSignal,
@@ -101,6 +107,7 @@ interface BrainSignalsPanelProps {
   currentInvestigationId: string | null
   currentInvestigationTitle?: string | null
   onOpenInvestigation?: (investigationId: string) => void
+  onLaunchFocusedRabbitHole?: (action: BrainFollowUpAction) => void
 }
 
 const PRIORITY_SIGNAL_LIMIT = 10
@@ -296,11 +303,13 @@ export default function BrainSignalsPanel({
   currentInvestigationId,
   currentInvestigationTitle,
   onOpenInvestigation,
+  onLaunchFocusedRabbitHole,
 }: BrainSignalsPanelProps) {
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
+  const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
   const [attentionSummary, setAttentionSummary] = useState<BrainAttentionSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -315,6 +324,7 @@ export default function BrainSignalsPanel({
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
+  const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('focus')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
@@ -344,6 +354,7 @@ export default function BrainSignalsPanel({
       setLinks([])
       setClusters([])
       setSuggestions([])
+      setFollowUps([])
       setBrainMapView(null)
       setAttentionSummary(null)
       setError(null)
@@ -357,6 +368,7 @@ export default function BrainSignalsPanel({
       setSelectedClusterId(null)
       setSelectedBrainMapNodeId(null)
       setCompareSelection(null)
+      setPendingFollowUp(null)
       setIsAttentionOpen(false)
       return
     }
@@ -381,6 +393,7 @@ export default function BrainSignalsPanel({
       }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
+      const nextFollowUps = await fetchBrainFollowUps(currentInvestigationId)
       let nextAttention: BrainAttentionSummary | null = null
       try {
         nextAttention = await fetchBrainAttention(currentInvestigationId)
@@ -396,6 +409,7 @@ export default function BrainSignalsPanel({
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
+      setFollowUps(nextFollowUps)
       setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
       setAttentionSummary(nextAttention)
       setShowLowerPrioritySignals(false)
@@ -407,6 +421,7 @@ export default function BrainSignalsPanel({
       setSelectedClusterId((current) =>
         current && nextClusters.some((cluster) => cluster.id === current) ? current : null,
       )
+      setPendingFollowUp((current) => current ? nextFollowUps.find((action) => action.id === current.id) || null : null)
     } catch {
       if (requestIdRef.current === requestId) {
         setError('Brain signals unavailable')
@@ -551,6 +566,15 @@ export default function BrainSignalsPanel({
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
     [rankedSuggestions],
   )
+  const followUpsBySourceId = useMemo(() => {
+    const bySource = new Map<string, BrainFollowUpAction>()
+    followUps.forEach((action) => {
+      if (action.sourceKind === 'suggestion' && action.sourceId) {
+        bySource.set(action.sourceId, action)
+      }
+    })
+    return bySource
+  }, [followUps])
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
   const localBrainMapModel = useMemo(
     () => buildBrainMapModel({
@@ -1043,6 +1067,72 @@ export default function BrainSignalsPanel({
     }
   }
 
+  const updateFollowUp = (updatedAction: BrainFollowUpAction) => {
+    setFollowUps((current) => {
+      const next = [
+        updatedAction,
+        ...current.filter((candidate) => candidate.id !== updatedAction.id),
+      ]
+      return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    })
+    setPendingFollowUp((current) => (current?.id === updatedAction.id ? updatedAction : current))
+  }
+
+  const handlePrepareFollowUp = async (suggestion: BrainSuggestion) => {
+    if (!currentInvestigationId) {
+      return
+    }
+
+    setBusyAction(`followup-prepare:${suggestion.id}`)
+    setError(null)
+    try {
+      const action = await prepareBrainFollowUp({
+        investigationId: currentInvestigationId,
+        sourceKind: 'suggestion',
+        sourceId: suggestion.id,
+      })
+      updateFollowUp(action)
+      setPendingFollowUp(action)
+    } catch {
+      setError('Focused follow-up preparation failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleLaunchFollowUp = async (action: BrainFollowUpAction) => {
+    if (!onLaunchFocusedRabbitHole) {
+      return
+    }
+
+    setBusyAction(`followup-launch:${action.id}`)
+    setError(null)
+    try {
+      const launched = await launchBrainFollowUp(action.id)
+      updateFollowUp(launched)
+      setPendingFollowUp(null)
+      onLaunchFocusedRabbitHole(launched)
+    } catch {
+      setError('Focused Rabbit Hole launch failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleCancelFollowUp = async (action: BrainFollowUpAction) => {
+    setBusyAction(`followup-cancel:${action.id}`)
+    setError(null)
+    try {
+      const cancelled = await cancelBrainFollowUp(action.id)
+      updateFollowUp(cancelled)
+      setPendingFollowUp(null)
+    } catch {
+      setError('Focused follow-up cancel failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   const handleViewSuggestionCluster = (suggestion: BrainSuggestion) => {
     const clusterId = suggestion.relatedClusterIds.find((id) =>
       rankedClusters.some((cluster) => cluster.id === id && !cluster.hidden),
@@ -1089,6 +1179,20 @@ export default function BrainSignalsPanel({
       return { kind: 'signal', id: focus.signalId }
     }
     return null
+  }
+
+  const findSuggestionForFocus = () => {
+    const focus = attentionSummary?.focus
+    if (!focus) {
+      return null
+    }
+
+    return rankedSuggestions.find((suggestion) =>
+      (focus.clusterId && suggestion.relatedClusterIds.includes(focus.clusterId)) ||
+      (focus.linkId && suggestion.relatedMemoryLinkIds.includes(focus.linkId)) ||
+      (focus.signalId && suggestion.relatedSignalIds.includes(focus.signalId)) ||
+      (focus.targetInvestigationId && suggestion.targetInvestigationIds.includes(focus.targetInvestigationId)),
+    ) || null
   }
 
   const handleInspectFocus = () => {
@@ -2386,9 +2490,73 @@ export default function BrainSignalsPanel({
     </div>
   )
 
+  const renderFollowUpLauncher = () => {
+    if (!pendingFollowUp) {
+      return null
+    }
+
+    const isLaunchBusy = busyAction === `followup-launch:${pendingFollowUp.id}`
+    const isCancelBusy = busyAction === `followup-cancel:${pendingFollowUp.id}`
+
+    return (
+      <section
+        data-testid="brain-followup-launcher"
+        className="forensic-brain-followup-launcher"
+        aria-label="Prepared focused Rabbit Hole follow-up"
+      >
+        <div className="forensic-brain-followup-header">
+          <div>
+            <span className="forensic-brain-panel-kicker">Prepared follow-up</span>
+            <h3>{pendingFollowUp.title}</h3>
+            <p>{pendingFollowUp.summary}</p>
+          </div>
+          <strong>{pendingFollowUp.descentMode}</strong>
+        </div>
+        <div className="forensic-brain-followup-prompt" aria-label="Prepared Rabbit Hole prompt">
+          <span>Rabbit Hole prompt</span>
+          <pre>{pendingFollowUp.prompt}</pre>
+        </div>
+        {pendingFollowUp.reasonSamples.length > 0 && (
+          <div className="forensic-brain-chip-row" aria-label="Follow-up reason samples">
+            {pendingFollowUp.reasonSamples.slice(0, 4).map((reason) => (
+              <span
+                key={`followup:${pendingFollowUp.id}:${reason.gateway}:${reason.value}:${reason.label}`}
+                className={`forensic-brain-chip ${gatewayClassNames[reason.gateway] || ''}`}
+              >
+                {reason.label || formatGateway(reason.gateway)}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="forensic-brain-followup-actions">
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-primary"
+            disabled={!onLaunchFocusedRabbitHole || isLaunchBusy || pendingFollowUp.status === 'launched'}
+            onClick={() => void handleLaunchFollowUp(pendingFollowUp)}
+          >
+            <Rocket size={13} />
+            Launch Guided Rabbit Hole
+          </button>
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={isCancelBusy || pendingFollowUp.status === 'cancelled'}
+            onClick={() => void handleCancelFollowUp(pendingFollowUp)}
+          >
+            <X size={13} />
+            Cancel Follow-Up
+          </button>
+        </div>
+      </section>
+    )
+  }
+
   const renderFocusView = () => {
     const focus = attentionSummary?.focus
     const compareSelection = focusCompareSelection()
+    const focusFollowUpSuggestion = findSuggestionForFocus()
+    const hasFollowUpGuidance = !!focus?.guidance.some((card) => card.kind === 'follow-up')
     const sourceLabel = focus?.clusterId
       ? 'View Cluster'
       : focus?.linkId
@@ -2445,7 +2613,19 @@ export default function BrainSignalsPanel({
                           <span>{card.title}</span>
                           <p>{card.detail}</p>
                         </div>
-                        {card.actionLabel && <strong>{card.actionLabel}</strong>}
+                        {card.kind === 'follow-up' && focusFollowUpSuggestion ? (
+                          <button
+                            type="button"
+                            className="forensic-brain-action forensic-brain-action-primary"
+                            disabled={busyAction === `followup-prepare:${focusFollowUpSuggestion.id}`}
+                            onClick={() => void handlePrepareFollowUp(focusFollowUpSuggestion)}
+                          >
+                            <Rocket size={13} />
+                            {card.actionLabel || 'Prepare Rabbit Hole'}
+                          </button>
+                        ) : (
+                          card.actionLabel && <strong>{card.actionLabel}</strong>
+                        )}
                       </article>
                     ))}
                   </div>
@@ -2464,6 +2644,17 @@ export default function BrainSignalsPanel({
               )}
 
               <div className="forensic-brain-focus-actions">
+                {focusFollowUpSuggestion && !hasFollowUpGuidance && (
+                  <button
+                    type="button"
+                    className="forensic-brain-action forensic-brain-action-primary"
+                    disabled={busyAction === `followup-prepare:${focusFollowUpSuggestion.id}`}
+                    onClick={() => void handlePrepareFollowUp(focusFollowUpSuggestion)}
+                  >
+                    <Rocket size={13} />
+                    Prepare Rabbit Hole
+                  </button>
+                )}
                 <button
                   type="button"
                   className="forensic-brain-action forensic-brain-action-primary"
@@ -2503,6 +2694,7 @@ export default function BrainSignalsPanel({
                   View Map
                 </button>
               </div>
+              {renderFollowUpLauncher()}
             </>
           )}
         </section>
@@ -2628,6 +2820,12 @@ export default function BrainSignalsPanel({
     const canViewSignal = suggestion.relatedSignalIds.length > 0
     const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
+    const followUpAction = followUpsBySourceId.get(suggestion.id)
+    const followUpLabel = followUpAction?.status === 'prepared'
+      ? 'Review Rabbit Hole'
+      : followUpAction?.status === 'launched'
+        ? 'Rabbit Hole Launched'
+        : 'Prepare Rabbit Hole'
 
     return (
       <article
@@ -2673,6 +2871,22 @@ export default function BrainSignalsPanel({
         <aside className="forensic-brain-suggestion-action">
           <span>{formatScore(suggestion.score)}</span>
           <strong>{suggestion.suggestedAction}</strong>
+          <button
+            type="button"
+            aria-label={`Prepare focused Rabbit Hole ${suggestion.title}`}
+            className="forensic-brain-action forensic-brain-action-primary"
+            disabled={busyAction === `followup-prepare:${suggestion.id}` || followUpAction?.status === 'launched'}
+            onClick={() => {
+              if (followUpAction?.status === 'prepared') {
+                setPendingFollowUp(followUpAction)
+                return
+              }
+              void handlePrepareFollowUp(suggestion)
+            }}
+          >
+            <Rocket size={13} />
+            {followUpLabel}
+          </button>
           <button
             type="button"
             aria-label={`Compare next move ${suggestion.title}`}
@@ -2777,6 +2991,7 @@ export default function BrainSignalsPanel({
               <span>{reviewedSuggestions.length} reviewed</span>
             </div>
           </div>
+          {renderFollowUpLauncher()}
 
           {!currentInvestigationId ? (
             <div data-testid="brain-suggestions-empty-state" className="forensic-brain-empty">

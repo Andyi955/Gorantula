@@ -101,6 +101,35 @@ export interface BrainSuggestion {
   reviewedAt?: string
 }
 
+export interface PrepareBrainFollowUpRequest {
+  investigationId: string
+  sourceKind: 'suggestion' | string
+  sourceId: string
+}
+
+export interface BrainFollowUpAction {
+  id: string
+  investigationId: string
+  investigationTitle: string
+  sourceKind: 'suggestion' | string
+  sourceId: string
+  status: 'prepared' | 'launched' | 'cancelled' | string
+  title: string
+  summary: string
+  prompt: string
+  descentMode: 'guided' | 'max' | string
+  suggestedAction: string
+  targetInvestigationIds: string[]
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  relatedClusterIds: string[]
+  reasonSamples: BrainSignalReason[]
+  createdAt: string
+  updatedAt: string
+  launchedAt?: string
+  cancelledAt?: string
+}
+
 export interface BrainAttentionCounts {
   activeSignals: number
   linkedMemories: number
@@ -305,6 +334,16 @@ const normalizeBrainSuggestion = (suggestion: BrainSuggestion): BrainSuggestion 
   targetInvestigationIds: asStringArray(suggestion.targetInvestigationIds),
 })
 
+const normalizeBrainFollowUpAction = (action: BrainFollowUpAction): BrainFollowUpAction => ({
+  ...action,
+  targetInvestigationIds: asStringArray(action.targetInvestigationIds),
+  relatedSignalIds: asStringArray(action.relatedSignalIds),
+  relatedMemoryLinkIds: asStringArray(action.relatedMemoryLinkIds),
+  relatedClusterIds: asStringArray(action.relatedClusterIds),
+  reasonSamples: Array.isArray(action.reasonSamples) ? action.reasonSamples : [],
+  descentMode: action.descentMode || 'guided',
+})
+
 const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttentionSummary => ({
   ...summary,
   focus: {
@@ -372,6 +411,13 @@ export const fetchBrainSuggestions = async (investigationId: string) => {
   return suggestions.map(normalizeBrainSuggestion)
 }
 
+export const fetchBrainFollowUps = async (investigationId: string) => {
+  const actions = await requestJSON<BrainFollowUpAction[]>(
+    `${API_BASE}/followups?investigationId=${encodeURIComponent(investigationId)}`,
+  )
+  return actions.map(normalizeBrainFollowUpAction)
+}
+
 export const fetchBrainAttention = async (investigationId: string) => (
   normalizeAttentionSummary(await requestJSON<BrainAttentionSummary>(
     `${API_BASE}/attention?investigationId=${encodeURIComponent(investigationId)}`,
@@ -417,3 +463,19 @@ export const reviewBrainSuggestion = (suggestionId: string) =>
   requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/review`, {
     method: 'PUT',
   }).then(normalizeBrainSuggestion)
+
+export const prepareBrainFollowUp = (request: PrepareBrainFollowUpRequest) =>
+  requestJSON<BrainFollowUpAction>(`${API_BASE}/followups/prepare`, {
+    method: 'PUT',
+    body: JSON.stringify(request),
+  }).then(normalizeBrainFollowUpAction)
+
+export const launchBrainFollowUp = (actionId: string) =>
+  requestJSON<BrainFollowUpAction>(`${API_BASE}/followups/${encodeURIComponent(actionId)}/launch`, {
+    method: 'PUT',
+  }).then(normalizeBrainFollowUpAction)
+
+export const cancelBrainFollowUp = (actionId: string) =>
+  requestJSON<BrainFollowUpAction>(`${API_BASE}/followups/${encodeURIComponent(actionId)}/cancel`, {
+    method: 'PUT',
+  }).then(normalizeBrainFollowUpAction)

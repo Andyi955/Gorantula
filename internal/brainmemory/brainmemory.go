@@ -28,6 +28,7 @@ const (
 	linksFilename       = "links.json"
 	clustersFilename    = "clusters.json"
 	suggestionsFilename = "suggestions.json"
+	followUpsFilename   = "followups.json"
 
 	promotionTypeManual = "manual"
 	promotionTypeAuto   = "auto"
@@ -45,6 +46,12 @@ const (
 	SuggestionStatusActive    = "active"
 	SuggestionStatusDismissed = "dismissed"
 	SuggestionStatusReviewed  = "reviewed"
+
+	FollowUpSourceSuggestion = "suggestion"
+
+	FollowUpStatusPrepared  = "prepared"
+	FollowUpStatusLaunched  = "launched"
+	FollowUpStatusCancelled = "cancelled"
 
 	BrainMemoryStateReinforced = "reinforced"
 	BrainMemoryStateHot        = "hot"
@@ -70,6 +77,8 @@ var (
 	ErrLinkNotFound       = errors.New("brain memory link not found")
 	ErrClusterNotFound    = errors.New("brain memory cluster not found")
 	ErrSuggestionNotFound = errors.New("brain suggestion not found")
+	ErrFollowUpNotFound   = errors.New("brain follow-up action not found")
+	ErrInvalidFollowUp    = errors.New("invalid brain follow-up request")
 
 	taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
 	spacePattern        = regexp.MustCompile(`\s+`)
@@ -185,6 +194,35 @@ type BrainSuggestion struct {
 	UpdatedAt              string   `json:"updatedAt"`
 	DismissedAt            string   `json:"dismissedAt,omitempty"`
 	ReviewedAt             string   `json:"reviewedAt,omitempty"`
+}
+
+type PrepareFollowUpRequest struct {
+	InvestigationID string `json:"investigationId"`
+	SourceKind      string `json:"sourceKind"`
+	SourceID        string `json:"sourceId"`
+}
+
+type BrainFollowUpAction struct {
+	ID                     string         `json:"id"`
+	InvestigationID        string         `json:"investigationId"`
+	InvestigationTitle     string         `json:"investigationTitle"`
+	SourceKind             string         `json:"sourceKind"`
+	SourceID               string         `json:"sourceId"`
+	Status                 string         `json:"status"`
+	Title                  string         `json:"title"`
+	Summary                string         `json:"summary"`
+	Prompt                 string         `json:"prompt"`
+	DescentMode            string         `json:"descentMode"`
+	SuggestedAction        string         `json:"suggestedAction"`
+	TargetInvestigationIDs []string       `json:"targetInvestigationIds"`
+	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
+	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
+	ReasonSamples          []SignalReason `json:"reasonSamples"`
+	CreatedAt              string         `json:"createdAt"`
+	UpdatedAt              string         `json:"updatedAt"`
+	LaunchedAt             string         `json:"launchedAt,omitempty"`
+	CancelledAt            string         `json:"cancelledAt,omitempty"`
 }
 
 type BrainAttentionCounts struct {
@@ -859,6 +897,117 @@ func (s *Service) DismissSuggestion(suggestionID string) (BrainSuggestion, error
 
 func (s *Service) MarkSuggestionReviewed(suggestionID string) (BrainSuggestion, error) {
 	return s.setSuggestionStatus(suggestionID, SuggestionStatusReviewed)
+}
+
+func (s *Service) FollowUpsForInvestigation(investigationID string) ([]BrainFollowUpAction, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return nil, models.ErrInvalidInvestigationID
+	}
+	if _, err := s.store.LoadMetadata(investigationID); err != nil {
+		return nil, err
+	}
+
+	followUps, err := s.loadFollowUps()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]BrainFollowUpAction, 0)
+	for _, action := range followUps {
+		action = normalizeFollowUpAction(action)
+		if action.InvestigationID == investigationID {
+			result = append(result, action)
+		}
+	}
+	sortFollowUps(result)
+	return result, nil
+}
+
+func (s *Service) PrepareFollowUp(request PrepareFollowUpRequest) (BrainFollowUpAction, error) {
+	investigationID := strings.TrimSpace(request.InvestigationID)
+	sourceKind := strings.TrimSpace(request.SourceKind)
+	sourceID := strings.TrimSpace(request.SourceID)
+	if !models.ValidInvestigationID(investigationID) || sourceKind == "" || sourceID == "" {
+		return BrainFollowUpAction{}, ErrInvalidFollowUp
+	}
+	if sourceKind != FollowUpSourceSuggestion {
+		return BrainFollowUpAction{}, ErrInvalidFollowUp
+	}
+
+	record, err := s.store.LoadMetadata(investigationID)
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	suggestion, ok := suggestions[sourceID]
+	if !ok || suggestion.InvestigationID != investigationID {
+		return BrainFollowUpAction{}, ErrSuggestionNotFound
+	}
+	suggestion = normalizeSuggestionCollections(suggestion)
+
+	signals, err := s.loadSignals()
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	links, err := s.loadLinks()
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	followUps, err := s.loadFollowUps()
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	actionID := deterministicID("brain-followup", investigationID, sourceKind, sourceID)
+	existing := normalizeFollowUpAction(followUps[actionID])
+	createdAt := existing.CreatedAt
+	if strings.TrimSpace(createdAt) == "" {
+		createdAt = now
+	}
+
+	reasons := followUpReasonSamples(suggestion, signals, links, clusters)
+	action := BrainFollowUpAction{
+		ID:                     actionID,
+		InvestigationID:        investigationID,
+		InvestigationTitle:     displayTitle(record),
+		SourceKind:             sourceKind,
+		SourceID:               sourceID,
+		Status:                 FollowUpStatusPrepared,
+		Title:                  followUpActionTitle(suggestion),
+		Summary:                followUpActionSummary(suggestion),
+		Prompt:                 buildFocusedRabbitHolePrompt(record, suggestion, reasons),
+		DescentMode:            "guided",
+		SuggestedAction:        "Launch focused Rabbit Hole",
+		TargetInvestigationIDs: cleanStringSet(suggestion.TargetInvestigationIDs),
+		RelatedSignalIDs:       cleanStringSet(suggestion.RelatedSignalIDs),
+		RelatedMemoryLinkIDs:   cleanStringSet(suggestion.RelatedMemoryLinkIDs),
+		RelatedClusterIDs:      cleanStringSet(suggestion.RelatedClusterIDs),
+		ReasonSamples:          reasons,
+		CreatedAt:              createdAt,
+		UpdatedAt:              now,
+	}
+	followUps[action.ID] = action
+	if err := s.saveFollowUps(followUps); err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	return action, nil
+}
+
+func (s *Service) LaunchFollowUp(actionID string) (BrainFollowUpAction, error) {
+	return s.setFollowUpStatus(actionID, FollowUpStatusLaunched)
+}
+
+func (s *Service) CancelFollowUp(actionID string) (BrainFollowUpAction, error) {
+	return s.setFollowUpStatus(actionID, FollowUpStatusCancelled)
 }
 
 func (s *Service) AttentionForInvestigation(investigationID string) (BrainAttentionSummary, error) {
@@ -2321,6 +2470,37 @@ func (s *Service) setSuggestionStatus(suggestionID string, status string) (Brain
 	return suggestion, nil
 }
 
+func (s *Service) setFollowUpStatus(actionID string, status string) (BrainFollowUpAction, error) {
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" {
+		return BrainFollowUpAction{}, ErrFollowUpNotFound
+	}
+	followUps, err := s.loadFollowUps()
+	if err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	action, ok := followUps[actionID]
+	if !ok {
+		return BrainFollowUpAction{}, ErrFollowUpNotFound
+	}
+	action = normalizeFollowUpAction(action)
+	now := time.Now().UTC().Format(time.RFC3339)
+	action.Status = status
+	action.UpdatedAt = now
+	switch status {
+	case FollowUpStatusLaunched:
+		action.LaunchedAt = now
+		action.CancelledAt = ""
+	case FollowUpStatusCancelled:
+		action.CancelledAt = now
+	}
+	followUps[action.ID] = action
+	if err := s.saveFollowUps(followUps); err != nil {
+		return BrainFollowUpAction{}, err
+	}
+	return action, nil
+}
+
 func buildBrainSuggestions(
 	investigationID string,
 	signals map[string]BrainSignal,
@@ -3040,6 +3220,142 @@ func normalizeSuggestionCollections(suggestion BrainSuggestion) BrainSuggestion 
 	return suggestion
 }
 
+func normalizeFollowUpAction(action BrainFollowUpAction) BrainFollowUpAction {
+	action.TargetInvestigationIDs = cleanStringSet(action.TargetInvestigationIDs)
+	action.RelatedSignalIDs = cleanStringSet(action.RelatedSignalIDs)
+	action.RelatedMemoryLinkIDs = cleanStringSet(action.RelatedMemoryLinkIDs)
+	action.RelatedClusterIDs = cleanStringSet(action.RelatedClusterIDs)
+	action.ReasonSamples = cleanReasonSamples(action.ReasonSamples, 6)
+	if strings.TrimSpace(action.Status) == "" {
+		action.Status = FollowUpStatusPrepared
+	}
+	if strings.TrimSpace(action.DescentMode) == "" {
+		action.DescentMode = "guided"
+	}
+	return action
+}
+
+func followUpReasonSamples(
+	suggestion BrainSuggestion,
+	signals map[string]BrainSignal,
+	links map[string]MemoryLink,
+	clusters map[string]MemoryCluster,
+) []SignalReason {
+	reasons := make([]SignalReason, 0)
+	for _, clusterID := range suggestion.RelatedClusterIDs {
+		if cluster, ok := clusters[clusterID]; ok {
+			reasons = append(reasons, cluster.ReasonSamples...)
+		}
+	}
+	for _, linkID := range suggestion.RelatedMemoryLinkIDs {
+		if link, ok := links[linkID]; ok {
+			reasons = append(reasons, link.Reasons...)
+		}
+	}
+	for _, signalID := range suggestion.RelatedSignalIDs {
+		if signal, ok := signals[signalID]; ok {
+			reasons = append(reasons, signal.Reasons...)
+		}
+	}
+	if len(reasons) == 0 && strings.TrimSpace(suggestion.Reason) != "" {
+		reasons = append(reasons, SignalReason{
+			Gateway: suggestion.Kind,
+			Value:   suggestion.ID,
+			Label:   suggestion.Title,
+			Detail:  suggestion.Reason,
+		})
+	}
+	return cleanReasonSamples(reasons, 6)
+}
+
+func cleanReasonSamples(reasons []SignalReason, limit int) []SignalReason {
+	seen := make(map[string]bool)
+	cleaned := make([]SignalReason, 0, len(reasons))
+	for _, reason := range reasons {
+		reason.Gateway = strings.TrimSpace(reason.Gateway)
+		reason.Value = strings.TrimSpace(reason.Value)
+		reason.Label = strings.TrimSpace(reason.Label)
+		reason.Detail = strings.TrimSpace(reason.Detail)
+		reason.CurrentNodeIDs = cleanStringSet(reason.CurrentNodeIDs)
+		reason.TargetNodeIDs = cleanStringSet(reason.TargetNodeIDs)
+		key := reason.Gateway + "|" + reason.Value + "|" + reason.Label + "|" + reason.Detail
+		if key == "|||" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		cleaned = append(cleaned, reason)
+		if limit > 0 && len(cleaned) >= limit {
+			break
+		}
+	}
+	return cleaned
+}
+
+func followUpActionTitle(suggestion BrainSuggestion) string {
+	title := strings.TrimSpace(suggestion.Title)
+	if title == "" {
+		title = "Brain memory cue"
+	}
+	return "Focused Rabbit Hole: " + title
+}
+
+func followUpActionSummary(suggestion BrainSuggestion) string {
+	summary := strings.TrimSpace(suggestion.Summary)
+	if summary == "" {
+		summary = strings.TrimSpace(suggestion.Reason)
+	}
+	if summary == "" {
+		return "Use this Brain cue to run a focused Rabbit Hole pass."
+	}
+	return summary
+}
+
+func buildFocusedRabbitHolePrompt(record models.InvestigationRecord, suggestion BrainSuggestion, reasons []SignalReason) string {
+	currentTitle := displayTitle(record)
+	clues := followUpReasonLabels(reasons)
+	if len(clues) == 0 {
+		clues = []string{strings.TrimSpace(suggestion.Title)}
+	}
+	targets := cleanStringSet(suggestion.TargetInvestigationIDs)
+	targetLine := "the most relevant remembered cases"
+	if len(targets) > 0 {
+		targetLine = strings.Join(targets, ", ")
+	}
+	reason := strings.TrimSpace(suggestion.Reason)
+	if reason == "" {
+		reason = strings.TrimSpace(suggestion.Summary)
+	}
+	if reason == "" {
+		reason = "A Brain memory cue indicates a repeated pattern worth checking."
+	}
+
+	return strings.Join([]string{
+		"Focused Rabbit Hole follow-up.",
+		"",
+		"Current investigation: " + currentTitle,
+		"Brain cue: " + nonEmptyString(suggestion.Title, "Brain memory cue"),
+		"Why it fired: " + reason,
+		"Repeated clues: " + strings.Join(clues, ", "),
+		"Remembered cases to compare: " + targetLine,
+		"",
+		"Task: run a focused Rabbit Hole pass on the repeated pattern. Look for confirming evidence, missing bridge evidence, newer sources, and any contradiction that would weaken the memory link. Keep the scope narrow and explain whether the remembered case genuinely helps this investigation.",
+	}, "\n")
+}
+
+func followUpReasonLabels(reasons []SignalReason) []string {
+	labels := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		label := strings.TrimSpace(reason.Label)
+		if label == "" {
+			label = strings.TrimSpace(reason.Value)
+		}
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return cleanStringSet(labels)
+}
+
 func suggestionPriority(score float64) string {
 	if score >= 0.78 {
 		return "high"
@@ -3082,6 +3398,30 @@ func sortSuggestions(suggestions []BrainSuggestion) {
 			return suggestions[i].Title < suggestions[j].Title
 		}
 		return suggestions[i].Score > suggestions[j].Score
+	})
+}
+
+func sortFollowUps(actions []BrainFollowUpAction) {
+	statusRank := func(status string) int {
+		switch status {
+		case FollowUpStatusPrepared:
+			return 0
+		case FollowUpStatusLaunched:
+			return 1
+		case FollowUpStatusCancelled:
+			return 2
+		default:
+			return 3
+		}
+	}
+	sort.SliceStable(actions, func(i, j int) bool {
+		if statusRank(actions[i].Status) != statusRank(actions[j].Status) {
+			return statusRank(actions[i].Status) < statusRank(actions[j].Status)
+		}
+		if actions[i].UpdatedAt == actions[j].UpdatedAt {
+			return actions[i].Title < actions[j].Title
+		}
+		return actions[i].UpdatedAt > actions[j].UpdatedAt
 	})
 }
 
@@ -3155,8 +3495,48 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, attention, err)
 		return
 	}
+	if path == "api/brain/followups" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		actions, err := service.FollowUpsForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, actions, err)
+		return
+	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "followups" && parts[3] == "prepare" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var request PrepareFollowUpRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeAPIResult(w, BrainFollowUpAction{}, ErrInvalidFollowUp)
+			return
+		}
+		action, err := service.PrepareFollowUp(request)
+		writeAPIResult(w, action, err)
+		return
+	}
+	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "followups" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		switch parts[4] {
+		case "launch":
+			action, err := service.LaunchFollowUp(parts[3])
+			writeAPIResult(w, action, err)
+		case "cancel":
+			action, err := service.CancelFollowUp(parts[3])
+			writeAPIResult(w, action, err)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
 	if len(parts) == 5 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "suggestions" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -3244,6 +3624,10 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "memory cluster not found", http.StatusNotFound)
 		case errors.Is(err, ErrSuggestionNotFound):
 			http.Error(w, "brain suggestion not found", http.StatusNotFound)
+		case errors.Is(err, ErrFollowUpNotFound):
+			http.Error(w, "brain follow-up action not found", http.StatusNotFound)
+		case errors.Is(err, ErrInvalidFollowUp):
+			http.Error(w, "invalid brain follow-up request", http.StatusBadRequest)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -4014,6 +4398,30 @@ func (s *Service) saveSuggestions(suggestions map[string]BrainSuggestion) error 
 	}
 	sortSuggestions(list)
 	return s.saveBrainJSON(suggestionsFilename, list)
+}
+
+func (s *Service) loadFollowUps() (map[string]BrainFollowUpAction, error) {
+	actions := []BrainFollowUpAction{}
+	if err := s.loadBrainJSON(followUpsFilename, &actions); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]BrainFollowUpAction, len(actions))
+	for _, action := range actions {
+		action = normalizeFollowUpAction(action)
+		if strings.TrimSpace(action.ID) != "" {
+			byID[action.ID] = action
+		}
+	}
+	return byID, nil
+}
+
+func (s *Service) saveFollowUps(actions map[string]BrainFollowUpAction) error {
+	list := make([]BrainFollowUpAction, 0, len(actions))
+	for _, action := range actions {
+		list = append(list, normalizeFollowUpAction(action))
+	}
+	sortFollowUps(list)
+	return s.saveBrainJSON(followUpsFilename, list)
 }
 
 func (s *Service) loadBrainJSON(filename string, target interface{}) error {

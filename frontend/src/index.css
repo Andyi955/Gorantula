@@ -4772,6 +4772,70 @@ body {
   grid-column: 1 / -1;
 }
 
+.forensic-spider-brain-followup-handoff {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.42rem 0.8rem;
+  margin-top: 0.44rem;
+  border: 1px solid rgba(0, 255, 65, 0.32);
+  border-left: 3px solid #00ff41;
+  background:
+    linear-gradient(90deg, rgba(0, 255, 65, 0.12), rgba(129, 227, 255, 0.05) 58%, transparent),
+    rgba(2, 10, 12, 0.86);
+  padding: 0.52rem 0.64rem;
+  box-shadow: 0 0 18px rgba(0, 255, 65, 0.08);
+}
+
+.forensic-spider-brain-followup-handoff div {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.forensic-spider-brain-followup-handoff span,
+.forensic-spider-brain-followup-handoff small {
+  color: #7dfd9b;
+  font-size: 0.62rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.forensic-spider-brain-followup-handoff strong {
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(129, 227, 255, 0.08);
+  color: #c9f8ff;
+  font-size: 0.62rem;
+  font-weight: 950;
+  padding: 0.22rem 0.42rem;
+  text-transform: uppercase;
+}
+
+.forensic-spider-brain-followup-handoff p {
+  grid-column: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--forensic-text);
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-spider-brain-followup-handoff small {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: var(--forensic-accent);
+}
+
+.forensic-spider-mode-toggle .forensic-spider-guided-followup-active {
+  border-color: rgba(0, 255, 65, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(0, 255, 65, 0.2), 0 0 18px rgba(0, 255, 65, 0.24);
+}
+
 .forensic-spider-command-input {
   width: 100%;
   min-height: 3.45rem;
@@ -4900,6 +4964,38 @@ body {
 .forensic-spider-execute-button:hover {
   filter: brightness(1.08);
   transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .forensic-spider-brain-followup-handoff {
+    animation: forensicBrainFollowupHandoffPulse 1.6s ease-out 0s 2;
+  }
+
+  .forensic-spider-mode-toggle .forensic-spider-guided-followup-active {
+    animation: forensicGuidedFollowupPulse 1.6s ease-out 0s 2;
+  }
+}
+
+@keyframes forensicBrainFollowupHandoffPulse {
+  0% {
+    box-shadow: 0 0 0 rgba(0, 255, 65, 0);
+  }
+  45% {
+    box-shadow: 0 0 24px rgba(0, 255, 65, 0.22);
+  }
+  100% {
+    box-shadow: 0 0 18px rgba(0, 255, 65, 0.08);
+  }
+}
+
+@keyframes forensicGuidedFollowupPulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  45% {
+    filter: brightness(1.2);
+  }
 }
 
 .forensic-spider-command-more {
@@ -6077,6 +6173,95 @@ body {
   font-weight: 950;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.forensic-brain-guidance-card .forensic-brain-action {
+  align-self: flex-start;
+  min-height: 2rem;
+  padding-inline: 0.62rem;
+}
+
+.forensic-brain-followup-launcher {
+  display: grid;
+  gap: 0.72rem;
+  border: 1px solid rgba(129, 227, 255, 0.2);
+  border-left: 3px solid #00ff41;
+  background:
+    linear-gradient(135deg, rgba(0, 255, 65, 0.095), transparent 46%),
+    rgba(1, 6, 7, 0.86);
+  padding: 0.78rem;
+}
+
+.forensic-brain-followup-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.forensic-brain-followup-header h3 {
+  margin: 0.18rem 0 0;
+  color: var(--forensic-text);
+  font-size: 1.08rem;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.forensic-brain-followup-header p {
+  max-width: 84ch;
+  margin: 0.34rem 0 0;
+  color: var(--forensic-text-muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
+.forensic-brain-followup-header > strong {
+  border: 1px solid rgba(0, 255, 65, 0.32);
+  background: rgba(0, 255, 65, 0.08);
+  padding: 0.42rem 0.55rem;
+  color: #8dffa9;
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.forensic-brain-followup-prompt {
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(0, 8, 10, 0.72);
+  padding: 0.62rem;
+}
+
+.forensic-brain-followup-prompt span {
+  display: block;
+  color: #68e4ff;
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.forensic-brain-followup-prompt pre {
+  max-height: 9rem;
+  margin: 0.46rem 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--forensic-text);
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
+.forensic-brain-followup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(9rem, 1fr));
+  gap: 0.5rem;
+}
+
+.forensic-brain-followup-actions .forensic-brain-action {
+  justify-content: center;
 }
 
 .forensic-brain-focus-facts {

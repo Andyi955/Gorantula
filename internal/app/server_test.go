@@ -58,6 +58,17 @@ func TestBrainMemoryRoutesIncludeClustersAndLinkActions(t *testing.T) {
 		t.Fatalf("expected attention route to include CORS header, got %q", got)
 	}
 
+	followUpRequest := httptest.NewRequest(http.MethodOptions, "/api/brain/followups?investigationId=inv-current", nil)
+	followUpRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(followUpRecorder, followUpRequest)
+
+	if followUpRecorder.Code != http.StatusNoContent {
+		t.Fatalf("expected follow-up preflight to route through brain memory handler, got %d", followUpRecorder.Code)
+	}
+	if got := followUpRecorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected follow-up route to include CORS header, got %q", got)
+	}
+
 	linkRequest := httptest.NewRequest(http.MethodPut, "/api/brain/links/missing/forget", nil)
 	linkRecorder := httptest.NewRecorder()
 	mux.ServeHTTP(linkRecorder, linkRequest)
@@ -78,5 +89,16 @@ func TestBrainMemoryRoutesIncludeClustersAndLinkActions(t *testing.T) {
 	}
 	if got := suggestionActionRecorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Fatalf("expected slash suggestion action to include CORS header, got %q", got)
+	}
+
+	followUpActionRequest := httptest.NewRequest(http.MethodPut, "/api/brain/followups/missing/launch", nil)
+	followUpActionRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(followUpActionRecorder, followUpActionRequest)
+
+	if followUpActionRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected slash follow-up action to route through brain memory handler, got %d", followUpActionRecorder.Code)
+	}
+	if got := followUpActionRecorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected slash follow-up action to include CORS header, got %q", got)
 	}
 }
