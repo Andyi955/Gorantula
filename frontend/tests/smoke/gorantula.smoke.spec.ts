@@ -100,6 +100,29 @@ type BrainSuggestionPayload = {
   reviewedAt?: string
 }
 
+type BrainFollowUpPayload = {
+  id: string
+  investigationId: string
+  investigationTitle: string
+  sourceId: string
+  sourceKind: string
+  status: string
+  title: string
+  summary: string
+  prompt: string
+  suggestedAction: string
+  descentMode: string
+  targetInvestigationIds: string[]
+  relatedSignalIds: string[]
+  relatedMemoryLinkIds: string[]
+  relatedClusterIds: string[]
+  reasonSamples: BrainSignalReason[]
+  createdAt: string
+  updatedAt: string
+  launchedAt?: string
+  cancelledAt?: string
+}
+
 const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
   const signal: BrainSignalPayload = {
     id: 'brain-signal-smoke-qa',
@@ -166,6 +189,7 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
   let clusterHidden = false
   let suggestionDismissed = false
   let suggestionReviewed = false
+  let preparedFollowUp: BrainFollowUpPayload | null = null
 
   const clusterPayload = (): MemoryClusterPayload => ({
     id: 'brain-cluster-smoke-grid',
@@ -211,6 +235,42 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
     updatedAt: '2026-06-05T12:01:00Z',
     dismissedAt: suggestionDismissed ? '2026-06-05T12:03:00Z' : undefined,
     reviewedAt: suggestionReviewed ? '2026-06-05T12:02:00Z' : undefined,
+  })
+
+  const followUpPayload = (status: 'prepared' | 'launched' | 'cancelled' = 'prepared'): BrainFollowUpPayload => ({
+    id: 'brain-followup-smoke-next-move',
+    investigationId: signal.investigationId,
+    investigationTitle: signal.investigationTitle,
+    sourceId: suggestionPayload().id,
+    sourceKind: 'suggestion',
+    status,
+    title: 'Review active memory cluster',
+    summary: 'Run a focused Rabbit Hole pass on the repeated Grid reliability signal memory.',
+    prompt: [
+      'Focused Rabbit Hole follow-up.',
+      '',
+      'Current investigation: QA: Imported Target.',
+      'Suggested next move: Review active memory cluster.',
+      '',
+      'Why this matters:',
+      'Grid reliability signal is an active cluster with 2 related investigations.',
+      '',
+      'Repeated clues:',
+      '- Grid reliability signal appears in QA: Imported Target and QA: Source Case.',
+      '',
+      'Use Guided mode and return only evidence that confirms, weakens, or explains this repeated pattern.',
+    ].join('\n'),
+    suggestedAction: 'Launch focused Rabbit Hole',
+    descentMode: 'guided',
+    targetInvestigationIds: [signal.targetInvestigationId],
+    relatedSignalIds: [signal.id],
+    relatedMemoryLinkIds: promoted && !forgotten ? [link.id] : [],
+    relatedClusterIds: [clusterPayload().id],
+    reasonSamples: [signal.reasons[0]],
+    createdAt: '2026-06-05T12:04:00Z',
+    updatedAt: status === 'prepared' ? '2026-06-05T12:04:00Z' : '2026-06-05T12:05:00Z',
+    launchedAt: status === 'launched' ? '2026-06-05T12:05:00Z' : undefined,
+    cancelledAt: status === 'cancelled' ? '2026-06-05T12:05:00Z' : undefined,
   })
 
   const brainMapPayload = () => {
@@ -591,6 +651,16 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
       return
     }
 
+    if (request.method() === 'GET' && url.pathname.endsWith('/followups')) {
+      const investigationId = url.searchParams.get('investigationId')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(investigationId === signal.investigationId && preparedFollowUp ? [preparedFollowUp] : []),
+      })
+      return
+    }
+
     if (request.method() === 'GET' && url.pathname.endsWith('/map')) {
       const investigationId = url.searchParams.get('investigationId')
       await route.fulfill({
@@ -643,6 +713,36 @@ const installBrainMemoryApi = async (page: import('@playwright/test').Page) => {
           memoryStrengths: [],
           items: [],
         }),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith('/followups/prepare')) {
+      preparedFollowUp = followUpPayload('prepared')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(preparedFollowUp),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith('/followups/brain-followup-smoke-next-move/launch')) {
+      preparedFollowUp = followUpPayload('launched')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(preparedFollowUp),
+      })
+      return
+    }
+
+    if (request.method() === 'PUT' && url.pathname.endsWith('/followups/brain-followup-smoke-next-move/cancel')) {
+      preparedFollowUp = followUpPayload('cancelled')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(preparedFollowUp),
       })
       return
     }
@@ -1188,6 +1288,33 @@ test.describe('Gorantula smoke flows', () => {
 
     await detail.getByRole('button', { name: /forget memory link qa: source case/i }).click()
     await expect(page.getByTestId('brain-link-card')).toHaveCount(0)
+  })
+
+  test('Brain follow-up launcher starts a guided Rabbit Hole from a prepared next move', async ({ page }) => {
+    await installBrainMemoryApi(page)
+    await seedBrowserQaData(page)
+
+    await page.getByRole('button', { name: /^brain$/i }).click()
+    await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+
+    await page.getByRole('button', { name: /next moves view/i }).click()
+    const suggestionCard = page.getByTestId('brain-suggestion-card').filter({ hasText: 'Review active memory cluster' })
+    await expect(suggestionCard).toContainText('Inspect recurring memory cluster')
+    await suggestionCard.getByRole('button', { name: /prepare focused rabbit hole review active memory cluster/i }).click()
+
+    const launcher = page.getByTestId('brain-followup-launcher')
+    await expect(launcher).toContainText('Prepared follow-up')
+    await expect(launcher).toContainText('Review active memory cluster')
+    await expect(launcher).toContainText('Focused Rabbit Hole follow-up.')
+    await expect(launcher).toContainText('guided')
+
+    const previousCount = await outboundTypeCount(page, 'CRAWL_RABBIT_HOLE')
+    await launcher.getByRole('button', { name: /launch guided rabbit hole/i }).click()
+    const crawl = await waitForOutboundMessage(page, 'CRAWL_RABBIT_HOLE', previousCount)
+
+    expect(crawl.descentMode).toBe('guided')
+    expect(crawl.payload).toContain('Focused Rabbit Hole follow-up.')
+    expect(crawl.payload).toContain('Grid reliability signal')
   })
 
   test('backend error clears the active run and allows a new web investigation', async ({ page }) => {

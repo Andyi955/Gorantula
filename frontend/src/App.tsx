@@ -34,6 +34,7 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
+import type { BrainFollowUpAction } from './utils/brainMemory'
 import {
   BOARD_RESTORE_COMPLETE_EVENT,
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
@@ -2016,7 +2017,12 @@ function App() {
     return () => window.removeEventListener(BOARD_PERSIST_FAILED_EVENT, handlePersistFailure as EventListener)
   }, [])
 
-  const runSpider = useCallback((customPrompt?: string, customLabel?: string, overrideMode?: SpiderOperationMode) => {
+  const runSpider = useCallback((
+    customPrompt?: string,
+    customLabel?: string,
+    overrideMode?: SpiderOperationMode,
+    overrideRabbitHoleDescentMode?: 'guided' | 'max',
+  ) => {
     const inputValue = crawlInputRef.current?.value || '';
     const textToRun = customPrompt || inputValue || prompt;
     const labelToUse = customLabel || textToRun;
@@ -2045,7 +2051,7 @@ function App() {
       const crawlMessage = modeToUse === 'local'
         ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
         : modeToUse === 'rabbit-hole'
-          ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: rabbitHoleDescentMode }
+          ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: overrideRabbitHoleDescentMode || rabbitHoleDescentMode }
           : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
       socketConfig.socket.send(JSON.stringify(crawlMessage))
       if (modeToUse === 'local') {
@@ -2094,6 +2100,21 @@ function App() {
     setRabbitHoleGatekeeper(null)
     setActiveTab('spider')
   }, [currentInvestigation?.topic, currentInvestigationId, imageScrapingEnabled, prompt, rabbitHoleGatekeeper, socketConfig.ready, socketConfig.socket])
+
+  const handleLaunchFocusedRabbitHole = useCallback((action: BrainFollowUpAction) => {
+    const promptToRun = action.prompt || action.summary || action.title
+    if (!promptToRun) {
+      return
+    }
+    setCrawlMode('rabbit-hole')
+    setRabbitHoleDescentMode('guided')
+    runSpider(
+      promptToRun,
+      action.title || 'Focused Brain follow-up',
+      'rabbit-hole',
+      'guided',
+    )
+  }, [runSpider])
 
   const finishRabbitHoleDescent = useCallback(() => {
     if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
@@ -2987,6 +3008,7 @@ function App() {
                   currentInvestigationId={currentInvestigationId}
                   currentInvestigationTitle={currentInvestigation?.displayTopic || currentInvestigation?.topic || null}
                   onOpenInvestigation={handleOpenBrainInvestigation}
+                  onLaunchFocusedRabbitHole={handleLaunchFocusedRabbitHole}
                 />
               </Suspense>
             )}

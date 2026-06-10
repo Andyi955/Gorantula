@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type {
   BrainAttentionSummary,
+  BrainFollowUpAction,
   BrainSignal,
   BrainSuggestion,
   MemoryCluster,
@@ -100,6 +101,34 @@ const suggestion: BrainSuggestion = {
   targetInvestigationIds: ['inv-older'],
   createdAt: '2026-06-05T12:00:00Z',
   updatedAt: '2026-06-05T12:00:00Z',
+}
+
+const followUpAction: BrainFollowUpAction = {
+  id: 'brain-followup-next-move',
+  investigationId: 'inv-current',
+  investigationTitle: 'Current Grid Case',
+  sourceKind: 'suggestion',
+  sourceId: suggestion.id,
+  status: 'prepared',
+  title: 'Focused Rabbit Hole: Review active memory cluster',
+  summary: 'Acme Grid has an active memory cluster worth checking.',
+  prompt: [
+    'Focused Rabbit Hole follow-up.',
+    '',
+    'Current investigation: Current Grid Case',
+    'Brain cue: Review active memory cluster',
+    'Why it fired: Acme Grid is an active cluster with 3 related investigations.',
+    'Repeated clues: Northgate Substation A-17',
+  ].join('\n'),
+  descentMode: 'guided',
+  suggestedAction: 'Launch focused Rabbit Hole',
+  targetInvestigationIds: ['inv-older'],
+  relatedSignalIds: [signal.id],
+  relatedMemoryLinkIds: [link.id],
+  relatedClusterIds: [cluster.id],
+  reasonSamples: [signal.reasons[0]],
+  createdAt: '2026-06-05T12:05:00Z',
+  updatedAt: '2026-06-05T12:05:00Z',
 }
 
 const attentionSummary: BrainAttentionSummary = {
@@ -427,6 +456,16 @@ const makeSuggestion = (overrides: Partial<BrainSuggestion> = {}): BrainSuggesti
   targetInvestigationIds: overrides.targetInvestigationIds || suggestion.targetInvestigationIds,
 })
 
+const makeFollowUp = (overrides: Partial<BrainFollowUpAction> = {}): BrainFollowUpAction => ({
+  ...followUpAction,
+  ...overrides,
+  targetInvestigationIds: overrides.targetInvestigationIds || followUpAction.targetInvestigationIds,
+  relatedSignalIds: overrides.relatedSignalIds || followUpAction.relatedSignalIds,
+  relatedMemoryLinkIds: overrides.relatedMemoryLinkIds || followUpAction.relatedMemoryLinkIds,
+  relatedClusterIds: overrides.relatedClusterIds || followUpAction.relatedClusterIds,
+  reasonSamples: overrides.reasonSamples || followUpAction.reasonSamples,
+})
+
 const jsonResponse = (payload: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
@@ -438,6 +477,7 @@ const installBrainFetch = ({
   links = [],
   clusters = [],
   suggestions = [],
+  followUps = [],
   brainMap = emptyBackendBrainMap,
   attention = null,
   promoteLink = link,
@@ -446,6 +486,7 @@ const installBrainFetch = ({
   links?: MemoryLink[]
   clusters?: MemoryCluster[]
   suggestions?: BrainSuggestion[]
+  followUps?: BrainFollowUpAction[]
   brainMap?: typeof backendBrainMap
   attention?: BrainAttentionSummary | null
   promoteLink?: MemoryLink
@@ -468,6 +509,9 @@ const installBrainFetch = ({
     }
     if (url.includes('/api/brain/suggestions?')) {
       return Promise.resolve(jsonResponse(suggestions) as Response)
+    }
+    if (url.includes('/api/brain/followups?')) {
+      return Promise.resolve(jsonResponse(followUps) as Response)
     }
     if (url.includes('/api/brain/attention?') && attention) {
       return Promise.resolve(jsonResponse(attention) as Response)
@@ -500,6 +544,19 @@ const installBrainFetch = ({
     if (method === 'PUT' && url.includes('/api/brain/suggestions/') && url.endsWith('/review')) {
       const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
       return Promise.resolve(jsonResponse({ ...target, status: 'reviewed', reviewedAt: '2026-06-06T10:00:00Z' }) as Response)
+    }
+    if (method === 'PUT' && url.endsWith('/api/brain/followups/prepare')) {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { sourceId?: string } : {}
+      const target = followUps.find((candidate) => candidate.sourceId === body.sourceId) || followUpAction
+      return Promise.resolve(jsonResponse({ ...target, sourceId: body.sourceId || target.sourceId, status: 'prepared' }) as Response)
+    }
+    if (method === 'PUT' && url.includes('/api/brain/followups/') && url.endsWith('/launch')) {
+      const target = followUps.find((candidate) => url.includes(candidate.id)) || followUpAction
+      return Promise.resolve(jsonResponse({ ...target, status: 'launched', launchedAt: '2026-06-06T10:01:00Z' }) as Response)
+    }
+    if (method === 'PUT' && url.includes('/api/brain/followups/') && url.endsWith('/cancel')) {
+      const target = followUps.find((candidate) => url.includes(candidate.id)) || followUpAction
+      return Promise.resolve(jsonResponse({ ...target, status: 'cancelled', cancelledAt: '2026-06-06T10:01:00Z' }) as Response)
     }
 
     return Promise.resolve(jsonResponse({}, 404) as Response)
@@ -693,6 +750,85 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('1 link')
   })
 
+  it('prepares and launches a focused Rabbit Hole follow-up from next moves', async () => {
+    const user = userEvent.setup()
+    const onLaunchFocusedRabbitHole = vi.fn()
+    const fetchMock = installBrainFetch({
+      signals: [signal],
+      links: [link],
+      clusters: [cluster],
+      suggestions: [suggestion],
+    })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onLaunchFocusedRabbitHole={onLaunchFocusedRabbitHole}
+      />,
+    )
+    await openBrainView(user, /next moves view/i)
+
+    const card = await screen.findByTestId('brain-suggestion-card')
+    await user.click(within(card).getByRole('button', { name: /prepare focused rabbit hole review active memory cluster/i }))
+
+    const launcher = await screen.findByTestId('brain-followup-launcher')
+    expect(launcher).toHaveTextContent('Prepared follow-up')
+    expect(launcher).toHaveTextContent('Focused Rabbit Hole: Review active memory cluster')
+    expect(launcher).toHaveTextContent('Current investigation: Current Grid Case')
+    expect(launcher).toHaveTextContent('Northgate Substation A-17')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/prepare',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"sourceId":"brain-suggestion-next-move"'),
+      }),
+    )
+
+    await user.click(within(launcher).getByRole('button', { name: /launch guided rabbit hole/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/brain-followup-next-move/launch',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(onLaunchFocusedRabbitHole).toHaveBeenCalledWith(expect.objectContaining({
+      id: followUpAction.id,
+      status: 'launched',
+      prompt: expect.stringContaining('Focused Rabbit Hole follow-up.'),
+      descentMode: 'guided',
+    }))
+    expect(screen.queryByTestId('brain-followup-launcher')).not.toBeInTheDocument()
+  })
+
+  it('cancels a prepared focused follow-up without launching', async () => {
+    const user = userEvent.setup()
+    const onLaunchFocusedRabbitHole = vi.fn()
+    const fetchMock = installBrainFetch({
+      suggestions: [suggestion],
+    })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onLaunchFocusedRabbitHole={onLaunchFocusedRabbitHole}
+      />,
+    )
+    await openBrainView(user, /next moves view/i)
+
+    const card = await screen.findByTestId('brain-suggestion-card')
+    await user.click(within(card).getByRole('button', { name: /prepare focused rabbit hole review active memory cluster/i }))
+    const launcher = await screen.findByTestId('brain-followup-launcher')
+    await user.click(within(launcher).getByRole('button', { name: /cancel follow-up/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/brain-followup-next-move/cancel',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(onLaunchFocusedRabbitHole).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('brain-followup-launcher')).not.toBeInTheDocument()
+  })
+
   it('does not crash when suggestion relationship arrays are null', async () => {
     const user = userEvent.setup()
     const nullableSuggestion = {
@@ -883,6 +1019,9 @@ describe('BrainSignalsPanel', () => {
       if (url.includes('/api/brain/suggestions?')) {
         return jsonResponse([]) as Response
       }
+      if (url.includes('/api/brain/followups?')) {
+        return jsonResponse([]) as Response
+      }
 
       return jsonResponse({}, 404) as Response
     })
@@ -917,6 +1056,9 @@ describe('BrainSignalsPanel', () => {
         return jsonResponse([]) as Response
       }
       if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/followups?')) {
         return jsonResponse([]) as Response
       }
 
@@ -964,6 +1106,9 @@ describe('BrainSignalsPanel', () => {
         return jsonResponse([]) as Response
       }
       if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/followups?')) {
         return jsonResponse([]) as Response
       }
 
@@ -1568,6 +1713,9 @@ describe('BrainSignalsPanel', () => {
         return jsonResponse(clusterAvailable ? [cluster] : []) as Response
       }
       if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/followups?')) {
         return jsonResponse([]) as Response
       }
 
