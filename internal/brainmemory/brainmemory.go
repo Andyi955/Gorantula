@@ -70,6 +70,11 @@ const (
 	BrainGuidanceKindGap           = "gap"
 	BrainGuidanceKindFreshness     = "freshness"
 	BrainGuidanceKindFollowUp      = "follow-up"
+
+	RelevanceStrongMemory    = "strong-memory"
+	RelevancePossibleBridge  = "possible-bridge"
+	RelevanceDistantEcho     = "distant-echo"
+	RelevanceBackgroundNoise = "background-noise"
 )
 
 var (
@@ -100,6 +105,9 @@ type BrainSignal struct {
 	TargetInvestigationID string         `json:"targetInvestigationId"`
 	TargetTitle           string         `json:"targetTitle"`
 	Score                 float64        `json:"score"`
+	Relevance             string         `json:"relevance,omitempty"`
+	RelevanceLabel        string         `json:"relevanceLabel,omitempty"`
+	RelevanceReason       string         `json:"relevanceReason,omitempty"`
 	Gateways              []string       `json:"gateways"`
 	Reasons               []SignalReason `json:"reasons"`
 	SuggestedAction       string         `json:"suggestedAction"`
@@ -139,6 +147,9 @@ type MemoryLink struct {
 	ToInvestigationID   string         `json:"toInvestigationId"`
 	ToTitle             string         `json:"toTitle"`
 	Score               float64        `json:"score"`
+	Relevance           string         `json:"relevance,omitempty"`
+	RelevanceLabel      string         `json:"relevanceLabel,omitempty"`
+	RelevanceReason     string         `json:"relevanceReason,omitempty"`
 	Gateways            []string       `json:"gateways"`
 	Reasons             []SignalReason `json:"reasons"`
 	SuggestedAction     string         `json:"suggestedAction"`
@@ -160,6 +171,9 @@ type MemoryCluster struct {
 	Label                  string                `json:"label"`
 	Summary                string                `json:"summary"`
 	Score                  float64               `json:"score"`
+	Relevance              string                `json:"relevance,omitempty"`
+	RelevanceLabel         string                `json:"relevanceLabel,omitempty"`
+	RelevanceReason        string                `json:"relevanceReason,omitempty"`
 	Status                 string                `json:"status"`
 	DominantGateway        string                `json:"dominantGateway"`
 	GatewayCounts          map[string]int        `json:"gatewayCounts"`
@@ -184,6 +198,9 @@ type BrainSuggestion struct {
 	Summary                string   `json:"summary"`
 	SuggestedAction        string   `json:"suggestedAction"`
 	Score                  float64  `json:"score"`
+	Relevance              string   `json:"relevance,omitempty"`
+	RelevanceLabel         string   `json:"relevanceLabel,omitempty"`
+	RelevanceReason        string   `json:"relevanceReason,omitempty"`
 	Priority               string   `json:"priority"`
 	Reason                 string   `json:"reason"`
 	RelatedSignalIDs       []string `json:"relatedSignalIds"`
@@ -242,6 +259,9 @@ type BrainMemoryStrength struct {
 	Kind                   string         `json:"kind"`
 	Title                  string         `json:"title"`
 	Score                  float64        `json:"score"`
+	Relevance              string         `json:"relevance,omitempty"`
+	RelevanceLabel         string         `json:"relevanceLabel,omitempty"`
+	RelevanceReason        string         `json:"relevanceReason,omitempty"`
 	State                  string         `json:"state"`
 	TargetInvestigationID  string         `json:"targetInvestigationId,omitempty"`
 	ClusterID              string         `json:"clusterId,omitempty"`
@@ -268,6 +288,9 @@ type BrainAttentionItem struct {
 	Title                  string         `json:"title"`
 	Detail                 string         `json:"detail"`
 	Score                  float64        `json:"score"`
+	Relevance              string         `json:"relevance,omitempty"`
+	RelevanceLabel         string         `json:"relevanceLabel,omitempty"`
+	RelevanceReason        string         `json:"relevanceReason,omitempty"`
 	SuggestedAction        string         `json:"suggestedAction"`
 	TargetInvestigationID  string         `json:"targetInvestigationId,omitempty"`
 	ClusterID              string         `json:"clusterId,omitempty"`
@@ -291,6 +314,9 @@ type BrainFocusNarrative struct {
 	PrimaryKind           string              `json:"primaryKind,omitempty"`
 	PrimaryTitle          string              `json:"primaryTitle,omitempty"`
 	PrimaryGateway        string              `json:"primaryGateway,omitempty"`
+	Relevance             string              `json:"relevance,omitempty"`
+	RelevanceLabel        string              `json:"relevanceLabel,omitempty"`
+	RelevanceReason       string              `json:"relevanceReason,omitempty"`
 	TargetInvestigationID string              `json:"targetInvestigationId,omitempty"`
 	ClusterID             string              `json:"clusterId,omitempty"`
 	SignalID              string              `json:"signalId,omitempty"`
@@ -338,6 +364,8 @@ type BrainMapNode struct {
 	Title                  string         `json:"title"`
 	Subtitle               string         `json:"subtitle"`
 	Score                  float64        `json:"score"`
+	Relevance              string         `json:"relevance,omitempty"`
+	RelevanceLabel         string         `json:"relevanceLabel,omitempty"`
 	Status                 string         `json:"status"`
 	Gateway                string         `json:"gateway,omitempty"`
 	GatewayCounts          map[string]int `json:"gatewayCounts,omitempty"`
@@ -374,6 +402,8 @@ type BrainMapRegion struct {
 	Label                  string   `json:"label"`
 	Status                 string   `json:"status"`
 	Score                  float64  `json:"score"`
+	Relevance              string   `json:"relevance,omitempty"`
+	RelevanceLabel         string   `json:"relevanceLabel,omitempty"`
 	Gateway                string   `json:"gateway"`
 	NodeIDs                []string `json:"nodeIds"`
 	MemberInvestigationIDs []string `json:"memberInvestigationIds"`
@@ -382,10 +412,12 @@ type BrainMapRegion struct {
 }
 
 type BrainMapDigestItem struct {
-	ID     string `json:"id"`
-	Tone   string `json:"tone"`
-	Title  string `json:"title"`
-	Detail string `json:"detail"`
+	ID             string `json:"id"`
+	Tone           string `json:"tone"`
+	Title          string `json:"title"`
+	Detail         string `json:"detail"`
+	Relevance      string `json:"relevance,omitempty"`
+	RelevanceLabel string `json:"relevanceLabel,omitempty"`
 }
 
 type BrainMapSummary struct {
@@ -475,6 +507,21 @@ type clusterSeed struct {
 	Label   string
 	Kind    string
 	Members map[string]clusterEvidence
+}
+
+type relevanceCalibration struct {
+	Class  string
+	Label  string
+	Reason string
+	Score  float64
+}
+
+type reasonRelevanceStats struct {
+	MeaningfulEntityCount int
+	BroadEntityCount      int
+	SourceCount           int
+	RelationshipCount     int
+	ReasonCount           int
 }
 
 func (s *Service) GenerateSignals(investigationID string) ([]BrainSignal, error) {
@@ -1120,6 +1167,8 @@ func buildBrainMapView(
 			Title:                  cluster.Label,
 			Subtitle:               cluster.Summary,
 			Score:                  normalizeMapScore(cluster.Score),
+			Relevance:              normalizeRelevance(cluster.Relevance),
+			RelevanceLabel:         nonEmptyString(cluster.RelevanceLabel, relevanceLabel(cluster.Relevance)),
 			Status:                 cluster.Status,
 			Gateway:                cluster.DominantGateway,
 			GatewayCounts:          cloneGatewayCounts(cluster.GatewayCounts),
@@ -1149,6 +1198,8 @@ func buildBrainMapView(
 			Label:                  cluster.Label,
 			Status:                 cluster.Status,
 			Score:                  normalizeMapScore(cluster.Score),
+			Relevance:              normalizeRelevance(cluster.Relevance),
+			RelevanceLabel:         nonEmptyString(cluster.RelevanceLabel, relevanceLabel(cluster.Relevance)),
 			Gateway:                cluster.DominantGateway,
 			NodeIDs:                []string{nodeID},
 			MemberInvestigationIDs: cleanStringSet(cluster.MemberInvestigationIDs),
@@ -1172,6 +1223,8 @@ func buildBrainMapView(
 			Title:                 nonEmptyString(targetTitle, targetID),
 			Subtitle:              firstReasonDetail(link.Reasons, link.SuggestedAction),
 			Score:                 normalizeMapScore(link.Score),
+			Relevance:             normalizeRelevance(link.Relevance),
+			RelevanceLabel:        nonEmptyString(link.RelevanceLabel, relevanceLabel(link.Relevance)),
 			Status:                mapStatusForScore(link.Score),
 			Gateway:               firstGateway(link.Gateways),
 			Badges:                memoryLinkBadges(link),
@@ -1206,6 +1259,8 @@ func buildBrainMapView(
 			Title:                 nonEmptyString(signal.TargetTitle, signal.TargetInvestigationID),
 			Subtitle:              firstReasonDetail(signal.Reasons, signal.SuggestedAction),
 			Score:                 normalizeMapScore(signal.Score),
+			Relevance:             normalizeRelevance(signal.Relevance),
+			RelevanceLabel:        nonEmptyString(signal.RelevanceLabel, relevanceLabel(signal.Relevance)),
 			Status:                mapStatusForScore(signal.Score),
 			Gateway:               firstGateway(signal.Gateways),
 			Badges:                signalBadges(signal),
@@ -1316,6 +1371,9 @@ func firstSignalsForMap(signals []BrainSignal, limit int) []BrainSignal {
 
 func sortLinksForMap(links []MemoryLink) {
 	sort.SliceStable(links, func(i, j int) bool {
+		if relevanceRank(links[i].Relevance) != relevanceRank(links[j].Relevance) {
+			return relevanceRank(links[i].Relevance) < relevanceRank(links[j].Relevance)
+		}
 		if links[i].Score == links[j].Score {
 			return links[i].CreatedAt > links[j].CreatedAt
 		}
@@ -1400,7 +1458,7 @@ func firstGateway(gateways []string) string {
 }
 
 func memoryLinkBadges(link MemoryLink) []string {
-	badges := []string{formatMemoryPromotionForMap(link.PromotionType)}
+	badges := []string{formatMemoryPromotionForMap(link.PromotionType), relevanceLabel(link.Relevance)}
 	if link.ActivationCount > 1 {
 		badges = append(badges, fmt.Sprintf("%d activations", link.ActivationCount))
 	}
@@ -1408,7 +1466,7 @@ func memoryLinkBadges(link MemoryLink) []string {
 }
 
 func signalBadges(signal BrainSignal) []string {
-	badges := []string{"Signal"}
+	badges := []string{"Signal", relevanceLabel(signal.Relevance)}
 	if signal.ActivationCount > 1 {
 		badges = append(badges, fmt.Sprintf("%d firings", signal.ActivationCount))
 	}
@@ -1485,38 +1543,46 @@ func buildBrainMapDigest(
 	if len(clusters) > 0 {
 		cluster := clusters[0]
 		digest = append(digest, BrainMapDigestItem{
-			ID:     "brain-map-digest-cluster-" + cluster.ID,
-			Tone:   mapStatusForScore(cluster.Score),
-			Title:  "Cluster region active",
-			Detail: fmt.Sprintf("%s links %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
+			ID:             "brain-map-digest-cluster-" + cluster.ID,
+			Tone:           mapStatusForScore(cluster.Score),
+			Title:          "Cluster region active",
+			Detail:         fmt.Sprintf("%s links %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
+			Relevance:      normalizeRelevance(cluster.Relevance),
+			RelevanceLabel: nonEmptyString(cluster.RelevanceLabel, relevanceLabel(cluster.Relevance)),
 		})
 	}
 	if len(links) > 0 {
 		link := links[0]
 		_, title := memoryLinkTargetForMap(link, currentInvestigationID)
 		digest = append(digest, BrainMapDigestItem{
-			ID:     "brain-map-digest-link-" + link.ID,
-			Tone:   mapStatusForScore(link.Score),
-			Title:  "Linked memory visible",
-			Detail: fmt.Sprintf("%s is available on the map.", nonEmptyString(title, link.ToTitle)),
+			ID:             "brain-map-digest-link-" + link.ID,
+			Tone:           mapStatusForScore(link.Score),
+			Title:          "Linked memory visible",
+			Detail:         fmt.Sprintf("%s is available on the map.", nonEmptyString(title, link.ToTitle)),
+			Relevance:      normalizeRelevance(link.Relevance),
+			RelevanceLabel: nonEmptyString(link.RelevanceLabel, relevanceLabel(link.Relevance)),
 		})
 	}
 	if len(signals) > 0 {
 		signal := signals[0]
 		digest = append(digest, BrainMapDigestItem{
-			ID:     "brain-map-digest-signal-" + signal.ID,
-			Tone:   mapStatusForScore(signal.Score),
-			Title:  "Signal firing",
-			Detail: fmt.Sprintf("%s is firing through %s.", signal.TargetTitle, formatGatewayName(firstGateway(signal.Gateways))),
+			ID:             "brain-map-digest-signal-" + signal.ID,
+			Tone:           mapStatusForScore(signal.Score),
+			Title:          "Signal firing",
+			Detail:         fmt.Sprintf("%s is firing through %s.", signal.TargetTitle, formatGatewayName(firstGateway(signal.Gateways))),
+			Relevance:      normalizeRelevance(signal.Relevance),
+			RelevanceLabel: nonEmptyString(signal.RelevanceLabel, relevanceLabel(signal.Relevance)),
 		})
 	}
 	if len(suggestions) > 0 {
 		suggestion := suggestions[0]
 		digest = append(digest, BrainMapDigestItem{
-			ID:     "brain-map-digest-suggestion-" + suggestion.ID,
-			Tone:   suggestion.Priority,
-			Title:  "Next move ready",
-			Detail: suggestion.Title,
+			ID:             "brain-map-digest-suggestion-" + suggestion.ID,
+			Tone:           suggestion.Priority,
+			Title:          "Next move ready",
+			Detail:         suggestion.Title,
+			Relevance:      normalizeRelevance(suggestion.Relevance),
+			RelevanceLabel: nonEmptyString(suggestion.RelevanceLabel, relevanceLabel(suggestion.Relevance)),
 		})
 	}
 	if len(digest) > 3 {
@@ -1614,6 +1680,9 @@ func buildBrainFocusNarrative(
 			PrimaryKind:           strength.Kind,
 			PrimaryTitle:          strength.Title,
 			PrimaryGateway:        nonEmptyString(strength.Gateway, firstGateway(strength.Gateways)),
+			Relevance:             strength.Relevance,
+			RelevanceLabel:        strength.RelevanceLabel,
+			RelevanceReason:       strength.RelevanceReason,
 			TargetInvestigationID: strength.TargetInvestigationID,
 			ClusterID:             strength.ClusterID,
 			SignalID:              strength.SignalID,
@@ -1633,6 +1702,9 @@ func buildBrainFocusNarrative(
 		Guidance:              focusItemGuidance(currentTitle, item, counts, itemAction, itemWhy),
 		PrimaryKind:           item.Kind,
 		PrimaryTitle:          item.Title,
+		Relevance:             item.Relevance,
+		RelevanceLabel:        item.RelevanceLabel,
+		RelevanceReason:       item.RelevanceReason,
 		TargetInvestigationID: item.TargetInvestigationID,
 		ClusterID:             item.ClusterID,
 		SignalID:              item.SignalID,
@@ -1752,6 +1824,18 @@ func focusThinkingGuidanceCard(currentTitle string, strength BrainMemoryStrength
 		LinkID:                strength.LinkID,
 	}
 	switch {
+	case normalizeRelevance(strength.Relevance) == RelevanceBackgroundNoise:
+		card.Kind = BrainGuidanceKindGap
+		card.Tone = "caution"
+		card.Title = "Background context only"
+		card.Detail = "This memory is firing on broad context. Keep it available, but do not use it as a lead until sharper entity, source, relationship, or bridge evidence appears."
+		card.ActionLabel = "Treat as context"
+	case normalizeRelevance(strength.Relevance) == RelevanceDistantEcho:
+		card.Kind = BrainGuidanceKindGap
+		card.Tone = "caution"
+		card.Title = "Distant echo"
+		card.Detail = "This memory may be interesting, but it is still speculative. Look for a concrete bridge before launching a follow-up from it."
+		card.ActionLabel = "Find stronger bridge"
 	case strengthNeedsBridgeEvidence(strength):
 		card.Kind = BrainGuidanceKindGap
 		card.Tone = "caution"
@@ -1781,6 +1865,9 @@ func focusThinkingGuidanceCard(currentTitle string, strength BrainMemoryStrength
 }
 
 func strengthNeedsBridgeEvidence(strength BrainMemoryStrength) bool {
+	if normalizeRelevance(strength.Relevance) == RelevanceDistantEcho || normalizeRelevance(strength.Relevance) == RelevanceBackgroundNoise {
+		return true
+	}
 	if strings.Contains(strings.ToLower(strength.SuggestedAction), "bridge evidence") {
 		return true
 	}
@@ -1798,6 +1885,9 @@ func strengthNeedsFreshnessCheck(strength BrainMemoryStrength) bool {
 }
 
 func strengthReadyForFocusedFollowUp(strength BrainMemoryStrength, counts BrainAttentionCounts) bool {
+	if normalizeRelevance(strength.Relevance) == RelevanceDistantEcho || normalizeRelevance(strength.Relevance) == RelevanceBackgroundNoise {
+		return false
+	}
 	if strength.Score < 0.78 {
 		return false
 	}
@@ -1929,6 +2019,9 @@ func focusSupportingFacts(strength BrainMemoryStrength, counts BrainAttentionCou
 	facts := []string{
 		fmt.Sprintf("%d%% attention strength", int(normalizeMapScore(strength.Score)*100+0.5)),
 	}
+	if label := nonEmptyString(strength.RelevanceLabel, relevanceLabel(strength.Relevance)); label != "" {
+		facts = append(facts, label)
+	}
 	if gateway := nonEmptyString(strength.Gateway, firstGateway(strength.Gateways)); gateway != "" {
 		facts = append(facts, "Strongest gateway: "+formatGatewayName(gateway))
 	}
@@ -1947,6 +2040,9 @@ func focusSupportingFacts(strength BrainMemoryStrength, counts BrainAttentionCou
 func focusItemSupportingFacts(item BrainAttentionItem, counts BrainAttentionCounts) []string {
 	facts := []string{
 		fmt.Sprintf("%d%% attention strength", int(normalizeMapScore(item.Score)*100+0.5)),
+	}
+	if label := nonEmptyString(item.RelevanceLabel, relevanceLabel(item.Relevance)); label != "" {
+		facts = append(facts, label)
 	}
 	if counts.ActiveSignals > 0 {
 		facts = append(facts, focusCountLabel(counts.ActiveSignals, "active firing", "active firings"))
@@ -2012,6 +2108,7 @@ func buildBrainMemoryStrengths(
 	for _, link := range links {
 		targetID, targetTitle := memoryLinkTargetForMap(link, currentInvestigationID)
 		lastActivatedAt := nonEmptyString(link.LastFiredAt, link.UpdatedAt, link.CreatedAt)
+		relevance := linkRelevanceCalibration(link)
 		score := memoryStrengthScore(link.Score, link.ActivationCount, lastActivatedAt, now)
 		if reviewedLinks[link.ID] {
 			score += 0.06
@@ -2019,12 +2116,16 @@ func buildBrainMemoryStrengths(
 		if link.PromotionType == promotionTypeManual {
 			score += 0.04
 		}
+		score = calibrateStrengthScoreForRelevance(score, relevance.Class)
 		score = normalizeMapScore(score)
 		strengths = append(strengths, BrainMemoryStrength{
 			ID:                    deterministicID("brain-strength", currentInvestigationID, "link", link.ID),
 			Kind:                  "memory-link",
 			Title:                 nonEmptyString(targetTitle, targetID, "Linked memory"),
 			Score:                 score,
+			Relevance:             relevance.Class,
+			RelevanceLabel:        relevance.Label,
+			RelevanceReason:       relevance.Reason,
 			State:                 brainMemoryState(score, link.ActivationCount, lastActivatedAt, now),
 			TargetInvestigationID: targetID,
 			LinkID:                link.ID,
@@ -2044,6 +2145,7 @@ func buildBrainMemoryStrengths(
 			continue
 		}
 		lastActivatedAt := nonEmptyString(cluster.LastActivatedAt, cluster.UpdatedAt, cluster.CreatedAt)
+		relevance := clusterRelevanceCalibration(cluster)
 		score := memoryStrengthScore(cluster.Score, len(cluster.SignalIDs)+len(cluster.MemoryLinkIDs), lastActivatedAt, now)
 		if reviewedClusters[cluster.ID] {
 			score += 0.06
@@ -2051,12 +2153,16 @@ func buildBrainMemoryStrengths(
 		if cluster.Pinned {
 			score += 0.05
 		}
+		score = calibrateStrengthScoreForRelevance(score, relevance.Class)
 		score = normalizeMapScore(score)
 		strengths = append(strengths, BrainMemoryStrength{
 			ID:                     deterministicID("brain-strength", currentInvestigationID, "cluster", cluster.ID),
 			Kind:                   "memory-cluster",
 			Title:                  nonEmptyString(cluster.Label, "Memory cluster"),
 			Score:                  score,
+			Relevance:              relevance.Class,
+			RelevanceLabel:         relevance.Label,
+			RelevanceReason:        relevance.Reason,
 			State:                  brainMemoryState(score, len(cluster.SignalIDs)+len(cluster.MemoryLinkIDs), lastActivatedAt, now),
 			ClusterID:              cluster.ID,
 			Gateway:                cluster.DominantGateway,
@@ -2075,16 +2181,21 @@ func buildBrainMemoryStrengths(
 	}
 	for _, signal := range signals {
 		lastActivatedAt := nonEmptyString(signal.LastFiredAt, signal.UpdatedAt, signal.CreatedAt)
+		relevance := signalRelevanceCalibration(signal)
 		score := memoryStrengthScore(signal.Score*0.88, signal.ActivationCount, lastActivatedAt, now)
 		if reviewedSignals[signal.ID] {
 			score += 0.05
 		}
+		score = calibrateStrengthScoreForRelevance(score, relevance.Class)
 		score = normalizeMapScore(score)
 		strengths = append(strengths, BrainMemoryStrength{
 			ID:                    deterministicID("brain-strength", currentInvestigationID, "signal", signal.ID),
 			Kind:                  "active-signal",
 			Title:                 nonEmptyString(signal.TargetTitle, signal.TargetInvestigationID, "Active signal"),
 			Score:                 score,
+			Relevance:             relevance.Class,
+			RelevanceLabel:        relevance.Label,
+			RelevanceReason:       relevance.Reason,
 			State:                 brainMemoryState(score, signal.ActivationCount, lastActivatedAt, now),
 			TargetInvestigationID: signal.TargetInvestigationID,
 			SignalID:              signal.ID,
@@ -2123,6 +2234,9 @@ func buildBrainAttentionItems(
 			Title:                 "Memory reinforced",
 			Detail:                fmt.Sprintf("%s has fired %d time(s).", strength.Title, strength.ActivationCount),
 			Score:                 strength.Score,
+			Relevance:             strength.Relevance,
+			RelevanceLabel:        strength.RelevanceLabel,
+			RelevanceReason:       strength.RelevanceReason,
 			SuggestedAction:       strength.SuggestedAction,
 			TargetInvestigationID: strength.TargetInvestigationID,
 			ClusterID:             strength.ClusterID,
@@ -2137,13 +2251,17 @@ func buildBrainAttentionItems(
 	if len(clusters) > 0 {
 		cluster := clusters[0]
 		if !cluster.Hidden {
+			relevance := clusterRelevanceCalibration(cluster)
 			items = append(items, BrainAttentionItem{
 				ID:                     deterministicID("brain-attention", currentInvestigationID, AttentionKindClusterActive, cluster.ID),
 				Kind:                   AttentionKindClusterActive,
 				Tone:                   cluster.Status,
 				Title:                  "Cluster region active",
 				Detail:                 fmt.Sprintf("%s links %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
-				Score:                  normalizeMapScore(cluster.Score),
+				Score:                  calibrateStrengthScoreForRelevance(normalizeMapScore(cluster.Score), relevance.Class),
+				Relevance:              relevance.Class,
+				RelevanceLabel:         relevance.Label,
+				RelevanceReason:        relevance.Reason,
 				SuggestedAction:        "Inspect recurring memory cluster",
 				ClusterID:              cluster.ID,
 				RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
@@ -2166,6 +2284,9 @@ func buildBrainAttentionItems(
 				Title:                  "Next move ready",
 				Detail:                 suggestion.Title,
 				Score:                  normalizeMapScore(suggestion.Score),
+				Relevance:              normalizeRelevance(suggestion.Relevance),
+				RelevanceLabel:         nonEmptyString(suggestion.RelevanceLabel, relevanceLabel(suggestion.Relevance)),
+				RelevanceReason:        suggestion.RelevanceReason,
 				SuggestedAction:        suggestion.SuggestedAction,
 				TargetInvestigationID:  firstString(suggestion.TargetInvestigationIDs),
 				RelatedSignalIDs:       cleanStringSet(suggestion.RelatedSignalIDs),
@@ -2179,13 +2300,17 @@ func buildBrainAttentionItems(
 	}
 	if len(signals) > 0 {
 		signal := signals[0]
+		relevance := signalRelevanceCalibration(signal)
 		items = append(items, BrainAttentionItem{
 			ID:                    deterministicID("brain-attention", currentInvestigationID, AttentionKindSignalFiring, signal.ID),
 			Kind:                  AttentionKindSignalFiring,
 			Tone:                  mapStatusForScore(signal.Score),
 			Title:                 "Signal firing",
 			Detail:                fmt.Sprintf("%s is firing through %s.", signal.TargetTitle, formatGatewayName(firstGateway(signal.Gateways))),
-			Score:                 normalizeMapScore(signal.Score),
+			Score:                 calibrateStrengthScoreForRelevance(normalizeMapScore(signal.Score), relevance.Class),
+			Relevance:             relevance.Class,
+			RelevanceLabel:        relevance.Label,
+			RelevanceReason:       relevance.Reason,
 			SuggestedAction:       nonEmptyString(signal.SuggestedAction, "Review older case"),
 			TargetInvestigationID: signal.TargetInvestigationID,
 			SignalID:              signal.ID,
@@ -2259,6 +2384,55 @@ func memoryStrengthScore(baseScore float64, activationCount int, lastActivatedAt
 	return normalizeMapScore(score)
 }
 
+func calibrateStrengthScoreForRelevance(score float64, relevance string) float64 {
+	switch normalizeRelevance(relevance) {
+	case RelevanceBackgroundNoise:
+		return minFloat(score, 0.34)
+	case RelevanceDistantEcho:
+		return minFloat(score, 0.58)
+	default:
+		return score
+	}
+}
+
+func signalRelevanceCalibration(signal BrainSignal) relevanceCalibration {
+	relevance := normalizeRelevance(signal.Relevance)
+	return relevanceCalibration{
+		Class:  relevance,
+		Label:  nonEmptyString(signal.RelevanceLabel, relevanceLabel(relevance)),
+		Reason: nonEmptyString(signal.RelevanceReason, "This signal has not been recalibrated yet."),
+		Score:  normalizeMapScore(signal.Score),
+	}
+}
+
+func linkRelevanceCalibration(link MemoryLink) relevanceCalibration {
+	relevance := normalizeRelevance(link.Relevance)
+	reason := link.RelevanceReason
+	if strings.TrimSpace(reason) == "" {
+		reason = "This memory link keeps the relevance of its strongest underlying signal."
+	}
+	return relevanceCalibration{
+		Class:  relevance,
+		Label:  nonEmptyString(link.RelevanceLabel, relevanceLabel(relevance)),
+		Reason: reason,
+		Score:  normalizeMapScore(link.Score),
+	}
+}
+
+func clusterRelevanceCalibration(cluster MemoryCluster) relevanceCalibration {
+	relevance := normalizeRelevance(cluster.Relevance)
+	if strings.TrimSpace(cluster.Relevance) == "" {
+		calibration := calibrateClusterRelevance(cluster.DominantGateway, cluster.Label, len(cluster.MemberInvestigationIDs), len(cluster.SignalIDs), len(cluster.MemoryLinkIDs), cluster.ReasonSamples, cluster.Score)
+		return calibration
+	}
+	return relevanceCalibration{
+		Class:  relevance,
+		Label:  nonEmptyString(cluster.RelevanceLabel, relevanceLabel(relevance)),
+		Reason: nonEmptyString(cluster.RelevanceReason, "This cluster has recurring memory evidence."),
+		Score:  normalizeMapScore(cluster.Score),
+	}
+}
+
 func recencyStrengthBoost(timestamp string, now time.Time) float64 {
 	timestamp = strings.TrimSpace(timestamp)
 	if timestamp == "" {
@@ -2313,6 +2487,9 @@ func memoryIsDormant(timestamp string, now time.Time) bool {
 
 func sortBrainMemoryStrengths(strengths []BrainMemoryStrength) {
 	sort.SliceStable(strengths, func(i, j int) bool {
+		if relevanceRank(strengths[i].Relevance) != relevanceRank(strengths[j].Relevance) {
+			return relevanceRank(strengths[i].Relevance) < relevanceRank(strengths[j].Relevance)
+		}
 		if brainMemoryStateRank(strengths[i].State) != brainMemoryStateRank(strengths[j].State) {
 			return brainMemoryStateRank(strengths[i].State) < brainMemoryStateRank(strengths[j].State)
 		}
@@ -2343,6 +2520,9 @@ func brainMemoryStateRank(state string) int {
 
 func sortBrainAttentionItems(items []BrainAttentionItem) {
 	sort.SliceStable(items, func(i, j int) bool {
+		if relevanceRank(items[i].Relevance) != relevanceRank(items[j].Relevance) {
+			return relevanceRank(items[i].Relevance) < relevanceRank(items[j].Relevance)
+		}
 		if attentionKindRank(items[i].Kind) != attentionKindRank(items[j].Kind) {
 			return attentionKindRank(items[i].Kind) < attentionKindRank(items[j].Kind)
 		}
@@ -2541,6 +2721,8 @@ func clusterReviewSuggestions(
 			continue
 		}
 		score := clusterSuggestionScore(cluster)
+		relevance := clusterRelevanceCalibration(cluster)
+		score = calibrateStrengthScoreForRelevance(score, relevance.Class)
 		suggestion := BrainSuggestion{
 			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindClusterReview, cluster.ID),
 			InvestigationID:        investigationID,
@@ -2550,6 +2732,9 @@ func clusterReviewSuggestions(
 			Summary:                cluster.Summary,
 			SuggestedAction:        "Inspect recurring memory cluster",
 			Score:                  score,
+			Relevance:              relevance.Class,
+			RelevanceLabel:         relevance.Label,
+			RelevanceReason:        relevance.Reason,
 			Priority:               suggestionPriority(score),
 			Reason:                 fmt.Sprintf("%s is an %s cluster with %d related investigations.", cluster.Label, cluster.Status, len(cluster.MemberInvestigationIDs)),
 			RelatedClusterIDs:      []string{cluster.ID},
@@ -2650,6 +2835,7 @@ func sourceReviewSuggestions(
 	type sourceGroup struct {
 		domain    string
 		score     float64
+		relevance relevanceCalibration
 		signalIDs []string
 		targetIDs []string
 	}
@@ -2667,6 +2853,7 @@ func sourceReviewSuggestions(
 			if signal.Score > group.score {
 				group.score = signal.Score
 			}
+			group.relevance = mergeSignalGroupRelevance(group.relevance, signal)
 			group.signalIDs = append(group.signalIDs, signal.ID)
 			group.targetIDs = append(group.targetIDs, signal.TargetInvestigationID)
 			groups[reason.Value] = group
@@ -2674,6 +2861,11 @@ func sourceReviewSuggestions(
 	}
 	suggestions := make([]BrainSuggestion, 0, len(groups))
 	for value, group := range groups {
+		relevance := group.relevance
+		if relevance.Class == "" {
+			relevance = relevanceCalibration{Class: RelevancePossibleBridge, Label: relevanceLabel(RelevancePossibleBridge), Reason: "This source-domain recall needs comparison before it becomes durable memory.", Score: normalizeMapScore(group.score)}
+		}
+		score := calibrateStrengthScoreForRelevance(maxFloat(group.score, 0.44), relevance.Class)
 		suggestion := BrainSuggestion{
 			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindSourceReview, value),
 			InvestigationID:        investigationID,
@@ -2682,8 +2874,11 @@ func sourceReviewSuggestions(
 			Title:                  "Compare repeated source domain",
 			Summary:                fmt.Sprintf("Source domain %q appears in active Brain firings.", group.domain),
 			SuggestedAction:        "Compare source domain",
-			Score:                  maxFloat(group.score, 0.44),
-			Priority:               suggestionPriority(maxFloat(group.score, 0.44)),
+			Score:                  score,
+			Relevance:              relevance.Class,
+			RelevanceLabel:         relevance.Label,
+			RelevanceReason:        relevance.Reason,
+			Priority:               suggestionPriority(score),
 			Reason:                 fmt.Sprintf("%s appears across %d active signal(s).", group.domain, len(cleanStringSet(group.signalIDs))),
 			RelatedSignalIDs:       cleanStringSet(group.signalIDs),
 			TargetInvestigationIDs: cleanStringSet(group.targetIDs),
@@ -2711,6 +2906,8 @@ func relationshipMotifSuggestions(
 		if len(targetIDs) == 0 {
 			continue
 		}
+		relevance := clusterRelevanceCalibration(cluster)
+		score := calibrateStrengthScoreForRelevance(maxFloat(cluster.Score, 0.58), relevance.Class)
 		suggestion := BrainSuggestion{
 			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindRelationshipMotif, cluster.ID),
 			InvestigationID:        investigationID,
@@ -2719,8 +2916,11 @@ func relationshipMotifSuggestions(
 			Title:                  "Inspect repeated relationship motif",
 			Summary:                cluster.Summary,
 			SuggestedAction:        "Inspect repeated relationship pattern",
-			Score:                  maxFloat(cluster.Score, 0.58),
-			Priority:               suggestionPriority(maxFloat(cluster.Score, 0.58)),
+			Score:                  score,
+			Relevance:              relevance.Class,
+			RelevanceLabel:         relevance.Label,
+			RelevanceReason:        relevance.Reason,
+			Priority:               suggestionPriority(score),
 			Reason:                 fmt.Sprintf("Relationship pattern %q recurs across %d investigations.", cluster.Label, len(cluster.MemberInvestigationIDs)),
 			RelatedClusterIDs:      []string{cluster.ID},
 			RelatedSignalIDs:       cleanStringSet(cluster.SignalIDs),
@@ -2739,6 +2939,8 @@ func relationshipMotifSuggestions(
 			key := reason.Value
 			suggestion, ok := suggestionsByValue[key]
 			if !ok {
+				relevance := signalRelevanceCalibration(signal)
+				score := calibrateStrengthScoreForRelevance(maxFloat(signal.Score, 0.58), relevance.Class)
 				suggestion = BrainSuggestion{
 					ID:              deterministicID("brain-suggestion", investigationID, SuggestionKindRelationshipMotif, key),
 					InvestigationID: investigationID,
@@ -2747,8 +2949,11 @@ func relationshipMotifSuggestions(
 					Title:           "Inspect repeated relationship motif",
 					Summary:         fmt.Sprintf("Relationship pattern %q appears in active Brain firings.", reason.Label),
 					SuggestedAction: "Inspect repeated relationship pattern",
-					Score:           maxFloat(signal.Score, 0.58),
-					Priority:        suggestionPriority(maxFloat(signal.Score, 0.58)),
+					Score:           score,
+					Relevance:       relevance.Class,
+					RelevanceLabel:  relevance.Label,
+					RelevanceReason: relevance.Reason,
+					Priority:        suggestionPriority(score),
 					Reason:          reason.Detail,
 					CreatedAt:       timestamp,
 					UpdatedAt:       timestamp,
@@ -2783,6 +2988,8 @@ func memoryLinkCompareSuggestions(
 		if targetID == "" || targetID == investigationID {
 			continue
 		}
+		relevance := linkRelevanceCalibration(link)
+		score := calibrateStrengthScoreForRelevance(maxFloat(link.Score, 0.50), relevance.Class)
 		suggestion := BrainSuggestion{
 			ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindMemoryLinkCompare, link.ID),
 			InvestigationID:        investigationID,
@@ -2791,8 +2998,11 @@ func memoryLinkCompareSuggestions(
 			Title:                  "Compare durable memory link",
 			Summary:                fmt.Sprintf("%s has a durable memory link to %s.", link.FromTitle, link.ToTitle),
 			SuggestedAction:        "Compare linked memory",
-			Score:                  maxFloat(link.Score, 0.50),
-			Priority:               suggestionPriority(maxFloat(link.Score, 0.50)),
+			Score:                  score,
+			Relevance:              relevance.Class,
+			RelevanceLabel:         relevance.Label,
+			RelevanceReason:        relevance.Reason,
+			Priority:               suggestionPriority(score),
 			Reason:                 fmt.Sprintf("Linked memory %q has fired %d time(s).", targetTitle, link.ActivationCount),
 			RelatedMemoryLinkIDs:   []string{link.ID},
 			RelatedSignalIDs:       cleanStringSet([]string{link.SignalID}),
@@ -2825,6 +3035,8 @@ func gapReviewSuggestion(
 			break
 		}
 	}
+	relevance := signalRelevanceCalibration(top)
+	score := calibrateStrengthScoreForRelevance(maxFloat(top.Score, 0.42), relevance.Class)
 	suggestion := BrainSuggestion{
 		ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindGapReview, strings.Join(cleanStringSet(signalIDs), ",")),
 		InvestigationID:        investigationID,
@@ -2833,8 +3045,11 @@ func gapReviewSuggestion(
 		Title:                  "Decide whether this firing becomes memory",
 		Summary:                fmt.Sprintf("%d active signal(s) have not become durable memory links yet.", len(signals)),
 		SuggestedAction:        "Review before promoting memory",
-		Score:                  maxFloat(top.Score, 0.42),
-		Priority:               suggestionPriority(maxFloat(top.Score, 0.42)),
+		Score:                  score,
+		Relevance:              relevance.Class,
+		RelevanceLabel:         relevance.Label,
+		RelevanceReason:        relevance.Reason,
+		Priority:               suggestionPriority(score),
 		Reason:                 "Active firings are present without a user decision on whether they should become durable memory.",
 		RelatedSignalIDs:       cleanStringSet(signalIDs),
 		TargetInvestigationIDs: cleanStringSet(targetIDs),
@@ -2886,12 +3101,16 @@ func buildMemoryClusters(
 		signalIDs := matchingClusterSignalIDs(signals, seed.Gateway, seed.Value, currentInvestigationID, seed.Members)
 		linkIDs := matchingClusterLinkIDs(links, seed.Gateway, seed.Value, seed.Members)
 		score := scoreCluster(seed.Gateway, len(seed.Members), len(signalIDs), len(linkIDs))
+		calibration := calibrateClusterRelevance(seed.Gateway, seed.Label, len(seed.Members), len(signalIDs), len(linkIDs), reasons, score)
 		cluster := MemoryCluster{
 			ID:                     deterministicID("brain-cluster", seed.Gateway, seed.Value),
 			Label:                  seed.Label,
 			Summary:                clusterSummary(seed, len(seed.Members), len(signalIDs), len(linkIDs)),
-			Score:                  score,
-			Status:                 clusterStatus(score),
+			Score:                  calibration.Score,
+			Relevance:              calibration.Class,
+			RelevanceLabel:         calibration.Label,
+			RelevanceReason:        calibration.Reason,
+			Status:                 clusterStatus(calibration.Score),
 			DominantGateway:        seed.Gateway,
 			GatewayCounts:          map[string]int{seed.Gateway: len(seed.Members)},
 			MemberInvestigationIDs: memberIDs,
@@ -3084,6 +3303,65 @@ func scoreCluster(gateway string, memberCount int, signalCount int, linkCount in
 	return score
 }
 
+func calibrateClusterRelevance(gateway string, label string, memberCount int, signalCount int, linkCount int, reasons []SignalReason, score float64) relevanceCalibration {
+	score = normalizeMapScore(score)
+	class := RelevancePossibleBridge
+	reason := "This recurring region has enough repeated context to inspect."
+
+	switch {
+	case gateway == GatewayRelationshipTag && (signalCount > 0 || linkCount > 0):
+		class = RelevanceStrongMemory
+		reason = "A repeated relationship pattern is active across this memory region."
+	case gateway == GatewaySourceDomain && linkCount > 0:
+		class = RelevanceStrongMemory
+		reason = "This source-domain region is backed by durable memory links."
+	case gateway == GatewayEntityDate && !clusterEvidenceLooksBroad(label, reasons) && (signalCount > 0 || linkCount > 0):
+		class = RelevanceStrongMemory
+		reason = "A specific entity/date region is actively connected to signals or memory links."
+	case gateway == GatewayEntityDate && clusterEvidenceLooksBroad(label, reasons):
+		class = RelevanceDistantEcho
+		score = minFloat(score, 0.56)
+		reason = "This region is built from broad date/location context, so it is useful as an echo but not a lead by itself."
+	case signalCount > 0 || linkCount > 0:
+		class = RelevancePossibleBridge
+		reason = "The region has active supporting evidence, but needs a stronger bridge before it should dominate focus."
+	default:
+		class = RelevanceBackgroundNoise
+		score = minFloat(score, 0.42)
+		reason = "This region repeats in memory, but has no active signals or links for the current case."
+	}
+
+	if gateway == GatewayEntityDate && memberCount >= 20 && linkCount < 2 && signalCount < 4 {
+		class = RelevanceBackgroundNoise
+		score = minFloat(score, 0.46)
+		reason = "This entity/date region is extremely broad across many investigations and should stay in the background until a sharper bridge appears."
+	}
+
+	if class == RelevanceStrongMemory && score < 0.70 {
+		class = RelevancePossibleBridge
+		reason = "The region has useful bridge evidence, but the score is not strong enough to treat as durable focus yet."
+	}
+
+	return relevanceCalibration{
+		Class:  class,
+		Label:  relevanceLabel(class),
+		Reason: reason,
+		Score:  normalizeMapScore(score),
+	}
+}
+
+func clusterEvidenceLooksBroad(label string, reasons []SignalReason) bool {
+	if looksLikeYearOrISODate(label) {
+		return true
+	}
+	for _, reason := range reasons {
+		if reason.Gateway == GatewayEntityDate && isBroadEntityDateReason(reason) {
+			return true
+		}
+	}
+	return false
+}
+
 func clusterStatus(score float64) string {
 	if score >= 0.75 {
 		return "active"
@@ -3118,6 +3396,62 @@ func formatGatewayName(gateway string) string {
 	}
 }
 
+func relevanceLabel(relevance string) string {
+	switch normalizeRelevance(relevance) {
+	case RelevanceStrongMemory:
+		return "Strong Memory"
+	case RelevancePossibleBridge:
+		return "Possible Bridge"
+	case RelevanceDistantEcho:
+		return "Distant Echo"
+	case RelevanceBackgroundNoise:
+		return "Background Noise"
+	default:
+		return "Possible Bridge"
+	}
+}
+
+func normalizeRelevance(relevance string) string {
+	switch strings.TrimSpace(relevance) {
+	case RelevanceStrongMemory, RelevancePossibleBridge, RelevanceDistantEcho, RelevanceBackgroundNoise:
+		return strings.TrimSpace(relevance)
+	default:
+		return RelevancePossibleBridge
+	}
+}
+
+func relevanceRank(relevance string) int {
+	switch normalizeRelevance(relevance) {
+	case RelevanceStrongMemory:
+		return 0
+	case RelevancePossibleBridge:
+		return 1
+	case RelevanceDistantEcho:
+		return 2
+	case RelevanceBackgroundNoise:
+		return 3
+	default:
+		return 1
+	}
+}
+
+func mergeRelevance(existingClass string, existingLabel string, existingReason string, incomingClass string, incomingLabel string, incomingReason string) (string, string, string) {
+	existingClass = normalizeRelevance(existingClass)
+	incomingClass = normalizeRelevance(incomingClass)
+	if relevanceRank(incomingClass) < relevanceRank(existingClass) || strings.TrimSpace(existingLabel) == "" {
+		return incomingClass, nonEmptyString(incomingLabel, relevanceLabel(incomingClass)), incomingReason
+	}
+	return existingClass, nonEmptyString(existingLabel, relevanceLabel(existingClass)), existingReason
+}
+
+func mergeSignalGroupRelevance(existing relevanceCalibration, signal BrainSignal) relevanceCalibration {
+	incoming := signalRelevanceCalibration(signal)
+	if strings.TrimSpace(existing.Class) == "" || relevanceRank(incoming.Class) < relevanceRank(existing.Class) {
+		return incoming
+	}
+	return existing
+}
+
 func sortClusters(clusters []MemoryCluster) {
 	sort.SliceStable(clusters, func(i, j int) bool {
 		if clusters[i].Pinned != clusters[j].Pinned {
@@ -3125,6 +3459,9 @@ func sortClusters(clusters []MemoryCluster) {
 		}
 		if clusters[i].Hidden != clusters[j].Hidden {
 			return !clusters[i].Hidden
+		}
+		if relevanceRank(clusters[i].Relevance) != relevanceRank(clusters[j].Relevance) {
+			return relevanceRank(clusters[i].Relevance) < relevanceRank(clusters[j].Relevance)
 		}
 		if clusters[i].Score == clusters[j].Score {
 			return clusters[i].Label < clusters[j].Label
@@ -3785,16 +4122,17 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string) 
 
 	gateways := uniqueGateways(reasons)
 	score := scoreReasons(reasons)
-	if broadContextOnlyReasons(reasons) {
-		reasons = annotateBroadContextReasons(reasons)
-		score = minFloat(score, 0.28)
-	}
+	calibration := calibrateSignalRelevance(reasons, score)
+	reasons = annotateRelevanceReasons(reasons, calibration)
 	signal := BrainSignal{
 		InvestigationID:       current.ID,
 		InvestigationTitle:    current.Title,
 		TargetInvestigationID: target.ID,
 		TargetTitle:           target.Title,
-		Score:                 score,
+		Score:                 calibration.Score,
+		Relevance:             calibration.Class,
+		RelevanceLabel:        calibration.Label,
+		RelevanceReason:       calibration.Reason,
 		Gateways:              gateways,
 		Reasons:               reasons,
 		SuggestedAction:       suggestedActionForSignal(gateways, reasons),
@@ -3807,6 +4145,9 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string) 
 
 func shouldAutoPromoteSignal(signal BrainSignal) bool {
 	if signal.Dismissed || signal.Linked || len(signal.Gateways) < 2 {
+		return false
+	}
+	if normalizeRelevance(signal.Relevance) == RelevanceDistantEcho || normalizeRelevance(signal.Relevance) == RelevanceBackgroundNoise {
 		return false
 	}
 	if !hasMeaningfulAutoPromotionEvidence(signal) {
@@ -3848,6 +4189,9 @@ func newMemoryLink(signal BrainSignal, timestamp string, promotionType string) M
 		ToInvestigationID:   signal.TargetInvestigationID,
 		ToTitle:             signal.TargetTitle,
 		Score:               signal.Score,
+		Relevance:           normalizeRelevance(signal.Relevance),
+		RelevanceLabel:      nonEmptyString(signal.RelevanceLabel, relevanceLabel(signal.Relevance)),
+		RelevanceReason:     signal.RelevanceReason,
 		Gateways:            uniqueSortedGateways(signal.Gateways),
 		Reasons:             uniqueSignalReasons(signal.Reasons),
 		SuggestedAction:     suggestedMemoryLinkAction(promotionType),
@@ -3880,6 +4224,14 @@ func reinforceMemoryLink(link MemoryLink, signal BrainSignal, timestamp string, 
 	if signal.Score > link.Score {
 		link.Score = signal.Score
 	}
+	link.Relevance, link.RelevanceLabel, link.RelevanceReason = mergeRelevance(
+		link.Relevance,
+		link.RelevanceLabel,
+		link.RelevanceReason,
+		signal.Relevance,
+		signal.RelevanceLabel,
+		signal.RelevanceReason,
+	)
 	link.Gateways = uniqueSortedGateways(append(link.Gateways, signal.Gateways...))
 	link.Reasons = uniqueSignalReasons(append(link.Reasons, signal.Reasons...))
 	link.UpdatedAt = timestamp
@@ -4052,6 +4404,79 @@ func scoreReasons(reasons []SignalReason) float64 {
 	return score
 }
 
+func calibrateSignalRelevance(reasons []SignalReason, score float64) relevanceCalibration {
+	stats := analyzeReasonRelevance(reasons)
+	score = normalizeMapScore(score)
+	class := RelevancePossibleBridge
+	reason := "This match has a specific clue worth comparing before it becomes durable memory."
+
+	switch {
+	case stats.ReasonCount == 0:
+		class = RelevanceBackgroundNoise
+		score = 0
+		reason = "No usable recall reason was found."
+	case stats.RelationshipCount > 0 && (stats.MeaningfulEntityCount > 0 || stats.SourceCount > 0):
+		class = RelevanceStrongMemory
+		reason = "A repeated relationship pattern is backed by another gateway."
+	case stats.MeaningfulEntityCount > 0 && stats.SourceCount > 0:
+		class = RelevanceStrongMemory
+		reason = "A named clue and a shared source domain both connect these investigations."
+	case stats.MeaningfulEntityCount >= 2 && score >= 0.55:
+		class = RelevanceStrongMemory
+		reason = "Multiple specific named clues connect these investigations."
+	case stats.RelationshipCount > 0 || stats.SourceCount > 0 || stats.MeaningfulEntityCount > 0:
+		class = RelevancePossibleBridge
+		reason = "A usable bridge exists, but it needs comparison before it should steer the investigation."
+	default:
+		class = RelevanceBackgroundNoise
+		score = minFloat(score, 0.28)
+		reason = "Only broad context matched, so this is background memory unless bridge evidence appears."
+	}
+
+	if stats.BroadEntityCount > 0 && stats.MeaningfulEntityCount == 0 {
+		if stats.SourceCount > 0 || stats.RelationshipCount > 0 {
+			class = RelevanceDistantEcho
+			score = minFloat(score, 0.54)
+			reason = "A broad clue is echoing with one extra bridge. Keep it visible, but treat it as speculative."
+		} else {
+			class = RelevanceBackgroundNoise
+			score = minFloat(score, 0.28)
+			reason = "Only broad context matched, so this is background memory unless bridge evidence appears."
+		}
+	}
+
+	if class == RelevanceStrongMemory && score < 0.70 {
+		class = RelevancePossibleBridge
+		reason = "The match has useful bridge evidence, but the current score is not strong enough to treat as durable memory yet."
+	}
+
+	return relevanceCalibration{
+		Class:  class,
+		Label:  relevanceLabel(class),
+		Reason: reason,
+		Score:  normalizeMapScore(score),
+	}
+}
+
+func analyzeReasonRelevance(reasons []SignalReason) reasonRelevanceStats {
+	stats := reasonRelevanceStats{ReasonCount: len(reasons)}
+	for _, reason := range reasons {
+		switch reason.Gateway {
+		case GatewayEntityDate:
+			if isBroadEntityDateReason(reason) {
+				stats.BroadEntityCount++
+			} else {
+				stats.MeaningfulEntityCount++
+			}
+		case GatewaySourceDomain:
+			stats.SourceCount++
+		case GatewayRelationshipTag:
+			stats.RelationshipCount++
+		}
+	}
+	return stats
+}
+
 func broadContextOnlyReasons(reasons []SignalReason) bool {
 	if len(reasons) == 0 {
 		return false
@@ -4062,6 +4487,11 @@ func broadContextOnlyReasons(reasons []SignalReason) bool {
 		}
 	}
 	return true
+}
+
+func signalRelevanceNeedsBridgeEvidence(signal BrainSignal) bool {
+	relevance := normalizeRelevance(signal.Relevance)
+	return relevance == RelevanceDistantEcho || relevance == RelevanceBackgroundNoise || strings.Contains(strings.ToLower(signal.SuggestedAction), "bridge evidence")
 }
 
 func isBroadEntityDateReason(reason SignalReason) bool {
@@ -4099,11 +4529,14 @@ func numericString(value string) bool {
 	return true
 }
 
-func annotateBroadContextReasons(reasons []SignalReason) []SignalReason {
+func annotateRelevanceReasons(reasons []SignalReason, calibration relevanceCalibration) []SignalReason {
 	annotated := make([]SignalReason, 0, len(reasons))
 	for _, reason := range reasons {
 		if isBroadEntityDateReason(reason) && !strings.Contains(strings.ToLower(reason.Detail), "broad context") {
-			reason.Detail = reason.Detail + " This is a broad context match and needs bridge evidence before it should guide the investigation."
+			reason.Detail = strings.TrimSpace(reason.Detail + " This is a broad context match and needs bridge evidence before it should guide the investigation.")
+		}
+		if normalizeRelevance(calibration.Class) == RelevanceDistantEcho && !strings.Contains(strings.ToLower(reason.Detail), "distant echo") {
+			reason.Detail = strings.TrimSpace(reason.Detail + " Treat this as a distant echo until a stronger bridge appears.")
 		}
 		annotated = append(annotated, reason)
 	}
@@ -4113,6 +4546,11 @@ func annotateBroadContextReasons(reasons []SignalReason) []SignalReason {
 func suggestedActionForSignal(gateways []string, reasons []SignalReason) string {
 	if broadContextOnlyReasons(reasons) {
 		return "Look for bridge evidence"
+	}
+	for _, reason := range reasons {
+		if strings.Contains(strings.ToLower(reason.Detail), "distant echo") {
+			return "Inspect speculative bridge"
+		}
 	}
 	return suggestedAction(gateways)
 }
@@ -4186,6 +4624,9 @@ func reasonSignature(reasons []SignalReason) string {
 
 func sortSignals(signals []BrainSignal) {
 	sort.SliceStable(signals, func(i, j int) bool {
+		if relevanceRank(signals[i].Relevance) != relevanceRank(signals[j].Relevance) {
+			return relevanceRank(signals[i].Relevance) < relevanceRank(signals[j].Relevance)
+		}
 		if signals[i].Score == signals[j].Score {
 			return signals[i].TargetTitle < signals[j].TargetTitle
 		}

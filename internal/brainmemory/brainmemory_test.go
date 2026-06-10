@@ -83,6 +83,9 @@ func TestServiceGeneratesRecallBundleSignals(t *testing.T) {
 	if signal.Score < 0.65 {
 		t.Fatalf("expected useful recall score, got %.2f", signal.Score)
 	}
+	if signal.Relevance != RelevanceStrongMemory {
+		t.Fatalf("expected strong memory relevance, got %#v", signal)
+	}
 	for _, gateway := range []string{GatewayEntityDate, GatewaySourceDomain} {
 		if !signal.HasGateway(gateway) {
 			t.Fatalf("expected gateway %s in %#v", gateway, signal.Gateways)
@@ -249,11 +252,113 @@ func TestServiceDampensBroadContextOnlySignals(t *testing.T) {
 	if signal.Score >= 0.35 {
 		t.Fatalf("expected broad context-only signal to be dampened below weak threshold, got %.2f", signal.Score)
 	}
+	if signal.Relevance != RelevanceBackgroundNoise {
+		t.Fatalf("expected broad context-only signal to be labeled background noise, got %#v", signal)
+	}
+	if signal.RelevanceLabel != "Background Noise" {
+		t.Fatalf("expected readable background-noise label, got %q", signal.RelevanceLabel)
+	}
 	if !strings.Contains(signal.SuggestedAction, "bridge evidence") {
 		t.Fatalf("expected bridge-evidence guidance for broad context signal, got %q", signal.SuggestedAction)
 	}
 	if !strings.Contains(strings.Join(signal.ReasonTexts(), " "), "broad context") {
 		t.Fatalf("expected reason text to explain broad context distance, got %#v", signal.Reasons)
+	}
+}
+
+func TestServiceKeepsDistantEchoesVisibleButManual(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "China Robotics Supply Chain"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[LOC:China] appears in a robotics supply-chain investigation.",
+			"sourceURL":"https://wire.example.com/robotics"
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Olympics Broadcast Rights"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"old-node","data":{
+			"summary":"[LOC:China] appears in an Olympics broadcasting investigation.",
+			"sourceURL":"https://wire.example.com/olympics"
+		}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	var signals []BrainSignal
+	var err error
+	for pass := 0; pass < repeatedPromotionActivationCount+1; pass++ {
+		signals, err = service.GenerateSignals("inv-current")
+		if err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", pass+1, err)
+		}
+		if len(signals) != 1 {
+			t.Fatalf("expected distant echo to remain active for manual review, got %#v", signals)
+		}
+	}
+	signal := signals[0]
+	if signal.Relevance != RelevanceDistantEcho {
+		t.Fatalf("expected broad clue plus source bridge to become distant echo, got %#v", signal)
+	}
+	if signal.Score > 0.58 || signal.Score < 0.35 {
+		t.Fatalf("expected distant echo score to stay speculative but visible, got %.2f", signal.Score)
+	}
+	if !strings.Contains(signal.SuggestedAction, "speculative bridge") {
+		t.Fatalf("expected speculative bridge action, got %q", signal.SuggestedAction)
+	}
+	if !strings.Contains(strings.Join(signal.ReasonTexts(), " "), "distant echo") {
+		t.Fatalf("expected reason text to explain distant echo, got %#v", signal.Reasons)
+	}
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation failed: %v", err)
+	}
+	if len(links) != 0 {
+		t.Fatalf("distant echoes should not auto-promote, got %#v", links)
+	}
+}
+
+func TestBrainAttentionPrefersSpecificBridgeOverBackgroundNoise(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "China Robotics Supply Chain"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"current-node","data":{
+			"summary":"[LOC:China] appears beside [ORG:Acme Grid] in a robotics supply-chain investigation."
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-broad", "Olympics Broadcast Rights"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"broad-node","data":{
+			"summary":"[LOC:China] appears in an Olympics broadcasting investigation."
+		}}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-specific", "Acme Grid Supplier Note"), `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"specific-node","data":{
+			"summary":"[ORG:Acme Grid] appears in a supplier-risk investigation."
+		}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	attention, err := service.AttentionForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AttentionForInvestigation failed: %v", err)
+	}
+	if attention.Focus.Relevance == RelevanceBackgroundNoise {
+		t.Fatalf("background noise should not own the focus narrative, got %#v", attention.Focus)
+	}
+	if attention.Focus.PrimaryTitle != "Acme Grid Supplier Note" {
+		t.Fatalf("expected specific bridge to own focus, got %#v", attention.Focus)
+	}
+	if !containsString(attention.Focus.SupportingFacts, "Possible Bridge") {
+		t.Fatalf("expected focus supporting facts to explain relevance, got %#v", attention.Focus.SupportingFacts)
 	}
 }
 
@@ -699,13 +804,22 @@ func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	if dateSuggestion.Priority == "high" || dateSuggestion.Score >= 0.78 {
 		t.Fatalf("expected pure date cluster to be down-ranked, got %#v", dateSuggestion)
 	}
+	if dateSuggestion.Relevance != RelevanceDistantEcho {
+		t.Fatalf("expected pure date cluster to remain as distant echo, got %#v", dateSuggestion)
+	}
 	broadPersonSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-broad-person")
 	if broadPersonSuggestion.Priority == "high" || broadPersonSuggestion.Score >= 0.78 {
 		t.Fatalf("expected broad person cluster to be down-ranked, got %#v", broadPersonSuggestion)
 	}
+	if broadPersonSuggestion.Relevance != RelevanceBackgroundNoise {
+		t.Fatalf("expected very broad person cluster to be background noise, got %#v", broadPersonSuggestion)
+	}
 	focusedSuggestion := findSuggestionByClusterID(t, suggestions, "cluster-focused-org")
 	if focusedSuggestion.Priority != "high" || focusedSuggestion.Score < 0.78 {
 		t.Fatalf("expected focused entity cluster to stay high priority, got %#v", focusedSuggestion)
+	}
+	if focusedSuggestion.Relevance != RelevanceStrongMemory {
+		t.Fatalf("expected focused entity cluster to be strong memory, got %#v", focusedSuggestion)
 	}
 }
 
