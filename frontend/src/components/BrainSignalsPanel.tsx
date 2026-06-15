@@ -3360,7 +3360,7 @@ export default function BrainSignalsPanel({
       <article
         key={item.id}
         data-testid="brain-autonomy-card"
-        className={`forensic-brain-autonomy-card forensic-brain-autonomy-card-reference forensic-brain-autonomy-${item.status} forensic-brain-relevance-${relevance}`}
+        className={`forensic-brain-autonomy-card forensic-brain-autonomy-card-reference forensic-brain-autonomy-card-compact forensic-brain-autonomy-${item.status} forensic-brain-relevance-${relevance}`}
       >
         <div data-testid="brain-autonomy-card-main" className="forensic-brain-autonomy-main">
           <div className="forensic-brain-suggestion-topline forensic-brain-autonomy-topline">
@@ -3451,7 +3451,7 @@ export default function BrainSignalsPanel({
 
     return (
       <div className="forensic-brain-view forensic-brain-view-autonomy">
-        <section data-testid="brain-autonomy-view" className="forensic-brain-panel forensic-brain-panel-autonomy">
+        <section data-testid="brain-autonomy-view" className="forensic-brain-panel forensic-brain-panel-autonomy forensic-brain-panel-autonomy-compact">
           <div className="forensic-brain-panel-header forensic-brain-autonomy-header">
             <div>
               <span className="forensic-brain-panel-kicker">Guarded preparation</span>

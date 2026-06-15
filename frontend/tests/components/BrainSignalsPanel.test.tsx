@@ -920,6 +920,7 @@ describe('BrainSignalsPanel', () => {
     await openBrainView(user, /autonomy queue view/i)
 
     const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    expect(autonomyView).toHaveClass('forensic-brain-panel-autonomy-compact')
     expect(autonomyView).toHaveTextContent('Autonomy Queue')
     expect(autonomyView).toHaveTextContent('Auto-prepare Off')
     expect(autonomyView).toHaveTextContent('Review active memory cluster')
@@ -928,6 +929,7 @@ describe('BrainSignalsPanel', () => {
     expect(autonomyView).toHaveTextContent('Unresolved Gap')
     const autonomyCards = within(autonomyView).getAllByTestId('brain-autonomy-card')
     expect(autonomyCards[0]).toHaveClass('forensic-brain-autonomy-card-reference')
+    expect(autonomyCards[0]).toHaveClass('forensic-brain-autonomy-card-compact')
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-card-main')).toBeInTheDocument()
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-card-rail')).toBeInTheDocument()
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-timestamp')).toBeInTheDocument()

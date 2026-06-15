@@ -7368,24 +7368,24 @@ body {
 }
 
 .forensic-brain-panel-autonomy .forensic-brain-autonomy-header {
-  min-height: 6.8rem;
+  min-height: 4.6rem;
   align-items: center;
   border-bottom-color: rgba(129, 227, 255, 0.22);
   background:
     radial-gradient(circle at top right, rgba(129, 227, 255, 0.08), transparent 18rem),
     rgba(5, 11, 16, 0.94);
-  padding: 1.25rem 1.5rem;
+  padding: 0.82rem 1rem;
 }
 
 .forensic-brain-panel-autonomy .forensic-brain-panel-kicker {
   color: #ff4e81;
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   letter-spacing: 0.16em;
 }
 
 .forensic-brain-panel-autonomy .forensic-brain-autonomy-header h3 {
-  margin-top: 0.42rem;
-  font-size: clamp(1.55rem, 2vw, 2.05rem);
+  margin-top: 0.3rem;
+  font-size: clamp(1.22rem, 1.45vw, 1.55rem);
   line-height: 1;
   text-shadow: 0 0 1.2rem rgba(129, 227, 255, 0.18);
 }
@@ -7423,8 +7423,8 @@ body {
 }
 
 .forensic-brain-autonomy-list {
-  gap: 1.05rem;
-  padding: 1.05rem;
+  gap: 0.72rem;
+  padding: 0.72rem;
 }
 
 .forensic-brain-map-digest,
@@ -7925,16 +7925,16 @@ body {
 
 .forensic-brain-autonomy-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(21rem, 0.32fr);
-  gap: 1.9rem;
-  min-height: 13.1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(15.5rem, 0.28fr);
+  gap: 1rem;
+  min-height: 8.7rem;
   border-color: rgba(129, 227, 255, 0.24);
   border-radius: 0.56rem;
   background:
     radial-gradient(circle at 12% 12%, rgba(129, 227, 255, 0.08), transparent 22rem),
     linear-gradient(180deg, rgba(7, 16, 22, 0.96), rgba(2, 7, 11, 0.98));
-  padding: 1.15rem 1.15rem 1.15rem 1.48rem;
-  box-shadow: inset 0 0 0 1px rgba(6, 18, 24, 0.85), 0 1.1rem 2.6rem rgba(0, 0, 0, 0.2);
+  padding: 0.76rem 0.82rem 0.76rem 1.05rem;
+  box-shadow: inset 0 0 0 1px rgba(6, 18, 24, 0.85), 0 0.72rem 1.8rem rgba(0, 0, 0, 0.18);
 }
 
 .forensic-brain-suggestion-card::before {
@@ -7974,7 +7974,7 @@ body {
   display: grid;
   align-content: start;
   min-width: 0;
-  gap: 0.92rem;
+  gap: 0.52rem;
 }
 
 .forensic-brain-suggestion-topline {
@@ -8002,16 +8002,16 @@ body {
 }
 
 .forensic-brain-autonomy-topline {
-  gap: 0.5rem;
+  gap: 0.38rem;
 }
 
 .forensic-brain-autonomy-topline span,
 .forensic-brain-autonomy-topline strong {
-  min-height: 2.28rem;
+  min-height: 1.72rem;
   align-items: center;
   border-radius: 0.2rem;
-  padding: 0 0.62rem;
-  font-size: 0.72rem;
+  padding: 0 0.48rem;
+  font-size: 0.58rem;
   letter-spacing: 0.1em;
 }
 
@@ -8029,7 +8029,7 @@ body {
 }
 
 .forensic-brain-autonomy-topline .forensic-brain-relevance-chip {
-  padding-inline: 0.78rem;
+  padding-inline: 0.58rem;
 }
 
 .forensic-brain-autonomy-score-chip {
@@ -8053,7 +8053,7 @@ body {
   margin: 0;
   overflow: hidden;
   color: var(--forensic-text);
-  font-size: clamp(1.25rem, 1.6vw, 1.55rem);
+  font-size: clamp(1rem, 1.2vw, 1.18rem);
   font-weight: 950;
   line-height: 1.1;
   text-overflow: ellipsis;
@@ -8070,31 +8070,31 @@ body {
 .forensic-brain-autonomy-card p {
   margin: 0;
   color: var(--forensic-text-muted);
-  font-size: 0.95rem;
+  font-size: 0.76rem;
   line-height: 1.45;
 }
 
 .forensic-brain-autonomy-rail {
   display: grid;
   align-content: start;
-  gap: 1.2rem;
+  gap: 0.68rem;
   border-left: 1px solid rgba(129, 227, 255, 0.22);
-  padding-left: 1.85rem;
+  padding-left: 1rem;
 }
 
 .forensic-brain-autonomy-rail-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.8rem;
+  gap: 0.55rem;
 }
 
 .forensic-brain-autonomy-timestamp {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.36rem;
   color: #74ff95;
-  font-size: 0.82rem;
+  font-size: 0.62rem;
   font-weight: 950;
   letter-spacing: 0.04em;
   white-space: nowrap;
@@ -8107,24 +8107,24 @@ body {
   background:
     linear-gradient(180deg, rgba(129, 227, 255, 0.1), rgba(129, 227, 255, 0.04)),
     rgba(7, 16, 22, 0.92);
-  padding: 0.54rem 0.72rem;
+  padding: 0.38rem 0.52rem;
   color: var(--forensic-text);
-  font-size: 0.82rem;
+  font-size: 0.66rem;
   font-weight: 950;
   line-height: 1;
 }
 
 .forensic-brain-autonomy-rail-actions {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.48rem;
 }
 
 .forensic-brain-autonomy-rail .forensic-brain-action {
-  min-height: 3.65rem;
+  min-height: 2.55rem;
   width: 100%;
   border-radius: 0.18rem;
-  font-size: 0.82rem;
-  letter-spacing: 0.1em;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
 }
 
 .forensic-brain-autonomy-rail .forensic-brain-action-primary {
@@ -8156,37 +8156,37 @@ body {
 }
 
 .forensic-brain-autonomy-decision-box {
-  gap: 0.72rem;
+  gap: 0.38rem;
   border-color: rgba(129, 227, 255, 0.22);
   border-radius: 0.24rem;
   background:
     linear-gradient(180deg, rgba(129, 227, 255, 0.07), rgba(129, 227, 255, 0.035)),
     rgba(4, 12, 17, 0.88);
-  padding: 0.9rem 1rem;
+  padding: 0.54rem 0.66rem;
 }
 
 .forensic-brain-autonomy-decision-box span {
   color: #ff4e81;
-  font-size: 0.66rem;
+  font-size: 0.56rem;
 }
 
 .forensic-brain-autonomy-decision-box strong {
-  font-size: 0.95rem;
+  font-size: 0.76rem;
   line-height: 1.45;
 }
 
 .forensic-brain-autonomy-blocker-row {
-  gap: 0.8rem;
-  margin-top: 0.18rem;
+  gap: 0.52rem;
+  margin-top: 0.05rem;
 }
 
 .forensic-brain-autonomy-blocker-chip,
 .forensic-brain-autonomy-clear-chip {
-  min-height: 2.55rem;
+  min-height: 1.85rem;
   align-items: center;
   border-radius: 0.2rem;
-  padding: 0 0.9rem;
-  font-size: 0.72rem;
+  padding: 0 0.62rem;
+  font-size: 0.58rem;
   letter-spacing: 0.1em;
 }
 
@@ -8200,16 +8200,16 @@ body {
 .forensic-brain-autonomy-budgets {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: 0.62rem;
   border-bottom: 1px solid rgba(129, 227, 255, 0.18);
   background:
     radial-gradient(circle at left, rgba(129, 227, 255, 0.045), transparent 22rem),
     rgba(3, 8, 12, 0.78);
-  padding: 1.18rem 1.5rem;
+  padding: 0.68rem 0.9rem;
 }
 
 .forensic-brain-autonomy-controls {
-  min-height: 6.15rem;
+  min-height: 3.7rem;
   align-items: center;
 }
 
@@ -8217,18 +8217,18 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.72rem;
-  width: min(25.5rem, 100%);
-  min-height: 4.05rem;
+  gap: 0.5rem;
+  width: min(19.5rem, 100%);
+  min-height: 2.72rem;
   border: 1px solid rgba(0, 255, 65, 0.58);
   border-radius: 0.32rem;
   background:
     radial-gradient(circle at left, rgba(0, 255, 65, 0.16), transparent 11rem),
     rgba(0, 255, 65, 0.06);
-  padding: 0.62rem 1rem;
+  padding: 0.42rem 0.66rem;
   color: var(--forensic-text);
   cursor: pointer;
-  font-size: 0.86rem;
+  font-size: 0.68rem;
   font-weight: 950;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -8240,21 +8240,21 @@ body {
 }
 
 .forensic-brain-panel-autonomy .forensic-brain-cluster-summary {
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .forensic-brain-panel-autonomy .forensic-brain-cluster-summary span {
   display: inline-flex;
-  min-height: 3.25rem;
+  min-height: 2.35rem;
   align-items: center;
   border-color: rgba(129, 227, 255, 0.28);
   border-radius: 0.22rem;
   background:
     linear-gradient(180deg, rgba(129, 227, 255, 0.075), rgba(129, 227, 255, 0.035)),
     rgba(2, 7, 11, 0.86);
-  padding: 0 1.1rem;
+  padding: 0 0.72rem;
   color: rgba(232, 240, 248, 0.82);
-  font-size: 0.78rem;
+  font-size: 0.62rem;
   letter-spacing: 0.035em;
   box-shadow: inset 0 0 1.4rem rgba(129, 227, 255, 0.045);
 }
@@ -8277,9 +8277,9 @@ body {
   border: 1px solid rgba(0, 255, 65, 0.54);
   border-radius: 0.18rem;
   background: rgba(0, 255, 65, 0.08);
-  padding: 0.42rem 0.48rem;
+  padding: 0.28rem 0.36rem;
   color: #74ff95;
-  font-size: 0.72rem;
+  font-size: 0.58rem;
 }
 
 .forensic-brain-autonomy-toggle[aria-checked='true'] strong {
@@ -8290,16 +8290,16 @@ body {
 
 .forensic-brain-autonomy-budgets span {
   display: grid;
-  gap: 0.42rem;
-  min-width: 14.2rem;
+  gap: 0.24rem;
+  min-width: 10.2rem;
   border: 1px solid rgba(129, 227, 255, 0.24);
   border-radius: 0.22rem;
   background:
     linear-gradient(180deg, rgba(129, 227, 255, 0.075), rgba(129, 227, 255, 0.035)),
     rgba(3, 10, 15, 0.86);
-  padding: 0.95rem 1.05rem;
+  padding: 0.58rem 0.7rem;
   color: rgba(164, 193, 217, 0.88);
-  font-size: 0.74rem;
+  font-size: 0.58rem;
   font-weight: 950;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -8307,7 +8307,7 @@ body {
 
 .forensic-brain-autonomy-budgets strong {
   color: var(--forensic-text);
-  font-size: 1.3rem;
+  font-size: 0.92rem;
   line-height: 1;
   letter-spacing: 0;
   text-transform: none;
