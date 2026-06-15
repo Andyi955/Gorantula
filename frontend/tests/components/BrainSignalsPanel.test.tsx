@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type {
   BrainAttentionSummary,
+  BrainAutonomyState,
   BrainFollowUpAction,
   BrainSignal,
   BrainSuggestion,
@@ -473,6 +474,17 @@ const makeFollowUp = (overrides: Partial<BrainFollowUpAction> = {}): BrainFollow
   reasonSamples: overrides.reasonSamples || followUpAction.reasonSamples,
 })
 
+const makeAutonomyState = (overrides: Partial<BrainAutonomyState> = {}): BrainAutonomyState => ({
+  settings: overrides.settings || {
+    mode: 'off',
+    maxAutoPreparedPerInvestigation: 1,
+    maxActivePrepared: 3,
+    updatedAt: '2026-06-05T12:00:00Z',
+  },
+  queue: overrides.queue || [],
+  audit: overrides.audit || [],
+})
+
 const jsonResponse = (payload: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
@@ -488,6 +500,7 @@ const installBrainFetch = ({
   brainMap = emptyBackendBrainMap,
   attention = null,
   promoteLink = link,
+  autonomy = makeAutonomyState(),
 }: {
   signals?: BrainSignal[]
   links?: MemoryLink[]
@@ -497,7 +510,9 @@ const installBrainFetch = ({
   brainMap?: typeof backendBrainMap
   attention?: BrainAttentionSummary | null
   promoteLink?: MemoryLink
+  autonomy?: BrainAutonomyState
 } = {}) => {
+  let currentAutonomy = autonomy
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method || 'GET'
@@ -520,8 +535,25 @@ const installBrainFetch = ({
     if (url.includes('/api/brain/followups?')) {
       return Promise.resolve(jsonResponse(followUps) as Response)
     }
+    if (url.includes('/api/brain/autonomy?')) {
+      return Promise.resolve(jsonResponse(currentAutonomy) as Response)
+    }
     if (url.includes('/api/brain/attention?') && attention) {
       return Promise.resolve(jsonResponse(attention) as Response)
+    }
+    if (method === 'PUT' && url.endsWith('/api/brain/autonomy/settings')) {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as Partial<BrainAutonomyState['settings']>
+        : {}
+      currentAutonomy = {
+        ...currentAutonomy,
+        settings: {
+          ...currentAutonomy.settings,
+          ...body,
+          updatedAt: '2026-06-06T10:02:00Z',
+        },
+      }
+      return Promise.resolve(jsonResponse(currentAutonomy.settings) as Response)
     }
     if (method === 'PUT' && url.endsWith('/dismiss')) {
       return Promise.resolve(jsonResponse({ ...signal, dismissed: true }) as Response)
@@ -816,6 +848,108 @@ describe('BrainSignalsPanel', () => {
       descentMode: 'guided',
     }))
     expect(screen.queryByTestId('brain-followup-launcher')).not.toBeInTheDocument()
+  })
+
+  it('shows the autonomy queue and toggles auto-prepare with one switch', async () => {
+    const user = userEvent.setup()
+    const autonomy = makeAutonomyState({
+      queue: [
+        {
+          id: 'brain-autonomy-next-move',
+          investigationId: 'inv-current',
+          suggestionId: suggestion.id,
+          actionId: followUpAction.id,
+          decision: 'prepared',
+          status: 'prepared',
+          mode: 'prepare-only',
+          title: 'Review active memory cluster',
+          summary: 'Acme Grid has an active memory cluster worth checking.',
+          score: 0.86,
+          relevance: 'strong-memory',
+          reason: 'Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed.',
+          blockers: [],
+          targetInvestigationIds: ['inv-older'],
+          createdAt: '2026-06-05T12:05:00Z',
+          updatedAt: '2026-06-05T12:05:00Z',
+        },
+        {
+          id: 'brain-autonomy-gap-blocked',
+          investigationId: 'inv-current',
+          suggestionId: 'brain-suggestion-gap',
+          decision: 'blocked',
+          status: 'blocked',
+          mode: 'prepare-only',
+          title: 'Compare durable memory link',
+          summary: 'A candidate follow-up is waiting on gap review.',
+          score: 0.92,
+          relevance: 'strong-memory',
+          reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
+          blockers: ['unresolved-gap'],
+          targetInvestigationIds: ['inv-older'],
+          createdAt: '2026-06-05T12:06:00Z',
+          updatedAt: '2026-06-05T12:06:00Z',
+        },
+      ],
+      audit: [
+        {
+          id: 'brain-autonomy-audit-next-move',
+          queueItemId: 'brain-autonomy-next-move',
+          investigationId: 'inv-current',
+          suggestionId: suggestion.id,
+          actionId: followUpAction.id,
+          decision: 'prepared',
+          mode: 'prepare-only',
+          reason: 'Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed.',
+          blockers: [],
+          createdAt: '2026-06-05T12:05:00Z',
+        },
+      ],
+    })
+    const fetchMock = installBrainFetch({
+      suggestions: [suggestion],
+      followUps: [followUpAction],
+      autonomy,
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /autonomy queue view/i)
+
+    const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    expect(autonomyView).toHaveTextContent('Autonomy Queue')
+    expect(autonomyView).toHaveTextContent('Auto-prepare Off')
+    expect(autonomyView).toHaveTextContent('Review active memory cluster')
+    expect(autonomyView).toHaveTextContent('Prepared')
+    expect(autonomyView).toHaveTextContent('Compare durable memory link')
+    expect(autonomyView).toHaveTextContent('Unresolved Gap')
+    expect(within(autonomyView).queryByRole('button', { name: /suggest only/i })).not.toBeInTheDocument()
+    expect(within(autonomyView).queryByRole('button', { name: /prepare only/i })).not.toBeInTheDocument()
+    expect(within(autonomyView).queryByRole('button', { name: /ask before launch/i })).not.toBeInTheDocument()
+
+    const toggle = within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(toggle)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/autonomy/settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"mode":"prepare-only"'),
+      }),
+    )
+    await waitFor(() => {
+      expect(within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i })).toHaveAttribute('aria-checked', 'true')
+    })
+    expect(autonomyView).toHaveTextContent('Auto-prepare On')
+
+    await user.click(within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/autonomy/settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"mode":"off"'),
+      }),
+    )
   })
 
   it('shows thinking gateway cues and blocks non-launchable next moves', async () => {

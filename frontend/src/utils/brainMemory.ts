@@ -152,6 +152,59 @@ export interface BrainFollowUpAction {
   cancelledAt?: string
 }
 
+export type BrainAutonomyMode =
+  | 'off'
+  | 'suggest-only'
+  | 'prepare-only'
+  | 'ask-before-launch'
+  | 'limited-background'
+  | string
+
+export interface BrainAutonomySettings {
+  mode: BrainAutonomyMode
+  maxAutoPreparedPerInvestigation: number
+  maxActivePrepared: number
+  updatedAt?: string
+}
+
+export interface BrainAutonomyQueueItem {
+  id: string
+  investigationId: string
+  suggestionId: string
+  actionId?: string
+  decision: 'prepared' | 'would-prepare' | 'blocked' | string
+  status: 'prepared' | 'waiting' | 'blocked' | string
+  mode: BrainAutonomyMode
+  title: string
+  summary: string
+  score: number
+  relevance?: BrainRelevance
+  reason: string
+  blockers: string[]
+  targetInvestigationIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BrainAutonomyAuditEntry {
+  id: string
+  queueItemId: string
+  investigationId: string
+  suggestionId: string
+  actionId?: string
+  decision: 'prepared' | 'would-prepare' | 'blocked' | string
+  mode: BrainAutonomyMode
+  reason: string
+  blockers: string[]
+  createdAt: string
+}
+
+export interface BrainAutonomyState {
+  settings: BrainAutonomySettings
+  queue: BrainAutonomyQueueItem[]
+  audit: BrainAutonomyAuditEntry[]
+}
+
 export interface BrainAttentionCounts {
   activeSignals: number
   linkedMemories: number
@@ -383,6 +436,30 @@ const normalizeBrainFollowUpAction = (action: BrainFollowUpAction): BrainFollowU
   descentMode: action.descentMode || 'guided',
 })
 
+const normalizeBrainAutonomySettings = (settings?: Partial<BrainAutonomySettings>): BrainAutonomySettings => ({
+  mode: settings?.mode || 'off',
+  maxAutoPreparedPerInvestigation: settings?.maxAutoPreparedPerInvestigation || 1,
+  maxActivePrepared: settings?.maxActivePrepared || 3,
+  updatedAt: settings?.updatedAt,
+})
+
+const normalizeBrainAutonomyQueueItem = (item: BrainAutonomyQueueItem): BrainAutonomyQueueItem => ({
+  ...item,
+  blockers: asStringArray(item.blockers),
+  targetInvestigationIds: asStringArray(item.targetInvestigationIds),
+})
+
+const normalizeBrainAutonomyAuditEntry = (entry: BrainAutonomyAuditEntry): BrainAutonomyAuditEntry => ({
+  ...entry,
+  blockers: asStringArray(entry.blockers),
+})
+
+const normalizeBrainAutonomyState = (state: BrainAutonomyState): BrainAutonomyState => ({
+  settings: normalizeBrainAutonomySettings(state.settings),
+  queue: Array.isArray(state.queue) ? state.queue.map(normalizeBrainAutonomyQueueItem) : [],
+  audit: Array.isArray(state.audit) ? state.audit.map(normalizeBrainAutonomyAuditEntry) : [],
+})
+
 const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttentionSummary => ({
   ...summary,
   focus: {
@@ -457,6 +534,12 @@ export const fetchBrainFollowUps = async (investigationId: string) => {
   return actions.map(normalizeBrainFollowUpAction)
 }
 
+export const fetchBrainAutonomy = async (investigationId: string) => (
+  normalizeBrainAutonomyState(await requestJSON<BrainAutonomyState>(
+    `${API_BASE}/autonomy?investigationId=${encodeURIComponent(investigationId)}`,
+  ))
+)
+
 export const fetchBrainAttention = async (investigationId: string) => (
   normalizeAttentionSummary(await requestJSON<BrainAttentionSummary>(
     `${API_BASE}/attention?investigationId=${encodeURIComponent(investigationId)}`,
@@ -524,3 +607,9 @@ export const cancelBrainFollowUp = (actionId: string) =>
   requestJSON<BrainFollowUpAction>(`${API_BASE}/followups/${encodeURIComponent(actionId)}/cancel`, {
     method: 'PUT',
   }).then(normalizeBrainFollowUpAction)
+
+export const updateBrainAutonomySettings = (settings: BrainAutonomySettings) =>
+  requestJSON<BrainAutonomySettings>(`${API_BASE}/autonomy/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  }).then(normalizeBrainAutonomySettings)

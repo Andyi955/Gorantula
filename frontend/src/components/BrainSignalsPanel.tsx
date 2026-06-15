@@ -23,6 +23,7 @@ import {
   Pin,
   RefreshCw,
   Rocket,
+  ShieldCheck,
   Trash2,
   X,
 } from 'lucide-react'
@@ -36,6 +37,7 @@ import {
   dismissBrainSignal,
   cancelBrainFollowUp,
   fetchBrainAttention,
+  fetchBrainAutonomy,
   fetchBrainClusters,
   fetchBrainFollowUps,
   fetchBrainLinks,
@@ -51,7 +53,12 @@ import {
   reviewBrainSuggestion,
   toggleBrainClusterPin,
   unhideBrainCluster,
+  updateBrainAutonomySettings,
   type BrainAttentionSummary,
+  type BrainAutonomyMode,
+  type BrainAutonomyQueueItem,
+  type BrainAutonomySettings,
+  type BrainAutonomyState,
   type BrainFollowUpAction,
   type BrainMemoryStrength,
   type BrainSuggestion,
@@ -129,7 +136,7 @@ const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 
-type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters'
+type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'autonomy'
 
 type BrainCompareSelection =
   | { kind: 'signal'; id: string }
@@ -165,6 +172,12 @@ const strengthFilterOptions: Array<{ value: StrengthFilter; label: string }> = [
   { value: 'warm', label: 'Warm' },
   { value: 'weak', label: 'Weak' },
 ]
+
+const defaultAutonomySettings: BrainAutonomySettings = {
+  mode: 'off',
+  maxAutoPreparedPerInvestigation: 1,
+  maxActivePrepared: 3,
+}
 
 const suggestionPriorityRank = (priority: string) => {
   switch (priority) {
@@ -321,6 +334,38 @@ const missingEvidenceOutcome = (value: string) => {
   }
 }
 
+const formatAutonomyDecision = (decision?: string) => {
+  switch (decision) {
+    case 'prepared':
+      return 'Prepared'
+    case 'would-prepare':
+      return 'Would Prepare'
+    case 'blocked':
+      return 'Blocked'
+    default:
+      return decision ? decision.replace(/-/g, ' ') : 'Waiting'
+  }
+}
+
+const formatAutonomyBlocker = (blocker: string) => {
+  switch (blocker) {
+    case 'unresolved-gap':
+      return 'Unresolved Gap'
+    case 'unresolved-contradiction':
+      return 'Unresolved Contradiction'
+    case 'duplicate-follow-up':
+      return 'Duplicate Follow-Up'
+    case 'investigation-budget':
+      return 'Investigation Budget'
+    case 'active-prepared-budget':
+      return 'Active Prepared Budget'
+    case 'unsafe-relevance':
+      return 'Unsafe Relevance'
+    default:
+      return blocker.replace(/-/g, ' ')
+  }
+}
+
 const formatAttentionState = (state: string) => {
   switch (state) {
     case 'reinforced':
@@ -397,6 +442,7 @@ export default function BrainSignalsPanel({
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
+  const [autonomyState, setAutonomyState] = useState<BrainAutonomyState | null>(null)
   const [attentionSummary, setAttentionSummary] = useState<BrainAttentionSummary | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -443,6 +489,7 @@ export default function BrainSignalsPanel({
       setSuggestions([])
       setFollowUps([])
       setBrainMapView(null)
+      setAutonomyState(null)
       setAttentionSummary(null)
       setError(null)
       setIsLoading(false)
@@ -482,6 +529,12 @@ export default function BrainSignalsPanel({
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
       const nextFollowUps = await fetchBrainFollowUps(currentInvestigationId)
+      let nextAutonomyState: BrainAutonomyState | null = null
+      try {
+        nextAutonomyState = await fetchBrainAutonomy(currentInvestigationId)
+      } catch {
+        nextAutonomyState = null
+      }
       let nextAttention: BrainAttentionSummary | null = null
       try {
         nextAttention = await fetchBrainAttention(currentInvestigationId)
@@ -499,6 +552,7 @@ export default function BrainSignalsPanel({
       setSuggestions(sortSuggestionsForView(nextSuggestions))
       setFollowUps(nextFollowUps)
       setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
+      setAutonomyState(nextAutonomyState)
       setAttentionSummary(nextAttention)
       setShowLowerPrioritySignals(false)
       setShowLowerPrioritySuggestions(false)
@@ -675,6 +729,14 @@ export default function BrainSignalsPanel({
     })
     return bySource
   }, [followUps])
+  const autonomySettings = autonomyState?.settings || defaultAutonomySettings
+  const autonomyQueue = autonomyState?.queue || []
+  const autonomyAudit = autonomyState?.audit || []
+  const autonomyAutoPrepareEnabled = autonomySettings.mode === 'prepare-only' || autonomySettings.mode === 'ask-before-launch'
+  const blockedAutonomyCount = useMemo(
+    () => autonomyQueue.filter((item) => item.status === 'blocked' || item.decision === 'blocked').length,
+    [autonomyQueue],
+  )
   const activeTitle = currentInvestigationTitle || currentInvestigationId || 'No investigation selected'
   const localBrainMapModel = useMemo(
     () => buildBrainMapModel({
@@ -1250,6 +1312,27 @@ export default function BrainSignalsPanel({
       setPendingFollowUp(null)
     } catch {
       setError('Focused follow-up cancel failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleToggleAutonomyAutoPrepare = async () => {
+    const nextMode: BrainAutonomyMode = autonomyAutoPrepareEnabled ? 'off' : 'prepare-only'
+    setBusyAction('autonomy-toggle')
+    setError(null)
+    try {
+      const settings = await updateBrainAutonomySettings({
+        ...autonomySettings,
+        mode: nextMode,
+      })
+      setAutonomyState((current) => ({
+        settings,
+        queue: current?.queue || [],
+        audit: current?.audit || [],
+      }))
+    } catch {
+      setError('Brain autonomy settings update failed')
     } finally {
       setBusyAction(null)
     }
@@ -3263,6 +3346,168 @@ export default function BrainSignalsPanel({
     )
   }
 
+  const renderAutonomyQueueItem = (item: BrainAutonomyQueueItem) => {
+    const relevance = normalizeRelevance(item.relevance)
+    const action = item.actionId ? followUps.find((candidate) => candidate.id === item.actionId) : null
+    const suggestion = rankedSuggestions.find((candidate) => candidate.id === item.suggestionId) || null
+    const canOpenTarget = item.targetInvestigationIds.length > 0 && !!onOpenInvestigation
+
+    return (
+      <article
+        key={item.id}
+        data-testid="brain-autonomy-card"
+        className={`forensic-brain-autonomy-card forensic-brain-autonomy-${item.status} forensic-brain-relevance-${relevance}`}
+      >
+        <div className="forensic-brain-autonomy-main">
+          <div className="forensic-brain-suggestion-topline">
+            <span>{formatAutonomyDecision(item.decision)}</span>
+            <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
+              {formatRelevance(item)}
+            </span>
+            <strong>{formatScore(item.score)}</strong>
+          </div>
+          <h4>{item.title}</h4>
+          <p>{item.summary}</p>
+          <div className="forensic-brain-suggestion-reason">
+            <span>Decision</span>
+            <strong>{item.reason}</strong>
+          </div>
+          <div className="forensic-brain-chip-row" aria-label="Autonomy blockers">
+            {item.blockers.length > 0 ? (
+              item.blockers.map((blocker) => (
+                <span key={blocker} className="forensic-brain-chip forensic-brain-chip-relationship">
+                  {formatAutonomyBlocker(blocker)}
+                </span>
+              ))
+            ) : (
+              <span className="forensic-brain-chip forensic-brain-chip-source">
+                Clear
+              </span>
+            )}
+            {item.actionId && (
+              <span className="forensic-brain-chip forensic-brain-chip-entity">
+                Action Ready
+              </span>
+            )}
+          </div>
+        </div>
+        <aside className="forensic-brain-suggestion-action">
+          <span>{formatTimestamp(item.updatedAt)}</span>
+          <b className="forensic-brain-autonomy-status">{formatAutonomyDecision(item.status)}</b>
+          {action?.status === 'prepared' && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setPendingFollowUp(action)}
+            >
+              <Rocket size={13} />
+              Review Rabbit Hole
+            </button>
+          )}
+          {suggestion && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
+            >
+              <Maximize2 size={13} />
+              Compare
+            </button>
+          )}
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={!canOpenTarget}
+            onClick={() => {
+              const targetId = item.targetInvestigationIds[0]
+              if (targetId) {
+                onOpenInvestigation?.(targetId)
+              }
+            }}
+          >
+            <ExternalLink size={13} />
+            Open
+          </button>
+        </aside>
+      </article>
+    )
+  }
+
+  const renderAutonomyView = () => {
+    const latestAudit = autonomyAudit[0]
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-autonomy">
+        <section data-testid="brain-autonomy-view" className="forensic-brain-panel forensic-brain-panel-autonomy">
+          <div className="forensic-brain-panel-header">
+            <div>
+              <span className="forensic-brain-panel-kicker">Guarded preparation</span>
+              <h3>Autonomy Queue</h3>
+            </div>
+            <div className="forensic-brain-cluster-summary">
+              <span>Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}</span>
+              <span>{autonomyQueue.length} queued</span>
+              <span>{blockedAutonomyCount} blocked</span>
+            </div>
+          </div>
+
+          <div className="forensic-brain-autonomy-controls" aria-label="Brain autonomy mode">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autonomyAutoPrepareEnabled}
+              aria-label="Auto-prepare Rabbit Holes"
+              className="forensic-brain-autonomy-toggle"
+              disabled={busyAction === 'autonomy-toggle'}
+              onClick={() => void handleToggleAutonomyAutoPrepare()}
+            >
+              <ShieldCheck size={13} />
+              <span>Auto-prepare Rabbit Holes</span>
+              <strong>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
+            </button>
+          </div>
+
+          <div className="forensic-brain-autonomy-budgets" aria-label="Brain autonomy budgets">
+            <span>
+              Per Case
+              <strong>{autonomySettings.maxAutoPreparedPerInvestigation}</strong>
+            </span>
+            <span>
+              Active Prepared
+              <strong>{autonomySettings.maxActivePrepared}</strong>
+            </span>
+            {latestAudit && (
+              <span>
+                Last Decision
+                <strong>{formatAutonomyDecision(latestAudit.decision)}</strong>
+              </span>
+            )}
+          </div>
+
+          {renderFollowUpLauncher()}
+
+          {!currentInvestigationId ? (
+            <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
+              Select an investigation to inspect autonomy.
+            </div>
+          ) : isLoading ? (
+            <div data-testid="brain-loading-state" className="forensic-brain-empty">
+              Checking autonomy queue...
+            </div>
+          ) : autonomyQueue.length === 0 ? (
+            <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
+              No queued autonomy decisions yet.
+            </div>
+          ) : (
+            <div className="forensic-brain-autonomy-list">
+              {autonomyQueue.map(renderAutonomyQueueItem)}
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
+
   const renderNextMovesView = () => {
     const emptyMessage = rankedSuggestions.length === 0
       ? 'No next moves yet. Run or refresh Brain after memory signals form.'
@@ -3514,6 +3759,7 @@ export default function BrainSignalsPanel({
     { view: 'focus', label: 'Focus', detail: attentionSummary?.focus ? formatAttentionState(attentionSummary.dominantState) : 'summary' },
     { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
     { view: 'moves', label: 'Next Moves', detail: `${activeSuggestions.length} active` },
+    { view: 'autonomy', label: 'Autonomy Queue', detail: autonomyAutoPrepareEnabled ? 'auto on' : 'auto off' },
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
     { view: 'links', label: 'Memory Links', detail: `${allLinkGroups.length} saved` },
     { view: 'clusters', label: 'Memory Clusters', detail: `${visibleClusters.length} visible` },
@@ -3583,6 +3829,7 @@ export default function BrainSignalsPanel({
         )}
         {activeBrainView === 'signals' && renderSignalsView()}
         {activeBrainView === 'moves' && renderNextMovesView()}
+        {activeBrainView === 'autonomy' && renderAutonomyView()}
         {activeBrainView === 'links' && renderLinksView()}
         {activeBrainView === 'clusters' && renderClustersView()}
       </div>

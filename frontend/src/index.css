@@ -5990,6 +5990,7 @@ body {
 .forensic-brain-view-map,
 .forensic-brain-view-focus,
 .forensic-brain-view-moves,
+.forensic-brain-view-autonomy,
 .forensic-brain-view-signals,
 .forensic-brain-view-links,
 .forensic-brain-view-clusters {
@@ -6000,6 +6001,7 @@ body {
 .forensic-brain-view-focus .forensic-brain-focus-panel,
 .forensic-brain-view-map .forensic-brain-map-radar,
 .forensic-brain-view-moves .forensic-brain-panel,
+.forensic-brain-view-autonomy .forensic-brain-panel,
 .forensic-brain-view-signals .forensic-brain-panel,
 .forensic-brain-view-links .forensic-brain-panel,
 .forensic-brain-view-clusters .forensic-brain-panel {
@@ -7373,6 +7375,7 @@ body {
 .forensic-brain-signal-list,
 .forensic-brain-link-list,
 .forensic-brain-suggestion-list,
+.forensic-brain-autonomy-list,
 .forensic-brain-cluster-list,
 .forensic-brain-hidden-cluster-list {
   display: flex;
@@ -7399,6 +7402,7 @@ body {
 .forensic-brain-signal-list::-webkit-scrollbar,
 .forensic-brain-link-list::-webkit-scrollbar,
 .forensic-brain-suggestion-list::-webkit-scrollbar,
+.forensic-brain-autonomy-list::-webkit-scrollbar,
 .forensic-brain-cluster-list::-webkit-scrollbar,
 .forensic-brain-hidden-cluster-list::-webkit-scrollbar,
 .forensic-brain-map-node-stack::-webkit-scrollbar,
@@ -7412,6 +7416,7 @@ body {
 .forensic-brain-signal-list::-webkit-scrollbar-track,
 .forensic-brain-link-list::-webkit-scrollbar-track,
 .forensic-brain-suggestion-list::-webkit-scrollbar-track,
+.forensic-brain-autonomy-list::-webkit-scrollbar-track,
 .forensic-brain-cluster-list::-webkit-scrollbar-track,
 .forensic-brain-hidden-cluster-list::-webkit-scrollbar-track,
 .forensic-brain-map-node-stack::-webkit-scrollbar-track,
@@ -7425,6 +7430,7 @@ body {
 .forensic-brain-signal-list::-webkit-scrollbar-thumb,
 .forensic-brain-link-list::-webkit-scrollbar-thumb,
 .forensic-brain-suggestion-list::-webkit-scrollbar-thumb,
+.forensic-brain-autonomy-list::-webkit-scrollbar-thumb,
 .forensic-brain-cluster-list::-webkit-scrollbar-thumb,
 .forensic-brain-hidden-cluster-list::-webkit-scrollbar-thumb,
 .forensic-brain-map-node-stack::-webkit-scrollbar-thumb,
@@ -7439,6 +7445,7 @@ body {
 .forensic-brain-signal-card,
 .forensic-brain-link-card,
 .forensic-brain-suggestion-card,
+.forensic-brain-autonomy-card,
 .forensic-brain-cluster-card {
   position: relative;
   border: 1px solid rgba(129, 227, 255, 0.16);
@@ -7448,6 +7455,7 @@ body {
 
 .forensic-brain-link-card::before,
 .forensic-brain-suggestion-card::before,
+.forensic-brain-autonomy-card::before,
 .forensic-brain-cluster-card::before {
   content: '';
   position: absolute;
@@ -7458,6 +7466,7 @@ body {
 
 .forensic-brain-link-card,
 .forensic-brain-suggestion-card,
+.forensic-brain-autonomy-card,
 .forensic-brain-cluster-card {
   flex: 0 0 auto;
   transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
@@ -7877,8 +7886,24 @@ body {
   padding-left: 1rem;
 }
 
+.forensic-brain-autonomy-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(11rem, 0.18fr);
+  gap: 0.7rem;
+  min-height: 0;
+  padding-left: 1rem;
+}
+
 .forensic-brain-suggestion-card::before {
   background: linear-gradient(180deg, #ff4e81, rgba(129, 227, 255, 0.88));
+}
+
+.forensic-brain-autonomy-card::before {
+  background: linear-gradient(180deg, rgba(129, 227, 255, 0.95), rgba(0, 255, 65, 0.72));
+}
+
+.forensic-brain-autonomy-blocked::before {
+  background: linear-gradient(180deg, #ff4e81, rgba(255, 214, 102, 0.72));
 }
 
 .forensic-brain-suggestion-card.is-reviewed {
@@ -7894,6 +7919,13 @@ body {
 }
 
 .forensic-brain-suggestion-main {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 0.48rem;
+}
+
+.forensic-brain-autonomy-main {
   display: grid;
   align-content: start;
   min-width: 0;
@@ -7935,11 +7967,46 @@ body {
   white-space: nowrap;
 }
 
+.forensic-brain-autonomy-card h4 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--forensic-text);
+  font-size: 0.96rem;
+  font-weight: 950;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .forensic-brain-suggestion-card p {
   margin: 0;
   color: var(--forensic-text-muted);
   font-size: 0.72rem;
   line-height: 1.45;
+}
+
+.forensic-brain-autonomy-card p {
+  margin: 0;
+  color: var(--forensic-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.forensic-brain-autonomy-card .forensic-brain-suggestion-action {
+  align-content: flex-start;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.forensic-brain-autonomy-status {
+  flex: 0 0 auto;
+  border: 1px solid rgba(129, 227, 255, 0.2);
+  background: rgba(129, 227, 255, 0.06);
+  padding: 0.32rem 0.48rem;
+  color: var(--forensic-text);
+  font-size: 0.66rem;
+  font-weight: 950;
+  line-height: 1;
 }
 
 .forensic-brain-suggestion-reason {
@@ -7954,6 +8021,78 @@ body {
   color: var(--forensic-text);
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+.forensic-brain-autonomy-controls,
+.forensic-brain-autonomy-budgets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.46rem;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.13);
+  background: rgba(3, 8, 12, 0.78);
+  padding: 0.62rem 0.72rem;
+}
+
+.forensic-brain-autonomy-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  border: 1px solid rgba(129, 227, 255, 0.2);
+  background: rgba(1, 5, 8, 0.82);
+  padding: 0.42rem 0.62rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-autonomy-toggle:hover:not(:disabled),
+.forensic-brain-autonomy-toggle[aria-checked='true'] {
+  border-color: rgba(0, 255, 65, 0.42);
+  background: rgba(0, 255, 65, 0.08);
+  color: var(--forensic-text);
+}
+
+.forensic-brain-autonomy-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.forensic-brain-autonomy-toggle strong {
+  border: 1px solid rgba(129, 227, 255, 0.18);
+  background: rgba(129, 227, 255, 0.08);
+  padding: 0.18rem 0.34rem;
+  color: var(--forensic-accent);
+  font-size: 0.58rem;
+}
+
+.forensic-brain-autonomy-toggle[aria-checked='true'] strong {
+  border-color: rgba(0, 255, 65, 0.36);
+  background: rgba(0, 255, 65, 0.13);
+  color: #74ff95;
+}
+
+.forensic-brain-autonomy-budgets span {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 7.5rem;
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(129, 227, 255, 0.055);
+  padding: 0.38rem 0.48rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.56rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-autonomy-budgets strong {
+  color: var(--forensic-text);
+  font-size: 0.72rem;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .forensic-brain-thinking-action-panel {
@@ -11505,10 +11644,12 @@ body {
 
   .forensic-brain-signal-list,
   .forensic-brain-link-list,
+  .forensic-brain-autonomy-list,
   .forensic-brain-cluster-workspace {
     padding: 0.62rem;
   }
 
+  .forensic-brain-autonomy-card,
   .forensic-brain-cluster-card {
     grid-template-columns: minmax(0, 1fr);
   }
