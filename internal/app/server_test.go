@@ -69,6 +69,28 @@ func TestBrainMemoryRoutesIncludeClustersAndLinkActions(t *testing.T) {
 		t.Fatalf("expected follow-up route to include CORS header, got %q", got)
 	}
 
+	autonomyRequest := httptest.NewRequest(http.MethodOptions, "/api/brain/autonomy?investigationId=inv-current", nil)
+	autonomyRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(autonomyRecorder, autonomyRequest)
+
+	if autonomyRecorder.Code != http.StatusNoContent {
+		t.Fatalf("expected autonomy preflight to route through brain memory handler, got %d", autonomyRecorder.Code)
+	}
+	if got := autonomyRecorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected autonomy route to include CORS header, got %q", got)
+	}
+
+	autonomySettingsRequest := httptest.NewRequest(http.MethodOptions, "/api/brain/autonomy/settings", nil)
+	autonomySettingsRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(autonomySettingsRecorder, autonomySettingsRequest)
+
+	if autonomySettingsRecorder.Code != http.StatusNoContent {
+		t.Fatalf("expected autonomy settings preflight to route through brain memory handler, got %d", autonomySettingsRecorder.Code)
+	}
+	if got := autonomySettingsRecorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected autonomy settings route to include CORS header, got %q", got)
+	}
+
 	linkRequest := httptest.NewRequest(http.MethodPut, "/api/brain/links/missing/forget", nil)
 	linkRecorder := httptest.NewRecorder()
 	mux.ServeHTTP(linkRecorder, linkRequest)
