@@ -901,6 +901,105 @@ func TestBrainContradictionCueCreatesVerifySuggestion(t *testing.T) {
 	}
 }
 
+func TestBrainThinkingActionPayloadsAndOutcomesPersist(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Supplier Denial"), `{
+		"nodes":[{
+			"id":"current-denial-node",
+			"data":{
+				"title":"Current denial",
+				"summary":"[ORG:Acme Grid] denies using [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"fullText":"[ORG:Acme Grid] denies using [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"sourceURL":"https://intel.example.com/current-denial"
+			}
+		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Supplier Evidence"), `{
+		"nodes":[{
+			"id":"remembered-supplier-node",
+			"data":{
+				"title":"Older supplier evidence",
+				"summary":"Prior evidence ties [ORG:Acme Grid] to [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"fullText":"Prior evidence ties [ORG:Acme Grid] to [ORG:Northgate Cooling]. [CONTRADICTION:supplier denial]",
+				"sourceURL":"https://intel.example.com/archive-supplier"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	contradiction := findSuggestion(t, suggestions, SuggestionKindContradictionReview)
+	if len(contradiction.ReasonSamples) == 0 {
+		t.Fatalf("expected contradiction suggestion to include verification reason samples, got %#v", contradiction)
+	}
+	if !containsString(contradiction.ReasonSamples[0].CurrentNodeIDs, "current-denial-node") {
+		t.Fatalf("expected current evidence ids in contradiction reason samples, got %#v", contradiction.ReasonSamples)
+	}
+	if !containsString(contradiction.ReasonSamples[0].TargetNodeIDs, "remembered-supplier-node") {
+		t.Fatalf("expected remembered evidence ids in contradiction reason samples, got %#v", contradiction.ReasonSamples)
+	}
+
+	resolved, err := service.MarkSuggestionOutcome(contradiction.ID, SuggestionOutcomeResolved)
+	if err != nil {
+		t.Fatalf("MarkSuggestionOutcome failed: %v", err)
+	}
+	if resolved.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected resolved thinking action to be reviewed, got %#v", resolved)
+	}
+	if resolved.ReviewOutcome != SuggestionOutcomeResolved {
+		t.Fatalf("expected resolved outcome, got %#v", resolved)
+	}
+	if strings.TrimSpace(resolved.ReviewedAt) == "" || strings.TrimSpace(resolved.ResolvedAt) == "" {
+		t.Fatalf("expected reviewed and resolved timestamps, got %#v", resolved)
+	}
+
+	recomputed, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation after outcome failed: %v", err)
+	}
+	again := findSuggestionByID(t, recomputed, contradiction.ID)
+	if again.ReviewOutcome != SuggestionOutcomeResolved || again.ResolvedAt != resolved.ResolvedAt {
+		t.Fatalf("expected thinking action outcome to persist across recompute, got %#v", again)
+	}
+}
+
+func TestBrainGapSuggestionIncludesActionPayload(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+
+	gap := findSuggestion(t, suggestions, SuggestionKindGapReview)
+	if len(gap.MissingEvidence) == 0 {
+		t.Fatalf("expected gap suggestion to name missing evidence needs, got %#v", gap)
+	}
+	if !containsString(gap.MissingEvidence, SuggestionMissingCorroboration) {
+		t.Fatalf("expected gap suggestion to ask for corroboration, got %#v", gap.MissingEvidence)
+	}
+	if strings.TrimSpace(gap.SearchPrompt) == "" {
+		t.Fatalf("expected gap suggestion to include a prepared search prompt, got %#v", gap)
+	}
+	if !strings.Contains(gap.SearchPrompt, "Current Grid Case") {
+		t.Fatalf("expected search prompt to mention the current case, got %q", gap.SearchPrompt)
+	}
+}
+
 func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	timestamp := "2026-06-08T10:00:00Z"
 	clusters := []MemoryCluster{
@@ -1372,6 +1471,20 @@ func TestHandleAPIRoutesBrainSuggestions(t *testing.T) {
 	}
 	if reviewed.Status != SuggestionStatusReviewed {
 		t.Fatalf("expected reviewed status, got %#v", reviewed)
+	}
+
+	outcomeRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+suggestions[0].ID+"/outcome", strings.NewReader(`{"outcome":"verified-conflict"}`))
+	outcomeRecorder := httptest.NewRecorder()
+	HandleAPI(outcomeRecorder, outcomeRequest, service)
+	if outcomeRecorder.Code != http.StatusOK {
+		t.Fatalf("expected outcome PUT 200, got %d body=%s", outcomeRecorder.Code, outcomeRecorder.Body.String())
+	}
+	var outcome BrainSuggestion
+	if err := json.Unmarshal(outcomeRecorder.Body.Bytes(), &outcome); err != nil {
+		t.Fatalf("decode outcome suggestion failed: %v", err)
+	}
+	if outcome.ReviewOutcome != SuggestionOutcomeVerifiedConflict {
+		t.Fatalf("expected verified conflict outcome, got %#v", outcome)
 	}
 
 	dismissRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+suggestions[1].ID+"/dismiss", nil)

@@ -108,6 +108,10 @@ export interface BrainSuggestion {
   actionMode?: 'compare' | 'verify' | 'fill-gap' | 'inspect' | 'launch-follow-up' | string
   priority: 'high' | 'medium' | 'low' | string
   reason: string
+  reasonSamples?: BrainSignalReason[]
+  missingEvidence?: string[]
+  searchPrompt?: string
+  reviewOutcome?: string
   relatedSignalIds: string[]
   relatedMemoryLinkIds: string[]
   relatedClusterIds: string[]
@@ -116,6 +120,7 @@ export interface BrainSuggestion {
   updatedAt: string
   dismissedAt?: string
   reviewedAt?: string
+  resolvedAt?: string
 }
 
 export interface PrepareBrainFollowUpRequest {
@@ -360,6 +365,8 @@ const asStringArray = (value: unknown): string[] => (
 
 const normalizeBrainSuggestion = (suggestion: BrainSuggestion): BrainSuggestion => ({
   ...suggestion,
+  reasonSamples: Array.isArray(suggestion.reasonSamples) ? suggestion.reasonSamples : [],
+  missingEvidence: asStringArray(suggestion.missingEvidence),
   relatedSignalIds: asStringArray(suggestion.relatedSignalIds),
   relatedMemoryLinkIds: asStringArray(suggestion.relatedMemoryLinkIds),
   relatedClusterIds: asStringArray(suggestion.relatedClusterIds),
@@ -494,6 +501,12 @@ export const dismissBrainSuggestion = (suggestionId: string) =>
 export const reviewBrainSuggestion = (suggestionId: string) =>
   requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/review`, {
     method: 'PUT',
+  }).then(normalizeBrainSuggestion)
+
+export const markBrainSuggestionOutcome = (suggestionId: string, outcome: string) =>
+  requestJSON<BrainSuggestion>(`${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/outcome`, {
+    method: 'PUT',
+    body: JSON.stringify({ outcome }),
   }).then(normalizeBrainSuggestion)
 
 export const prepareBrainFollowUp = (request: PrepareBrainFollowUpRequest) =>

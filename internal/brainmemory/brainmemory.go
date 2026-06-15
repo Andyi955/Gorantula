@@ -60,6 +60,21 @@ const (
 	SuggestionStatusDismissed = "dismissed"
 	SuggestionStatusReviewed  = "reviewed"
 
+	SuggestionOutcomeVerifiedConflict = "verified-conflict"
+	SuggestionOutcomeResolved         = "resolved"
+	SuggestionOutcomeFalseAlarm       = "false-alarm"
+	SuggestionOutcomeNeedsSource      = "needs-source"
+	SuggestionOutcomeNeedsDate        = "needs-date"
+	SuggestionOutcomeNeedsEntity      = "needs-entity-bridge"
+	SuggestionOutcomeNeedsRelation    = "needs-relationship-bridge"
+	SuggestionOutcomeNeedsCorroborate = "needs-corroboration"
+
+	SuggestionMissingSource        = "source"
+	SuggestionMissingDate          = "date"
+	SuggestionMissingEntityBridge  = "entity-bridge"
+	SuggestionMissingRelation      = "relationship-bridge"
+	SuggestionMissingCorroboration = "corroborating-evidence"
+
 	FollowUpSourceSuggestion = "suggestion"
 
 	FollowUpStatusPrepared  = "prepared"
@@ -91,12 +106,13 @@ const (
 )
 
 var (
-	ErrSignalNotFound     = errors.New("brain signal not found")
-	ErrLinkNotFound       = errors.New("brain memory link not found")
-	ErrClusterNotFound    = errors.New("brain memory cluster not found")
-	ErrSuggestionNotFound = errors.New("brain suggestion not found")
-	ErrFollowUpNotFound   = errors.New("brain follow-up action not found")
-	ErrInvalidFollowUp    = errors.New("invalid brain follow-up request")
+	ErrSignalNotFound           = errors.New("brain signal not found")
+	ErrLinkNotFound             = errors.New("brain memory link not found")
+	ErrClusterNotFound          = errors.New("brain memory cluster not found")
+	ErrSuggestionNotFound       = errors.New("brain suggestion not found")
+	ErrFollowUpNotFound         = errors.New("brain follow-up action not found")
+	ErrInvalidFollowUp          = errors.New("invalid brain follow-up request")
+	ErrInvalidSuggestionOutcome = errors.New("invalid brain suggestion outcome")
 
 	taggedEntityPattern        = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
 	taggedContradictionPattern = regexp.MustCompile(`\[(CONTRADICTION|CONFLICT):([^\]]+)]`)
@@ -204,37 +220,46 @@ type MemoryCluster struct {
 }
 
 type BrainSuggestion struct {
-	ID                     string   `json:"id"`
-	InvestigationID        string   `json:"investigationId"`
-	Kind                   string   `json:"kind"`
-	Status                 string   `json:"status"`
-	Title                  string   `json:"title"`
-	Summary                string   `json:"summary"`
-	SuggestedAction        string   `json:"suggestedAction"`
-	Score                  float64  `json:"score"`
-	Relevance              string   `json:"relevance,omitempty"`
-	RelevanceLabel         string   `json:"relevanceLabel,omitempty"`
-	RelevanceReason        string   `json:"relevanceReason,omitempty"`
-	ThinkingGateway        string   `json:"thinkingGateway,omitempty"`
-	ThinkingLabel          string   `json:"thinkingLabel,omitempty"`
-	ThinkingReason         string   `json:"thinkingReason,omitempty"`
-	ActionMode             string   `json:"actionMode,omitempty"`
-	Priority               string   `json:"priority"`
-	Reason                 string   `json:"reason"`
-	RelatedSignalIDs       []string `json:"relatedSignalIds"`
-	RelatedMemoryLinkIDs   []string `json:"relatedMemoryLinkIds"`
-	RelatedClusterIDs      []string `json:"relatedClusterIds"`
-	TargetInvestigationIDs []string `json:"targetInvestigationIds"`
-	CreatedAt              string   `json:"createdAt"`
-	UpdatedAt              string   `json:"updatedAt"`
-	DismissedAt            string   `json:"dismissedAt,omitempty"`
-	ReviewedAt             string   `json:"reviewedAt,omitempty"`
+	ID                     string         `json:"id"`
+	InvestigationID        string         `json:"investigationId"`
+	Kind                   string         `json:"kind"`
+	Status                 string         `json:"status"`
+	Title                  string         `json:"title"`
+	Summary                string         `json:"summary"`
+	SuggestedAction        string         `json:"suggestedAction"`
+	Score                  float64        `json:"score"`
+	Relevance              string         `json:"relevance,omitempty"`
+	RelevanceLabel         string         `json:"relevanceLabel,omitempty"`
+	RelevanceReason        string         `json:"relevanceReason,omitempty"`
+	ThinkingGateway        string         `json:"thinkingGateway,omitempty"`
+	ThinkingLabel          string         `json:"thinkingLabel,omitempty"`
+	ThinkingReason         string         `json:"thinkingReason,omitempty"`
+	ActionMode             string         `json:"actionMode,omitempty"`
+	Priority               string         `json:"priority"`
+	Reason                 string         `json:"reason"`
+	ReasonSamples          []SignalReason `json:"reasonSamples"`
+	MissingEvidence        []string       `json:"missingEvidence"`
+	SearchPrompt           string         `json:"searchPrompt,omitempty"`
+	ReviewOutcome          string         `json:"reviewOutcome,omitempty"`
+	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
+	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
+	TargetInvestigationIDs []string       `json:"targetInvestigationIds"`
+	CreatedAt              string         `json:"createdAt"`
+	UpdatedAt              string         `json:"updatedAt"`
+	DismissedAt            string         `json:"dismissedAt,omitempty"`
+	ReviewedAt             string         `json:"reviewedAt,omitempty"`
+	ResolvedAt             string         `json:"resolvedAt,omitempty"`
 }
 
 type PrepareFollowUpRequest struct {
 	InvestigationID string `json:"investigationId"`
 	SourceKind      string `json:"sourceKind"`
 	SourceID        string `json:"sourceId"`
+}
+
+type SuggestionOutcomeRequest struct {
+	Outcome string `json:"outcome"`
 }
 
 type BrainFollowUpAction struct {
@@ -964,6 +989,38 @@ func (s *Service) DismissSuggestion(suggestionID string) (BrainSuggestion, error
 
 func (s *Service) MarkSuggestionReviewed(suggestionID string) (BrainSuggestion, error) {
 	return s.setSuggestionStatus(suggestionID, SuggestionStatusReviewed)
+}
+
+func (s *Service) MarkSuggestionOutcome(suggestionID string, outcome string) (BrainSuggestion, error) {
+	suggestionID = strings.TrimSpace(suggestionID)
+	outcome = strings.TrimSpace(outcome)
+	if !validSuggestionOutcome(outcome) {
+		return BrainSuggestion{}, ErrInvalidSuggestionOutcome
+	}
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return BrainSuggestion{}, err
+	}
+	suggestion, ok := suggestions[suggestionID]
+	if !ok {
+		return BrainSuggestion{}, ErrSuggestionNotFound
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	suggestion.Status = SuggestionStatusReviewed
+	suggestion.ReviewOutcome = outcome
+	suggestion.ReviewedAt = now
+	suggestion.UpdatedAt = now
+	if suggestionOutcomeIsResolved(outcome) {
+		suggestion.ResolvedAt = now
+	} else {
+		suggestion.ResolvedAt = ""
+	}
+	suggestion = normalizeSuggestionCollections(suggestion)
+	suggestions[suggestionID] = suggestion
+	if err := s.saveSuggestions(suggestions); err != nil {
+		return BrainSuggestion{}, err
+	}
+	return suggestion, nil
 }
 
 func (s *Service) FollowUpsForInvestigation(investigationID string) ([]BrainFollowUpAction, error) {
@@ -2684,6 +2741,26 @@ func (s *Service) setSuggestionStatus(suggestionID string, status string) (Brain
 	return suggestion, nil
 }
 
+func validSuggestionOutcome(outcome string) bool {
+	switch outcome {
+	case SuggestionOutcomeVerifiedConflict,
+		SuggestionOutcomeResolved,
+		SuggestionOutcomeFalseAlarm,
+		SuggestionOutcomeNeedsSource,
+		SuggestionOutcomeNeedsDate,
+		SuggestionOutcomeNeedsEntity,
+		SuggestionOutcomeNeedsRelation,
+		SuggestionOutcomeNeedsCorroborate:
+		return true
+	default:
+		return false
+	}
+}
+
+func suggestionOutcomeIsResolved(outcome string) bool {
+	return outcome == SuggestionOutcomeResolved || outcome == SuggestionOutcomeFalseAlarm
+}
+
 func (s *Service) setFollowUpStatus(actionID string, status string) (BrainFollowUpAction, error) {
 	actionID = strings.TrimSpace(actionID)
 	if actionID == "" {
@@ -2752,6 +2829,7 @@ func contradictionReviewSuggestions(
 		relevance relevanceCalibration
 		signalIDs []string
 		targetIDs []string
+		reasons   []SignalReason
 	}
 	groups := make(map[string]contradictionGroup)
 	for _, signal := range signals {
@@ -2765,6 +2843,7 @@ func contradictionReviewSuggestions(
 			group.relevance = mergeSignalGroupRelevance(group.relevance, signal)
 			group.signalIDs = append(group.signalIDs, signal.ID)
 			group.targetIDs = append(group.targetIDs, signal.TargetInvestigationID)
+			group.reasons = append(group.reasons, reason)
 			groups[reason.Value] = group
 		}
 	}
@@ -2794,6 +2873,7 @@ func contradictionReviewSuggestions(
 			RelevanceReason:        relevance.Reason,
 			Priority:               suggestionPriority(score),
 			Reason:                 fmt.Sprintf("%s may conflict with remembered evidence and needs verification.", group.label),
+			ReasonSamples:          cleanReasonSamples(group.reasons, 4),
 			RelatedSignalIDs:       cleanStringSet(group.signalIDs),
 			TargetInvestigationIDs: cleanStringSet(group.targetIDs),
 			CreatedAt:              timestamp,
@@ -3127,15 +3207,18 @@ func gapReviewSuggestion(
 	top := signals[0]
 	signalIDs := make([]string, 0, minInt(3, len(signals)))
 	targetIDs := make([]string, 0, minInt(3, len(signals)))
+	reasonSamples := make([]SignalReason, 0)
 	for _, signal := range signals {
 		signalIDs = append(signalIDs, signal.ID)
 		targetIDs = append(targetIDs, signal.TargetInvestigationID)
+		reasonSamples = append(reasonSamples, signal.Reasons...)
 		if len(signalIDs) == 3 {
 			break
 		}
 	}
 	relevance := signalRelevanceCalibration(top)
 	score := calibrateStrengthScoreForRelevance(maxFloat(top.Score, 0.42), relevance.Class)
+	missingEvidence := missingEvidenceForGapSignals(signals)
 	suggestion := BrainSuggestion{
 		ID:                     deterministicID("brain-suggestion", investigationID, SuggestionKindGapReview, strings.Join(cleanStringSet(signalIDs), ",")),
 		InvestigationID:        investigationID,
@@ -3150,12 +3233,74 @@ func gapReviewSuggestion(
 		RelevanceReason:        relevance.Reason,
 		Priority:               suggestionPriority(score),
 		Reason:                 "Active firings are present without a user decision on whether they should become durable memory.",
+		ReasonSamples:          cleanReasonSamples(reasonSamples, 5),
+		MissingEvidence:        missingEvidence,
+		SearchPrompt:           buildGapSearchPrompt(top, targetIDs, missingEvidence),
 		RelatedSignalIDs:       cleanStringSet(signalIDs),
 		TargetInvestigationIDs: cleanStringSet(targetIDs),
 		CreatedAt:              timestamp,
 		UpdatedAt:              timestamp,
 	}
 	return mergeSuggestionState(suggestion, existing, timestamp), true
+}
+
+func missingEvidenceForGapSignals(signals []BrainSignal) []string {
+	gateways := make(map[string]bool)
+	for _, signal := range signals {
+		for _, gateway := range signal.Gateways {
+			gateways[gateway] = true
+		}
+		for _, reason := range signal.Reasons {
+			gateways[reason.Gateway] = true
+		}
+	}
+	missing := make([]string, 0, 5)
+	if !gateways[GatewaySourceDomain] {
+		missing = append(missing, SuggestionMissingSource)
+	}
+	if !gateways[GatewayEntityDate] {
+		missing = append(missing, SuggestionMissingEntityBridge, SuggestionMissingDate)
+	}
+	if !gateways[GatewayRelationshipTag] {
+		missing = append(missing, SuggestionMissingRelation)
+	}
+	missing = append(missing, SuggestionMissingCorroboration)
+	return cleanStringSet(missing)
+}
+
+func buildGapSearchPrompt(top BrainSignal, targetIDs []string, missingEvidence []string) string {
+	currentTitle := nonEmptyString(top.InvestigationTitle, top.InvestigationID)
+	targets := cleanStringSet(targetIDs)
+	if len(targets) == 0 {
+		targets = []string{"remembered cases"}
+	}
+	missingLabels := make([]string, 0, len(missingEvidence))
+	for _, item := range missingEvidence {
+		missingLabels = append(missingLabels, missingEvidenceLabel(item))
+	}
+	return fmt.Sprintf(
+		"Find %s for %s against %s. Focus on bridge evidence before preparing any Rabbit Hole follow-up.",
+		strings.Join(missingLabels, ", "),
+		currentTitle,
+		strings.Join(targets, ", "),
+	)
+}
+
+func missingEvidenceLabel(value string) string {
+	switch value {
+	case SuggestionMissingSource:
+		return "a source"
+	case SuggestionMissingDate:
+		return "a date"
+	case SuggestionMissingEntityBridge:
+		return "an entity bridge"
+	case SuggestionMissingRelation:
+		return "a relationship bridge"
+	case SuggestionMissingCorroboration:
+		return "corroborating evidence"
+	default:
+		return strings.ReplaceAll(value, "-", " ")
+	}
 }
 
 func buildMemoryClusters(
@@ -3639,17 +3784,24 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 	}
 	suggestion.DismissedAt = previous.DismissedAt
 	suggestion.ReviewedAt = previous.ReviewedAt
+	suggestion.ReviewOutcome = previous.ReviewOutcome
+	suggestion.ResolvedAt = previous.ResolvedAt
 	if suggestion.Status == SuggestionStatusDismissed && suggestion.DismissedAt == "" {
 		suggestion.DismissedAt = timestamp
 	}
 	if suggestion.Status == SuggestionStatusReviewed && suggestion.ReviewedAt == "" {
 		suggestion.ReviewedAt = timestamp
 	}
+	if suggestionOutcomeIsResolved(suggestion.ReviewOutcome) && suggestion.ResolvedAt == "" {
+		suggestion.ResolvedAt = timestamp
+	}
 	return normalizeSuggestionCollections(suggestion)
 }
 
 func normalizeSuggestionCollections(suggestion BrainSuggestion) BrainSuggestion {
 	suggestion = routeSuggestionThinking(suggestion)
+	suggestion.ReasonSamples = cleanReasonSamples(suggestion.ReasonSamples, 6)
+	suggestion.MissingEvidence = cleanStringSet(suggestion.MissingEvidence)
 	suggestion.RelatedSignalIDs = cleanStringSet(suggestion.RelatedSignalIDs)
 	suggestion.RelatedMemoryLinkIDs = cleanStringSet(suggestion.RelatedMemoryLinkIDs)
 	suggestion.RelatedClusterIDs = cleanStringSet(suggestion.RelatedClusterIDs)
@@ -4072,6 +4224,14 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		case "review":
 			suggestion, err := service.MarkSuggestionReviewed(parts[3])
 			writeAPIResult(w, suggestion, err)
+		case "outcome":
+			var request SuggestionOutcomeRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				writeAPIResult(w, BrainSuggestion{}, ErrInvalidSuggestionOutcome)
+				return
+			}
+			suggestion, err := service.MarkSuggestionOutcome(parts[3], request.Outcome)
+			writeAPIResult(w, suggestion, err)
 		default:
 			http.NotFound(w, r)
 		}
@@ -4151,6 +4311,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "brain follow-up action not found", http.StatusNotFound)
 		case errors.Is(err, ErrInvalidFollowUp):
 			http.Error(w, "invalid brain follow-up request", http.StatusBadRequest)
+		case errors.Is(err, ErrInvalidSuggestionOutcome):
+			http.Error(w, "invalid brain suggestion outcome", http.StatusBadRequest)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
