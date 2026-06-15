@@ -1000,6 +1000,208 @@ func TestBrainGapSuggestionIncludesActionPayload(t *testing.T) {
 	}
 }
 
+func TestBrainAutonomySettingsPersistDefaultOff(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	if state.Settings.Mode != AutonomyModeOff {
+		t.Fatalf("expected autonomy to default off, got %#v", state.Settings)
+	}
+	if state.Settings.MaxAutoPreparedPerInvestigation != 1 {
+		t.Fatalf("expected default per-investigation budget, got %#v", state.Settings)
+	}
+	if len(state.Queue) != 0 || len(state.Audit) != 0 {
+		t.Fatalf("expected default autonomy state to have no queue/audit entries, got %#v", state)
+	}
+
+	updated, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               2,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+	if updated.Mode != AutonomyModePrepareOnly || updated.MaxActivePrepared != 2 {
+		t.Fatalf("expected prepare-only settings to persist, got %#v", updated)
+	}
+
+	reloaded, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation after settings failed: %v", err)
+	}
+	if reloaded.Settings.Mode != AutonomyModePrepareOnly || reloaded.Settings.MaxActivePrepared != 2 {
+		t.Fatalf("expected reloaded settings, got %#v", reloaded.Settings)
+	}
+}
+
+func TestBrainAutonomyPrepareOnlyCreatesQueuedFollowUp(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	initial, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	gap := findSuggestion(t, initial, SuggestionKindGapReview)
+	if _, err := service.MarkSuggestionOutcome(gap.ID, SuggestionOutcomeResolved); err != nil {
+		t.Fatalf("MarkSuggestionOutcome gap resolved failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation with autonomy failed: %v", err)
+	}
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 1 || actions[0].Status != FollowUpStatusPrepared {
+		t.Fatalf("expected one auto-prepared follow-up, got %#v", actions)
+	}
+	preparedSuggestion := findSuggestionByID(t, suggestions, actions[0].SourceID)
+	if preparedSuggestion.ActionMode != SuggestionActionLaunchFollowUp {
+		t.Fatalf("expected follow-up to use a launch-ready suggestion, got %#v", preparedSuggestion)
+	}
+
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	item := findAutonomyQueueItem(t, state.Queue, preparedSuggestion.ID)
+	if item.Decision != AutonomyDecisionPrepared || item.Status != AutonomyQueueStatusPrepared {
+		t.Fatalf("expected prepared queue item, got %#v", item)
+	}
+	if item.ActionID != actions[0].ID {
+		t.Fatalf("expected queue item to reference prepared action, got item=%#v action=%#v", item, actions[0])
+	}
+	if len(state.Audit) == 0 || state.Audit[0].Decision != AutonomyDecisionPrepared {
+		t.Fatalf("expected prepared audit entry, got %#v", state.Audit)
+	}
+}
+
+func TestBrainAutonomyLimitedBackgroundQueuesWithoutPreparing(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	initial, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	gap := findSuggestion(t, initial, SuggestionKindGapReview)
+	if _, err := service.MarkSuggestionOutcome(gap.ID, SuggestionOutcomeResolved); err != nil {
+		t.Fatalf("MarkSuggestionOutcome gap resolved failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModeLimitedBackground,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation with limited-background autonomy failed: %v", err)
+	}
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions with limited-background autonomy, got %#v", suggestions)
+	}
+
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Fatalf("expected limited-background to avoid preparing V16 follow-ups, got %#v", actions)
+	}
+
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	if len(state.Queue) != 1 || state.Queue[0].Decision != AutonomyDecisionWouldPrepare {
+		t.Fatalf("expected limited-background to queue a would-prepare decision, got %#v", state.Queue)
+	}
+}
+
+func TestBrainAutonomyBlocksUnresolvedGapSuggestions(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation with blocker failed: %v", err)
+	}
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions with blocker, got %#v", suggestions)
+	}
+
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Fatalf("expected unresolved gap to block auto-prepare, got %#v", actions)
+	}
+
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	if len(state.Queue) != 1 {
+		t.Fatalf("expected one blocked autonomy queue item, got %#v", state.Queue)
+	}
+	queuedSuggestion := findSuggestionByID(t, suggestions, state.Queue[0].SuggestionID)
+	if queuedSuggestion.ActionMode != SuggestionActionLaunchFollowUp {
+		t.Fatalf("expected blocked queue item to point at a launch-ready suggestion, got %#v", queuedSuggestion)
+	}
+	item := findAutonomyQueueItem(t, state.Queue, queuedSuggestion.ID)
+	if item.Decision != AutonomyDecisionBlocked || !containsString(item.Blockers, AutonomyBlockerUnresolvedGap) {
+		t.Fatalf("expected unresolved-gap blocker, got %#v", item)
+	}
+}
+
 func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	timestamp := "2026-06-08T10:00:00Z"
 	clusters := []MemoryCluster{
@@ -1627,6 +1829,54 @@ func TestHandleAPIRoutesBrainFollowUps(t *testing.T) {
 	}
 }
 
+func TestHandleAPIRoutesBrainAutonomy(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+
+	updateRequest := httptest.NewRequest(
+		http.MethodPut,
+		"/api/brain/autonomy/settings",
+		strings.NewReader(`{"mode":"prepare-only","maxAutoPreparedPerInvestigation":2,"maxActivePrepared":4}`),
+	)
+	updateRecorder := httptest.NewRecorder()
+	HandleAPI(updateRecorder, updateRequest, service)
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected autonomy settings PUT 200, got %d body=%s", updateRecorder.Code, updateRecorder.Body.String())
+	}
+	var updated BrainAutonomySettings
+	if err := json.Unmarshal(updateRecorder.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode autonomy settings failed: %v", err)
+	}
+	if updated.Mode != AutonomyModePrepareOnly || updated.MaxActivePrepared != 4 {
+		t.Fatalf("expected persisted autonomy settings, got %#v", updated)
+	}
+
+	stateRequest := httptest.NewRequest(http.MethodGet, "/api/brain/autonomy?investigationId=inv-current", nil)
+	stateRecorder := httptest.NewRecorder()
+	HandleAPI(stateRecorder, stateRequest, service)
+	if stateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected autonomy GET 200, got %d body=%s", stateRecorder.Code, stateRecorder.Body.String())
+	}
+	var state BrainAutonomyState
+	if err := json.Unmarshal(stateRecorder.Body.Bytes(), &state); err != nil {
+		t.Fatalf("decode autonomy state failed: %v", err)
+	}
+	if state.Settings.Mode != AutonomyModePrepareOnly || state.Settings.MaxAutoPreparedPerInvestigation != 2 {
+		t.Fatalf("expected autonomy state to include settings, got %#v", state)
+	}
+
+	invalidRequest := httptest.NewRequest(
+		http.MethodPut,
+		"/api/brain/autonomy/settings",
+		strings.NewReader(`{"mode":"launch-everything"}`),
+	)
+	invalidRecorder := httptest.NewRecorder()
+	HandleAPI(invalidRecorder, invalidRequest, service)
+	if invalidRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid autonomy settings 400, got %d body=%s", invalidRecorder.Code, invalidRecorder.Body.String())
+	}
+}
+
 func TestDismissAndPromotePersistAcrossRecompute(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "abdomen_vault")
 	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Case"), `{
@@ -1832,6 +2082,17 @@ func findSuggestionByID(t *testing.T, suggestions []BrainSuggestion, id string) 
 	}
 	t.Fatalf("expected suggestion id=%q in %#v", id, suggestions)
 	return BrainSuggestion{}
+}
+
+func findAutonomyQueueItem(t *testing.T, items []BrainAutonomyQueueItem, suggestionID string) BrainAutonomyQueueItem {
+	t.Helper()
+	for _, item := range items {
+		if item.SuggestionID == suggestionID {
+			return item
+		}
+	}
+	t.Fatalf("expected autonomy queue item for suggestion id=%q in %#v", suggestionID, items)
+	return BrainAutonomyQueueItem{}
 }
 
 func findMemoryStrength(t *testing.T, strengths []BrainMemoryStrength, targetID string) BrainMemoryStrength {
