@@ -3476,7 +3476,7 @@ export default function BrainSignalsPanel({
             >
               <ShieldCheck size={13} />
               <span>Auto-prepare Rabbit Holes</span>
-              <strong>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
+              <strong className={autonomyStateClass}>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
             </button>
           </div>
 
@@ -3768,11 +3768,12 @@ export default function BrainSignalsPanel({
     )
   }
 
-  const brainViewOptions: Array<{ view: BrainView; label: string; detail: string }> = [
+  const autonomyStateClass = autonomyAutoPrepareEnabled ? 'forensic-brain-state-on' : 'forensic-brain-state-off'
+  const brainViewOptions: Array<{ view: BrainView; label: string; detail: string; detailClassName?: string }> = [
     { view: 'focus', label: 'Focus', detail: attentionSummary?.focus ? formatAttentionState(attentionSummary.dominantState) : 'summary' },
     { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
     { view: 'moves', label: 'Next Moves', detail: `${activeSuggestions.length} active` },
-    { view: 'autonomy', label: 'Autonomy Queue', detail: autonomyAutoPrepareEnabled ? 'auto on' : 'auto off' },
+    { view: 'autonomy', label: 'Autonomy Queue', detail: autonomyAutoPrepareEnabled ? 'auto on' : 'auto off', detailClassName: autonomyStateClass },
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
     { view: 'links', label: 'Memory Links', detail: `${allLinkGroups.length} saved` },
     { view: 'clusters', label: 'Memory Clusters', detail: `${visibleClusters.length} visible` },
@@ -3825,7 +3826,7 @@ export default function BrainSignalsPanel({
             onClick={() => setActiveBrainView(option.view)}
           >
             <span>{option.label}</span>
-            <strong>{option.detail}</strong>
+            <strong className={option.detailClassName}>{option.detail}</strong>
           </button>
         ))}
       </nav>

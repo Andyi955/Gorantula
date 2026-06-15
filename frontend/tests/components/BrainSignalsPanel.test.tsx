@@ -920,6 +920,8 @@ describe('BrainSignalsPanel', () => {
     await openBrainView(user, /autonomy queue view/i)
 
     const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    const brainSubnav = screen.getByTestId('brain-subnav')
+    expect(within(brainSubnav).getByText('auto off')).toHaveClass('forensic-brain-state-off')
     expect(autonomyView).toHaveClass('forensic-brain-panel-autonomy-compact')
     expect(autonomyView).toHaveTextContent('Autonomy Queue')
     expect(autonomyView).toHaveTextContent('Auto-prepare Off')
@@ -939,6 +941,7 @@ describe('BrainSignalsPanel', () => {
 
     const toggle = within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(within(toggle).getByText('Off')).toHaveClass('forensic-brain-state-off')
 
     await user.click(toggle)
 
@@ -953,6 +956,8 @@ describe('BrainSignalsPanel', () => {
       expect(within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i })).toHaveAttribute('aria-checked', 'true')
     })
     expect(autonomyView).toHaveTextContent('Auto-prepare On')
+    expect(within(brainSubnav).getByText('auto on')).toHaveClass('forensic-brain-state-on')
+    expect(within(toggle).getByText('On')).toHaveClass('forensic-brain-state-on')
 
     await user.click(within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i }))
     expect(fetchMock).toHaveBeenCalledWith(

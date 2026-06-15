@@ -5975,6 +5975,18 @@ body {
   color: var(--forensic-accent);
 }
 
+.forensic-brain-subnav strong.forensic-brain-state-on,
+.forensic-brain-subnav button.is-active strong.forensic-brain-state-on,
+.forensic-brain-state-on {
+  color: #74ff95;
+}
+
+.forensic-brain-subnav strong.forensic-brain-state-off,
+.forensic-brain-subnav button.is-active strong.forensic-brain-state-off,
+.forensic-brain-state-off {
+  color: #ff5d91;
+}
+
 .forensic-brain-active-view {
   flex: 1 1 0;
   min-height: 0;
@@ -8280,6 +8292,12 @@ body {
   padding: 0.28rem 0.36rem;
   color: #74ff95;
   font-size: 0.58rem;
+}
+
+.forensic-brain-autonomy-toggle strong.forensic-brain-state-off {
+  border-color: rgba(255, 78, 129, 0.54);
+  background: rgba(255, 78, 129, 0.08);
+  color: #ff5d91;
 }
 
 .forensic-brain-autonomy-toggle[aria-checked='true'] strong {
