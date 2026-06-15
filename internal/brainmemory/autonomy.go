@@ -1,0 +1,469 @@
+package brainmemory
+
+import (
+	"errors"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Andyi955/Gorantula/models"
+)
+
+const (
+	autonomySettingsFilename = "autonomy_settings.json"
+	autonomyQueueFilename    = "autonomy_queue.json"
+	autonomyAuditFilename    = "autonomy_audit.json"
+
+	AutonomyModeOff               = "off"
+	AutonomyModeSuggestOnly       = "suggest-only"
+	AutonomyModePrepareOnly       = "prepare-only"
+	AutonomyModeAskBeforeLaunch   = "ask-before-launch"
+	AutonomyModeLimitedBackground = "limited-background"
+
+	AutonomyDecisionPrepared     = "prepared"
+	AutonomyDecisionWouldPrepare = "would-prepare"
+	AutonomyDecisionBlocked      = "blocked"
+
+	AutonomyQueueStatusPrepared = "prepared"
+	AutonomyQueueStatusWaiting  = "waiting"
+	AutonomyQueueStatusBlocked  = "blocked"
+
+	AutonomyBlockerUnresolvedGap           = "unresolved-gap"
+	AutonomyBlockerUnresolvedContradiction = "unresolved-contradiction"
+	AutonomyBlockerDuplicateFollowUp       = "duplicate-follow-up"
+	AutonomyBlockerInvestigationBudget     = "investigation-budget"
+	AutonomyBlockerActivePreparedBudget    = "active-prepared-budget"
+	AutonomyBlockerUnsafeRelevance         = "unsafe-relevance"
+)
+
+var ErrInvalidAutonomySettings = errors.New("invalid brain autonomy settings")
+
+type BrainAutonomySettings struct {
+	Mode                            string `json:"mode"`
+	MaxAutoPreparedPerInvestigation int    `json:"maxAutoPreparedPerInvestigation"`
+	MaxActivePrepared               int    `json:"maxActivePrepared"`
+	UpdatedAt                       string `json:"updatedAt,omitempty"`
+}
+
+type BrainAutonomyQueueItem struct {
+	ID                     string   `json:"id"`
+	InvestigationID        string   `json:"investigationId"`
+	SuggestionID           string   `json:"suggestionId"`
+	ActionID               string   `json:"actionId,omitempty"`
+	Decision               string   `json:"decision"`
+	Status                 string   `json:"status"`
+	Mode                   string   `json:"mode"`
+	Title                  string   `json:"title"`
+	Summary                string   `json:"summary"`
+	Score                  float64  `json:"score"`
+	Relevance              string   `json:"relevance,omitempty"`
+	Reason                 string   `json:"reason"`
+	Blockers               []string `json:"blockers"`
+	TargetInvestigationIDs []string `json:"targetInvestigationIds"`
+	CreatedAt              string   `json:"createdAt"`
+	UpdatedAt              string   `json:"updatedAt"`
+}
+
+type BrainAutonomyAuditEntry struct {
+	ID              string   `json:"id"`
+	QueueItemID     string   `json:"queueItemId"`
+	InvestigationID string   `json:"investigationId"`
+	SuggestionID    string   `json:"suggestionId"`
+	ActionID        string   `json:"actionId,omitempty"`
+	Decision        string   `json:"decision"`
+	Mode            string   `json:"mode"`
+	Reason          string   `json:"reason"`
+	Blockers        []string `json:"blockers"`
+	CreatedAt       string   `json:"createdAt"`
+}
+
+type BrainAutonomyState struct {
+	Settings BrainAutonomySettings     `json:"settings"`
+	Queue    []BrainAutonomyQueueItem  `json:"queue"`
+	Audit    []BrainAutonomyAuditEntry `json:"audit"`
+}
+
+func (s *Service) AutonomyForInvestigation(investigationID string) (BrainAutonomyState, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return BrainAutonomyState{}, models.ErrInvalidInvestigationID
+	}
+	if _, err := s.store.LoadMetadata(investigationID); err != nil {
+		return BrainAutonomyState{}, err
+	}
+
+	settings, err := s.loadAutonomySettings()
+	if err != nil {
+		return BrainAutonomyState{}, err
+	}
+	queue, err := s.loadAutonomyQueue()
+	if err != nil {
+		return BrainAutonomyState{}, err
+	}
+	audit, err := s.loadAutonomyAudit()
+	if err != nil {
+		return BrainAutonomyState{}, err
+	}
+
+	return BrainAutonomyState{
+		Settings: settings,
+		Queue:    autonomyQueueForInvestigation(queue, investigationID),
+		Audit:    autonomyAuditForInvestigation(audit, investigationID),
+	}, nil
+}
+
+func (s *Service) UpdateAutonomySettings(settings BrainAutonomySettings) (BrainAutonomySettings, error) {
+	settings = normalizeAutonomySettings(settings)
+	if !validAutonomyMode(settings.Mode) {
+		return BrainAutonomySettings{}, ErrInvalidAutonomySettings
+	}
+	settings.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.saveAutonomySettings(settings); err != nil {
+		return BrainAutonomySettings{}, err
+	}
+	return settings, nil
+}
+
+func (s *Service) evaluateAutonomyForInvestigation(investigationID string, suggestions []BrainSuggestion, timestamp string) error {
+	settings, err := s.loadAutonomySettings()
+	if err != nil {
+		return err
+	}
+	if settings.Mode == AutonomyModeOff {
+		return nil
+	}
+
+	candidate, ok := firstLaunchReadyAutonomySuggestion(suggestions)
+	if !ok {
+		return nil
+	}
+
+	queue, err := s.loadAutonomyQueue()
+	if err != nil {
+		return err
+	}
+	audit, err := s.loadAutonomyAudit()
+	if err != nil {
+		return err
+	}
+	followUps, err := s.loadFollowUps()
+	if err != nil {
+		return err
+	}
+
+	blockers := autonomyBlockers(candidate, suggestions, followUps, queue, settings, investigationID)
+	item := buildAutonomyQueueItem(candidate, settings, timestamp)
+	item.Blockers = blockers
+
+	if len(blockers) > 0 {
+		item.Decision = AutonomyDecisionBlocked
+		item.Status = AutonomyQueueStatusBlocked
+		item.Reason = "Autonomy did not prepare this follow-up because safety blockers are still active."
+		return s.saveAutonomyDecision(queue, audit, item)
+	}
+
+	if settings.Mode == AutonomyModeSuggestOnly || settings.Mode == AutonomyModeLimitedBackground {
+		item.Decision = AutonomyDecisionWouldPrepare
+		item.Status = AutonomyQueueStatusWaiting
+		item.Reason = "Autonomy would prepare this focused follow-up, but the current mode does not permit V16 preparation."
+		return s.saveAutonomyDecision(queue, audit, item)
+	}
+
+	action, err := s.PrepareFollowUp(PrepareFollowUpRequest{
+		InvestigationID: investigationID,
+		SourceKind:      FollowUpSourceSuggestion,
+		SourceID:        candidate.ID,
+	})
+	if err != nil {
+		return err
+	}
+	item.ActionID = action.ID
+	item.Decision = AutonomyDecisionPrepared
+	item.Status = AutonomyQueueStatusPrepared
+	item.Reason = "Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed."
+	return s.saveAutonomyDecision(queue, audit, item)
+}
+
+func (s *Service) saveAutonomyDecision(
+	queue map[string]BrainAutonomyQueueItem,
+	audit map[string]BrainAutonomyAuditEntry,
+	item BrainAutonomyQueueItem,
+) error {
+	previous := queue[item.ID]
+	if strings.TrimSpace(previous.CreatedAt) != "" {
+		item.CreatedAt = previous.CreatedAt
+	}
+	item = normalizeAutonomyQueueItem(item)
+	queue[item.ID] = item
+
+	entry := BrainAutonomyAuditEntry{
+		ID:              deterministicID("brain-autonomy-audit", item.ID, item.Decision, item.ActionID, strings.Join(item.Blockers, ",")),
+		QueueItemID:     item.ID,
+		InvestigationID: item.InvestigationID,
+		SuggestionID:    item.SuggestionID,
+		ActionID:        item.ActionID,
+		Decision:        item.Decision,
+		Mode:            item.Mode,
+		Reason:          item.Reason,
+		Blockers:        cleanStringSet(item.Blockers),
+		CreatedAt:       item.UpdatedAt,
+	}
+	audit[entry.ID] = entry
+
+	if err := s.saveAutonomyQueue(queue); err != nil {
+		return err
+	}
+	return s.saveAutonomyAudit(audit)
+}
+
+func firstLaunchReadyAutonomySuggestion(suggestions []BrainSuggestion) (BrainSuggestion, bool) {
+	for _, suggestion := range suggestions {
+		suggestion = normalizeSuggestionCollections(suggestion)
+		if suggestion.Status != SuggestionStatusActive {
+			continue
+		}
+		if suggestion.ActionMode != SuggestionActionLaunchFollowUp {
+			continue
+		}
+		if !autonomySuggestionHasSafeRelevance(suggestion) {
+			continue
+		}
+		if suggestion.Score < 0.78 || len(suggestion.TargetInvestigationIDs) == 0 {
+			continue
+		}
+		return suggestion, true
+	}
+	return BrainSuggestion{}, false
+}
+
+func autonomyBlockers(
+	candidate BrainSuggestion,
+	suggestions []BrainSuggestion,
+	followUps map[string]BrainFollowUpAction,
+	queue map[string]BrainAutonomyQueueItem,
+	settings BrainAutonomySettings,
+	investigationID string,
+) []string {
+	blockers := make([]string, 0)
+	if !autonomySuggestionHasSafeRelevance(candidate) {
+		blockers = append(blockers, AutonomyBlockerUnsafeRelevance)
+	}
+	if autonomyHasUnresolvedAction(suggestions, SuggestionActionFillGap) {
+		blockers = append(blockers, AutonomyBlockerUnresolvedGap)
+	}
+	if autonomyHasUnresolvedAction(suggestions, SuggestionActionVerify) {
+		blockers = append(blockers, AutonomyBlockerUnresolvedContradiction)
+	}
+	if autonomyHasExistingFollowUp(candidate.ID, followUps) {
+		blockers = append(blockers, AutonomyBlockerDuplicateFollowUp)
+	}
+	if countAutonomyPreparedForInvestigation(queue, investigationID) >= settings.MaxAutoPreparedPerInvestigation {
+		blockers = append(blockers, AutonomyBlockerInvestigationBudget)
+	}
+	if countActivePreparedFollowUps(followUps) >= settings.MaxActivePrepared {
+		blockers = append(blockers, AutonomyBlockerActivePreparedBudget)
+	}
+	return cleanStringSet(blockers)
+}
+
+func autonomyHasUnresolvedAction(suggestions []BrainSuggestion, actionMode string) bool {
+	for _, suggestion := range suggestions {
+		suggestion = normalizeSuggestionCollections(suggestion)
+		if suggestion.Status != SuggestionStatusActive || suggestion.ActionMode != actionMode {
+			continue
+		}
+		if suggestionOutcomeIsResolved(suggestion.ReviewOutcome) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func autonomyHasExistingFollowUp(suggestionID string, followUps map[string]BrainFollowUpAction) bool {
+	for _, action := range followUps {
+		action = normalizeFollowUpAction(action)
+		if action.SourceKind == FollowUpSourceSuggestion && action.SourceID == suggestionID && action.Status != FollowUpStatusCancelled {
+			return true
+		}
+	}
+	return false
+}
+
+func countAutonomyPreparedForInvestigation(queue map[string]BrainAutonomyQueueItem, investigationID string) int {
+	count := 0
+	for _, item := range queue {
+		if item.InvestigationID == investigationID && item.Decision == AutonomyDecisionPrepared && item.Status == AutonomyQueueStatusPrepared {
+			count++
+		}
+	}
+	return count
+}
+
+func countActivePreparedFollowUps(followUps map[string]BrainFollowUpAction) int {
+	count := 0
+	for _, action := range followUps {
+		action = normalizeFollowUpAction(action)
+		if action.Status == FollowUpStatusPrepared {
+			count++
+		}
+	}
+	return count
+}
+
+func buildAutonomyQueueItem(suggestion BrainSuggestion, settings BrainAutonomySettings, timestamp string) BrainAutonomyQueueItem {
+	return BrainAutonomyQueueItem{
+		ID:                     deterministicID("brain-autonomy", suggestion.InvestigationID, suggestion.ID),
+		InvestigationID:        suggestion.InvestigationID,
+		SuggestionID:           suggestion.ID,
+		Mode:                   settings.Mode,
+		Title:                  suggestion.Title,
+		Summary:                suggestion.Summary,
+		Score:                  suggestion.Score,
+		Relevance:              suggestion.Relevance,
+		TargetInvestigationIDs: cleanStringSet(suggestion.TargetInvestigationIDs),
+		CreatedAt:              timestamp,
+		UpdatedAt:              timestamp,
+	}
+}
+
+func autonomySuggestionHasSafeRelevance(suggestion BrainSuggestion) bool {
+	relevance := normalizeRelevance(suggestion.Relevance)
+	return relevance == RelevanceStrongMemory || relevance == RelevancePossibleBridge
+}
+
+func normalizeAutonomySettings(settings BrainAutonomySettings) BrainAutonomySettings {
+	settings.Mode = strings.TrimSpace(settings.Mode)
+	if settings.Mode == "" {
+		settings.Mode = AutonomyModeOff
+	}
+	if settings.MaxAutoPreparedPerInvestigation <= 0 {
+		settings.MaxAutoPreparedPerInvestigation = 1
+	}
+	if settings.MaxActivePrepared <= 0 {
+		settings.MaxActivePrepared = 3
+	}
+	return settings
+}
+
+func validAutonomyMode(mode string) bool {
+	switch mode {
+	case AutonomyModeOff,
+		AutonomyModeSuggestOnly,
+		AutonomyModePrepareOnly,
+		AutonomyModeAskBeforeLaunch,
+		AutonomyModeLimitedBackground:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeAutonomyQueueItem(item BrainAutonomyQueueItem) BrainAutonomyQueueItem {
+	item.Blockers = cleanStringSet(item.Blockers)
+	item.TargetInvestigationIDs = cleanStringSet(item.TargetInvestigationIDs)
+	return item
+}
+
+func autonomyQueueForInvestigation(queue map[string]BrainAutonomyQueueItem, investigationID string) []BrainAutonomyQueueItem {
+	result := make([]BrainAutonomyQueueItem, 0)
+	for _, item := range queue {
+		item = normalizeAutonomyQueueItem(item)
+		if item.InvestigationID == investigationID {
+			result = append(result, item)
+		}
+	}
+	sortAutonomyQueue(result)
+	return result
+}
+
+func autonomyAuditForInvestigation(audit map[string]BrainAutonomyAuditEntry, investigationID string) []BrainAutonomyAuditEntry {
+	result := make([]BrainAutonomyAuditEntry, 0)
+	for _, entry := range audit {
+		entry.Blockers = cleanStringSet(entry.Blockers)
+		if entry.InvestigationID == investigationID {
+			result = append(result, entry)
+		}
+	}
+	sortAutonomyAudit(result)
+	return result
+}
+
+func sortAutonomyQueue(items []BrainAutonomyQueueItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].UpdatedAt == items[j].UpdatedAt {
+			return items[i].Title < items[j].Title
+		}
+		return items[i].UpdatedAt > items[j].UpdatedAt
+	})
+}
+
+func sortAutonomyAudit(items []BrainAutonomyAuditEntry) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].CreatedAt == items[j].CreatedAt {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].CreatedAt > items[j].CreatedAt
+	})
+}
+
+func (s *Service) loadAutonomySettings() (BrainAutonomySettings, error) {
+	settings := BrainAutonomySettings{}
+	if err := s.loadBrainJSON(autonomySettingsFilename, &settings); err != nil {
+		return BrainAutonomySettings{}, err
+	}
+	return normalizeAutonomySettings(settings), nil
+}
+
+func (s *Service) saveAutonomySettings(settings BrainAutonomySettings) error {
+	return s.saveBrainJSON(autonomySettingsFilename, normalizeAutonomySettings(settings))
+}
+
+func (s *Service) loadAutonomyQueue() (map[string]BrainAutonomyQueueItem, error) {
+	items := []BrainAutonomyQueueItem{}
+	if err := s.loadBrainJSON(autonomyQueueFilename, &items); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]BrainAutonomyQueueItem, len(items))
+	for _, item := range items {
+		item = normalizeAutonomyQueueItem(item)
+		if strings.TrimSpace(item.ID) != "" {
+			byID[item.ID] = item
+		}
+	}
+	return byID, nil
+}
+
+func (s *Service) saveAutonomyQueue(queue map[string]BrainAutonomyQueueItem) error {
+	items := make([]BrainAutonomyQueueItem, 0, len(queue))
+	for _, item := range queue {
+		items = append(items, normalizeAutonomyQueueItem(item))
+	}
+	sortAutonomyQueue(items)
+	return s.saveBrainJSON(autonomyQueueFilename, items)
+}
+
+func (s *Service) loadAutonomyAudit() (map[string]BrainAutonomyAuditEntry, error) {
+	items := []BrainAutonomyAuditEntry{}
+	if err := s.loadBrainJSON(autonomyAuditFilename, &items); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]BrainAutonomyAuditEntry, len(items))
+	for _, item := range items {
+		item.Blockers = cleanStringSet(item.Blockers)
+		if strings.TrimSpace(item.ID) != "" {
+			byID[item.ID] = item
+		}
+	}
+	return byID, nil
+}
+
+func (s *Service) saveAutonomyAudit(audit map[string]BrainAutonomyAuditEntry) error {
+	items := make([]BrainAutonomyAuditEntry, 0, len(audit))
+	for _, item := range audit {
+		item.Blockers = cleanStringSet(item.Blockers)
+		items = append(items, item)
+	}
+	sortAutonomyAudit(items)
+	return s.saveBrainJSON(autonomyAuditFilename, items)
+}

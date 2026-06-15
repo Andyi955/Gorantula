@@ -979,6 +979,9 @@ func (s *Service) SuggestionsForInvestigation(investigationID string) ([]BrainSu
 	if err := s.saveSuggestions(nextSuggestions); err != nil {
 		return nil, err
 	}
+	if err := s.evaluateAutonomyForInvestigation(investigationID, visible, now); err != nil {
+		return nil, err
+	}
 	sortSuggestions(visible)
 	return visible, nil
 }
@@ -4179,8 +4182,31 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, actions, err)
 		return
 	}
+	if path == "api/brain/autonomy" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		state, err := service.AutonomyForInvestigation(r.URL.Query().Get("investigationId"))
+		writeAPIResult(w, state, err)
+		return
+	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "autonomy" && parts[3] == "settings" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var settings BrainAutonomySettings
+		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+			writeAPIResult(w, BrainAutonomySettings{}, ErrInvalidAutonomySettings)
+			return
+		}
+		updated, err := service.UpdateAutonomySettings(settings)
+		writeAPIResult(w, updated, err)
+		return
+	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "followups" && parts[3] == "prepare" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -4313,6 +4339,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "invalid brain follow-up request", http.StatusBadRequest)
 		case errors.Is(err, ErrInvalidSuggestionOutcome):
 			http.Error(w, "invalid brain suggestion outcome", http.StatusBadRequest)
+		case errors.Is(err, ErrInvalidAutonomySettings):
+			http.Error(w, "invalid brain autonomy settings", http.StatusBadRequest)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
