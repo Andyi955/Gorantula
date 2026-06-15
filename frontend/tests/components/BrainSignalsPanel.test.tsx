@@ -501,6 +501,7 @@ const installBrainFetch = ({
   attention = null,
   promoteLink = link,
   autonomy = makeAutonomyState(),
+  autonomySettingsResponse,
 }: {
   signals?: BrainSignal[]
   links?: MemoryLink[]
@@ -511,6 +512,7 @@ const installBrainFetch = ({
   attention?: BrainAttentionSummary | null
   promoteLink?: MemoryLink
   autonomy?: BrainAutonomyState
+  autonomySettingsResponse?: Promise<Response>
 } = {}) => {
   let currentAutonomy = autonomy
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -542,6 +544,9 @@ const installBrainFetch = ({
       return Promise.resolve(jsonResponse(attention) as Response)
     }
     if (method === 'PUT' && url.endsWith('/api/brain/autonomy/settings')) {
+      if (autonomySettingsResponse) {
+        return autonomySettingsResponse
+      }
       const body = typeof init?.body === 'string'
         ? JSON.parse(init.body) as Partial<BrainAutonomyState['settings']>
         : {}
@@ -950,6 +955,41 @@ describe('BrainSignalsPanel', () => {
         body: expect.stringContaining('"mode":"off"'),
       }),
     )
+  })
+
+  it('keeps the autonomy switch clickable-looking while saving', async () => {
+    let resolveSettingsUpdate: (response: Response) => void = () => {}
+    const pendingSettingsUpdate = new Promise<Response>((resolve) => {
+      resolveSettingsUpdate = resolve
+    })
+    const user = userEvent.setup()
+    installBrainFetch({
+      suggestions: [suggestion],
+      autonomy: makeAutonomyState(),
+      autonomySettingsResponse: pendingSettingsUpdate,
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /autonomy queue view/i)
+
+    const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    const toggle = within(autonomyView).getByRole('switch', { name: /auto-prepare rabbit holes/i })
+
+    fireEvent.click(toggle)
+
+    expect(toggle).not.toBeDisabled()
+    expect(toggle).toHaveAttribute('aria-disabled', 'true')
+
+    await act(async () => {
+      resolveSettingsUpdate(jsonResponse({
+        mode: 'prepare-only',
+        maxAutoPreparedPerInvestigation: 1,
+        maxActivePrepared: 3,
+        updatedAt: '2026-06-06T10:02:00Z',
+      }) as Response)
+      await pendingSettingsUpdate
+    })
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-disabled', 'false'))
   })
 
   it('shows thinking gateway cues and blocks non-launchable next moves', async () => {

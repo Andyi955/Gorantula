@@ -8042,22 +8042,23 @@ body {
   background: rgba(1, 5, 8, 0.82);
   padding: 0.42rem 0.62rem;
   color: var(--forensic-text-muted);
+  cursor: pointer;
   font-size: 0.62rem;
   font-weight: 950;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.forensic-brain-autonomy-toggle:hover:not(:disabled),
+.forensic-brain-autonomy-toggle:hover:not([aria-disabled='true']),
 .forensic-brain-autonomy-toggle[aria-checked='true'] {
   border-color: rgba(0, 255, 65, 0.42);
   background: rgba(0, 255, 65, 0.08);
   color: var(--forensic-text);
 }
 
-.forensic-brain-autonomy-toggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.forensic-brain-autonomy-toggle[aria-disabled='true'] {
+  cursor: progress;
+  opacity: 0.68;
 }
 
 .forensic-brain-autonomy-toggle strong {

@@ -1318,6 +1318,9 @@ export default function BrainSignalsPanel({
   }
 
   const handleToggleAutonomyAutoPrepare = async () => {
+    if (busyAction === 'autonomy-toggle') {
+      return
+    }
     const nextMode: BrainAutonomyMode = autonomyAutoPrepareEnabled ? 'off' : 'prepare-only'
     setBusyAction('autonomy-toggle')
     setError(null)
@@ -3456,9 +3459,9 @@ export default function BrainSignalsPanel({
               type="button"
               role="switch"
               aria-checked={autonomyAutoPrepareEnabled}
+              aria-disabled={busyAction === 'autonomy-toggle'}
               aria-label="Auto-prepare Rabbit Holes"
               className="forensic-brain-autonomy-toggle"
-              disabled={busyAction === 'autonomy-toggle'}
               onClick={() => void handleToggleAutonomyAutoPrepare()}
             >
               <ShieldCheck size={13} />
