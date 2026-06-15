@@ -548,6 +548,17 @@ const installBrainFetch = ({
       const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
       return Promise.resolve(jsonResponse({ ...target, status: 'dismissed', dismissedAt: '2026-06-06T10:00:00Z' }) as Response)
     }
+    if (method === 'PUT' && url.includes('/api/brain/suggestions/') && url.endsWith('/outcome')) {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { outcome?: string } : {}
+      const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
+      return Promise.resolve(jsonResponse({
+        ...target,
+        status: 'reviewed',
+        reviewOutcome: body.outcome,
+        reviewedAt: '2026-06-06T10:00:00Z',
+        resolvedAt: body.outcome === 'resolved' || body.outcome === 'false-alarm' ? '2026-06-06T10:00:00Z' : undefined,
+      }) as Response)
+    }
     if (method === 'PUT' && url.includes('/api/brain/suggestions/') && url.endsWith('/review')) {
       const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
       return Promise.resolve(jsonResponse({ ...target, status: 'reviewed', reviewedAt: '2026-06-06T10:00:00Z' }) as Response)
@@ -862,6 +873,85 @@ describe('BrainSignalsPanel', () => {
     expect(within(gapCard as HTMLElement).getByText(/needs sharper bridge evidence/i)).toBeInTheDocument()
     expect(within(gapCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole find missing bridge evidence/i })).not.toBeInTheDocument()
     expect(within(gapCard as HTMLElement).getByText('Find bridge before Rabbit Hole')).toBeInTheDocument()
+  })
+
+  it('lets users record thinking action outcomes and prepare gap search prompts', async () => {
+    const user = userEvent.setup()
+    const contradictionSuggestion = makeSuggestion({
+      id: 'brain-suggestion-contradiction-action',
+      kind: 'contradiction-review',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Verify conflicting claim',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.88,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      reasonSamples: [{
+        gateway: 'contradiction',
+        value: 'supplier denial',
+        label: 'supplier denial',
+        detail: 'Contradiction cue "supplier denial" appears in both investigations and needs verification.',
+        currentNodeIds: ['current-denial-node'],
+        targetNodeIds: ['remembered-supplier-node'],
+      }],
+    })
+    const gapSuggestion = makeSuggestion({
+      id: 'brain-suggestion-gap-action',
+      kind: 'gap-review',
+      title: 'Find missing bridge evidence',
+      summary: 'Broad context fired, but there is not enough bridge evidence yet.',
+      suggestedAction: 'Find bridge evidence',
+      relevance: 'distant-echo',
+      relevanceLabel: 'Distant Echo',
+      thinkingGateway: 'fill-gap',
+      thinkingLabel: 'Fill memory gap',
+      thinkingReason: 'This cue needs sharper bridge evidence before it should steer a Rabbit Hole follow-up.',
+      actionMode: 'fill-gap',
+      priority: 'medium',
+      score: 0.54,
+      reason: 'Active firings need bridge evidence before they become durable memory.',
+      missingEvidence: ['source', 'corroborating-evidence'],
+      searchPrompt: 'Find a source and corroborating evidence for Current Grid Case against inv-older before launching follow-up work.',
+    })
+    const fetchMock = installBrainFetch({ suggestions: [contradictionSuggestion, gapSuggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const contradictionCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Verify possible contradiction'),
+    ) as HTMLElement
+    expect(contradictionCard).toBeTruthy()
+    expect(within(contradictionCard).getByText('Verification Queue')).toBeInTheDocument()
+    expect(contradictionCard).toHaveTextContent('current-denial-node')
+    expect(contradictionCard).toHaveTextContent('remembered-supplier-node')
+
+    await user.click(within(contradictionCard).getByRole('button', { name: /mark verified conflict/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/suggestions/brain-suggestion-contradiction-action/outcome',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"outcome":"verified-conflict"'),
+      }),
+    )
+    expect(await screen.findByText('Outcome: Verified Conflict')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /show lower-priority moves \(1\)/i }))
+    const gapCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Find missing bridge evidence'),
+    ) as HTMLElement
+    expect(gapCard).toBeTruthy()
+    expect(within(gapCard).getByText('Gap Checklist')).toBeInTheDocument()
+    expect(gapCard).toHaveTextContent('Source')
+    expect(gapCard).toHaveTextContent('Corroborating Evidence')
+
+    await user.click(within(gapCard).getByRole('button', { name: /prepare search prompt/i }))
+    expect(gapCard).toHaveTextContent('Find a source and corroborating evidence for Current Grid Case')
   })
 
   it('cancels a prepared focused follow-up without launching', async () => {

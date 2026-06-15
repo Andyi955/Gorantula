@@ -7956,6 +7956,115 @@ body {
   line-height: 1.35;
 }
 
+.forensic-brain-thinking-action-panel {
+  display: grid;
+  gap: 0.5rem;
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  background: rgba(8, 14, 24, 0.48);
+  padding: 0.58rem;
+}
+
+.forensic-brain-thinking-action-header,
+.forensic-brain-thinking-action-buttons,
+.forensic-brain-gap-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.forensic-brain-thinking-action-header {
+  justify-content: space-between;
+}
+
+.forensic-brain-thinking-action-header > span:first-child,
+.forensic-brain-action-outcome {
+  color: #81e3ff;
+  font-size: 0.56rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-action-outcome {
+  border: 1px solid rgba(0, 255, 65, 0.2);
+  background: rgba(0, 255, 65, 0.07);
+  padding: 0.22rem 0.34rem;
+  color: #74ff95;
+}
+
+.forensic-brain-verification-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.forensic-brain-verification-item {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.forensic-brain-verification-item strong {
+  color: var(--forensic-text);
+  font-size: 0.72rem;
+}
+
+.forensic-brain-verification-item p,
+.forensic-brain-thinking-action-panel > p,
+.forensic-brain-search-prompt {
+  margin: 0;
+  color: var(--forensic-text-muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.forensic-brain-evidence-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.forensic-brain-evidence-pair span {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  border: 1px solid rgba(129, 227, 255, 0.1);
+  background: rgba(129, 227, 255, 0.045);
+  padding: 0.42rem;
+  color: #ff6f9f;
+  font-size: 0.54rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-evidence-pair b {
+  overflow-wrap: anywhere;
+  color: var(--forensic-text);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.forensic-brain-gap-list span {
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  background: rgba(129, 227, 255, 0.06);
+  padding: 0.24rem 0.38rem;
+  color: var(--forensic-text);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.forensic-brain-action-compact {
+  min-width: 0;
+}
+
+.forensic-brain-search-prompt {
+  border-left: 2px solid rgba(129, 227, 255, 0.45);
+  background: rgba(129, 227, 255, 0.045);
+  padding: 0.48rem 0.58rem;
+}
+
 .forensic-brain-suggestion-action {
   display: flex;
   align-items: center;

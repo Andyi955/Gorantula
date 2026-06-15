@@ -45,6 +45,7 @@ import {
   forgetBrainLink,
   hideBrainCluster,
   launchBrainFollowUp,
+  markBrainSuggestionOutcome,
   prepareBrainFollowUp,
   promoteBrainSignal,
   reviewBrainSuggestion,
@@ -265,6 +266,61 @@ const formatSuggestionActionNote = (suggestion: BrainSuggestion) => {
   }
 }
 
+const formatSuggestionReviewOutcome = (outcome?: string) => {
+  switch (outcome) {
+    case 'verified-conflict':
+      return 'Verified Conflict'
+    case 'resolved':
+      return 'Resolved'
+    case 'false-alarm':
+      return 'False Alarm'
+    case 'needs-source':
+      return 'Needs Source'
+    case 'needs-date':
+      return 'Needs Date'
+    case 'needs-entity-bridge':
+      return 'Needs Entity Bridge'
+    case 'needs-relationship-bridge':
+      return 'Needs Relationship Bridge'
+    case 'needs-corroboration':
+      return 'Needs Corroboration'
+    default:
+      return outcome ? outcome.replace(/-/g, ' ') : ''
+  }
+}
+
+const formatMissingEvidence = (value: string) => {
+  switch (value) {
+    case 'source':
+      return 'Source'
+    case 'date':
+      return 'Date'
+    case 'entity-bridge':
+      return 'Entity Bridge'
+    case 'relationship-bridge':
+      return 'Relationship Bridge'
+    case 'corroborating-evidence':
+      return 'Corroborating Evidence'
+    default:
+      return value.replace(/-/g, ' ')
+  }
+}
+
+const missingEvidenceOutcome = (value: string) => {
+  switch (value) {
+    case 'source':
+      return 'needs-source'
+    case 'date':
+      return 'needs-date'
+    case 'entity-bridge':
+      return 'needs-entity-bridge'
+    case 'relationship-bridge':
+      return 'needs-relationship-bridge'
+    default:
+      return 'needs-corroboration'
+  }
+}
+
 const formatAttentionState = (state: string) => {
   switch (state) {
     case 'reinforced':
@@ -355,6 +411,7 @@ export default function BrainSignalsPanel({
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
+  const [expandedPromptSuggestionId, setExpandedPromptSuggestionId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('focus')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
@@ -399,6 +456,7 @@ export default function BrainSignalsPanel({
       setSelectedBrainMapNodeId(null)
       setCompareSelection(null)
       setPendingFollowUp(null)
+      setExpandedPromptSuggestionId(null)
       setIsAttentionOpen(false)
       return
     }
@@ -450,6 +508,9 @@ export default function BrainSignalsPanel({
       )
       setSelectedClusterId((current) =>
         current && nextClusters.some((cluster) => cluster.id === current) ? current : null,
+      )
+      setExpandedPromptSuggestionId((current) =>
+        current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
       )
       setPendingFollowUp((current) => current ? nextFollowUps.find((action) => action.id === current.id) || null : null)
     } catch {
@@ -1083,6 +1144,12 @@ export default function BrainSignalsPanel({
     }
   }
 
+  const updateSuggestion = (updatedSuggestion: BrainSuggestion) => {
+    setSuggestions((current) =>
+      sortSuggestionsForView(current.map((candidate) => (candidate.id === updatedSuggestion.id ? updatedSuggestion : candidate))),
+    )
+  }
+
   const handleDismissSuggestion = async (suggestion: BrainSuggestion) => {
     setBusyAction(`suggestion-dismiss:${suggestion.id}`)
     setError(null)
@@ -1101,11 +1168,22 @@ export default function BrainSignalsPanel({
     setError(null)
     try {
       const reviewed = await reviewBrainSuggestion(suggestion.id)
-      setSuggestions((current) =>
-        sortSuggestionsForView(current.map((candidate) => (candidate.id === reviewed.id ? reviewed : candidate))),
-      )
+      updateSuggestion(reviewed)
     } catch {
       setError('Brain suggestion review failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleSuggestionOutcome = async (suggestion: BrainSuggestion, outcome: string) => {
+    setBusyAction(`suggestion-outcome:${suggestion.id}:${outcome}`)
+    setError(null)
+    try {
+      const updated = await markBrainSuggestionOutcome(suggestion.id, outcome)
+      updateSuggestion(updated)
+    } catch {
+      setError('Brain suggestion outcome failed')
     } finally {
       setBusyAction(null)
     }
@@ -2893,6 +2971,119 @@ export default function BrainSignalsPanel({
     )
   }
 
+  const renderSuggestionOutcomeChip = (suggestion: BrainSuggestion) => {
+    if (!suggestion.reviewOutcome) {
+      return null
+    }
+    return (
+      <span className="forensic-brain-action-outcome">
+        Outcome: {formatSuggestionReviewOutcome(suggestion.reviewOutcome)}
+      </span>
+    )
+  }
+
+  const renderSuggestionOutcomeButton = (suggestion: BrainSuggestion, outcome: string, label: string) => (
+    <button
+      type="button"
+      className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+      disabled={busyAction === `suggestion-outcome:${suggestion.id}:${outcome}` || suggestion.reviewOutcome === outcome}
+      onClick={() => void handleSuggestionOutcome(suggestion, outcome)}
+    >
+      {label}
+    </button>
+  )
+
+  const renderVerificationActionPanel = (suggestion: BrainSuggestion) => {
+    const reasonSamples = (suggestion.reasonSamples || []).slice(0, 2)
+
+    return (
+      <section className="forensic-brain-thinking-action-panel" aria-label="Verification action">
+        <div className="forensic-brain-thinking-action-header">
+          <span>Verification Queue</span>
+          {renderSuggestionOutcomeChip(suggestion)}
+        </div>
+        {reasonSamples.length > 0 ? (
+          <div className="forensic-brain-verification-list">
+            {reasonSamples.map((reason) => (
+              <div key={`${reason.gateway}:${reason.value}:${reason.detail}`} className="forensic-brain-verification-item">
+                <strong>{reason.label || reason.value || 'Verification clue'}</strong>
+                <p>{reason.detail}</p>
+                <div className="forensic-brain-evidence-pair">
+                  <span>
+                    Current evidence
+                    <b>{formatNodeIds(reason.currentNodeIds)}</b>
+                  </span>
+                  <span>
+                    Remembered evidence
+                    <b>{formatNodeIds(reason.targetNodeIds)}</b>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p>No matched evidence ids recorded for this verification cue.</p>
+        )}
+        <div className="forensic-brain-thinking-action-buttons">
+          {renderSuggestionOutcomeButton(suggestion, 'verified-conflict', 'Mark Verified Conflict')}
+          {renderSuggestionOutcomeButton(suggestion, 'resolved', 'Mark Resolved')}
+          {renderSuggestionOutcomeButton(suggestion, 'false-alarm', 'Mark False Alarm')}
+          {renderSuggestionOutcomeButton(suggestion, 'needs-source', 'Needs Source')}
+        </div>
+      </section>
+    )
+  }
+
+  const renderGapActionPanel = (suggestion: BrainSuggestion) => {
+    const missingEvidence = suggestion.missingEvidence || []
+    const promptIsOpen = expandedPromptSuggestionId === suggestion.id
+
+    return (
+      <section className="forensic-brain-thinking-action-panel" aria-label="Gap action">
+        <div className="forensic-brain-thinking-action-header">
+          <span>Gap Checklist</span>
+          {renderSuggestionOutcomeChip(suggestion)}
+        </div>
+        {missingEvidence.length > 0 ? (
+          <div className="forensic-brain-gap-list">
+            {missingEvidence.map((item) => (
+              <span key={item}>{formatMissingEvidence(item)}</span>
+            ))}
+          </div>
+        ) : (
+          <p>No specific gap category was recorded.</p>
+        )}
+        <div className="forensic-brain-thinking-action-buttons">
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+            disabled={!suggestion.searchPrompt}
+            onClick={() => setExpandedPromptSuggestionId((current) => (current === suggestion.id ? null : suggestion.id))}
+          >
+            Prepare Search Prompt
+          </button>
+          {missingEvidence.slice(0, 3).map((item) =>
+            renderSuggestionOutcomeButton(suggestion, missingEvidenceOutcome(item), `Mark ${formatMissingEvidence(item)}`),
+          )}
+        </div>
+        {promptIsOpen && suggestion.searchPrompt && (
+          <p className="forensic-brain-search-prompt">{suggestion.searchPrompt}</p>
+        )}
+      </section>
+    )
+  }
+
+  const renderSuggestionThinkingAction = (suggestion: BrainSuggestion) => {
+    switch (suggestion.actionMode) {
+      case 'verify':
+        return renderVerificationActionPanel(suggestion)
+      case 'fill-gap':
+        return renderGapActionPanel(suggestion)
+      default:
+        return renderSuggestionOutcomeChip(suggestion)
+    }
+  }
+
   const renderSuggestionCard = (suggestion: BrainSuggestion) => {
     const canOpenTarget = suggestion.targetInvestigationIds.length > 0 && !!onOpenInvestigation
     const canViewCluster = suggestion.relatedClusterIds.length > 0
@@ -2958,6 +3149,7 @@ export default function BrainSignalsPanel({
               </span>
             )}
           </div>
+          {renderSuggestionThinkingAction(suggestion)}
         </div>
 
         <aside className="forensic-brain-suggestion-action">
