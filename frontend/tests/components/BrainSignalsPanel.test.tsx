@@ -1139,11 +1139,9 @@ describe('BrainSignalsPanel', () => {
     await user.click(within(autonomyCard).getByRole('button', { name: /go to gap checklist/i }))
 
     expect(screen.getByRole('heading', { name: /next moves/i })).toBeInTheDocument()
-    const lowerPriorityMoves = screen.getByTestId('brain-lower-priority-moves-section')
-    expect(within(lowerPriorityMoves).getByRole('button', { name: /hide lower-priority moves \(1\)/i })).toHaveAttribute('aria-expanded', 'true')
-    const gapCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
-      card.textContent?.includes('Find missing bridge evidence'),
-    ) as HTMLElement
+    let nextMoveCards = screen.getAllByTestId('brain-suggestion-card')
+    const gapCard = nextMoveCards[0]
+    expect(gapCard).toHaveTextContent('Find missing bridge evidence')
     expect(gapCard).toBeTruthy()
     expect(gapCard).toHaveClass('is-autonomy-blocker-focus')
     expect(gapCard).toHaveTextContent('Unblocks Autonomy')
@@ -1152,9 +1150,9 @@ describe('BrainSignalsPanel', () => {
     await openBrainView(user, /autonomy queue view/i)
     await user.click(within(await screen.findByTestId('brain-autonomy-view')).getByRole('button', { name: /go to verification queue/i }))
 
-    const contradictionCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
-      card.textContent?.includes('Verify possible contradiction'),
-    ) as HTMLElement
+    nextMoveCards = screen.getAllByTestId('brain-suggestion-card')
+    const contradictionCard = nextMoveCards[0]
+    expect(contradictionCard).toHaveTextContent('Verify possible contradiction')
     expect(contradictionCard).toBeTruthy()
     expect(contradictionCard).toHaveClass('is-autonomy-blocker-focus')
     expect(contradictionCard).toHaveTextContent('Unblocks Autonomy')

@@ -749,6 +749,25 @@ export default function BrainSignalsPanel({
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
     [rankedSuggestions],
   )
+  const focusedReviewSuggestion = useMemo(() => {
+    if (!focusedReviewSuggestionId) {
+      return null
+    }
+
+    return activeSuggestions.find((suggestion) => suggestion.id === focusedReviewSuggestionId) || null
+  }, [activeSuggestions, focusedReviewSuggestionId])
+  const visiblePrioritySuggestions = useMemo(
+    () => focusedReviewSuggestion
+      ? prioritySuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
+      : prioritySuggestions,
+    [focusedReviewSuggestion, prioritySuggestions],
+  )
+  const visibleLowerPrioritySuggestions = useMemo(
+    () => focusedReviewSuggestion
+      ? lowerPrioritySuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
+      : lowerPrioritySuggestions,
+    [focusedReviewSuggestion, lowerPrioritySuggestions],
+  )
   const findAutonomyBlockerReviewSuggestion = useCallback((blocker: string) => {
     const reviewMode = autonomyBlockerReviewMode(blocker)
     if (!reviewMode) {
@@ -3659,8 +3678,9 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <div className="forensic-brain-suggestion-list">
-              {prioritySuggestions.map(renderSuggestionCard)}
-              {lowerPrioritySuggestions.length > 0 && (
+              {focusedReviewSuggestion && renderSuggestionCard(focusedReviewSuggestion)}
+              {visiblePrioritySuggestions.map(renderSuggestionCard)}
+              {visibleLowerPrioritySuggestions.length > 0 && (
                 <div data-testid="brain-lower-priority-moves-section" className="forensic-brain-lower-priority">
                   <button
                     type="button"
@@ -3669,11 +3689,11 @@ export default function BrainSignalsPanel({
                     onClick={() => setShowLowerPrioritySuggestions((current) => !current)}
                   >
                     {showLowerPrioritySuggestions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {showLowerPrioritySuggestions ? 'Hide' : 'Show'} lower-priority moves ({lowerPrioritySuggestions.length})
+                    {showLowerPrioritySuggestions ? 'Hide' : 'Show'} lower-priority moves ({visibleLowerPrioritySuggestions.length})
                   </button>
                   {showLowerPrioritySuggestions && (
                     <div className="forensic-brain-lower-priority-list">
-                      {lowerPrioritySuggestions.map(renderSuggestionCard)}
+                      {visibleLowerPrioritySuggestions.map(renderSuggestionCard)}
                     </div>
                   )}
                 </div>
