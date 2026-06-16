@@ -1136,7 +1136,7 @@ describe('BrainSignalsPanel', () => {
     expect(autonomyCard).toHaveTextContent('How to unblock')
     expect(autonomyCard).toHaveTextContent('This Rabbit Hole is paused until the blocker review is resolved or marked false alarm.')
 
-    await user.click(within(autonomyCard).getByRole('button', { name: /open gap checklist/i }))
+    await user.click(within(autonomyCard).getByRole('button', { name: /go to gap checklist/i }))
 
     expect(screen.getByRole('heading', { name: /next moves/i })).toBeInTheDocument()
     const lowerPriorityMoves = screen.getByTestId('brain-lower-priority-moves-section')
@@ -1146,16 +1146,18 @@ describe('BrainSignalsPanel', () => {
     ) as HTMLElement
     expect(gapCard).toBeTruthy()
     expect(gapCard).toHaveClass('is-autonomy-blocker-focus')
+    expect(gapCard).toHaveTextContent('Unblocks Autonomy')
     expect(within(gapCard).getByText('Gap Checklist')).toBeInTheDocument()
 
     await openBrainView(user, /autonomy queue view/i)
-    await user.click(within(await screen.findByTestId('brain-autonomy-view')).getByRole('button', { name: /open verification queue/i }))
+    await user.click(within(await screen.findByTestId('brain-autonomy-view')).getByRole('button', { name: /go to verification queue/i }))
 
     const contradictionCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
       card.textContent?.includes('Verify possible contradiction'),
     ) as HTMLElement
     expect(contradictionCard).toBeTruthy()
     expect(contradictionCard).toHaveClass('is-autonomy-blocker-focus')
+    expect(contradictionCard).toHaveTextContent('Unblocks Autonomy')
     expect(within(contradictionCard).getByText('Verification Queue')).toBeInTheDocument()
   })
 

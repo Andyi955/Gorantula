@@ -10,6 +10,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
+  ArrowRight,
   Bell,
   Brain,
   ChevronDown,
@@ -381,11 +382,11 @@ const autonomyBlockerReviewMode = (blocker: string) => {
 const autonomyBlockerReviewLabel = (blocker: string) => {
   switch (blocker) {
     case 'unresolved-gap':
-      return 'Open Gap Checklist'
+      return 'Go to Gap Checklist'
     case 'unresolved-contradiction':
-      return 'Open Verification Queue'
+      return 'Go to Verification Queue'
     default:
-      return `Open ${formatAutonomyBlocker(blocker)} Review`
+      return `Go to ${formatAutonomyBlocker(blocker)} Review`
   }
 }
 
@@ -3266,6 +3267,11 @@ export default function BrainSignalsPanel({
                 {suggestion.thinkingLabel}
               </span>
             )}
+            {isAutonomyBlockerFocus && (
+              <span className="forensic-brain-autonomy-unblock-target-chip">
+                Unblocks Autonomy
+              </span>
+            )}
             <strong>{suggestion.priority}</strong>
           </div>
           <h4>{suggestion.title}</h4>
@@ -3482,7 +3488,7 @@ export default function BrainSignalsPanel({
                       className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
                       onClick={() => handleOpenAutonomyBlockerReview(blocker)}
                     >
-                      <ExternalLink size={12} />
+                      <ArrowRight size={12} />
                       {autonomyBlockerReviewLabel(blocker)}
                     </button>
                   ))}

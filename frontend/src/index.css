@@ -7903,6 +7903,25 @@ body {
   color: var(--forensic-accent);
 }
 
+.forensic-brain-autonomy-unblock-target-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid rgba(255, 199, 72, 0.56);
+  background: rgba(255, 199, 72, 0.09);
+  padding: 0.22rem 0.38rem;
+  color: #ffd66a;
+  font-size: 0.55rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.forensic-brain-suggestion-topline .forensic-brain-autonomy-unblock-target-chip {
+  color: #ffd66a;
+}
+
 .forensic-brain-cluster-chip-row {
   display: flex;
   flex-wrap: wrap;
