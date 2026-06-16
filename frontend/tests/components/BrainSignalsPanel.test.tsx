@@ -1044,6 +1044,121 @@ describe('BrainSignalsPanel', () => {
     }))
   })
 
+  it('opens the matching blocker review from a blocked autonomy card', async () => {
+    const user = userEvent.setup()
+    const launchSuggestion = makeSuggestion({
+      id: 'brain-suggestion-launch-blocked',
+      kind: 'cluster-review',
+      title: 'Review blocked memory cluster',
+      summary: 'Agibot has a strong memory cluster, but autonomy is paused.',
+      suggestedAction: 'Compare memory before launch',
+      actionMode: 'launch-follow-up',
+      priority: 'high',
+      relevance: 'strong-memory',
+      relevanceLabel: 'Strong Memory',
+      score: 0.98,
+      reason: 'A focused follow-up is blocked until review cues are handled.',
+    })
+    const contradictionSuggestion = makeSuggestion({
+      id: 'brain-suggestion-contradiction-action',
+      kind: 'contradiction-review',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Verify conflicting claim',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.88,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      reasonSamples: [{
+        gateway: 'contradiction',
+        value: 'supplier denial',
+        label: 'supplier denial',
+        detail: 'Contradiction cue "supplier denial" appears in both investigations and needs verification.',
+        currentNodeIds: ['current-denial-node'],
+        targetNodeIds: ['remembered-supplier-node'],
+      }],
+    })
+    const gapSuggestion = makeSuggestion({
+      id: 'brain-suggestion-gap-action',
+      kind: 'gap-review',
+      title: 'Find missing bridge evidence',
+      summary: 'Broad context fired, but there is not enough bridge evidence yet.',
+      suggestedAction: 'Find bridge evidence',
+      relevance: 'distant-echo',
+      relevanceLabel: 'Distant Echo',
+      thinkingGateway: 'fill-gap',
+      thinkingLabel: 'Fill memory gap',
+      thinkingReason: 'This cue needs sharper bridge evidence before it should steer a Rabbit Hole follow-up.',
+      actionMode: 'fill-gap',
+      priority: 'medium',
+      score: 0.54,
+      reason: 'Active firings need bridge evidence before they become durable memory.',
+      missingEvidence: ['source', 'corroborating-evidence'],
+    })
+    const autonomy = makeAutonomyState({
+      settings: {
+        mode: 'prepare-only',
+        maxAutoPreparedPerInvestigation: 1,
+        maxActivePrepared: 3,
+        updatedAt: '2026-06-05T12:00:00Z',
+      },
+      queue: [{
+        id: 'brain-autonomy-blocked-review',
+        investigationId: 'inv-current',
+        suggestionId: launchSuggestion.id,
+        decision: 'blocked',
+        status: 'blocked',
+        mode: 'prepare-only',
+        title: 'Review Agibot memory cluster',
+        summary: 'Agibot links 7 investigations through entity/date recall.',
+        score: 0.98,
+        relevance: 'strong-memory',
+        reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
+        blockers: ['unresolved-gap', 'unresolved-contradiction'],
+        targetInvestigationIds: ['inv-older'],
+        createdAt: '2026-06-05T12:06:00Z',
+        updatedAt: '2026-06-05T12:06:00Z',
+      }],
+    })
+    installBrainFetch({
+      suggestions: [launchSuggestion, contradictionSuggestion, gapSuggestion],
+      autonomy,
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /autonomy queue view/i)
+
+    const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    const autonomyCard = within(autonomyView).getByTestId('brain-autonomy-card')
+    expect(autonomyCard).toHaveTextContent('How to unblock')
+    expect(autonomyCard).toHaveTextContent('This Rabbit Hole is paused until the blocker review is resolved or marked false alarm.')
+
+    await user.click(within(autonomyCard).getByRole('button', { name: /open gap checklist/i }))
+
+    expect(screen.getByRole('heading', { name: /next moves/i })).toBeInTheDocument()
+    const lowerPriorityMoves = screen.getByTestId('brain-lower-priority-moves-section')
+    expect(within(lowerPriorityMoves).getByRole('button', { name: /hide lower-priority moves \(1\)/i })).toHaveAttribute('aria-expanded', 'true')
+    const gapCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Find missing bridge evidence'),
+    ) as HTMLElement
+    expect(gapCard).toBeTruthy()
+    expect(gapCard).toHaveClass('is-autonomy-blocker-focus')
+    expect(within(gapCard).getByText('Gap Checklist')).toBeInTheDocument()
+
+    await openBrainView(user, /autonomy queue view/i)
+    await user.click(within(await screen.findByTestId('brain-autonomy-view')).getByRole('button', { name: /open verification queue/i }))
+
+    const contradictionCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
+      card.textContent?.includes('Verify possible contradiction'),
+    ) as HTMLElement
+    expect(contradictionCard).toBeTruthy()
+    expect(contradictionCard).toHaveClass('is-autonomy-blocker-focus')
+    expect(within(contradictionCard).getByText('Verification Queue')).toBeInTheDocument()
+  })
+
   it('keeps the autonomy switch clickable-looking while saving', async () => {
     let resolveSettingsUpdate: (response: Response) => void = () => {}
     const pendingSettingsUpdate = new Promise<Response>((resolve) => {

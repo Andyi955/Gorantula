@@ -367,6 +367,28 @@ const formatAutonomyBlocker = (blocker: string) => {
   }
 }
 
+const autonomyBlockerReviewMode = (blocker: string) => {
+  switch (blocker) {
+    case 'unresolved-gap':
+      return 'fill-gap'
+    case 'unresolved-contradiction':
+      return 'verify'
+    default:
+      return ''
+  }
+}
+
+const autonomyBlockerReviewLabel = (blocker: string) => {
+  switch (blocker) {
+    case 'unresolved-gap':
+      return 'Open Gap Checklist'
+    case 'unresolved-contradiction':
+      return 'Open Verification Queue'
+    default:
+      return `Open ${formatAutonomyBlocker(blocker)} Review`
+  }
+}
+
 const formatAttentionState = (state: string) => {
   switch (state) {
     case 'reinforced':
@@ -459,6 +481,7 @@ export default function BrainSignalsPanel({
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
   const [expandedPromptSuggestionId, setExpandedPromptSuggestionId] = useState<string | null>(null)
+  const [focusedReviewSuggestionId, setFocusedReviewSuggestionId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('focus')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
@@ -505,6 +528,7 @@ export default function BrainSignalsPanel({
       setCompareSelection(null)
       setPendingFollowUp(null)
       setExpandedPromptSuggestionId(null)
+      setFocusedReviewSuggestionId(null)
       setIsAttentionOpen(false)
       return
     }
@@ -565,6 +589,9 @@ export default function BrainSignalsPanel({
         current && nextClusters.some((cluster) => cluster.id === current) ? current : null,
       )
       setExpandedPromptSuggestionId((current) =>
+        current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
+      )
+      setFocusedReviewSuggestionId((current) =>
         current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
       )
       setPendingFollowUp((current) => current ? nextFollowUps.find((action) => action.id === current.id) || null : null)
@@ -721,6 +748,30 @@ export default function BrainSignalsPanel({
     () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
     [rankedSuggestions],
   )
+  const findAutonomyBlockerReviewSuggestion = useCallback((blocker: string) => {
+    const reviewMode = autonomyBlockerReviewMode(blocker)
+    if (!reviewMode) {
+      return null
+    }
+
+    return activeSuggestions.find((candidate) =>
+      candidate.actionMode === reviewMode &&
+      candidate.reviewOutcome !== 'resolved' &&
+      candidate.reviewOutcome !== 'false-alarm',
+    ) || null
+  }, [activeSuggestions])
+  const handleOpenAutonomyBlockerReview = useCallback((blocker: string) => {
+    const reviewSuggestion = findAutonomyBlockerReviewSuggestion(blocker)
+    if (!reviewSuggestion) {
+      return
+    }
+
+    setFocusedReviewSuggestionId(reviewSuggestion.id)
+    if (lowerPrioritySuggestions.some((candidate) => candidate.id === reviewSuggestion.id)) {
+      setShowLowerPrioritySuggestions(true)
+    }
+    setActiveBrainView('moves')
+  }, [findAutonomyBlockerReviewSuggestion, lowerPrioritySuggestions])
   const followUpsBySourceId = useMemo(() => {
     const bySource = new Map<string, BrainFollowUpAction>()
     followUps.forEach((action) => {
@@ -3188,6 +3239,7 @@ export default function BrainSignalsPanel({
     const canViewSignal = suggestion.relatedSignalIds.length > 0
     const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
+    const isAutonomyBlockerFocus = focusedReviewSuggestionId === suggestion.id
     const relevance = normalizeRelevance(suggestion.relevance)
     const canPrepareFollowUp = suggestion.actionMode === 'launch-follow-up' && !isSpeculativeRelevance(suggestion.relevance)
     const followUpAction = followUpsBySourceId.get(suggestion.id)
@@ -3201,7 +3253,7 @@ export default function BrainSignalsPanel({
       <article
         key={suggestion.id}
         data-testid="brain-suggestion-card"
-        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} forensic-brain-relevance-${relevance} ${isReviewed ? 'is-reviewed' : ''}`}
+        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} forensic-brain-relevance-${relevance} ${isReviewed ? 'is-reviewed' : ''} ${isAutonomyBlockerFocus ? 'is-autonomy-blocker-focus' : ''}`}
       >
         <div className="forensic-brain-suggestion-main">
           <div className="forensic-brain-suggestion-topline">
@@ -3366,6 +3418,9 @@ export default function BrainSignalsPanel({
     const suggestion = rankedSuggestions.find((candidate) => candidate.id === item.suggestionId) || null
     const canOpenTarget = item.targetInvestigationIds.length > 0 && !!onOpenInvestigation
     const reviewLabel = item.approvalRequired ? 'Review and Approve Rabbit Hole' : 'Review Rabbit Hole'
+    const blockerReviewActions = Array.from(new Set(item.blockers))
+      .map((blocker) => ({ blocker, suggestion: findAutonomyBlockerReviewSuggestion(blocker) }))
+      .filter((entry): entry is { blocker: string; suggestion: BrainSuggestion } => !!entry.suggestion)
 
     return (
       <article
@@ -3412,6 +3467,33 @@ export default function BrainSignalsPanel({
               </span>
             )}
           </div>
+          {item.blockers.length > 0 && (
+            <section className="forensic-brain-autonomy-unblock" aria-label="How to unblock this autonomy decision">
+              <div>
+                <span>How to unblock</span>
+                <p>This Rabbit Hole is paused until the blocker review is resolved or marked false alarm.</p>
+              </div>
+              {blockerReviewActions.length > 0 ? (
+                <div className="forensic-brain-autonomy-unblock-actions">
+                  {blockerReviewActions.map(({ blocker }) => (
+                    <button
+                      key={blocker}
+                      type="button"
+                      className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+                      onClick={() => handleOpenAutonomyBlockerReview(blocker)}
+                    >
+                      <ExternalLink size={12} />
+                      {autonomyBlockerReviewLabel(blocker)}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="forensic-brain-autonomy-unblock-empty">
+                  Open Next Moves and resolve the matching review, then refresh Brain.
+                </p>
+              )}
+            </section>
+          )}
         </div>
         <aside data-testid="brain-autonomy-card-rail" className="forensic-brain-suggestion-action forensic-brain-autonomy-rail">
           <div className="forensic-brain-autonomy-rail-meta">
