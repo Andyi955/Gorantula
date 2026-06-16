@@ -1093,8 +1093,59 @@ func TestBrainAutonomyPrepareOnlyCreatesQueuedFollowUp(t *testing.T) {
 	if item.ActionID != actions[0].ID {
 		t.Fatalf("expected queue item to reference prepared action, got item=%#v action=%#v", item, actions[0])
 	}
+	if actions[0].Status == FollowUpStatusLaunched {
+		t.Fatalf("expected autonomy to require user approval before launch, got %#v", actions[0])
+	}
+	if !strings.Contains(strings.ToLower(item.Reason), "approve") {
+		t.Fatalf("expected prepared autonomy item to explain approval requirement, got %q", item.Reason)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal autonomy item failed: %v", err)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal autonomy item payload failed: %v", err)
+	}
+	if payload["approvalRequired"] != true {
+		t.Fatalf("expected autonomy queue payload to require approval, got %#v", payload)
+	}
 	if len(state.Audit) == 0 || state.Audit[0].Decision != AutonomyDecisionPrepared {
 		t.Fatalf("expected prepared audit entry, got %#v", state.Audit)
+	}
+}
+
+func TestBrainAutonomyRequiresHighConfidencePossibleBridge(t *testing.T) {
+	lowConfidenceBridge := BrainSuggestion{
+		ID:                     "brain-suggestion-bridge-low",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Title:                  "Compare possible bridge",
+		Summary:                "A possible bridge exists but confidence is not high yet.",
+		Score:                  0.82,
+		Relevance:              RelevancePossibleBridge,
+		ActionMode:             SuggestionActionLaunchFollowUp,
+		TargetInvestigationIDs: []string{"inv-older"},
+	}
+	if candidate, ok := firstLaunchReadyAutonomySuggestion([]BrainSuggestion{lowConfidenceBridge}); ok {
+		t.Fatalf("expected low-confidence possible bridge to be withheld, got %#v", candidate)
+	}
+
+	highConfidenceBridge := lowConfidenceBridge
+	highConfidenceBridge.ID = "brain-suggestion-bridge-high"
+	highConfidenceBridge.Score = 0.88
+	candidate, ok := firstLaunchReadyAutonomySuggestion([]BrainSuggestion{highConfidenceBridge})
+	if !ok || candidate.ID != highConfidenceBridge.ID {
+		t.Fatalf("expected high-confidence possible bridge to pass, got ok=%v candidate=%#v", ok, candidate)
+	}
+
+	strongMemory := lowConfidenceBridge
+	strongMemory.ID = "brain-suggestion-strong"
+	strongMemory.Score = 0.80
+	strongMemory.Relevance = RelevanceStrongMemory
+	candidate, ok = firstLaunchReadyAutonomySuggestion([]BrainSuggestion{strongMemory})
+	if !ok || candidate.ID != strongMemory.ID {
+		t.Fatalf("expected strong memory at controlled threshold to pass, got ok=%v candidate=%#v", ok, candidate)
 	}
 }
 

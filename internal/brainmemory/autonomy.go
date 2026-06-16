@@ -14,6 +14,9 @@ const (
 	autonomyQueueFilename    = "autonomy_queue.json"
 	autonomyAuditFilename    = "autonomy_audit.json"
 
+	autonomyStrongMemoryThreshold        = 0.78
+	autonomyPossibleBridgeHighConfidence = 0.86
+
 	AutonomyModeOff               = "off"
 	AutonomyModeSuggestOnly       = "suggest-only"
 	AutonomyModePrepareOnly       = "prepare-only"
@@ -59,22 +62,24 @@ type BrainAutonomyQueueItem struct {
 	Relevance              string   `json:"relevance,omitempty"`
 	Reason                 string   `json:"reason"`
 	Blockers               []string `json:"blockers"`
+	ApprovalRequired       bool     `json:"approvalRequired"`
 	TargetInvestigationIDs []string `json:"targetInvestigationIds"`
 	CreatedAt              string   `json:"createdAt"`
 	UpdatedAt              string   `json:"updatedAt"`
 }
 
 type BrainAutonomyAuditEntry struct {
-	ID              string   `json:"id"`
-	QueueItemID     string   `json:"queueItemId"`
-	InvestigationID string   `json:"investigationId"`
-	SuggestionID    string   `json:"suggestionId"`
-	ActionID        string   `json:"actionId,omitempty"`
-	Decision        string   `json:"decision"`
-	Mode            string   `json:"mode"`
-	Reason          string   `json:"reason"`
-	Blockers        []string `json:"blockers"`
-	CreatedAt       string   `json:"createdAt"`
+	ID               string   `json:"id"`
+	QueueItemID      string   `json:"queueItemId"`
+	InvestigationID  string   `json:"investigationId"`
+	SuggestionID     string   `json:"suggestionId"`
+	ActionID         string   `json:"actionId,omitempty"`
+	Decision         string   `json:"decision"`
+	Mode             string   `json:"mode"`
+	Reason           string   `json:"reason"`
+	Blockers         []string `json:"blockers"`
+	ApprovalRequired bool     `json:"approvalRequired"`
+	CreatedAt        string   `json:"createdAt"`
 }
 
 type BrainAutonomyState struct {
@@ -180,7 +185,8 @@ func (s *Service) evaluateAutonomyForInvestigation(investigationID string, sugge
 	item.ActionID = action.ID
 	item.Decision = AutonomyDecisionPrepared
 	item.Status = AutonomyQueueStatusPrepared
-	item.Reason = "Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed."
+	item.ApprovalRequired = true
+	item.Reason = "Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically."
 	return s.saveAutonomyDecision(queue, audit, item)
 }
 
@@ -197,16 +203,17 @@ func (s *Service) saveAutonomyDecision(
 	queue[item.ID] = item
 
 	entry := BrainAutonomyAuditEntry{
-		ID:              deterministicID("brain-autonomy-audit", item.ID, item.Decision, item.ActionID, strings.Join(item.Blockers, ",")),
-		QueueItemID:     item.ID,
-		InvestigationID: item.InvestigationID,
-		SuggestionID:    item.SuggestionID,
-		ActionID:        item.ActionID,
-		Decision:        item.Decision,
-		Mode:            item.Mode,
-		Reason:          item.Reason,
-		Blockers:        cleanStringSet(item.Blockers),
-		CreatedAt:       item.UpdatedAt,
+		ID:               deterministicID("brain-autonomy-audit", item.ID, item.Decision, item.ActionID, strings.Join(item.Blockers, ",")),
+		QueueItemID:      item.ID,
+		InvestigationID:  item.InvestigationID,
+		SuggestionID:     item.SuggestionID,
+		ActionID:         item.ActionID,
+		Decision:         item.Decision,
+		Mode:             item.Mode,
+		Reason:           item.Reason,
+		Blockers:         cleanStringSet(item.Blockers),
+		ApprovalRequired: item.ApprovalRequired,
+		CreatedAt:        item.UpdatedAt,
 	}
 	audit[entry.ID] = entry
 
@@ -225,10 +232,10 @@ func firstLaunchReadyAutonomySuggestion(suggestions []BrainSuggestion) (BrainSug
 		if suggestion.ActionMode != SuggestionActionLaunchFollowUp {
 			continue
 		}
-		if !autonomySuggestionHasSafeRelevance(suggestion) {
+		if !autonomySuggestionHasControlledConfidence(suggestion) {
 			continue
 		}
-		if suggestion.Score < 0.78 || len(suggestion.TargetInvestigationIDs) == 0 {
+		if len(suggestion.TargetInvestigationIDs) == 0 {
 			continue
 		}
 		return suggestion, true
@@ -245,7 +252,7 @@ func autonomyBlockers(
 	investigationID string,
 ) []string {
 	blockers := make([]string, 0)
-	if !autonomySuggestionHasSafeRelevance(candidate) {
+	if !autonomySuggestionHasControlledConfidence(candidate) {
 		blockers = append(blockers, AutonomyBlockerUnsafeRelevance)
 	}
 	if autonomyHasUnresolvedAction(suggestions, SuggestionActionFillGap) {
@@ -327,9 +334,16 @@ func buildAutonomyQueueItem(suggestion BrainSuggestion, settings BrainAutonomySe
 	}
 }
 
-func autonomySuggestionHasSafeRelevance(suggestion BrainSuggestion) bool {
+func autonomySuggestionHasControlledConfidence(suggestion BrainSuggestion) bool {
 	relevance := normalizeRelevance(suggestion.Relevance)
-	return relevance == RelevanceStrongMemory || relevance == RelevancePossibleBridge
+	switch relevance {
+	case RelevanceStrongMemory:
+		return suggestion.Score >= autonomyStrongMemoryThreshold
+	case RelevancePossibleBridge:
+		return suggestion.Score >= autonomyPossibleBridgeHighConfidence
+	default:
+		return false
+	}
 }
 
 func normalizeAutonomySettings(settings BrainAutonomySettings) BrainAutonomySettings {
