@@ -6241,6 +6241,18 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-followup-approval-note {
+  border: 1px solid rgba(255, 199, 72, 0.34);
+  background:
+    linear-gradient(90deg, rgba(255, 199, 72, 0.1), transparent 42%),
+    rgba(7, 11, 13, 0.76);
+  padding: 0.48rem 0.58rem;
+  color: #ffd06a;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
 .forensic-brain-followup-prompt {
   border: 1px solid rgba(129, 227, 255, 0.16);
   background: rgba(0, 8, 10, 0.72);
@@ -8038,6 +8050,21 @@ body {
   border-color: rgba(0, 255, 65, 0.56);
   background: rgba(0, 255, 65, 0.08);
   color: #7cff91;
+}
+
+.forensic-brain-autonomy-approval-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.72rem;
+  border: 1px solid rgba(255, 199, 72, 0.62);
+  border-radius: 0.2rem;
+  background: rgba(255, 199, 72, 0.06);
+  padding: 0 0.52rem;
+  color: #ffd06a;
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .forensic-brain-autonomy-topline .forensic-brain-relevance-chip {

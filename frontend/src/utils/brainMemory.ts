@@ -181,6 +181,7 @@ export interface BrainAutonomyQueueItem {
   relevance?: BrainRelevance
   reason: string
   blockers: string[]
+  approvalRequired?: boolean
   targetInvestigationIds: string[]
   createdAt: string
   updatedAt: string
@@ -196,6 +197,7 @@ export interface BrainAutonomyAuditEntry {
   mode: BrainAutonomyMode
   reason: string
   blockers: string[]
+  approvalRequired?: boolean
   createdAt: string
 }
 
@@ -446,12 +448,14 @@ const normalizeBrainAutonomySettings = (settings?: Partial<BrainAutonomySettings
 const normalizeBrainAutonomyQueueItem = (item: BrainAutonomyQueueItem): BrainAutonomyQueueItem => ({
   ...item,
   blockers: asStringArray(item.blockers),
+  approvalRequired: Boolean(item.approvalRequired),
   targetInvestigationIds: asStringArray(item.targetInvestigationIds),
 })
 
 const normalizeBrainAutonomyAuditEntry = (entry: BrainAutonomyAuditEntry): BrainAutonomyAuditEntry => ({
   ...entry,
   blockers: asStringArray(entry.blockers),
+  approvalRequired: Boolean(entry.approvalRequired),
 })
 
 const normalizeBrainAutonomyState = (state: BrainAutonomyState): BrainAutonomyState => ({

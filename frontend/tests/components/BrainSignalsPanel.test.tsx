@@ -871,8 +871,9 @@ describe('BrainSignalsPanel', () => {
           summary: 'Acme Grid has an active memory cluster worth checking.',
           score: 0.86,
           relevance: 'strong-memory',
-          reason: 'Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed.',
+          reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
           blockers: [],
+          approvalRequired: true,
           targetInvestigationIds: ['inv-older'],
           createdAt: '2026-06-05T12:05:00Z',
           updatedAt: '2026-06-05T12:05:00Z',
@@ -904,8 +905,9 @@ describe('BrainSignalsPanel', () => {
           actionId: followUpAction.id,
           decision: 'prepared',
           mode: 'prepare-only',
-          reason: 'Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed.',
+          reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
           blockers: [],
+          approvalRequired: true,
           createdAt: '2026-06-05T12:05:00Z',
         },
       ],
@@ -927,6 +929,7 @@ describe('BrainSignalsPanel', () => {
     expect(autonomyView).toHaveTextContent('Auto-prepare Off')
     expect(autonomyView).toHaveTextContent('Review active memory cluster')
     expect(autonomyView).toHaveTextContent('Prepared')
+    expect(autonomyView).toHaveTextContent('Approval Required')
     expect(autonomyView).toHaveTextContent('Compare durable memory link')
     expect(autonomyView).toHaveTextContent('Unresolved Gap')
     const autonomyCards = within(autonomyView).getAllByTestId('brain-autonomy-card')
@@ -935,6 +938,7 @@ describe('BrainSignalsPanel', () => {
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-card-main')).toBeInTheDocument()
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-card-rail')).toBeInTheDocument()
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-timestamp')).toBeInTheDocument()
+    expect(within(autonomyCards[0]).getByRole('button', { name: /review and approve rabbit hole/i })).toBeInTheDocument()
     expect(within(autonomyView).queryByRole('button', { name: /suggest only/i })).not.toBeInTheDocument()
     expect(within(autonomyView).queryByRole('button', { name: /prepare only/i })).not.toBeInTheDocument()
     expect(within(autonomyView).queryByRole('button', { name: /ask before launch/i })).not.toBeInTheDocument()
@@ -967,6 +971,77 @@ describe('BrainSignalsPanel', () => {
         body: expect.stringContaining('"mode":"off"'),
       }),
     )
+  })
+
+  it('requires manual approval before launching an autonomy prepared Rabbit Hole', async () => {
+    const user = userEvent.setup()
+    const onLaunchFocusedRabbitHole = vi.fn()
+    const autonomy = makeAutonomyState({
+      settings: {
+        mode: 'prepare-only',
+        maxAutoPreparedPerInvestigation: 1,
+        maxActivePrepared: 3,
+        updatedAt: '2026-06-05T12:00:00Z',
+      },
+      queue: [{
+        id: 'brain-autonomy-next-move',
+        investigationId: 'inv-current',
+        suggestionId: suggestion.id,
+        actionId: followUpAction.id,
+        decision: 'prepared',
+        status: 'prepared',
+        mode: 'prepare-only',
+        title: 'Review active memory cluster',
+        summary: 'Acme Grid has an active memory cluster worth checking.',
+        score: 0.86,
+        relevance: 'strong-memory',
+        reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
+        blockers: [],
+        approvalRequired: true,
+        targetInvestigationIds: ['inv-older'],
+        createdAt: '2026-06-05T12:05:00Z',
+        updatedAt: '2026-06-05T12:05:00Z',
+      }],
+    })
+    const fetchMock = installBrainFetch({
+      suggestions: [suggestion],
+      followUps: [followUpAction],
+      autonomy,
+    })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onLaunchFocusedRabbitHole={onLaunchFocusedRabbitHole}
+      />,
+    )
+    await openBrainView(user, /autonomy queue view/i)
+
+    const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    const card = within(autonomyView).getByTestId('brain-autonomy-card')
+    await user.click(within(card).getByRole('button', { name: /review and approve rabbit hole/i }))
+
+    const launcher = await screen.findByTestId('brain-followup-launcher')
+    expect(launcher).toHaveTextContent('Approval required')
+    expect(launcher).toHaveTextContent('Autonomy prepared this Rabbit Hole. It will not launch until you approve it.')
+    expect(onLaunchFocusedRabbitHole).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/brain-followup-next-move/launch',
+      expect.anything(),
+    )
+
+    await user.click(within(launcher).getByRole('button', { name: /approve and launch guided rabbit hole/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/brain-followup-next-move/launch',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(onLaunchFocusedRabbitHole).toHaveBeenCalledWith(expect.objectContaining({
+      id: followUpAction.id,
+      status: 'launched',
+      descentMode: 'guided',
+    }))
   })
 
   it('keeps the autonomy switch clickable-looking while saving', async () => {

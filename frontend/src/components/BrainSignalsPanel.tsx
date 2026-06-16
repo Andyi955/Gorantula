@@ -2734,8 +2734,11 @@ export default function BrainSignalsPanel({
       return null
     }
 
+    const autonomyApprovalItem = autonomyQueue.find((item) => item.actionId === pendingFollowUp.id && item.approvalRequired)
+    const requiresAutonomyApproval = Boolean(autonomyApprovalItem)
     const isLaunchBusy = busyAction === `followup-launch:${pendingFollowUp.id}`
     const isCancelBusy = busyAction === `followup-cancel:${pendingFollowUp.id}`
+    const launchLabel = requiresAutonomyApproval ? 'Approve and Launch Guided Rabbit Hole' : 'Launch Guided Rabbit Hole'
 
     return (
       <section
@@ -2745,12 +2748,19 @@ export default function BrainSignalsPanel({
       >
         <div className="forensic-brain-followup-header">
           <div>
-            <span className="forensic-brain-panel-kicker">Prepared follow-up</span>
+            <span className="forensic-brain-panel-kicker">
+              {requiresAutonomyApproval ? 'Approval required' : 'Prepared follow-up'}
+            </span>
             <h3>{pendingFollowUp.title}</h3>
             <p>{pendingFollowUp.summary}</p>
           </div>
           <strong>{pendingFollowUp.descentMode}</strong>
         </div>
+        {requiresAutonomyApproval && (
+          <div className="forensic-brain-followup-approval-note">
+            Autonomy prepared this Rabbit Hole. It will not launch until you approve it.
+          </div>
+        )}
         <div className="forensic-brain-followup-prompt" aria-label="Prepared Rabbit Hole prompt">
           <span>Rabbit Hole prompt</span>
           <pre>{pendingFollowUp.prompt}</pre>
@@ -2775,7 +2785,7 @@ export default function BrainSignalsPanel({
             onClick={() => void handleLaunchFollowUp(pendingFollowUp)}
           >
             <Rocket size={13} />
-            Launch Guided Rabbit Hole
+            {launchLabel}
           </button>
           <button
             type="button"
@@ -3355,6 +3365,7 @@ export default function BrainSignalsPanel({
     const action = item.actionId ? followUps.find((candidate) => candidate.id === item.actionId) : null
     const suggestion = rankedSuggestions.find((candidate) => candidate.id === item.suggestionId) || null
     const canOpenTarget = item.targetInvestigationIds.length > 0 && !!onOpenInvestigation
+    const reviewLabel = item.approvalRequired ? 'Review and Approve Rabbit Hole' : 'Review Rabbit Hole'
 
     return (
       <article
@@ -3370,6 +3381,11 @@ export default function BrainSignalsPanel({
             <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
               {formatRelevance(item)}
             </span>
+            {item.approvalRequired && (
+              <span className="forensic-brain-autonomy-approval-chip">
+                Approval Required
+              </span>
+            )}
             <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
           </div>
           <h4>{item.title}</h4>
@@ -3413,7 +3429,7 @@ export default function BrainSignalsPanel({
                 onClick={() => setPendingFollowUp(action)}
               >
                 <Rocket size={13} />
-                Review Rabbit Hole
+                {reviewLabel}
               </button>
             )}
             {suggestion && (
