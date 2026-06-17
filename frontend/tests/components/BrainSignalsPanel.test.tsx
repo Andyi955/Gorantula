@@ -1337,6 +1337,36 @@ describe('BrainSignalsPanel', () => {
     expect(gapCard).toHaveTextContent('Find a source and corroborating evidence for Current Grid Case')
   })
 
+  it('labels autonomy preflight blocker outcomes', async () => {
+    const user = userEvent.setup()
+    const contradictionSuggestion = makeSuggestion({
+      id: 'brain-suggestion-autonomy-preflight-conflict',
+      kind: 'contradiction-review',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Verify conflicting claim',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.88,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      reviewOutcome: 'verified-conflict',
+      reviewSource: 'autonomy-preflight',
+      status: 'reviewed',
+      reviewedAt: '2026-06-05T12:09:00Z',
+    })
+    installBrainFetch({ suggestions: [contradictionSuggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const contradictionCard = screen.getByTestId('brain-suggestion-card')
+    expect(contradictionCard).toHaveTextContent('Autonomy Checked: Verified Conflict')
+    expect(contradictionCard).toHaveTextContent('Autonomy Hold: Verified Conflict')
+  })
+
   it('cancels a prepared focused follow-up without launching', async () => {
     const user = userEvent.setup()
     const onLaunchFocusedRabbitHole = vi.fn()

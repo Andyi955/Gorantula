@@ -1306,6 +1306,87 @@ func TestBrainAutonomyStillBlocksReviewedGapWithoutOutcome(t *testing.T) {
 	}
 }
 
+func TestBrainAutonomyPreflightAutoClassifiesGapBlockers(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	gap := findSuggestion(t, suggestions, SuggestionKindGapReview)
+	if gap.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected autonomy preflight to review gap blocker, got %#v", gap)
+	}
+	if gap.ReviewOutcome != SuggestionOutcomeNeedsCorroborate {
+		t.Fatalf("expected autonomy preflight to mark corroboration need, got %#v", gap)
+	}
+	if gap.ReviewSource != SuggestionReviewSourceAutonomyPreflight {
+		t.Fatalf("expected autonomy preflight review source, got %#v", gap)
+	}
+	if strings.TrimSpace(gap.ReviewedAt) == "" {
+		t.Fatalf("expected reviewed timestamp from autonomy preflight, got %#v", gap)
+	}
+}
+
+func TestBrainAutonomyPreflightAutoClassifiesContradictionBlockers(t *testing.T) {
+	contradiction, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
+		ID:         "brain-suggestion-contradiction",
+		Status:     SuggestionStatusActive,
+		ActionMode: SuggestionActionVerify,
+		ReasonSamples: []SignalReason{{
+			Gateway:        GatewayContradiction,
+			Value:          "supplier denial",
+			Label:          "supplier denial",
+			Detail:         "Contradiction cue appears in both investigations.",
+			CurrentNodeIDs: []string{"current-denial-node"},
+			TargetNodeIDs:  []string{"remembered-supplier-node"},
+		}},
+	}, "2026-06-17T12:00:00Z")
+	if !ok {
+		t.Fatalf("expected autonomy preflight to classify contradiction blocker")
+	}
+	if contradiction.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected autonomy preflight to review contradiction blocker, got %#v", contradiction)
+	}
+	if contradiction.ReviewOutcome != SuggestionOutcomeVerifiedConflict {
+		t.Fatalf("expected autonomy preflight to verify conflict, got %#v", contradiction)
+	}
+	if contradiction.ReviewSource != SuggestionReviewSourceAutonomyPreflight {
+		t.Fatalf("expected autonomy preflight review source, got %#v", contradiction)
+	}
+	if strings.TrimSpace(contradiction.ReviewedAt) == "" {
+		t.Fatalf("expected reviewed timestamp from autonomy preflight, got %#v", contradiction)
+	}
+
+	needsSource, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
+		ID:         "brain-suggestion-contradiction-missing-evidence",
+		Status:     SuggestionStatusActive,
+		ActionMode: SuggestionActionVerify,
+	}, "2026-06-17T12:00:00Z")
+	if !ok {
+		t.Fatalf("expected autonomy preflight to classify missing-evidence contradiction blocker")
+	}
+	if needsSource.ReviewOutcome != SuggestionOutcomeNeedsSource {
+		t.Fatalf("expected missing-evidence contradiction to need source, got %#v", needsSource)
+	}
+}
+
 func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	timestamp := "2026-06-08T10:00:00Z"
 	clusters := []MemoryCluster{

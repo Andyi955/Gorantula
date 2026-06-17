@@ -8477,6 +8477,12 @@ body {
   color: #74ff95;
 }
 
+.forensic-brain-action-outcome-autonomy {
+  border-color: rgba(129, 227, 255, 0.36);
+  background: rgba(129, 227, 255, 0.07);
+  color: #9eeaff;
+}
+
 .forensic-brain-verification-list {
   display: grid;
   gap: 0.42rem;

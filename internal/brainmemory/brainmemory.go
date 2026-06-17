@@ -69,6 +69,9 @@ const (
 	SuggestionOutcomeNeedsRelation    = "needs-relationship-bridge"
 	SuggestionOutcomeNeedsCorroborate = "needs-corroboration"
 
+	SuggestionReviewSourceManual            = "manual"
+	SuggestionReviewSourceAutonomyPreflight = "autonomy-preflight"
+
 	SuggestionMissingSource        = "source"
 	SuggestionMissingDate          = "date"
 	SuggestionMissingEntityBridge  = "entity-bridge"
@@ -241,6 +244,7 @@ type BrainSuggestion struct {
 	MissingEvidence        []string       `json:"missingEvidence"`
 	SearchPrompt           string         `json:"searchPrompt,omitempty"`
 	ReviewOutcome          string         `json:"reviewOutcome,omitempty"`
+	ReviewSource           string         `json:"reviewSource,omitempty"`
 	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
 	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
 	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
@@ -1011,6 +1015,7 @@ func (s *Service) MarkSuggestionOutcome(suggestionID string, outcome string) (Br
 	now := time.Now().UTC().Format(time.RFC3339)
 	suggestion.Status = SuggestionStatusReviewed
 	suggestion.ReviewOutcome = outcome
+	suggestion.ReviewSource = SuggestionReviewSourceManual
 	suggestion.ReviewedAt = now
 	suggestion.UpdatedAt = now
 	if suggestionOutcomeIsResolved(outcome) {
@@ -3788,6 +3793,7 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 	suggestion.DismissedAt = previous.DismissedAt
 	suggestion.ReviewedAt = previous.ReviewedAt
 	suggestion.ReviewOutcome = previous.ReviewOutcome
+	suggestion.ReviewSource = previous.ReviewSource
 	suggestion.ResolvedAt = previous.ResolvedAt
 	if suggestion.Status == SuggestionStatusDismissed && suggestion.DismissedAt == "" {
 		suggestion.DismissedAt = timestamp

@@ -156,6 +156,11 @@ func (s *Service) evaluateAutonomyForInvestigation(investigationID string, sugge
 		return err
 	}
 
+	suggestions, err = s.autonomyPreflightBlockerSuggestions(suggestions, timestamp)
+	if err != nil {
+		return err
+	}
+
 	blockers := autonomyBlockers(candidate, suggestions, followUps, queue, settings, investigationID)
 	item := buildAutonomyQueueItem(candidate, settings, timestamp)
 	item.Blockers = blockers
@@ -221,6 +226,100 @@ func (s *Service) saveAutonomyDecision(
 		return err
 	}
 	return s.saveAutonomyAudit(audit)
+}
+
+func (s *Service) autonomyPreflightBlockerSuggestions(suggestions []BrainSuggestion, timestamp string) ([]BrainSuggestion, error) {
+	existing, err := s.loadSuggestions()
+	if err != nil {
+		return nil, err
+	}
+
+	changed := false
+	for index, suggestion := range suggestions {
+		updated, ok := autonomyPreflightBlockerSuggestion(suggestion, timestamp)
+		if !ok {
+			continue
+		}
+		suggestions[index] = updated
+		existing[updated.ID] = updated
+		changed = true
+	}
+
+	if !changed {
+		return suggestions, nil
+	}
+	if err := s.saveSuggestions(existing); err != nil {
+		return nil, err
+	}
+	return suggestions, nil
+}
+
+func autonomyPreflightBlockerSuggestion(suggestion BrainSuggestion, timestamp string) (BrainSuggestion, bool) {
+	suggestion = normalizeSuggestionCollections(suggestion)
+	if suggestion.Status == SuggestionStatusDismissed {
+		return suggestion, false
+	}
+	if strings.TrimSpace(suggestion.ReviewOutcome) != "" {
+		return suggestion, false
+	}
+
+	outcome := autonomyPreflightOutcome(suggestion)
+	if outcome == "" {
+		return suggestion, false
+	}
+
+	suggestion.Status = SuggestionStatusReviewed
+	suggestion.ReviewOutcome = outcome
+	suggestion.ReviewSource = SuggestionReviewSourceAutonomyPreflight
+	suggestion.ReviewedAt = timestamp
+	suggestion.ResolvedAt = ""
+	suggestion.UpdatedAt = timestamp
+	return normalizeSuggestionCollections(suggestion), true
+}
+
+func autonomyPreflightOutcome(suggestion BrainSuggestion) string {
+	switch suggestion.ActionMode {
+	case SuggestionActionVerify:
+		if !reasonSamplesHaveMatchedEvidence(suggestion.ReasonSamples) {
+			return SuggestionOutcomeNeedsSource
+		}
+		return SuggestionOutcomeVerifiedConflict
+	case SuggestionActionFillGap:
+		for _, item := range suggestion.MissingEvidence {
+			if outcome := autonomyPreflightMissingEvidenceOutcome(item); outcome != "" {
+				return outcome
+			}
+		}
+		return SuggestionOutcomeNeedsCorroborate
+	default:
+		return ""
+	}
+}
+
+func autonomyPreflightMissingEvidenceOutcome(item string) string {
+	switch item {
+	case SuggestionMissingSource:
+		return SuggestionOutcomeNeedsSource
+	case SuggestionMissingDate:
+		return SuggestionOutcomeNeedsDate
+	case SuggestionMissingEntityBridge:
+		return SuggestionOutcomeNeedsEntity
+	case SuggestionMissingRelation:
+		return SuggestionOutcomeNeedsRelation
+	case SuggestionMissingCorroboration:
+		return SuggestionOutcomeNeedsCorroborate
+	default:
+		return ""
+	}
+}
+
+func reasonSamplesHaveMatchedEvidence(reasons []SignalReason) bool {
+	for _, reason := range reasons {
+		if len(reason.CurrentNodeIDs) > 0 && len(reason.TargetNodeIDs) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func firstLaunchReadyAutonomySuggestion(suggestions []BrainSuggestion) (BrainSuggestion, bool) {

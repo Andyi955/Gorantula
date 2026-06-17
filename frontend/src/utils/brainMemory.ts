@@ -112,6 +112,7 @@ export interface BrainSuggestion {
   missingEvidence?: string[]
   searchPrompt?: string
   reviewOutcome?: string
+  reviewSource?: string
   relatedSignalIds: string[]
   relatedMemoryLinkIds: string[]
   relatedClusterIds: string[]

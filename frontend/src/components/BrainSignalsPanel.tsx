@@ -267,6 +267,11 @@ const formatSuggestionKind = (kind: string) => {
 }
 
 const formatSuggestionActionNote = (suggestion: BrainSuggestion) => {
+  if (suggestion.reviewSource === 'autonomy-preflight' && suggestion.reviewOutcome) {
+    const prefix = suggestionOutcomeClearsBlocker(suggestion.reviewOutcome) ? 'Autonomy Cleared' : 'Autonomy Hold'
+    return `${prefix}: ${formatSuggestionReviewOutcome(suggestion.reviewOutcome)}`
+  }
+
   switch (suggestion.actionMode) {
     case 'verify':
       return 'Resolve Verification Queue Above'
@@ -303,6 +308,9 @@ const formatSuggestionReviewOutcome = (outcome?: string) => {
       return outcome ? outcome.replace(/-/g, ' ') : ''
   }
 }
+
+const suggestionOutcomeClearsBlocker = (outcome?: string) =>
+  outcome === 'resolved' || outcome === 'false-alarm'
 
 const formatMissingEvidence = (value: string) => {
   switch (value) {
@@ -3153,9 +3161,10 @@ export default function BrainSignalsPanel({
     if (!suggestion.reviewOutcome) {
       return null
     }
+    const isAutonomyPreflight = suggestion.reviewSource === 'autonomy-preflight'
     return (
-      <span className="forensic-brain-action-outcome">
-        Outcome: {formatSuggestionReviewOutcome(suggestion.reviewOutcome)}
+      <span className={`forensic-brain-action-outcome ${isAutonomyPreflight ? 'forensic-brain-action-outcome-autonomy' : ''}`}>
+        {isAutonomyPreflight ? 'Autonomy Checked' : 'Outcome'}: {formatSuggestionReviewOutcome(suggestion.reviewOutcome)}
       </span>
     )
   }
