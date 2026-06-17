@@ -269,9 +269,9 @@ const formatSuggestionKind = (kind: string) => {
 const formatSuggestionActionNote = (suggestion: BrainSuggestion) => {
   switch (suggestion.actionMode) {
     case 'verify':
-      return 'Verify before Rabbit Hole'
+      return 'Resolve Verification Queue Above'
     case 'fill-gap':
-      return 'Find bridge before Rabbit Hole'
+      return 'Resolve Gap Checklist Above'
     case 'inspect':
       return 'Inspect before Rabbit Hole'
     case 'compare':
@@ -3347,7 +3347,7 @@ export default function BrainSignalsPanel({
               {followUpLabel}
             </button>
           ) : (
-            <span className="forensic-brain-action-note">
+            <span className={`forensic-brain-action-note forensic-brain-action-gate-chip forensic-brain-action-gate-${suggestion.actionMode || 'compare'}`}>
               {formatSuggestionActionNote(suggestion)}
             </span>
           )}

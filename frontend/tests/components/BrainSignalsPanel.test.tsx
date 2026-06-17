@@ -1238,7 +1238,8 @@ describe('BrainSignalsPanel', () => {
     expect(within(contradictionCard as HTMLElement).getByText('Verify contradiction')).toBeInTheDocument()
     expect(within(contradictionCard as HTMLElement).getByText(/could challenge the current explanation/i)).toBeInTheDocument()
     expect(within(contradictionCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole verify possible contradiction/i })).not.toBeInTheDocument()
-    expect(within(contradictionCard as HTMLElement).getByText('Verify before Rabbit Hole')).toBeInTheDocument()
+    const verificationGate = within(contradictionCard as HTMLElement).getByText('Resolve Verification Queue Above')
+    expect(verificationGate).toHaveClass('forensic-brain-action-gate-chip')
 
     await user.click(screen.getByRole('button', { name: /show lower-priority moves \(1\)/i }))
     const gapCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
@@ -1248,7 +1249,8 @@ describe('BrainSignalsPanel', () => {
     expect(within(gapCard as HTMLElement).getByText('Fill memory gap')).toBeInTheDocument()
     expect(within(gapCard as HTMLElement).getByText(/needs sharper bridge evidence/i)).toBeInTheDocument()
     expect(within(gapCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole find missing bridge evidence/i })).not.toBeInTheDocument()
-    expect(within(gapCard as HTMLElement).getByText('Find bridge before Rabbit Hole')).toBeInTheDocument()
+    const gapGate = within(gapCard as HTMLElement).getByText('Resolve Gap Checklist Above')
+    expect(gapGate).toHaveClass('forensic-brain-action-gate-chip')
   })
 
   it('lets users record thinking action outcomes and prepare gap search prompts', async () => {
