@@ -2,6 +2,7 @@ package brainmemory
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -271,6 +272,7 @@ func autonomyPreflightBlockerSuggestion(suggestion BrainSuggestion, timestamp st
 	suggestion.Status = SuggestionStatusReviewed
 	suggestion.ReviewOutcome = outcome
 	suggestion.ReviewSource = SuggestionReviewSourceAutonomyPreflight
+	suggestion = applyAutonomyPreflightOutcomeGuidance(suggestion)
 	suggestion.ReviewedAt = timestamp
 	suggestion.ResolvedAt = ""
 	suggestion.UpdatedAt = timestamp
@@ -285,7 +287,10 @@ func autonomyPreflightOutcome(suggestion BrainSuggestion) string {
 		}
 		return SuggestionOutcomeVerifiedConflict
 	case SuggestionActionFillGap:
-		for _, item := range suggestion.MissingEvidence {
+		for _, item := range autonomyPreflightMissingEvidencePriority() {
+			if !containsString(suggestion.MissingEvidence, item) {
+				continue
+			}
 			if outcome := autonomyPreflightMissingEvidenceOutcome(item); outcome != "" {
 				return outcome
 			}
@@ -293,6 +298,16 @@ func autonomyPreflightOutcome(suggestion BrainSuggestion) string {
 		return SuggestionOutcomeNeedsCorroborate
 	default:
 		return ""
+	}
+}
+
+func autonomyPreflightMissingEvidencePriority() []string {
+	return []string{
+		SuggestionMissingSource,
+		SuggestionMissingDate,
+		SuggestionMissingEntityBridge,
+		SuggestionMissingRelation,
+		SuggestionMissingCorroboration,
 	}
 }
 
@@ -311,6 +326,35 @@ func autonomyPreflightMissingEvidenceOutcome(item string) string {
 	default:
 		return ""
 	}
+}
+
+func applyAutonomyPreflightOutcomeGuidance(suggestion BrainSuggestion) BrainSuggestion {
+	switch suggestion.ReviewOutcome {
+	case SuggestionOutcomeNeedsSource:
+		if !containsString(suggestion.MissingEvidence, SuggestionMissingSource) {
+			suggestion.MissingEvidence = append(suggestion.MissingEvidence, SuggestionMissingSource)
+		}
+		if strings.TrimSpace(suggestion.SearchPrompt) == "" {
+			suggestion.SearchPrompt = buildAutonomySourceSearchPrompt(suggestion)
+		}
+		suggestion.SuggestedAction = "Find source evidence"
+	}
+	return suggestion
+}
+
+func buildAutonomySourceSearchPrompt(suggestion BrainSuggestion) string {
+	title := nonEmptyString(suggestion.Title, suggestion.Summary, suggestion.ID, "Brain memory cue")
+	targets := cleanStringSet(suggestion.TargetInvestigationIDs)
+	targetLabel := "remembered evidence"
+	if len(targets) > 0 {
+		targetLabel = strings.Join(targets, ", ")
+	}
+	reason := nonEmptyString(suggestion.Reason, suggestion.Summary)
+	prompt := fmt.Sprintf("Find source evidence for %s against %s.", title, targetLabel)
+	if reason != "" {
+		prompt += " Ground this cue: " + reason
+	}
+	return prompt + " Capture source URLs or evidence ids before autonomy prepares a Rabbit Hole."
 }
 
 func reasonSamplesHaveMatchedEvidence(reasons []SignalReason) bool {

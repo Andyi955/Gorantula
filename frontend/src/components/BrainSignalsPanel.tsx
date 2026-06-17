@@ -192,12 +192,26 @@ const suggestionPriorityRank = (priority: string) => {
   }
 }
 
-const suggestionStatusRank = (status: string) => (status === 'active' ? 0 : status === 'reviewed' ? 1 : 2)
+const isAutonomySourceHold = (suggestion: BrainSuggestion) =>
+  suggestion.reviewSource === 'autonomy-preflight' && suggestion.reviewOutcome === 'needs-source'
+
+const suggestionStatusRank = (suggestion: BrainSuggestion) => {
+  if (suggestion.status === 'active' || isAutonomySourceHold(suggestion)) {
+    return 0
+  }
+  return suggestion.status === 'reviewed' ? 1 : 2
+}
+
+const suggestionFlowRank = (suggestion: BrainSuggestion) => (isAutonomySourceHold(suggestion) ? 0 : 1)
 
 const sortSuggestionsForView = (items: BrainSuggestion[]) => [...items].sort((left, right) => {
-  const statusDelta = suggestionStatusRank(left.status) - suggestionStatusRank(right.status)
+  const statusDelta = suggestionStatusRank(left) - suggestionStatusRank(right)
   if (statusDelta !== 0) {
     return statusDelta
+  }
+  const flowDelta = suggestionFlowRank(left) - suggestionFlowRank(right)
+  if (flowDelta !== 0) {
+    return flowDelta
   }
   const relevanceDelta = relevanceRank(left.relevance) - relevanceRank(right.relevance)
   if (relevanceDelta !== 0) {
@@ -733,7 +747,7 @@ export default function BrainSignalsPanel({
   )
   const rankedSuggestions = useMemo(() => sortSuggestionsForView(suggestions), [suggestions])
   const activeSuggestions = useMemo(
-    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active'),
+    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active' || isAutonomySourceHold(suggestion)),
     [rankedSuggestions],
   )
   const { prioritySuggestions, lowerPrioritySuggestions } = useMemo(() => {
@@ -754,7 +768,7 @@ export default function BrainSignalsPanel({
     }
   }, [activeSuggestions])
   const reviewedSuggestions = useMemo(
-    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
+    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed' && !isAutonomySourceHold(suggestion)),
     [rankedSuggestions],
   )
   const focusedReviewSuggestion = useMemo(() => {
@@ -3182,6 +3196,9 @@ export default function BrainSignalsPanel({
 
   const renderVerificationActionPanel = (suggestion: BrainSuggestion) => {
     const reasonSamples = (suggestion.reasonSamples || []).slice(0, 2)
+    const sourceEvidenceNeeded = suggestion.reviewOutcome === 'needs-source'
+    const sourceEvidenceItems = (suggestion.missingEvidence || []).length > 0 ? suggestion.missingEvidence || [] : ['source']
+    const promptIsOpen = expandedPromptSuggestionId === suggestion.id
 
     return (
       <section className="forensic-brain-thinking-action-panel" aria-label="Verification action">
@@ -3210,6 +3227,28 @@ export default function BrainSignalsPanel({
           </div>
         ) : (
           <p>No matched evidence ids recorded for this verification cue.</p>
+        )}
+        {sourceEvidenceNeeded && (
+          <>
+            <div className="forensic-brain-gap-list">
+              {sourceEvidenceItems.map((item) => (
+                <span key={item}>{formatMissingEvidence(item)}</span>
+              ))}
+            </div>
+            <div className="forensic-brain-thinking-action-buttons">
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+                disabled={!suggestion.searchPrompt}
+                onClick={() => setExpandedPromptSuggestionId((current) => (current === suggestion.id ? null : suggestion.id))}
+              >
+                Prepare Source Prompt
+              </button>
+            </div>
+            {promptIsOpen && suggestion.searchPrompt && (
+              <p className="forensic-brain-search-prompt">{suggestion.searchPrompt}</p>
+            )}
+          </>
         )}
         <div className="forensic-brain-thinking-action-buttons">
           {renderSuggestionOutcomeButton(suggestion, 'verified-conflict', 'Mark Verified Conflict')}

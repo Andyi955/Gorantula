@@ -1333,8 +1333,8 @@ func TestBrainAutonomyPreflightAutoClassifiesGapBlockers(t *testing.T) {
 	if gap.Status != SuggestionStatusReviewed {
 		t.Fatalf("expected autonomy preflight to review gap blocker, got %#v", gap)
 	}
-	if gap.ReviewOutcome != SuggestionOutcomeNeedsCorroborate {
-		t.Fatalf("expected autonomy preflight to mark corroboration need, got %#v", gap)
+	if gap.ReviewOutcome != SuggestionOutcomeNeedsRelation {
+		t.Fatalf("expected autonomy preflight to mark the specific relationship gap before generic corroboration, got %#v", gap)
 	}
 	if gap.ReviewSource != SuggestionReviewSourceAutonomyPreflight {
 		t.Fatalf("expected autonomy preflight review source, got %#v", gap)
@@ -1375,15 +1375,60 @@ func TestBrainAutonomyPreflightAutoClassifiesContradictionBlockers(t *testing.T)
 	}
 
 	needsSource, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
-		ID:         "brain-suggestion-contradiction-missing-evidence",
-		Status:     SuggestionStatusActive,
-		ActionMode: SuggestionActionVerify,
+		ID:                     "brain-suggestion-contradiction-missing-evidence",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Title:                  "Verify possible contradiction",
+		Summary:                "Supplier denial may conflict with remembered evidence.",
+		SuggestedAction:        "Verify conflicting claim",
+		ActionMode:             SuggestionActionVerify,
+		Reason:                 "Supplier denial may conflict with remembered evidence and needs verification.",
+		TargetInvestigationIDs: []string{"inv-old"},
 	}, "2026-06-17T12:00:00Z")
 	if !ok {
 		t.Fatalf("expected autonomy preflight to classify missing-evidence contradiction blocker")
 	}
 	if needsSource.ReviewOutcome != SuggestionOutcomeNeedsSource {
 		t.Fatalf("expected missing-evidence contradiction to need source, got %#v", needsSource)
+	}
+	if !containsString(needsSource.MissingEvidence, SuggestionMissingSource) {
+		t.Fatalf("expected missing-evidence contradiction to carry source checklist, got %#v", needsSource)
+	}
+	if strings.TrimSpace(needsSource.SearchPrompt) == "" {
+		t.Fatalf("expected missing-evidence contradiction to prepare a source prompt, got %#v", needsSource)
+	}
+	if !strings.Contains(needsSource.SearchPrompt, "Find source evidence") {
+		t.Fatalf("expected source prompt to direct evidence search, got %q", needsSource.SearchPrompt)
+	}
+	if needsSource.SuggestedAction != "Find source evidence" {
+		t.Fatalf("expected suggested action to become source evidence work, got %#v", needsSource)
+	}
+}
+
+func TestBrainAutonomyPreflightPrioritizesSpecificMissingEvidence(t *testing.T) {
+	sourceGap, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
+		ID:                     "brain-suggestion-gap-needs-source",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Title:                  "Decide whether this firing becomes memory",
+		Summary:                "Active firings have not become durable memory links yet.",
+		SuggestedAction:        "Review before promoting memory",
+		ActionMode:             SuggestionActionFillGap,
+		Reason:                 "Active firings need bridge evidence before they become durable memory.",
+		MissingEvidence:        []string{SuggestionMissingCorroboration, SuggestionMissingSource},
+		TargetInvestigationIDs: []string{"inv-old"},
+	}, "2026-06-17T12:00:00Z")
+	if !ok {
+		t.Fatalf("expected autonomy preflight to classify gap blocker")
+	}
+	if sourceGap.ReviewOutcome != SuggestionOutcomeNeedsSource {
+		t.Fatalf("expected source gap to need source before corroboration, got %#v", sourceGap)
+	}
+	if !containsString(sourceGap.MissingEvidence, SuggestionMissingSource) {
+		t.Fatalf("expected source gap to keep source checklist, got %#v", sourceGap)
+	}
+	if strings.TrimSpace(sourceGap.SearchPrompt) == "" {
+		t.Fatalf("expected source gap to prepare a source prompt, got %#v", sourceGap)
 	}
 }
 

@@ -1367,6 +1367,54 @@ describe('BrainSignalsPanel', () => {
     expect(contradictionCard).toHaveTextContent('Autonomy Hold: Verified Conflict')
   })
 
+  it('surfaces autonomy source holds as actionable next moves', async () => {
+    const user = userEvent.setup()
+    const sourceHoldSuggestion = makeSuggestion({
+      id: 'brain-suggestion-autonomy-source-hold',
+      kind: 'contradiction-review',
+      status: 'reviewed',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Find source evidence',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.62,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      missingEvidence: ['source'],
+      searchPrompt: 'Find source evidence for Verify possible contradiction against inv-older.',
+      reviewOutcome: 'needs-source',
+      reviewSource: 'autonomy-preflight',
+      reviewedAt: '2026-06-05T12:09:00Z',
+      targetInvestigationIds: ['inv-older'],
+    })
+    const launchSuggestion = makeSuggestion({
+      id: 'brain-suggestion-launch-ready',
+      kind: 'cluster-review',
+      title: 'Review active memory cluster',
+      summary: 'Acme Grid has an active memory cluster worth checking.',
+      suggestedAction: 'Inspect recurring memory cluster',
+      actionMode: 'launch-follow-up',
+      priority: 'high',
+      score: 0.97,
+      reason: 'Acme Grid is an active cluster with 3 related investigations.',
+    })
+    installBrainFetch({ suggestions: [launchSuggestion, sourceHoldSuggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const cards = screen.getAllByTestId('brain-suggestion-card')
+    expect(cards[0]).toHaveTextContent('Verify possible contradiction')
+    expect(cards[0]).toHaveTextContent('Autonomy Checked: Needs Source')
+    expect(cards[0]).toHaveTextContent('Source')
+
+    await user.click(within(cards[0]).getByRole('button', { name: /prepare source prompt/i }))
+    expect(cards[0]).toHaveTextContent('Find source evidence for Verify possible contradiction against inv-older.')
+  })
+
   it('cancels a prepared focused follow-up without launching', async () => {
     const user = userEvent.setup()
     const onLaunchFocusedRabbitHole = vi.fn()
