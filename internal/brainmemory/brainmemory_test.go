@@ -1253,6 +1253,59 @@ func TestBrainAutonomyBlocksUnresolvedGapSuggestions(t *testing.T) {
 	}
 }
 
+func TestBrainAutonomyStillBlocksReviewedGapWithoutOutcome(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation with blocker failed: %v", err)
+	}
+	gap := findSuggestion(t, suggestions, SuggestionKindGapReview)
+	if gap.ActionMode != SuggestionActionFillGap {
+		t.Fatalf("expected fill-gap suggestion, got %#v", gap)
+	}
+	if _, err := service.MarkSuggestionReviewed(gap.ID); err != nil {
+		t.Fatalf("MarkSuggestionReviewed gap failed: %v", err)
+	}
+	if _, err := service.SuggestionsForInvestigation("inv-current"); err != nil {
+		t.Fatalf("SuggestionsForInvestigation after reviewed gap failed: %v", err)
+	}
+
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Fatalf("expected reviewed gap without outcome to block auto-prepare, got %#v", actions)
+	}
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	if len(state.Queue) != 1 {
+		t.Fatalf("expected one blocked autonomy queue item, got %#v", state.Queue)
+	}
+	if state.Queue[0].Decision != AutonomyDecisionBlocked || !containsString(state.Queue[0].Blockers, AutonomyBlockerUnresolvedGap) {
+		t.Fatalf("expected unresolved-gap blocker after reviewed gap, got %#v", state.Queue[0])
+	}
+}
+
 func TestClusterSuggestionsDownrankNoisyBroadClusters(t *testing.T) {
 	timestamp := "2026-06-08T10:00:00Z"
 	clusters := []MemoryCluster{

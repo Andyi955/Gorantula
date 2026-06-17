@@ -754,8 +754,10 @@ export default function BrainSignalsPanel({
       return null
     }
 
-    return activeSuggestions.find((suggestion) => suggestion.id === focusedReviewSuggestionId) || null
-  }, [activeSuggestions, focusedReviewSuggestionId])
+    return rankedSuggestions.find((suggestion) =>
+      suggestion.id === focusedReviewSuggestionId && suggestion.status !== 'dismissed',
+    ) || null
+  }, [focusedReviewSuggestionId, rankedSuggestions])
   const visiblePrioritySuggestions = useMemo(
     () => focusedReviewSuggestion
       ? prioritySuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
@@ -768,18 +770,26 @@ export default function BrainSignalsPanel({
       : lowerPrioritySuggestions,
     [focusedReviewSuggestion, lowerPrioritySuggestions],
   )
+  const visibleReviewedSuggestions = useMemo(
+    () => focusedReviewSuggestion
+      ? reviewedSuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
+      : reviewedSuggestions,
+    [focusedReviewSuggestion, reviewedSuggestions],
+  )
   const findAutonomyBlockerReviewSuggestion = useCallback((blocker: string) => {
     const reviewMode = autonomyBlockerReviewMode(blocker)
     if (!reviewMode) {
       return null
     }
 
-    return activeSuggestions.find((candidate) =>
+    const unresolvedCandidates = rankedSuggestions.filter((candidate) =>
       candidate.actionMode === reviewMode &&
+      candidate.status !== 'dismissed' &&
       candidate.reviewOutcome !== 'resolved' &&
       candidate.reviewOutcome !== 'false-alarm',
-    ) || null
-  }, [activeSuggestions])
+    )
+    return unresolvedCandidates.find((candidate) => candidate.status === 'active') || unresolvedCandidates[0] || null
+  }, [rankedSuggestions])
   const handleOpenAutonomyBlockerReview = useCallback((blocker: string) => {
     const reviewSuggestion = findAutonomyBlockerReviewSuggestion(blocker)
     if (!reviewSuggestion) {
@@ -3701,10 +3711,10 @@ export default function BrainSignalsPanel({
                   )}
                 </div>
               )}
-              {reviewedSuggestions.length > 0 && (
+              {visibleReviewedSuggestions.length > 0 && (
                 <div className="forensic-brain-reviewed-suggestions">
                   <span className="forensic-brain-panel-kicker">Reviewed context</span>
-                  {reviewedSuggestions.map(renderSuggestionCard)}
+                  {visibleReviewedSuggestions.map(renderSuggestionCard)}
                 </div>
               )}
             </div>

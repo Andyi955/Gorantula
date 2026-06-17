@@ -1097,6 +1097,8 @@ describe('BrainSignalsPanel', () => {
       score: 0.54,
       reason: 'Active firings need bridge evidence before they become durable memory.',
       missingEvidence: ['source', 'corroborating-evidence'],
+      status: 'reviewed',
+      reviewedAt: '2026-06-05T12:08:00Z',
     })
     const autonomy = makeAutonomyState({
       settings: {
@@ -1145,6 +1147,7 @@ describe('BrainSignalsPanel', () => {
     expect(gapCard).toBeTruthy()
     expect(gapCard).toHaveClass('is-autonomy-blocker-focus')
     expect(gapCard).toHaveTextContent('Unblocks Autonomy')
+    expect(gapCard).toHaveTextContent('Reviewed')
     expect(within(gapCard).getByText('Gap Checklist')).toBeInTheDocument()
 
     await openBrainView(user, /autonomy queue view/i)

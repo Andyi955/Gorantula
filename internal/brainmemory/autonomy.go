@@ -276,7 +276,10 @@ func autonomyBlockers(
 func autonomyHasUnresolvedAction(suggestions []BrainSuggestion, actionMode string) bool {
 	for _, suggestion := range suggestions {
 		suggestion = normalizeSuggestionCollections(suggestion)
-		if suggestion.Status != SuggestionStatusActive || suggestion.ActionMode != actionMode {
+		if suggestion.ActionMode != actionMode {
+			continue
+		}
+		if suggestion.Status == SuggestionStatusDismissed {
 			continue
 		}
 		if suggestionOutcomeIsResolved(suggestion.ReviewOutcome) {
