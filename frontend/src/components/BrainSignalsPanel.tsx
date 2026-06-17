@@ -3262,6 +3262,7 @@ export default function BrainSignalsPanel({
     const isAutonomyBlockerFocus = focusedReviewSuggestionId === suggestion.id
     const relevance = normalizeRelevance(suggestion.relevance)
     const canPrepareFollowUp = suggestion.actionMode === 'launch-follow-up' && !isSpeculativeRelevance(suggestion.relevance)
+    const usesThinkingOutcomeActions = suggestion.actionMode === 'verify' || suggestion.actionMode === 'fill-gap'
     const followUpAction = followUpsBySourceId.get(suggestion.id)
     const followUpLabel = followUpAction?.status === 'prepared'
       ? 'Review Rabbit Hole'
@@ -3400,15 +3401,17 @@ export default function BrainSignalsPanel({
               View Signal
             </button>
           )}
-          <button
-            type="button"
-            className="forensic-brain-action forensic-brain-action-secondary"
-            disabled={isReviewed || busyAction === `suggestion-review:${suggestion.id}`}
-            onClick={() => void handleReviewSuggestion(suggestion)}
-          >
-            <Eye size={13} />
-            Mark Reviewed
-          </button>
+          {!usesThinkingOutcomeActions && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={isReviewed || busyAction === `suggestion-review:${suggestion.id}`}
+              onClick={() => void handleReviewSuggestion(suggestion)}
+            >
+              <Eye size={13} />
+              Mark Reviewed
+            </button>
+          )}
           <button
             type="button"
             className="forensic-brain-action forensic-brain-action-secondary"
