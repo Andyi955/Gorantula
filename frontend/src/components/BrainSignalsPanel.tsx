@@ -10,6 +10,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
+  ArrowRight,
   Bell,
   Brain,
   ChevronDown,
@@ -191,12 +192,26 @@ const suggestionPriorityRank = (priority: string) => {
   }
 }
 
-const suggestionStatusRank = (status: string) => (status === 'active' ? 0 : status === 'reviewed' ? 1 : 2)
+const isAutonomySourceHold = (suggestion: BrainSuggestion) =>
+  suggestion.reviewSource === 'autonomy-preflight' && suggestion.reviewOutcome === 'needs-source'
+
+const suggestionStatusRank = (suggestion: BrainSuggestion) => {
+  if (suggestion.status === 'active' || isAutonomySourceHold(suggestion)) {
+    return 0
+  }
+  return suggestion.status === 'reviewed' ? 1 : 2
+}
+
+const suggestionFlowRank = (suggestion: BrainSuggestion) => (isAutonomySourceHold(suggestion) ? 0 : 1)
 
 const sortSuggestionsForView = (items: BrainSuggestion[]) => [...items].sort((left, right) => {
-  const statusDelta = suggestionStatusRank(left.status) - suggestionStatusRank(right.status)
+  const statusDelta = suggestionStatusRank(left) - suggestionStatusRank(right)
   if (statusDelta !== 0) {
     return statusDelta
+  }
+  const flowDelta = suggestionFlowRank(left) - suggestionFlowRank(right)
+  if (flowDelta !== 0) {
+    return flowDelta
   }
   const relevanceDelta = relevanceRank(left.relevance) - relevanceRank(right.relevance)
   if (relevanceDelta !== 0) {
@@ -266,11 +281,16 @@ const formatSuggestionKind = (kind: string) => {
 }
 
 const formatSuggestionActionNote = (suggestion: BrainSuggestion) => {
+  if (suggestion.reviewSource === 'autonomy-preflight' && suggestion.reviewOutcome) {
+    const prefix = suggestionOutcomeClearsBlocker(suggestion.reviewOutcome) ? 'Autonomy Cleared' : 'Autonomy Hold'
+    return `${prefix}: ${formatSuggestionReviewOutcome(suggestion.reviewOutcome)}`
+  }
+
   switch (suggestion.actionMode) {
     case 'verify':
-      return 'Verify before Rabbit Hole'
+      return 'Resolve Verification Queue Above'
     case 'fill-gap':
-      return 'Find bridge before Rabbit Hole'
+      return 'Resolve Gap Checklist Above'
     case 'inspect':
       return 'Inspect before Rabbit Hole'
     case 'compare':
@@ -302,6 +322,9 @@ const formatSuggestionReviewOutcome = (outcome?: string) => {
       return outcome ? outcome.replace(/-/g, ' ') : ''
   }
 }
+
+const suggestionOutcomeClearsBlocker = (outcome?: string) =>
+  outcome === 'resolved' || outcome === 'false-alarm'
 
 const formatMissingEvidence = (value: string) => {
   switch (value) {
@@ -364,6 +387,28 @@ const formatAutonomyBlocker = (blocker: string) => {
       return 'Unsafe Relevance'
     default:
       return blocker.replace(/-/g, ' ')
+  }
+}
+
+const autonomyBlockerReviewMode = (blocker: string) => {
+  switch (blocker) {
+    case 'unresolved-gap':
+      return 'fill-gap'
+    case 'unresolved-contradiction':
+      return 'verify'
+    default:
+      return ''
+  }
+}
+
+const autonomyBlockerReviewLabel = (blocker: string) => {
+  switch (blocker) {
+    case 'unresolved-gap':
+      return 'Go to Gap Checklist'
+    case 'unresolved-contradiction':
+      return 'Go to Verification Queue'
+    default:
+      return `Go to ${formatAutonomyBlocker(blocker)} Review`
   }
 }
 
@@ -459,6 +504,7 @@ export default function BrainSignalsPanel({
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
   const [expandedPromptSuggestionId, setExpandedPromptSuggestionId] = useState<string | null>(null)
+  const [focusedReviewSuggestionId, setFocusedReviewSuggestionId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('focus')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
@@ -505,6 +551,7 @@ export default function BrainSignalsPanel({
       setCompareSelection(null)
       setPendingFollowUp(null)
       setExpandedPromptSuggestionId(null)
+      setFocusedReviewSuggestionId(null)
       setIsAttentionOpen(false)
       return
     }
@@ -565,6 +612,9 @@ export default function BrainSignalsPanel({
         current && nextClusters.some((cluster) => cluster.id === current) ? current : null,
       )
       setExpandedPromptSuggestionId((current) =>
+        current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
+      )
+      setFocusedReviewSuggestionId((current) =>
         current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
       )
       setPendingFollowUp((current) => current ? nextFollowUps.find((action) => action.id === current.id) || null : null)
@@ -697,7 +747,7 @@ export default function BrainSignalsPanel({
   )
   const rankedSuggestions = useMemo(() => sortSuggestionsForView(suggestions), [suggestions])
   const activeSuggestions = useMemo(
-    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active'),
+    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'active' || isAutonomySourceHold(suggestion)),
     [rankedSuggestions],
   )
   const { prioritySuggestions, lowerPrioritySuggestions } = useMemo(() => {
@@ -718,9 +768,62 @@ export default function BrainSignalsPanel({
     }
   }, [activeSuggestions])
   const reviewedSuggestions = useMemo(
-    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed'),
+    () => rankedSuggestions.filter((suggestion) => suggestion.status === 'reviewed' && !isAutonomySourceHold(suggestion)),
     [rankedSuggestions],
   )
+  const focusedReviewSuggestion = useMemo(() => {
+    if (!focusedReviewSuggestionId) {
+      return null
+    }
+
+    return rankedSuggestions.find((suggestion) =>
+      suggestion.id === focusedReviewSuggestionId && suggestion.status !== 'dismissed',
+    ) || null
+  }, [focusedReviewSuggestionId, rankedSuggestions])
+  const visiblePrioritySuggestions = useMemo(
+    () => focusedReviewSuggestion
+      ? prioritySuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
+      : prioritySuggestions,
+    [focusedReviewSuggestion, prioritySuggestions],
+  )
+  const visibleLowerPrioritySuggestions = useMemo(
+    () => focusedReviewSuggestion
+      ? lowerPrioritySuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
+      : lowerPrioritySuggestions,
+    [focusedReviewSuggestion, lowerPrioritySuggestions],
+  )
+  const visibleReviewedSuggestions = useMemo(
+    () => focusedReviewSuggestion
+      ? reviewedSuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
+      : reviewedSuggestions,
+    [focusedReviewSuggestion, reviewedSuggestions],
+  )
+  const findAutonomyBlockerReviewSuggestion = useCallback((blocker: string) => {
+    const reviewMode = autonomyBlockerReviewMode(blocker)
+    if (!reviewMode) {
+      return null
+    }
+
+    const unresolvedCandidates = rankedSuggestions.filter((candidate) =>
+      candidate.actionMode === reviewMode &&
+      candidate.status !== 'dismissed' &&
+      candidate.reviewOutcome !== 'resolved' &&
+      candidate.reviewOutcome !== 'false-alarm',
+    )
+    return unresolvedCandidates.find((candidate) => candidate.status === 'active') || unresolvedCandidates[0] || null
+  }, [rankedSuggestions])
+  const handleOpenAutonomyBlockerReview = useCallback((blocker: string) => {
+    const reviewSuggestion = findAutonomyBlockerReviewSuggestion(blocker)
+    if (!reviewSuggestion) {
+      return
+    }
+
+    setFocusedReviewSuggestionId(reviewSuggestion.id)
+    if (lowerPrioritySuggestions.some((candidate) => candidate.id === reviewSuggestion.id)) {
+      setShowLowerPrioritySuggestions(true)
+    }
+    setActiveBrainView('moves')
+  }, [findAutonomyBlockerReviewSuggestion, lowerPrioritySuggestions])
   const followUpsBySourceId = useMemo(() => {
     const bySource = new Map<string, BrainFollowUpAction>()
     followUps.forEach((action) => {
@@ -2734,8 +2837,11 @@ export default function BrainSignalsPanel({
       return null
     }
 
+    const autonomyApprovalItem = autonomyQueue.find((item) => item.actionId === pendingFollowUp.id && item.approvalRequired)
+    const requiresAutonomyApproval = Boolean(autonomyApprovalItem)
     const isLaunchBusy = busyAction === `followup-launch:${pendingFollowUp.id}`
     const isCancelBusy = busyAction === `followup-cancel:${pendingFollowUp.id}`
+    const launchLabel = requiresAutonomyApproval ? 'Approve and Launch Guided Rabbit Hole' : 'Launch Guided Rabbit Hole'
 
     return (
       <section
@@ -2745,12 +2851,19 @@ export default function BrainSignalsPanel({
       >
         <div className="forensic-brain-followup-header">
           <div>
-            <span className="forensic-brain-panel-kicker">Prepared follow-up</span>
+            <span className="forensic-brain-panel-kicker">
+              {requiresAutonomyApproval ? 'Approval required' : 'Prepared follow-up'}
+            </span>
             <h3>{pendingFollowUp.title}</h3>
             <p>{pendingFollowUp.summary}</p>
           </div>
           <strong>{pendingFollowUp.descentMode}</strong>
         </div>
+        {requiresAutonomyApproval && (
+          <div className="forensic-brain-followup-approval-note">
+            Autonomy prepared this Rabbit Hole. It will not launch until you approve it.
+          </div>
+        )}
         <div className="forensic-brain-followup-prompt" aria-label="Prepared Rabbit Hole prompt">
           <span>Rabbit Hole prompt</span>
           <pre>{pendingFollowUp.prompt}</pre>
@@ -2775,7 +2888,7 @@ export default function BrainSignalsPanel({
             onClick={() => void handleLaunchFollowUp(pendingFollowUp)}
           >
             <Rocket size={13} />
-            Launch Guided Rabbit Hole
+            {launchLabel}
           </button>
           <button
             type="button"
@@ -3062,9 +3175,10 @@ export default function BrainSignalsPanel({
     if (!suggestion.reviewOutcome) {
       return null
     }
+    const isAutonomyPreflight = suggestion.reviewSource === 'autonomy-preflight'
     return (
-      <span className="forensic-brain-action-outcome">
-        Outcome: {formatSuggestionReviewOutcome(suggestion.reviewOutcome)}
+      <span className={`forensic-brain-action-outcome ${isAutonomyPreflight ? 'forensic-brain-action-outcome-autonomy' : ''}`}>
+        {isAutonomyPreflight ? 'Autonomy Checked' : 'Outcome'}: {formatSuggestionReviewOutcome(suggestion.reviewOutcome)}
       </span>
     )
   }
@@ -3082,6 +3196,9 @@ export default function BrainSignalsPanel({
 
   const renderVerificationActionPanel = (suggestion: BrainSuggestion) => {
     const reasonSamples = (suggestion.reasonSamples || []).slice(0, 2)
+    const sourceEvidenceNeeded = suggestion.reviewOutcome === 'needs-source'
+    const sourceEvidenceItems = (suggestion.missingEvidence || []).length > 0 ? suggestion.missingEvidence || [] : ['source']
+    const promptIsOpen = expandedPromptSuggestionId === suggestion.id
 
     return (
       <section className="forensic-brain-thinking-action-panel" aria-label="Verification action">
@@ -3111,11 +3228,33 @@ export default function BrainSignalsPanel({
         ) : (
           <p>No matched evidence ids recorded for this verification cue.</p>
         )}
+        {sourceEvidenceNeeded && (
+          <>
+            <div className="forensic-brain-gap-list">
+              {sourceEvidenceItems.map((item) => (
+                <span key={item}>{formatMissingEvidence(item)}</span>
+              ))}
+            </div>
+            <div className="forensic-brain-thinking-action-buttons">
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+                disabled={!suggestion.searchPrompt}
+                onClick={() => setExpandedPromptSuggestionId((current) => (current === suggestion.id ? null : suggestion.id))}
+              >
+                Show Source Prompt
+              </button>
+            </div>
+            {promptIsOpen && suggestion.searchPrompt && (
+              <p className="forensic-brain-search-prompt">{suggestion.searchPrompt}</p>
+            )}
+          </>
+        )}
         <div className="forensic-brain-thinking-action-buttons">
           {renderSuggestionOutcomeButton(suggestion, 'verified-conflict', 'Mark Verified Conflict')}
           {renderSuggestionOutcomeButton(suggestion, 'resolved', 'Mark Resolved')}
           {renderSuggestionOutcomeButton(suggestion, 'false-alarm', 'Mark False Alarm')}
-          {renderSuggestionOutcomeButton(suggestion, 'needs-source', 'Needs Source')}
+          {suggestion.reviewOutcome !== 'needs-source' && renderSuggestionOutcomeButton(suggestion, 'needs-source', 'Needs Source')}
         </div>
       </section>
     )
@@ -3178,8 +3317,10 @@ export default function BrainSignalsPanel({
     const canViewSignal = suggestion.relatedSignalIds.length > 0
     const canViewMap = !!findBrainMapNodeForSuggestion(suggestion)
     const isReviewed = suggestion.status === 'reviewed'
+    const isAutonomyBlockerFocus = focusedReviewSuggestionId === suggestion.id
     const relevance = normalizeRelevance(suggestion.relevance)
     const canPrepareFollowUp = suggestion.actionMode === 'launch-follow-up' && !isSpeculativeRelevance(suggestion.relevance)
+    const usesThinkingOutcomeActions = suggestion.actionMode === 'verify' || suggestion.actionMode === 'fill-gap'
     const followUpAction = followUpsBySourceId.get(suggestion.id)
     const followUpLabel = followUpAction?.status === 'prepared'
       ? 'Review Rabbit Hole'
@@ -3191,7 +3332,7 @@ export default function BrainSignalsPanel({
       <article
         key={suggestion.id}
         data-testid="brain-suggestion-card"
-        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} forensic-brain-relevance-${relevance} ${isReviewed ? 'is-reviewed' : ''}`}
+        className={`forensic-brain-suggestion-card forensic-brain-suggestion-${suggestion.priority} forensic-brain-relevance-${relevance} ${isReviewed ? 'is-reviewed' : ''} ${isAutonomyBlockerFocus ? 'is-autonomy-blocker-focus' : ''}`}
       >
         <div className="forensic-brain-suggestion-main">
           <div className="forensic-brain-suggestion-topline">
@@ -3202,6 +3343,11 @@ export default function BrainSignalsPanel({
             {suggestion.thinkingLabel && (
               <span className={`forensic-brain-thinking-chip forensic-brain-thinking-${suggestion.actionMode || 'compare'}`}>
                 {suggestion.thinkingLabel}
+              </span>
+            )}
+            {isAutonomyBlockerFocus && (
+              <span className="forensic-brain-autonomy-unblock-target-chip">
+                Unblocks Autonomy
               </span>
             )}
             <strong>{suggestion.priority}</strong>
@@ -3260,7 +3406,7 @@ export default function BrainSignalsPanel({
               {followUpLabel}
             </button>
           ) : (
-            <span className="forensic-brain-action-note">
+            <span className={`forensic-brain-action-note forensic-brain-action-gate-chip forensic-brain-action-gate-${suggestion.actionMode || 'compare'}`}>
               {formatSuggestionActionNote(suggestion)}
             </span>
           )}
@@ -3313,15 +3459,17 @@ export default function BrainSignalsPanel({
               View Signal
             </button>
           )}
-          <button
-            type="button"
-            className="forensic-brain-action forensic-brain-action-secondary"
-            disabled={isReviewed || busyAction === `suggestion-review:${suggestion.id}`}
-            onClick={() => void handleReviewSuggestion(suggestion)}
-          >
-            <Eye size={13} />
-            Mark Reviewed
-          </button>
+          {!usesThinkingOutcomeActions && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={isReviewed || busyAction === `suggestion-review:${suggestion.id}`}
+              onClick={() => void handleReviewSuggestion(suggestion)}
+            >
+              <Eye size={13} />
+              Mark Reviewed
+            </button>
+          )}
           <button
             type="button"
             className="forensic-brain-action forensic-brain-action-secondary"
@@ -3355,6 +3503,10 @@ export default function BrainSignalsPanel({
     const action = item.actionId ? followUps.find((candidate) => candidate.id === item.actionId) : null
     const suggestion = rankedSuggestions.find((candidate) => candidate.id === item.suggestionId) || null
     const canOpenTarget = item.targetInvestigationIds.length > 0 && !!onOpenInvestigation
+    const reviewLabel = item.approvalRequired ? 'Review and Approve Rabbit Hole' : 'Review Rabbit Hole'
+    const blockerReviewActions = Array.from(new Set(item.blockers))
+      .map((blocker) => ({ blocker, suggestion: findAutonomyBlockerReviewSuggestion(blocker) }))
+      .filter((entry): entry is { blocker: string; suggestion: BrainSuggestion } => !!entry.suggestion)
 
     return (
       <article
@@ -3370,6 +3522,11 @@ export default function BrainSignalsPanel({
             <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
               {formatRelevance(item)}
             </span>
+            {item.approvalRequired && (
+              <span className="forensic-brain-autonomy-approval-chip">
+                Approval Required
+              </span>
+            )}
             <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
           </div>
           <h4>{item.title}</h4>
@@ -3396,6 +3553,33 @@ export default function BrainSignalsPanel({
               </span>
             )}
           </div>
+          {item.blockers.length > 0 && (
+            <section className="forensic-brain-autonomy-unblock" aria-label="How to unblock this autonomy decision">
+              <div>
+                <span>How to unblock</span>
+                <p>This Rabbit Hole is paused until the blocker review is resolved or marked false alarm.</p>
+              </div>
+              {blockerReviewActions.length > 0 ? (
+                <div className="forensic-brain-autonomy-unblock-actions">
+                  {blockerReviewActions.map(({ blocker }) => (
+                    <button
+                      key={blocker}
+                      type="button"
+                      className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+                      onClick={() => handleOpenAutonomyBlockerReview(blocker)}
+                    >
+                      <ArrowRight size={12} />
+                      {autonomyBlockerReviewLabel(blocker)}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="forensic-brain-autonomy-unblock-empty">
+                  Open Next Moves and resolve the matching review, then refresh Brain.
+                </p>
+              )}
+            </section>
+          )}
         </div>
         <aside data-testid="brain-autonomy-card-rail" className="forensic-brain-suggestion-action forensic-brain-autonomy-rail">
           <div className="forensic-brain-autonomy-rail-meta">
@@ -3413,7 +3597,7 @@ export default function BrainSignalsPanel({
                 onClick={() => setPendingFollowUp(action)}
               >
                 <Rocket size={13} />
-                Review Rabbit Hole
+                {reviewLabel}
               </button>
             )}
             {suggestion && (
@@ -3555,8 +3739,9 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <div className="forensic-brain-suggestion-list">
-              {prioritySuggestions.map(renderSuggestionCard)}
-              {lowerPrioritySuggestions.length > 0 && (
+              {focusedReviewSuggestion && renderSuggestionCard(focusedReviewSuggestion)}
+              {visiblePrioritySuggestions.map(renderSuggestionCard)}
+              {visibleLowerPrioritySuggestions.length > 0 && (
                 <div data-testid="brain-lower-priority-moves-section" className="forensic-brain-lower-priority">
                   <button
                     type="button"
@@ -3565,19 +3750,19 @@ export default function BrainSignalsPanel({
                     onClick={() => setShowLowerPrioritySuggestions((current) => !current)}
                   >
                     {showLowerPrioritySuggestions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {showLowerPrioritySuggestions ? 'Hide' : 'Show'} lower-priority moves ({lowerPrioritySuggestions.length})
+                    {showLowerPrioritySuggestions ? 'Hide' : 'Show'} lower-priority moves ({visibleLowerPrioritySuggestions.length})
                   </button>
                   {showLowerPrioritySuggestions && (
                     <div className="forensic-brain-lower-priority-list">
-                      {lowerPrioritySuggestions.map(renderSuggestionCard)}
+                      {visibleLowerPrioritySuggestions.map(renderSuggestionCard)}
                     </div>
                   )}
                 </div>
               )}
-              {reviewedSuggestions.length > 0 && (
+              {visibleReviewedSuggestions.length > 0 && (
                 <div className="forensic-brain-reviewed-suggestions">
                   <span className="forensic-brain-panel-kicker">Reviewed context</span>
-                  {reviewedSuggestions.map(renderSuggestionCard)}
+                  {visibleReviewedSuggestions.map(renderSuggestionCard)}
                 </div>
               )}
             </div>

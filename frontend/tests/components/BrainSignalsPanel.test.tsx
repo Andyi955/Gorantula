@@ -871,8 +871,9 @@ describe('BrainSignalsPanel', () => {
           summary: 'Acme Grid has an active memory cluster worth checking.',
           score: 0.86,
           relevance: 'strong-memory',
-          reason: 'Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed.',
+          reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
           blockers: [],
+          approvalRequired: true,
           targetInvestigationIds: ['inv-older'],
           createdAt: '2026-06-05T12:05:00Z',
           updatedAt: '2026-06-05T12:05:00Z',
@@ -904,8 +905,9 @@ describe('BrainSignalsPanel', () => {
           actionId: followUpAction.id,
           decision: 'prepared',
           mode: 'prepare-only',
-          reason: 'Autonomy prepared this focused follow-up because settings allowed prepare-only action and safety checks passed.',
+          reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
           blockers: [],
+          approvalRequired: true,
           createdAt: '2026-06-05T12:05:00Z',
         },
       ],
@@ -927,6 +929,7 @@ describe('BrainSignalsPanel', () => {
     expect(autonomyView).toHaveTextContent('Auto-prepare Off')
     expect(autonomyView).toHaveTextContent('Review active memory cluster')
     expect(autonomyView).toHaveTextContent('Prepared')
+    expect(autonomyView).toHaveTextContent('Approval Required')
     expect(autonomyView).toHaveTextContent('Compare durable memory link')
     expect(autonomyView).toHaveTextContent('Unresolved Gap')
     const autonomyCards = within(autonomyView).getAllByTestId('brain-autonomy-card')
@@ -935,6 +938,7 @@ describe('BrainSignalsPanel', () => {
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-card-main')).toBeInTheDocument()
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-card-rail')).toBeInTheDocument()
     expect(within(autonomyCards[0]).getByTestId('brain-autonomy-timestamp')).toBeInTheDocument()
+    expect(within(autonomyCards[0]).getByRole('button', { name: /review and approve rabbit hole/i })).toBeInTheDocument()
     expect(within(autonomyView).queryByRole('button', { name: /suggest only/i })).not.toBeInTheDocument()
     expect(within(autonomyView).queryByRole('button', { name: /prepare only/i })).not.toBeInTheDocument()
     expect(within(autonomyView).queryByRole('button', { name: /ask before launch/i })).not.toBeInTheDocument()
@@ -967,6 +971,195 @@ describe('BrainSignalsPanel', () => {
         body: expect.stringContaining('"mode":"off"'),
       }),
     )
+  })
+
+  it('requires manual approval before launching an autonomy prepared Rabbit Hole', async () => {
+    const user = userEvent.setup()
+    const onLaunchFocusedRabbitHole = vi.fn()
+    const autonomy = makeAutonomyState({
+      settings: {
+        mode: 'prepare-only',
+        maxAutoPreparedPerInvestigation: 1,
+        maxActivePrepared: 3,
+        updatedAt: '2026-06-05T12:00:00Z',
+      },
+      queue: [{
+        id: 'brain-autonomy-next-move',
+        investigationId: 'inv-current',
+        suggestionId: suggestion.id,
+        actionId: followUpAction.id,
+        decision: 'prepared',
+        status: 'prepared',
+        mode: 'prepare-only',
+        title: 'Review active memory cluster',
+        summary: 'Acme Grid has an active memory cluster worth checking.',
+        score: 0.86,
+        relevance: 'strong-memory',
+        reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
+        blockers: [],
+        approvalRequired: true,
+        targetInvestigationIds: ['inv-older'],
+        createdAt: '2026-06-05T12:05:00Z',
+        updatedAt: '2026-06-05T12:05:00Z',
+      }],
+    })
+    const fetchMock = installBrainFetch({
+      suggestions: [suggestion],
+      followUps: [followUpAction],
+      autonomy,
+    })
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onLaunchFocusedRabbitHole={onLaunchFocusedRabbitHole}
+      />,
+    )
+    await openBrainView(user, /autonomy queue view/i)
+
+    const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    const card = within(autonomyView).getByTestId('brain-autonomy-card')
+    await user.click(within(card).getByRole('button', { name: /review and approve rabbit hole/i }))
+
+    const launcher = await screen.findByTestId('brain-followup-launcher')
+    expect(launcher).toHaveTextContent('Approval required')
+    expect(launcher).toHaveTextContent('Autonomy prepared this Rabbit Hole. It will not launch until you approve it.')
+    expect(onLaunchFocusedRabbitHole).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/brain-followup-next-move/launch',
+      expect.anything(),
+    )
+
+    await user.click(within(launcher).getByRole('button', { name: /approve and launch guided rabbit hole/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/followups/brain-followup-next-move/launch',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    expect(onLaunchFocusedRabbitHole).toHaveBeenCalledWith(expect.objectContaining({
+      id: followUpAction.id,
+      status: 'launched',
+      descentMode: 'guided',
+    }))
+  })
+
+  it('opens the matching blocker review from a blocked autonomy card', async () => {
+    const user = userEvent.setup()
+    const launchSuggestion = makeSuggestion({
+      id: 'brain-suggestion-launch-blocked',
+      kind: 'cluster-review',
+      title: 'Review blocked memory cluster',
+      summary: 'Agibot has a strong memory cluster, but autonomy is paused.',
+      suggestedAction: 'Compare memory before launch',
+      actionMode: 'launch-follow-up',
+      priority: 'high',
+      relevance: 'strong-memory',
+      relevanceLabel: 'Strong Memory',
+      score: 0.98,
+      reason: 'A focused follow-up is blocked until review cues are handled.',
+    })
+    const contradictionSuggestion = makeSuggestion({
+      id: 'brain-suggestion-contradiction-action',
+      kind: 'contradiction-review',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Verify conflicting claim',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.88,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      reasonSamples: [{
+        gateway: 'contradiction',
+        value: 'supplier denial',
+        label: 'supplier denial',
+        detail: 'Contradiction cue "supplier denial" appears in both investigations and needs verification.',
+        currentNodeIds: ['current-denial-node'],
+        targetNodeIds: ['remembered-supplier-node'],
+      }],
+    })
+    const gapSuggestion = makeSuggestion({
+      id: 'brain-suggestion-gap-action',
+      kind: 'gap-review',
+      title: 'Find missing bridge evidence',
+      summary: 'Broad context fired, but there is not enough bridge evidence yet.',
+      suggestedAction: 'Find bridge evidence',
+      relevance: 'distant-echo',
+      relevanceLabel: 'Distant Echo',
+      thinkingGateway: 'fill-gap',
+      thinkingLabel: 'Fill memory gap',
+      thinkingReason: 'This cue needs sharper bridge evidence before it should steer a Rabbit Hole follow-up.',
+      actionMode: 'fill-gap',
+      priority: 'medium',
+      score: 0.54,
+      reason: 'Active firings need bridge evidence before they become durable memory.',
+      missingEvidence: ['source', 'corroborating-evidence'],
+      status: 'reviewed',
+      reviewedAt: '2026-06-05T12:08:00Z',
+    })
+    const autonomy = makeAutonomyState({
+      settings: {
+        mode: 'prepare-only',
+        maxAutoPreparedPerInvestigation: 1,
+        maxActivePrepared: 3,
+        updatedAt: '2026-06-05T12:00:00Z',
+      },
+      queue: [{
+        id: 'brain-autonomy-blocked-review',
+        investigationId: 'inv-current',
+        suggestionId: launchSuggestion.id,
+        decision: 'blocked',
+        status: 'blocked',
+        mode: 'prepare-only',
+        title: 'Review Agibot memory cluster',
+        summary: 'Agibot links 7 investigations through entity/date recall.',
+        score: 0.98,
+        relevance: 'strong-memory',
+        reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
+        blockers: ['unresolved-gap', 'unresolved-contradiction'],
+        targetInvestigationIds: ['inv-older'],
+        createdAt: '2026-06-05T12:06:00Z',
+        updatedAt: '2026-06-05T12:06:00Z',
+      }],
+    })
+    installBrainFetch({
+      suggestions: [launchSuggestion, contradictionSuggestion, gapSuggestion],
+      autonomy,
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /autonomy queue view/i)
+
+    const autonomyView = await screen.findByTestId('brain-autonomy-view')
+    const autonomyCard = within(autonomyView).getByTestId('brain-autonomy-card')
+    expect(autonomyCard).toHaveTextContent('How to unblock')
+    expect(autonomyCard).toHaveTextContent('This Rabbit Hole is paused until the blocker review is resolved or marked false alarm.')
+
+    await user.click(within(autonomyCard).getByRole('button', { name: /go to gap checklist/i }))
+
+    expect(screen.getByRole('heading', { name: /next moves/i })).toBeInTheDocument()
+    let nextMoveCards = screen.getAllByTestId('brain-suggestion-card')
+    const gapCard = nextMoveCards[0]
+    expect(gapCard).toHaveTextContent('Find missing bridge evidence')
+    expect(gapCard).toBeTruthy()
+    expect(gapCard).toHaveClass('is-autonomy-blocker-focus')
+    expect(gapCard).toHaveTextContent('Unblocks Autonomy')
+    expect(gapCard).toHaveTextContent('Reviewed')
+    expect(within(gapCard).getByText('Gap Checklist')).toBeInTheDocument()
+
+    await openBrainView(user, /autonomy queue view/i)
+    await user.click(within(await screen.findByTestId('brain-autonomy-view')).getByRole('button', { name: /go to verification queue/i }))
+
+    nextMoveCards = screen.getAllByTestId('brain-suggestion-card')
+    const contradictionCard = nextMoveCards[0]
+    expect(contradictionCard).toHaveTextContent('Verify possible contradiction')
+    expect(contradictionCard).toBeTruthy()
+    expect(contradictionCard).toHaveClass('is-autonomy-blocker-focus')
+    expect(contradictionCard).toHaveTextContent('Unblocks Autonomy')
+    expect(within(contradictionCard).getByText('Verification Queue')).toBeInTheDocument()
   })
 
   it('keeps the autonomy switch clickable-looking while saving', async () => {
@@ -1048,7 +1241,9 @@ describe('BrainSignalsPanel', () => {
     expect(within(contradictionCard as HTMLElement).getByText('Verify contradiction')).toBeInTheDocument()
     expect(within(contradictionCard as HTMLElement).getByText(/could challenge the current explanation/i)).toBeInTheDocument()
     expect(within(contradictionCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole verify possible contradiction/i })).not.toBeInTheDocument()
-    expect(within(contradictionCard as HTMLElement).getByText('Verify before Rabbit Hole')).toBeInTheDocument()
+    expect(within(contradictionCard as HTMLElement).queryByRole('button', { name: /mark reviewed/i })).not.toBeInTheDocument()
+    const verificationGate = within(contradictionCard as HTMLElement).getByText('Resolve Verification Queue Above')
+    expect(verificationGate).toHaveClass('forensic-brain-action-gate-chip')
 
     await user.click(screen.getByRole('button', { name: /show lower-priority moves \(1\)/i }))
     const gapCard = screen.getAllByTestId('brain-suggestion-card').find((card) =>
@@ -1058,7 +1253,9 @@ describe('BrainSignalsPanel', () => {
     expect(within(gapCard as HTMLElement).getByText('Fill memory gap')).toBeInTheDocument()
     expect(within(gapCard as HTMLElement).getByText(/needs sharper bridge evidence/i)).toBeInTheDocument()
     expect(within(gapCard as HTMLElement).queryByRole('button', { name: /prepare focused rabbit hole find missing bridge evidence/i })).not.toBeInTheDocument()
-    expect(within(gapCard as HTMLElement).getByText('Find bridge before Rabbit Hole')).toBeInTheDocument()
+    expect(within(gapCard as HTMLElement).queryByRole('button', { name: /mark reviewed/i })).not.toBeInTheDocument()
+    const gapGate = within(gapCard as HTMLElement).getByText('Resolve Gap Checklist Above')
+    expect(gapGate).toHaveClass('forensic-brain-action-gate-chip')
   })
 
   it('lets users record thinking action outcomes and prepare gap search prompts', async () => {
@@ -1138,6 +1335,86 @@ describe('BrainSignalsPanel', () => {
 
     await user.click(within(gapCard).getByRole('button', { name: /prepare search prompt/i }))
     expect(gapCard).toHaveTextContent('Find a source and corroborating evidence for Current Grid Case')
+  })
+
+  it('labels autonomy preflight blocker outcomes', async () => {
+    const user = userEvent.setup()
+    const contradictionSuggestion = makeSuggestion({
+      id: 'brain-suggestion-autonomy-preflight-conflict',
+      kind: 'contradiction-review',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Verify conflicting claim',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.88,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      reviewOutcome: 'verified-conflict',
+      reviewSource: 'autonomy-preflight',
+      status: 'reviewed',
+      reviewedAt: '2026-06-05T12:09:00Z',
+    })
+    installBrainFetch({ suggestions: [contradictionSuggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const contradictionCard = screen.getByTestId('brain-suggestion-card')
+    expect(contradictionCard).toHaveTextContent('Autonomy Checked: Verified Conflict')
+    expect(contradictionCard).toHaveTextContent('Autonomy Hold: Verified Conflict')
+  })
+
+  it('surfaces autonomy source holds as actionable next moves', async () => {
+    const user = userEvent.setup()
+    const sourceHoldSuggestion = makeSuggestion({
+      id: 'brain-suggestion-autonomy-source-hold',
+      kind: 'contradiction-review',
+      status: 'reviewed',
+      title: 'Verify possible contradiction',
+      summary: 'Supplier denial may conflict with remembered evidence.',
+      suggestedAction: 'Find source evidence',
+      thinkingGateway: 'verify-contradiction',
+      thinkingLabel: 'Verify contradiction',
+      thinkingReason: 'This cue could challenge the current explanation. Compare the remembered evidence before launching follow-up work.',
+      actionMode: 'verify',
+      priority: 'high',
+      score: 0.62,
+      reason: 'Supplier denial may conflict with remembered evidence and needs verification.',
+      missingEvidence: ['source'],
+      searchPrompt: 'Find source evidence for Verify possible contradiction against inv-older.',
+      reviewOutcome: 'needs-source',
+      reviewSource: 'autonomy-preflight',
+      reviewedAt: '2026-06-05T12:09:00Z',
+      targetInvestigationIds: ['inv-older'],
+    })
+    const launchSuggestion = makeSuggestion({
+      id: 'brain-suggestion-launch-ready',
+      kind: 'cluster-review',
+      title: 'Review active memory cluster',
+      summary: 'Acme Grid has an active memory cluster worth checking.',
+      suggestedAction: 'Inspect recurring memory cluster',
+      actionMode: 'launch-follow-up',
+      priority: 'high',
+      score: 0.97,
+      reason: 'Acme Grid is an active cluster with 3 related investigations.',
+    })
+    installBrainFetch({ suggestions: [launchSuggestion, sourceHoldSuggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const cards = screen.getAllByTestId('brain-suggestion-card')
+    expect(cards[0]).toHaveTextContent('Verify possible contradiction')
+    expect(cards[0]).toHaveTextContent('Autonomy Checked: Needs Source')
+    expect(cards[0]).toHaveTextContent('Source')
+
+    expect(within(cards[0]).queryByRole('button', { name: /^needs source$/i })).not.toBeInTheDocument()
+
+    await user.click(within(cards[0]).getByRole('button', { name: /show source prompt/i }))
+    expect(cards[0]).toHaveTextContent('Find source evidence for Verify possible contradiction against inv-older.')
   })
 
   it('cancels a prepared focused follow-up without launching', async () => {

@@ -1093,8 +1093,59 @@ func TestBrainAutonomyPrepareOnlyCreatesQueuedFollowUp(t *testing.T) {
 	if item.ActionID != actions[0].ID {
 		t.Fatalf("expected queue item to reference prepared action, got item=%#v action=%#v", item, actions[0])
 	}
+	if actions[0].Status == FollowUpStatusLaunched {
+		t.Fatalf("expected autonomy to require user approval before launch, got %#v", actions[0])
+	}
+	if !strings.Contains(strings.ToLower(item.Reason), "approve") {
+		t.Fatalf("expected prepared autonomy item to explain approval requirement, got %q", item.Reason)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal autonomy item failed: %v", err)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal autonomy item payload failed: %v", err)
+	}
+	if payload["approvalRequired"] != true {
+		t.Fatalf("expected autonomy queue payload to require approval, got %#v", payload)
+	}
 	if len(state.Audit) == 0 || state.Audit[0].Decision != AutonomyDecisionPrepared {
 		t.Fatalf("expected prepared audit entry, got %#v", state.Audit)
+	}
+}
+
+func TestBrainAutonomyRequiresHighConfidencePossibleBridge(t *testing.T) {
+	lowConfidenceBridge := BrainSuggestion{
+		ID:                     "brain-suggestion-bridge-low",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Title:                  "Compare possible bridge",
+		Summary:                "A possible bridge exists but confidence is not high yet.",
+		Score:                  0.82,
+		Relevance:              RelevancePossibleBridge,
+		ActionMode:             SuggestionActionLaunchFollowUp,
+		TargetInvestigationIDs: []string{"inv-older"},
+	}
+	if candidate, ok := firstLaunchReadyAutonomySuggestion([]BrainSuggestion{lowConfidenceBridge}); ok {
+		t.Fatalf("expected low-confidence possible bridge to be withheld, got %#v", candidate)
+	}
+
+	highConfidenceBridge := lowConfidenceBridge
+	highConfidenceBridge.ID = "brain-suggestion-bridge-high"
+	highConfidenceBridge.Score = 0.88
+	candidate, ok := firstLaunchReadyAutonomySuggestion([]BrainSuggestion{highConfidenceBridge})
+	if !ok || candidate.ID != highConfidenceBridge.ID {
+		t.Fatalf("expected high-confidence possible bridge to pass, got ok=%v candidate=%#v", ok, candidate)
+	}
+
+	strongMemory := lowConfidenceBridge
+	strongMemory.ID = "brain-suggestion-strong"
+	strongMemory.Score = 0.80
+	strongMemory.Relevance = RelevanceStrongMemory
+	candidate, ok = firstLaunchReadyAutonomySuggestion([]BrainSuggestion{strongMemory})
+	if !ok || candidate.ID != strongMemory.ID {
+		t.Fatalf("expected strong memory at controlled threshold to pass, got ok=%v candidate=%#v", ok, candidate)
 	}
 }
 
@@ -1199,6 +1250,185 @@ func TestBrainAutonomyBlocksUnresolvedGapSuggestions(t *testing.T) {
 	item := findAutonomyQueueItem(t, state.Queue, queuedSuggestion.ID)
 	if item.Decision != AutonomyDecisionBlocked || !containsString(item.Blockers, AutonomyBlockerUnresolvedGap) {
 		t.Fatalf("expected unresolved-gap blocker, got %#v", item)
+	}
+}
+
+func TestBrainAutonomyStillBlocksReviewedGapWithoutOutcome(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation with blocker failed: %v", err)
+	}
+	gap := findSuggestion(t, suggestions, SuggestionKindGapReview)
+	if gap.ActionMode != SuggestionActionFillGap {
+		t.Fatalf("expected fill-gap suggestion, got %#v", gap)
+	}
+	if _, err := service.MarkSuggestionReviewed(gap.ID); err != nil {
+		t.Fatalf("MarkSuggestionReviewed gap failed: %v", err)
+	}
+	if _, err := service.SuggestionsForInvestigation("inv-current"); err != nil {
+		t.Fatalf("SuggestionsForInvestigation after reviewed gap failed: %v", err)
+	}
+
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Fatalf("expected reviewed gap without outcome to block auto-prepare, got %#v", actions)
+	}
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	if len(state.Queue) != 1 {
+		t.Fatalf("expected one blocked autonomy queue item, got %#v", state.Queue)
+	}
+	if state.Queue[0].Decision != AutonomyDecisionBlocked || !containsString(state.Queue[0].Blockers, AutonomyBlockerUnresolvedGap) {
+		t.Fatalf("expected unresolved-gap blocker after reviewed gap, got %#v", state.Queue[0])
+	}
+}
+
+func TestBrainAutonomyPreflightAutoClassifiesGapBlockers(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	gap := findSuggestion(t, suggestions, SuggestionKindGapReview)
+	if gap.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected autonomy preflight to review gap blocker, got %#v", gap)
+	}
+	if gap.ReviewOutcome != SuggestionOutcomeNeedsRelation {
+		t.Fatalf("expected autonomy preflight to mark the specific relationship gap before generic corroboration, got %#v", gap)
+	}
+	if gap.ReviewSource != SuggestionReviewSourceAutonomyPreflight {
+		t.Fatalf("expected autonomy preflight review source, got %#v", gap)
+	}
+	if strings.TrimSpace(gap.ReviewedAt) == "" {
+		t.Fatalf("expected reviewed timestamp from autonomy preflight, got %#v", gap)
+	}
+}
+
+func TestBrainAutonomyPreflightAutoClassifiesContradictionBlockers(t *testing.T) {
+	contradiction, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
+		ID:         "brain-suggestion-contradiction",
+		Status:     SuggestionStatusActive,
+		ActionMode: SuggestionActionVerify,
+		ReasonSamples: []SignalReason{{
+			Gateway:        GatewayContradiction,
+			Value:          "supplier denial",
+			Label:          "supplier denial",
+			Detail:         "Contradiction cue appears in both investigations.",
+			CurrentNodeIDs: []string{"current-denial-node"},
+			TargetNodeIDs:  []string{"remembered-supplier-node"},
+		}},
+	}, "2026-06-17T12:00:00Z")
+	if !ok {
+		t.Fatalf("expected autonomy preflight to classify contradiction blocker")
+	}
+	if contradiction.Status != SuggestionStatusReviewed {
+		t.Fatalf("expected autonomy preflight to review contradiction blocker, got %#v", contradiction)
+	}
+	if contradiction.ReviewOutcome != SuggestionOutcomeVerifiedConflict {
+		t.Fatalf("expected autonomy preflight to verify conflict, got %#v", contradiction)
+	}
+	if contradiction.ReviewSource != SuggestionReviewSourceAutonomyPreflight {
+		t.Fatalf("expected autonomy preflight review source, got %#v", contradiction)
+	}
+	if strings.TrimSpace(contradiction.ReviewedAt) == "" {
+		t.Fatalf("expected reviewed timestamp from autonomy preflight, got %#v", contradiction)
+	}
+
+	needsSource, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
+		ID:                     "brain-suggestion-contradiction-missing-evidence",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Title:                  "Verify possible contradiction",
+		Summary:                "Supplier denial may conflict with remembered evidence.",
+		SuggestedAction:        "Verify conflicting claim",
+		ActionMode:             SuggestionActionVerify,
+		Reason:                 "Supplier denial may conflict with remembered evidence and needs verification.",
+		TargetInvestigationIDs: []string{"inv-old"},
+	}, "2026-06-17T12:00:00Z")
+	if !ok {
+		t.Fatalf("expected autonomy preflight to classify missing-evidence contradiction blocker")
+	}
+	if needsSource.ReviewOutcome != SuggestionOutcomeNeedsSource {
+		t.Fatalf("expected missing-evidence contradiction to need source, got %#v", needsSource)
+	}
+	if !containsString(needsSource.MissingEvidence, SuggestionMissingSource) {
+		t.Fatalf("expected missing-evidence contradiction to carry source checklist, got %#v", needsSource)
+	}
+	if strings.TrimSpace(needsSource.SearchPrompt) == "" {
+		t.Fatalf("expected missing-evidence contradiction to prepare a source prompt, got %#v", needsSource)
+	}
+	if !strings.Contains(needsSource.SearchPrompt, "Find source evidence") {
+		t.Fatalf("expected source prompt to direct evidence search, got %q", needsSource.SearchPrompt)
+	}
+	if needsSource.SuggestedAction != "Find source evidence" {
+		t.Fatalf("expected suggested action to become source evidence work, got %#v", needsSource)
+	}
+}
+
+func TestBrainAutonomyPreflightPrioritizesSpecificMissingEvidence(t *testing.T) {
+	sourceGap, ok := autonomyPreflightBlockerSuggestion(BrainSuggestion{
+		ID:                     "brain-suggestion-gap-needs-source",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Title:                  "Decide whether this firing becomes memory",
+		Summary:                "Active firings have not become durable memory links yet.",
+		SuggestedAction:        "Review before promoting memory",
+		ActionMode:             SuggestionActionFillGap,
+		Reason:                 "Active firings need bridge evidence before they become durable memory.",
+		MissingEvidence:        []string{SuggestionMissingCorroboration, SuggestionMissingSource},
+		TargetInvestigationIDs: []string{"inv-old"},
+	}, "2026-06-17T12:00:00Z")
+	if !ok {
+		t.Fatalf("expected autonomy preflight to classify gap blocker")
+	}
+	if sourceGap.ReviewOutcome != SuggestionOutcomeNeedsSource {
+		t.Fatalf("expected source gap to need source before corroboration, got %#v", sourceGap)
+	}
+	if !containsString(sourceGap.MissingEvidence, SuggestionMissingSource) {
+		t.Fatalf("expected source gap to keep source checklist, got %#v", sourceGap)
+	}
+	if strings.TrimSpace(sourceGap.SearchPrompt) == "" {
+		t.Fatalf("expected source gap to prepare a source prompt, got %#v", sourceGap)
 	}
 }
 
