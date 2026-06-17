@@ -1411,7 +1411,9 @@ describe('BrainSignalsPanel', () => {
     expect(cards[0]).toHaveTextContent('Autonomy Checked: Needs Source')
     expect(cards[0]).toHaveTextContent('Source')
 
-    await user.click(within(cards[0]).getByRole('button', { name: /prepare source prompt/i }))
+    expect(within(cards[0]).queryByRole('button', { name: /^needs source$/i })).not.toBeInTheDocument()
+
+    await user.click(within(cards[0]).getByRole('button', { name: /show source prompt/i }))
     expect(cards[0]).toHaveTextContent('Find source evidence for Verify possible contradiction against inv-older.')
   })
 

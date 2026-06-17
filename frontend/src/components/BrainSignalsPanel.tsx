@@ -3242,7 +3242,7 @@ export default function BrainSignalsPanel({
                 disabled={!suggestion.searchPrompt}
                 onClick={() => setExpandedPromptSuggestionId((current) => (current === suggestion.id ? null : suggestion.id))}
               >
-                Prepare Source Prompt
+                Show Source Prompt
               </button>
             </div>
             {promptIsOpen && suggestion.searchPrompt && (
@@ -3254,7 +3254,7 @@ export default function BrainSignalsPanel({
           {renderSuggestionOutcomeButton(suggestion, 'verified-conflict', 'Mark Verified Conflict')}
           {renderSuggestionOutcomeButton(suggestion, 'resolved', 'Mark Resolved')}
           {renderSuggestionOutcomeButton(suggestion, 'false-alarm', 'Mark False Alarm')}
-          {renderSuggestionOutcomeButton(suggestion, 'needs-source', 'Needs Source')}
+          {suggestion.reviewOutcome !== 'needs-source' && renderSuggestionOutcomeButton(suggestion, 'needs-source', 'Needs Source')}
         </div>
       </section>
     )
