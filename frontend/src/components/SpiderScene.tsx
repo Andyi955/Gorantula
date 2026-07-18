@@ -1,6 +1,6 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Color, Group, Mesh, Quaternion, Vector3 } from 'three';
+import { AdditiveBlending, BufferGeometry, Color, Group, LineBasicMaterial, Mesh, Points, Quaternion, Vector3 } from 'three';
 import type { SpiderEvidencePacket, SpiderLegVisualStatus, SpiderOperationMode } from './SpiderVisualizer';
 
 interface SpiderSceneProps {
@@ -202,9 +202,127 @@ const ScanRings = ({ active }: { active: boolean }) => {
     );
 };
 
+const seededRandom = (seed: number) => {
+    const value = Math.sin(seed * 12.9898) * 43758.5453;
+    return value - Math.floor(value);
+};
+
+const ParticleField = ({
+    count,
+    color,
+    size,
+    spread,
+    spin,
+    opacity,
+}: {
+    count: number;
+    color: string;
+    size: number;
+    spread: number;
+    spin: number;
+    opacity: number;
+}) => {
+    const pointsRef = useRef<Points>(null);
+    const positions = useMemo(() => {
+        const values = new Float32Array(count * 3);
+        for (let i = 0; i < count; i += 1) {
+            const radius = 2.6 + seededRandom(i * 3 + 1) * spread;
+            const theta = seededRandom(i * 3 + 2) * Math.PI * 2;
+            values[i * 3] = Math.cos(theta) * radius;
+            values[i * 3 + 1] = Math.sin(theta) * radius;
+            values[i * 3 + 2] = -1.6 + seededRandom(i * 3 + 3) * 4.4;
+        }
+        return values;
+    }, [count, spread]);
+
+    useFrame(({ clock }) => {
+        if (!pointsRef.current) return;
+        const time = clock.getElapsedTime();
+        pointsRef.current.rotation.z = time * spin;
+        pointsRef.current.position.z = Math.sin(time * 0.45) * 0.22;
+    });
+
+    return (
+        <points ref={pointsRef}>
+            <bufferGeometry>
+                <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+            </bufferGeometry>
+            <pointsMaterial
+                size={size}
+                color={color}
+                transparent
+                opacity={opacity}
+                sizeAttenuation
+                depthWrite={false}
+                blending={AdditiveBlending}
+            />
+        </points>
+    );
+};
+
+const WEB_THREAD_COUNT = 8;
+
+const WebThreads = ({
+    legVisualStatuses,
+    active,
+}: {
+    legVisualStatuses: Record<number, SpiderLegVisualStatus>;
+    active: boolean;
+}) => {
+    const materialsRef = useRef<(LineBasicMaterial | null)[]>([]);
+
+    const threads = useMemo(() => (
+        Array.from({ length: WEB_THREAD_COUNT }, (_, id) => {
+            const angle = (id / WEB_THREAD_COUNT) * Math.PI * 2;
+            const geometry = new BufferGeometry().setFromPoints([
+                new Vector3(0, 0, 0.62),
+                new Vector3(Math.cos(angle) * 5.4, Math.sin(angle) * 5.4, 0.42),
+            ]);
+            return { id, geometry };
+        })
+    ), []);
+
+    useEffect(() => () => {
+        threads.forEach(({ geometry }) => geometry.dispose());
+    }, [threads]);
+
+    useFrame(({ clock }) => {
+        const time = clock.getElapsedTime();
+        threads.forEach(({ id }, index) => {
+            const material = materialsRef.current[index];
+            if (!material) return;
+            const legActive = active && (legVisualStatuses[id] || 'idle') !== 'idle';
+            const base = legActive ? 0.3 : 0.04;
+            const swing = legActive ? 0.14 : 0.02;
+            material.opacity = base + Math.sin(time * 2.3 + id * 0.85) * swing;
+        });
+    });
+
+    return (
+        <group>
+            {threads.map(({ id, geometry }, index) => {
+                const legActive = (legVisualStatuses[id] || 'idle') !== 'idle';
+                return (
+                    <lineSegments key={id} geometry={geometry}>
+                        <lineBasicMaterial
+                            ref={(material) => { materialsRef.current[index] = material; }}
+                            color={legActive ? '#90f3da' : '#22333f'}
+                            transparent
+                            opacity={0.05}
+                            depthWrite={false}
+                            blending={AdditiveBlending}
+                        />
+                    </lineSegments>
+                );
+            })}
+        </group>
+    );
+};
+
 const Core = ({ active }: { active: boolean }) => {
     const coreRef = useRef<Mesh>(null);
     const shellRef = useRef<Mesh>(null);
+    const ringsRef = useRef<Group>(null);
 
     useFrame(({ clock }) => {
         const time = clock.getElapsedTime();
@@ -217,6 +335,10 @@ const Core = ({ active }: { active: boolean }) => {
         if (shellRef.current) {
             shellRef.current.rotation.y = -time * 0.18;
             shellRef.current.rotation.z = time * 0.12;
+        }
+        if (ringsRef.current) {
+            ringsRef.current.rotation.y = time * (active ? 0.5 : 0.16);
+            ringsRef.current.rotation.x = Math.sin(time * 0.35) * 0.22;
         }
     });
 
@@ -250,6 +372,16 @@ const Core = ({ active }: { active: boolean }) => {
                 <torusGeometry args={[1.34, 0.025, 16, 96]} />
                 <meshBasicMaterial color={active ? '#90f3da' : '#36505d'} transparent opacity={0.72} />
             </mesh>
+            <group ref={ringsRef}>
+                <mesh rotation={[Math.PI / 3, 0.4, 0]}>
+                    <torusGeometry args={[1.58, 0.012, 12, 96]} />
+                    <meshBasicMaterial color={active ? '#59e4ff' : '#22333f'} transparent opacity={active ? 0.5 : 0.26} />
+                </mesh>
+                <mesh rotation={[-Math.PI / 2.6, -0.5, 0.3]}>
+                    <torusGeometry args={[1.84, 0.008, 12, 96]} />
+                    <meshBasicMaterial color={active ? '#bc13fe' : '#1c2b36'} transparent opacity={active ? 0.4 : 0.2} />
+                </mesh>
+            </group>
         </group>
     );
 };
@@ -283,6 +415,9 @@ export const SpiderScene: React.FC<SpiderSceneProps> = ({
             <gridHelper args={[16, 28, '#183746', '#0b1821']} position={[0, 0, -1.04]} rotation={[Math.PI / 2, 0, 0]} />
 
             <ScanRings active={active} />
+            <ParticleField count={170} color="#59e4ff" size={0.05} spread={6.4} spin={0.024} opacity={dimmed ? 0.18 : 0.5} />
+            <ParticleField count={90} color="#90f3da" size={0.075} spread={4.6} spin={-0.037} opacity={dimmed ? 0.12 : 0.34} />
+            <WebThreads legVisualStatuses={legVisualStatuses} active={active && !dimmed} />
             {Array.from({ length: 8 }, (_, id) => (
                 <SpiderLeg key={id} id={id} state={legStates[id] || 'Idle'} status={legVisualStatuses[id] || 'idle'} />
             ))}

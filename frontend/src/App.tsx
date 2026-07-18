@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo, type CSSProperties } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
@@ -289,7 +289,8 @@ const coerceRabbitHoleGatekeeperPayload = (payload: unknown): RabbitHoleGatekeep
 }
 
 const tabFallback = (label: string) => (
-  <div className="flex h-full items-center justify-center bg-cyber-black text-xs font-bold uppercase tracking-[0.24em] text-cyber-cyan/70">
+  <div className="forensic-tab-fallback flex h-full items-center justify-center gap-3 bg-cyber-black text-xs font-bold uppercase tracking-[0.24em] text-cyber-cyan/70">
+    <span className="forensic-tab-fallback-dot" aria-hidden="true" />
     Loading {label}...
   </div>
 )
@@ -2638,11 +2639,12 @@ function App() {
                 No investigations match <span className="font-black text-[var(--forensic-accent)]">"{sidebarSearchQuery}"</span>.
               </div>
             ) : (
-              filteredSidebarRows.map(({ investigation, depth }) => (
+              filteredSidebarRows.map(({ investigation, depth }, rowIndex) => (
                 <div
                   key={investigation.id}
                   ref={currentInvestigationId === investigation.id ? activeSidebarItemRef : null}
                   className={`forensic-sidebar-item group relative ${currentInvestigationId === investigation.id ? 'forensic-sidebar-item-active' : ''}`}
+                  style={{ '--sidebar-row-index': rowIndex } as CSSProperties}
                 >
                   <button
                     onClick={() => {

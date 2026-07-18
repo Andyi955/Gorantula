@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
-import { Activity, BarChart3, Braces, CircuitBoard, Crosshair, DatabaseZap, Info, Network, RadioTower, ScanLine } from 'lucide-react';
+import { Activity, BarChart3, Braces, CircuitBoard, Crosshair, Database, DatabaseZap, Gauge, Info, Network, RadioTower, ScanLine, Zap, type LucideIcon } from 'lucide-react';
 import { SpiderScene } from './SpiderScene';
 
 type PipelineRailStatus = 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
@@ -158,7 +158,8 @@ const MiniWaveform = ({ color, seed }: { color: string; seed: number }) => (
                     height: `${18 + (((index + seed) * 7) % 18)}%`,
                     backgroundColor: color,
                     opacity: 0.35 + (((index + seed) % 5) * 0.1),
-                }}
+                    '--spider-bar-index': index,
+                } as React.CSSProperties}
             />
         ))}
     </div>
@@ -170,7 +171,10 @@ const SignalBars = ({ level, color }: { level: number; color: string }) => (
             <span
                 key={index}
                 className={index < level ? 'forensic-spider-signal-bar-active' : ''}
-                style={index < level ? { backgroundColor: color, boxShadow: `0 0 8px ${color}55` } : undefined}
+                style={{
+                    ...(index < level ? { backgroundColor: color, boxShadow: `0 0 8px ${color}55` } : {}),
+                    '--spider-bar-index': index,
+                } as React.CSSProperties}
             />
         ))}
     </div>
@@ -181,14 +185,12 @@ const LegTelemetryCard = ({
     state,
     pipelineStatus,
     role,
-    operationMode,
     transientStatus,
 }: {
     id: number;
     state: string;
     pipelineStatus: PipelineRailStatus;
     role: string;
-    operationMode: SpiderOperationMode;
     transientStatus?: 'error' | 'recovering';
 }) => {
     const color = getSignalColor(state);
@@ -203,8 +205,8 @@ const LegTelemetryCard = ({
             className={`forensic-spider-leg-card forensic-spider-leg-card-${visualStatus} ${isActive ? 'forensic-spider-leg-card-active' : ''} ${transientStatus === 'error' ? 'forensic-spider-leg-card-error-flash' : ''} ${transientStatus === 'recovering' ? 'forensic-spider-leg-card-recovering' : ''}`}
             style={{ '--spider-leg-color': color } as React.CSSProperties}
         >
-            <header className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
+            <header className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                     <span className="forensic-spider-leg-index" />
                     <span className="text-[11px] font-black text-[var(--forensic-accent)]">Leg {displayId}</span>
                 </div>
@@ -213,15 +215,14 @@ const LegTelemetryCard = ({
                     {getLegDisplayState(visualStatus)}
                 </span>
             </header>
-            <dl className="mt-3 grid grid-cols-[3.6rem_1fr] gap-x-2 gap-y-1.5 text-[10px]">
-                <dt>Signal</dt>
-                <dd><SignalBars level={signalLevel} color={color} /></dd>
-                <dt>Role</dt>
-                <dd>{role}</dd>
-                <dt>{operationMode === 'local' ? 'Intake' : 'Crawl'}</dt>
-                <dd>{state}</dd>
-            </dl>
-            <MiniWaveform color={color} seed={id} />
+            <div className="forensic-spider-leg-subrow">
+                <span className="forensic-spider-leg-role" title={role}>{role}</span>
+                <span className="forensic-spider-leg-crawl" title={state}>{state}</span>
+            </div>
+            <div className="forensic-spider-leg-viz">
+                <SignalBars level={signalLevel} color={color} />
+                <MiniWaveform color={color} seed={id} />
+            </div>
         </article>
     );
 };
@@ -275,9 +276,12 @@ const RabbitDescentTelemetryPanel = ({
     );
 };
 
-const MetricReadout = ({ label, value, title }: { label: string; value: string | number; title?: string }) => (
+const MetricReadout = ({ label, value, title, icon: Icon }: { label: string; value: string | number; title?: string; icon?: LucideIcon }) => (
     <div className="forensic-spider-readout" title={title}>
-        <span>{label}</span>
+        <span className="forensic-spider-readout-label">
+            {Icon && <Icon size={11} aria-hidden="true" />}
+            {label}
+        </span>
         <strong>{value}</strong>
     </div>
 );
@@ -706,8 +710,13 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
             <div className="forensic-spider-frame">
                 <header className="forensic-spider-status-strip">
                     <div className={`forensic-spider-brain-title forensic-spider-brain-title-${brainVisualStatus}`} aria-label={`Brain: ${brainState}`}>
-                        <span>Brain: </span>
-                        <strong>{brainState}</strong>
+                        <div className="forensic-spider-brain-copy">
+                            <small className="forensic-spider-brain-caption">Neural Link</small>
+                            <div className="forensic-spider-brain-line">
+                                <span>Brain: </span>
+                                <strong>{brainState}</strong>
+                            </div>
+                        </div>
                         <div
                             data-testid="spider-brain-signal"
                             className="forensic-spider-brain-signal"
@@ -719,10 +728,10 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                         </div>
                     </div>
                     <div className="forensic-spider-top-metrics">
-                        <MetricReadout label={isRabbitHoleMode ? 'Tools Active' : 'Legs Active'} value={`${activeLegCount} / 8`} />
-                        <MetricReadout label="Evidence" value={evidenceCount} />
-                        <MetricReadout label="Tokens" value={tokenReadout?.value || '0'} title={tokenReadout?.title} />
-                        <MetricReadout label="Throughput" value={throughput} />
+                        <MetricReadout label={isRabbitHoleMode ? 'Tools Active' : 'Legs Active'} value={`${activeLegCount} / 8`} icon={Network} />
+                        <MetricReadout label="Evidence" value={evidenceCount} icon={Database} />
+                        <MetricReadout label="Tokens" value={tokenReadout?.value || '0'} title={tokenReadout?.title} icon={Zap} />
+                        <MetricReadout label="Throughput" value={throughput} icon={Gauge} />
                     </div>
                 </header>
 
@@ -743,7 +752,6 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                                     state={legStates[id] || 'Idle'}
                                     pipelineStatus={effectivePipelineStatus}
                                     role={legRoles[id]}
-                                    operationMode={effectiveOperationMode}
                                     transientStatus={legTransitionStates[id]}
                                 />
                             ))}
@@ -803,7 +811,6 @@ const SpiderVisualizer: React.FC<SpiderVisualizerProps> = ({
                                     state={legStates[id] || 'Idle'}
                                     pipelineStatus={effectivePipelineStatus}
                                     role={legRoles[id]}
-                                    operationMode={effectiveOperationMode}
                                     transientStatus={legTransitionStates[id]}
                                 />
                             ))}
