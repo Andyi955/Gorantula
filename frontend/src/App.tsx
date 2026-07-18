@@ -1,6 +1,8 @@
 import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
+import type { LandingTargetTab } from './components/LandingExperience'
 import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle, Activity, Brain } from 'lucide-react'
 import {
   buildSidebarInvestigationRows,
@@ -91,6 +93,7 @@ const VaultChatbot = lazy(() => import('./components/VaultChatbot'))
 const SynthesisPanel = lazy(() => import('./components/SynthesisPanel'))
 const DiscoveryPanel = lazy(() => import('./components/DiscoveryPanel'))
 const BrainSignalsPanel = lazy(() => import('./components/BrainSignalsPanel'))
+const LandingExperience = lazy(() => import('./components/LandingExperience'))
 
 type ActiveTab = 'spider' | 'board' | 'timeline' | 'brain' | 'chat' | 'settings'
 
@@ -713,6 +716,7 @@ function App() {
   const [investigationSwitchOverlay, setInvestigationSwitchOverlay] = useState<InvestigationSwitchOverlayState | null>(null)
   const [boardWorkspaceRevision, setBoardWorkspaceRevision] = useState(0)
   const [showSummaryLog, setShowSummaryLog] = useState(false)
+  const [showLandingExperience, setShowLandingExperience] = useState(() => import.meta.env.MODE !== 'test')
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => getMostRecentInvestigationId(initialInvestigationsRef.current || []))
@@ -978,6 +982,13 @@ function App() {
 
   const focusSpiderInput = useCallback(() => {
     crawlInputRef.current?.focus()
+  }, [])
+
+  const handleLandingEnter = useCallback((tab?: LandingTargetTab) => {
+    if (tab) {
+      setActiveTab(tab)
+    }
+    setShowLandingExperience(false)
   }, [])
 
   const clearInvestigationSwitchTimeout = useCallback(() => {
@@ -2436,7 +2447,11 @@ function App() {
     <div data-testid="app-shell" className={appShellClassName}>
       {/* Top Header */}
       <header className={headerClassName}>
-        <h1 className={brandClassName}>
+        <h1
+          className={`${brandClassName} cursor-pointer select-none`}
+          title="Return to launch screen"
+          onClick={() => setShowLandingExperience(true)}
+        >
           GORANTULA
         </h1>
 
@@ -3375,6 +3390,21 @@ function App() {
           </div>
         </div>
       )}
+
+      <AnimatePresence>
+        {showLandingExperience && (
+          <Suspense fallback={<div className="fixed inset-0 z-[100] bg-[#02060a]" />}>
+            <LandingExperience
+              onEnter={handleLandingEnter}
+              stats={{
+                investigations: investigations.length,
+                evidence: currentBoardSnapshot.evidenceCount,
+                relationships: currentBoardSnapshot.edgeCount,
+              }}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
