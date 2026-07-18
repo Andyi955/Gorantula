@@ -3739,19 +3739,6 @@ body {
   border-radius: 999px;
 }
 
-.forensic-spider-leg-card dt {
-  color: var(--forensic-text-faint);
-}
-
-.forensic-spider-leg-card dd {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--forensic-text);
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .forensic-spider-signal-bars {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -12487,5 +12474,831 @@ body {
 
   .landing-marquee-track {
     transform: none;
+  }
+}
+
+/* ---- Spider view design refresh ---- */
+
+/* Entrance choreography: containers only, so leg-card state animations stay untouched. */
+.forensic-spider-status-strip {
+  animation: spiderLabEnterDrop 560ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-spider-lab-stage {
+  animation: spiderLabStageEnter 720ms cubic-bezier(0.16, 0.84, 0.28, 1) 110ms both;
+}
+
+.forensic-spider-workbench > .forensic-spider-leg-bank {
+  animation: spiderLabEnterRise 640ms cubic-bezier(0.16, 0.84, 0.28, 1) 200ms both;
+}
+
+.forensic-spider-workbench > .forensic-spider-leg-bank ~ .forensic-spider-leg-bank {
+  animation-delay: 300ms;
+}
+
+.forensic-rabbit-descent-telemetry {
+  animation: spiderLabEnterRise 640ms cubic-bezier(0.16, 0.84, 0.28, 1) 200ms both;
+}
+
+.forensic-spider-intake-panel {
+  animation: spiderLabEnterRise 640ms cubic-bezier(0.16, 0.84, 0.28, 1) 380ms both;
+}
+
+.forensic-spider-utility-rail {
+  animation: spiderLabEnterRise 560ms cubic-bezier(0.16, 0.84, 0.28, 1) 460ms both;
+}
+
+.forensic-spider-crawl-console {
+  animation: spiderLabConsoleEnter 620ms cubic-bezier(0.16, 0.84, 0.28, 1) 240ms both;
+}
+
+/* Brain readout glow while a run is active. */
+.forensic-spider-root-running .forensic-spider-brain-title strong {
+  animation: spiderBrainGlow 2.2s ease-in-out infinite;
+}
+
+/* Leg card internals: waveform + signal bars come alive while a leg runs. */
+.forensic-spider-signal-bars span {
+  border-radius: 1px;
+  transition: background-color 240ms ease, box-shadow 240ms ease, transform 240ms ease;
+}
+
+.forensic-spider-leg-card-running .forensic-spider-waveform span,
+.forensic-spider-leg-card-running .forensic-spider-signal-bar-active {
+  transform-origin: bottom;
+}
+
+.forensic-spider-leg-card-running .forensic-spider-waveform span {
+  animation: spiderWaveformDance 1.15s ease-in-out infinite;
+  animation-delay: calc(var(--spider-bar-index, 0) * -88ms);
+}
+
+.forensic-spider-leg-card-running .forensic-spider-signal-bar-active {
+  animation: spiderSignalPulse 1.3s ease-in-out infinite;
+  animation-delay: calc(var(--spider-bar-index, 0) * -110ms);
+}
+
+/* Intake bar chart breathes while the pipeline runs. */
+.forensic-spider-bar-chart span {
+  transform-origin: bottom;
+}
+
+.forensic-spider-root-running .forensic-spider-bar-chart span {
+  animation: spiderBarBreathe 1.9s ease-in-out infinite;
+}
+
+.forensic-spider-root-running .forensic-spider-bar-chart span:nth-child(4n + 1) {
+  animation-delay: -0.5s;
+}
+
+.forensic-spider-root-running .forensic-spider-bar-chart span:nth-child(4n + 2) {
+  animation-delay: -1.1s;
+}
+
+.forensic-spider-root-running .forensic-spider-bar-chart span:nth-child(4n + 3) {
+  animation-delay: -1.5s;
+}
+
+.forensic-spider-live-chip {
+  animation: spiderLiveChipPulse 2.4s ease-in-out infinite;
+}
+
+/* Stage: ambient scan sweep over the 3D canvas. */
+.forensic-spider-lab-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, rgba(89, 228, 255, 0.04) 45%, rgba(89, 228, 255, 0.09) 50%, rgba(89, 228, 255, 0.04) 55%, transparent 100%);
+  background-size: 100% 240%;
+  animation: spiderStageScan 7s linear infinite;
+}
+
+.forensic-spider-root-rabbit-hole .forensic-spider-lab-stage::after {
+  background: linear-gradient(180deg, transparent 0%, rgba(255, 47, 84, 0.04) 45%, rgba(255, 47, 84, 0.09) 50%, rgba(255, 47, 84, 0.04) 55%, transparent 100%);
+  background-size: 100% 240%;
+}
+
+/* Stage overlay chips: glassy readout pills. */
+.forensic-spider-stage-overlay {
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  border-radius: 0.6rem;
+  background: rgba(4, 9, 13, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+/* Utility rail: tactile hover. */
+.forensic-spider-utility-rail button {
+  transition: color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.forensic-spider-utility-rail button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+/* Metric readouts: hover lift. */
+.forensic-spider-readout {
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.forensic-spider-readout:hover {
+  transform: translateY(-1px);
+  border-color: rgba(142, 232, 255, 0.3);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), 0 0 16px rgba(129, 227, 255, 0.08);
+}
+
+/* Command console: focused input glow + execute button sheen. */
+.forensic-spider-command-input:focus {
+  border-color: rgba(144, 243, 218, 0.62);
+  box-shadow:
+    0 0 0 1px rgba(144, 243, 218, 0.14),
+    0 0 26px rgba(144, 243, 218, 0.1),
+    inset 0 0 18px rgba(144, 243, 218, 0.04);
+  text-shadow: 0 0 12px rgba(0, 255, 65, 0.32);
+}
+
+.forensic-spider-execute-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.forensic-spider-execute-button::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent, rgba(236, 253, 255, 0.4), transparent);
+  transform: skewX(-20deg);
+  animation: spiderExecuteSheen 3.2s ease-in-out infinite;
+}
+
+.forensic-spider-execute-button:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.forensic-spider-mode-toggle button {
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 200ms ease, border-color 160ms ease;
+}
+
+.forensic-spider-mode-toggle .forensic-spider-mode-active {
+  box-shadow: 0 0 0 1px rgba(129, 227, 255, 0.18), 0 0 18px rgba(129, 227, 255, 0.16);
+}
+
+@keyframes spiderLabEnterRise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spiderLabEnterDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spiderLabStageEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes spiderLabConsoleEnter {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spiderBrainGlow {
+  0%, 100% {
+    text-shadow: 0 0 8px rgba(144, 243, 218, 0.12);
+  }
+  50% {
+    text-shadow: 0 0 18px rgba(144, 243, 218, 0.42);
+  }
+}
+
+@keyframes spiderWaveformDance {
+  0%, 100% {
+    transform: scaleY(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scaleY(0.32);
+    filter: brightness(1.5);
+  }
+}
+
+@keyframes spiderSignalPulse {
+  0%, 100% {
+    transform: scaleY(0.68);
+    filter: brightness(0.92);
+  }
+  50% {
+    transform: scaleY(1);
+    filter: brightness(1.35);
+  }
+}
+
+@keyframes spiderBarBreathe {
+  0%, 100% {
+    transform: scaleY(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scaleY(0.55);
+    filter: brightness(1.4);
+  }
+}
+
+@keyframes spiderLiveChipPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(144, 243, 218, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(144, 243, 218, 0.4);
+  }
+}
+
+@keyframes spiderStageScan {
+  from {
+    background-position: 0 -120%;
+  }
+  to {
+    background-position: 0 120%;
+  }
+}
+
+@keyframes spiderExecuteSheen {
+  0% {
+    transform: translateX(0) skewX(-20deg);
+    opacity: 0;
+  }
+  24% {
+    opacity: 1;
+  }
+  58%, 100% {
+    transform: translateX(430%) skewX(-20deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-spider-status-strip,
+  .forensic-spider-lab-stage,
+  .forensic-spider-workbench > .forensic-spider-leg-bank,
+  .forensic-rabbit-descent-telemetry,
+  .forensic-spider-intake-panel,
+  .forensic-spider-utility-rail,
+  .forensic-spider-crawl-console,
+  .forensic-spider-root-running .forensic-spider-brain-title strong,
+  .forensic-spider-leg-card-running .forensic-spider-waveform span,
+  .forensic-spider-leg-card-running .forensic-spider-signal-bar-active,
+  .forensic-spider-root-running .forensic-spider-bar-chart span,
+  .forensic-spider-live-chip,
+  .forensic-spider-lab-stage::after,
+  .forensic-spider-execute-button::after {
+    animation: none !important;
+  }
+}
+
+/* ---- App shell design refresh ---- */
+
+/* Header: drifting gradient seam under the bar. */
+.forensic-app-shell-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(129, 227, 255, 0.5), rgba(144, 243, 218, 0.4), rgba(188, 19, 254, 0.35), transparent);
+  background-size: 220% 100%;
+  animation: shellGradientDrift 12s linear infinite;
+  opacity: 0.8;
+}
+
+/* Brand: shimmering gradient wordmark. */
+.forensic-app-brand {
+  background: linear-gradient(115deg, #ecfdff 0%, #8ee8ff 30%, #90f3da 55%, #7cf0ff 78%, #ecfdff 100%);
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shellBrandShimmer 9s linear infinite;
+  transition: filter 180ms ease;
+}
+
+.forensic-app-brand:hover {
+  filter: brightness(1.18) drop-shadow(0 0 14px rgba(129, 227, 255, 0.35));
+}
+
+/* Tab rail: tactile tabs, glowing active pill. */
+.forensic-app-tab {
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 200ms ease, transform 160ms ease;
+}
+
+.forensic-app-tab:hover {
+  transform: translateY(-1px);
+}
+
+.forensic-app-tab svg {
+  transition: transform 200ms ease, filter 200ms ease;
+}
+
+.forensic-app-tab:hover svg {
+  transform: scale(1.12);
+}
+
+.forensic-app-tab-active {
+  box-shadow:
+    inset 0 0 0 1px rgba(129, 227, 255, 0.22),
+    0 0 26px rgba(129, 227, 255, 0.16),
+    0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+.forensic-app-tab-active svg {
+  filter: drop-shadow(0 0 6px rgba(142, 232, 255, 0.55));
+  animation: shellTabIconPulse 2.6s ease-in-out infinite;
+}
+
+/* Tab panels: subtle settle when switching workspaces. */
+.forensic-app-main-content > .opacity-0 {
+  transform: translateY(12px) scale(0.997);
+  transition: opacity 500ms ease, transform 500ms cubic-bezier(0.16, 0.84, 0.28, 1);
+}
+
+.forensic-app-main-content > .opacity-100 {
+  transform: none;
+  transition: opacity 500ms ease, transform 500ms cubic-bezier(0.16, 0.84, 0.28, 1);
+}
+
+/* Sidebar: staggered row entrance + active row treatment. */
+.forensic-sidebar-item {
+  animation: shellSidebarItemEnter 480ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+  animation-delay: calc(var(--sidebar-row-index, 0) * 42ms);
+}
+
+.forensic-sidebar-item-active {
+  box-shadow:
+    inset 0 0 0 1px rgba(129, 227, 255, 0.1),
+    inset 0 0 24px rgba(129, 227, 255, 0.05),
+    0 0 18px rgba(129, 227, 255, 0.08);
+}
+
+.forensic-sidebar-active-dot {
+  animation: shellActiveDotPulse 2s ease-in-out infinite;
+}
+
+.forensic-sidebar-search {
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.forensic-sidebar-search:focus-within {
+  border-color: rgba(129, 227, 255, 0.4);
+  box-shadow: 0 0 0 1px rgba(129, 227, 255, 0.1), 0 0 20px rgba(129, 227, 255, 0.1);
+}
+
+.forensic-sidebar-collapsed-item {
+  animation: shellCollapsedItemEnter 420ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-sidebar-collapsed-item:nth-child(2) { animation-delay: 45ms; }
+.forensic-sidebar-collapsed-item:nth-child(3) { animation-delay: 90ms; }
+.forensic-sidebar-collapsed-item:nth-child(4) { animation-delay: 135ms; }
+.forensic-sidebar-collapsed-item:nth-child(5) { animation-delay: 180ms; }
+.forensic-sidebar-collapsed-item:nth-child(6) { animation-delay: 225ms; }
+.forensic-sidebar-collapsed-item:nth-child(7) { animation-delay: 270ms; }
+.forensic-sidebar-collapsed-item:nth-child(n + 8) { animation-delay: 315ms; }
+
+.forensic-sidebar-summary-card {
+  animation: shellSidebarItemEnter 520ms cubic-bezier(0.16, 0.84, 0.28, 1) 260ms both;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.forensic-sidebar-summary-card:hover {
+  border-color: rgba(129, 227, 255, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02), 0 12px 24px rgba(0, 0, 0, 0.18), 0 0 22px rgba(129, 227, 255, 0.1);
+}
+
+/* Status bar: entrance stagger + animated confidence fill. */
+.forensic-statusbar {
+  animation: shellStatusbarEnter 520ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-status-block {
+  animation: shellStatusBlockEnter 460ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-status-block:nth-child(2) { animation-delay: 40ms; }
+.forensic-status-block:nth-child(3) { animation-delay: 80ms; }
+.forensic-status-block:nth-child(4) { animation-delay: 120ms; }
+.forensic-status-block:nth-child(5) { animation-delay: 160ms; }
+.forensic-status-block:nth-child(6) { animation-delay: 200ms; }
+.forensic-status-block:nth-child(7) { animation-delay: 240ms; }
+.forensic-status-block:nth-child(8) { animation-delay: 280ms; }
+
+.forensic-status-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.forensic-confidence-fill {
+  position: relative;
+  overflow: hidden;
+  transition: width 700ms cubic-bezier(0.16, 0.84, 0.28, 1);
+}
+
+.forensic-confidence-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-100%);
+  animation: shellConfidenceSheen 2.8s ease-in-out infinite;
+}
+
+/* Overlays: drawer + dialog entrances, system notice slide. */
+.forensic-pipeline-drawer {
+  animation: shellDrawerEnter 420ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-board-dialog {
+  animation: shellDialogEnter 380ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-app-system-notice {
+  animation: shellNoticeEnter 340ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+@keyframes shellGradientDrift {
+  from { background-position: 0% 0; }
+  to { background-position: 220% 0; }
+}
+
+@keyframes shellBrandShimmer {
+  from { background-position: 0% 0; }
+  to { background-position: 240% 0; }
+}
+
+@keyframes shellTabIconPulse {
+  0%, 100% { filter: drop-shadow(0 0 5px rgba(142, 232, 255, 0.45)); }
+  50% { filter: drop-shadow(0 0 10px rgba(142, 232, 255, 0.75)); }
+}
+
+@keyframes shellSidebarItemEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes shellCollapsedItemEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shellActiveDotPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(129, 227, 255, 0.16), 0 0 8px rgba(129, 227, 255, 0.22);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(129, 227, 255, 0.3), 0 0 14px rgba(129, 227, 255, 0.45);
+    transform: scale(1.12);
+  }
+}
+
+@keyframes shellStatusbarEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shellStatusBlockEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shellConfidenceSheen {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  70%, 100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes shellDrawerEnter {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes shellDialogEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes shellNoticeEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-app-shell-header::after,
+  .forensic-app-brand,
+  .forensic-app-tab-active svg,
+  .forensic-sidebar-item,
+  .forensic-sidebar-collapsed-item,
+  .forensic-sidebar-summary-card,
+  .forensic-sidebar-active-dot,
+  .forensic-statusbar,
+  .forensic-status-block,
+  .forensic-confidence-fill::after,
+  .forensic-pipeline-drawer,
+  .forensic-board-dialog,
+  .forensic-app-system-notice {
+    animation: none !important;
+  }
+
+  .forensic-app-main-content > .opacity-0,
+  .forensic-app-main-content > .opacity-100 {
+    transform: none;
+    transition: opacity 200ms ease;
+  }
+}
+
+/* ---- Spider status strip + leg card redesign ---- */
+
+/* Brain module: framed status segment with a state-colored edge. */
+.forensic-spider-brain-title {
+  flex: 0 1 26rem;
+  justify-content: space-between;
+  border: 1px solid rgba(118, 177, 214, 0.16);
+  border-left: 3px solid var(--forensic-accent-muted);
+  border-radius: 0.75rem;
+  padding: 0.4rem 0.7rem;
+  background: linear-gradient(180deg, rgba(10, 17, 24, 0.72), rgba(6, 11, 16, 0.78));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  transition: border-color 240ms ease, box-shadow 240ms ease, filter 180ms ease, opacity 180ms ease;
+}
+
+.forensic-spider-brain-title-running {
+  border-left-color: #00ff41;
+  box-shadow: inset 0 0 0 1px rgba(0, 255, 65, 0.05), 0 0 22px rgba(0, 255, 65, 0.1);
+}
+
+.forensic-spider-brain-title-connected {
+  border-left-color: #8ee8ff;
+  box-shadow: inset 0 0 0 1px rgba(142, 232, 255, 0.05), 0 0 20px rgba(142, 232, 255, 0.08);
+}
+
+.forensic-spider-brain-title-complete {
+  border-left-color: #21ff71;
+  box-shadow: inset 0 0 0 1px rgba(33, 255, 113, 0.06), 0 0 22px rgba(33, 255, 113, 0.12);
+}
+
+.forensic-spider-brain-title-error {
+  border-left-color: #ff8c86;
+  box-shadow: inset 0 0 0 1px rgba(255, 140, 134, 0.07), 0 0 22px rgba(255, 140, 134, 0.12);
+}
+
+.forensic-spider-brain-title-cancelled {
+  border-left-color: #f6c879;
+}
+
+.forensic-spider-brain-title-offline {
+  border-left-color: #677789;
+}
+
+.forensic-spider-brain-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.forensic-spider-brain-caption {
+  color: var(--forensic-text-faint);
+  font-size: 0.52rem;
+  font-weight: 900;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.forensic-spider-brain-line {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+/* Metric readouts: icon labels + staggered entrance. */
+.forensic-spider-top-metrics {
+  grid-template-columns: repeat(4, minmax(6.25rem, 1fr));
+}
+
+.forensic-spider-top-metrics .forensic-spider-readout {
+  animation: spiderReadoutEnter 420ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-spider-top-metrics .forensic-spider-readout:nth-child(2) { animation-delay: 70ms; }
+.forensic-spider-top-metrics .forensic-spider-readout:nth-child(3) { animation-delay: 140ms; }
+.forensic-spider-top-metrics .forensic-spider-readout:nth-child(4) { animation-delay: 210ms; }
+
+.forensic-spider-readout .forensic-spider-readout-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.forensic-spider-readout-label svg {
+  flex: 0 0 auto;
+  color: var(--forensic-accent-muted);
+}
+
+/* Leg cards: compact three-row layout so all eight legs fit the bank. */
+.forensic-spider-leg-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  padding: 0.5rem 0.55rem;
+}
+
+.forensic-spider-leg-subrow {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  line-height: 1.25;
+}
+
+.forensic-spider-leg-role {
+  flex: 0 0 auto;
+  color: var(--forensic-text-faint);
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.forensic-spider-leg-crawl {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--forensic-text);
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 200ms ease;
+}
+
+.forensic-spider-leg-viz {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: end;
+  margin-top: auto;
+}
+
+.forensic-spider-leg-viz .forensic-spider-waveform {
+  height: 0.85rem;
+  margin-top: 0;
+}
+
+@keyframes spiderReadoutEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-spider-top-metrics .forensic-spider-readout {
+    animation: none !important;
+  }
+}
+
+/* ---- Final polish: gatekeeper entrance + tab fallback loader ---- */
+
+.forensic-rabbit-gatekeeper-panel {
+  animation: spiderGatekeeperEnter 420ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+.forensic-tab-fallback-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--forensic-accent);
+  box-shadow: 0 0 12px rgba(129, 227, 255, 0.8);
+  animation: spiderTabFallbackPulse 1.4s ease-in-out infinite;
+}
+
+.forensic-tab-fallback {
+  animation: shellDialogEnter 300ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+}
+
+@keyframes spiderGatekeeperEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes spiderTabFallbackPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-rabbit-gatekeeper-panel,
+  .forensic-tab-fallback,
+  .forensic-tab-fallback-dot {
+    animation: none !important;
   }
 }
