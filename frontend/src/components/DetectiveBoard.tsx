@@ -25,6 +25,7 @@ import type {
 import 'reactflow/dist/style.css';
 import CustomNode, { type NodeData, type NodeSaveMode, type PersonaInsight } from './CustomNode';
 import CustomEdge from './CustomEdge';
+import BoardAmbience, { type BoardAmbienceMode } from './BoardAmbience';
 import { assignStrictGridPorts, BOARD_GRID_SIZE, buildStrictGridRoute, calculateNodeFrame, getNodeCenter, getNodeDimensions, getPortById, normalizeNodeFrame, snapCoordinateToGrid } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
@@ -128,7 +129,7 @@ import {
     getQaAnimationDemoStagingPosition,
 } from './detectiveBoardQaFixtures';
 
-import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Zap, Info, Trash2, Edit2, Download, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Box, PlusSquare, Grid3X3, Target, Move, SlidersHorizontal, Eye, ArrowLeft, Maximize2, Minimize2, Search, X, Lightbulb, Network, Crosshair, FlaskConical, PlayCircle, RadioTower, Activity, Clock, FileSearch, AlertTriangle, ExternalLink, Sparkles } from 'lucide-react';
 const normalizeRelationshipTag = (tag?: string | null) => {
     const trimmed = (tag || '').trim();
     return trimmed ? trimmed.toUpperCase() : 'RELATED';
@@ -1061,6 +1062,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [relationshipNameInput, setRelationshipNameInput] = useState('RELATED');
     const [marquee, setMarquee] = useState<MarqueeState | null>(null);
     const [isMiniMapExpanded, setIsMiniMapExpanded] = useState(false);
+    const [boardAmbienceMode, setBoardAmbienceMode] = useState<BoardAmbienceMode>(() => {
+        try {
+            const saved = window.localStorage.getItem('gorantula.boardAmbienceMode');
+            return saved === 'signals' || saved === 'horizon' || saved === 'off' ? saved : 'signals';
+        } catch {
+            return 'signals';
+        }
+    });
     const [isBoardCameraMoving, setIsBoardCameraMoving] = useState(false);
     const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
     const [supportHoverNodeId, setSupportHoverNodeId] = useState<string | null>(null);
@@ -1118,6 +1127,14 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const handleRelationshipLegendClosed = useCallback(() => {
         setEditingTag(null);
     }, []);
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem('gorantula.boardAmbienceMode', boardAmbienceMode);
+        } catch {
+            // Persistence is best-effort; the ambience is cosmetic.
+        }
+    }, [boardAmbienceMode]);
 
     const {
         showExportMenu,
@@ -5042,6 +5059,31 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                                             </div>
                                         </div>
                                     </button>
+
+                                    <div className="mt-2 rounded-xl border border-white/10 bg-black/35 px-3 py-3">
+                                        <div className="flex items-center gap-2">
+                                            <Sparkles size={15} className="shrink-0 text-[var(--forensic-accent-muted)]" />
+                                            <div className="text-[11px] font-semibold text-gray-200">Board Ambience</div>
+                                        </div>
+                                        <div className="mt-1 text-xs leading-relaxed text-gray-500">Animated signal pulses along the grid, or a slow horizon sweep behind the evidence.</div>
+                                        <div className="mt-2 flex gap-1.5" role="group" aria-label="Board ambience">
+                                            {(['signals', 'horizon', 'off'] as const).map((mode) => (
+                                                <button
+                                                    key={mode}
+                                                    type="button"
+                                                    data-testid={`board-ambience-option-${mode}`}
+                                                    onClick={() => setBoardAmbienceMode(mode)}
+                                                    aria-pressed={boardAmbienceMode === mode}
+                                                    className={`rounded-md border px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] transition-all ${boardAmbienceMode === mode
+                                                        ? 'border-cyber-cyan/45 bg-cyber-cyan/12 text-cyber-cyan'
+                                                        : 'border-white/12 bg-black/30 text-gray-400 hover:border-cyber-cyan/30 hover:text-white'
+                                                        }`}
+                                                >
+                                                    {mode}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </section>
 
                                 <section className="forensic-board-section rounded-2xl p-3">
@@ -5216,6 +5258,9 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onPointerMove={onPanePointerMove}
                 onPointerUp={onPanePointerUp}
             >
+                {showGrid && boardAmbienceMode !== 'off' && (
+                    <BoardAmbience mode={boardAmbienceMode} />
+                )}
                 <ReactFlow
                     nodes={nodesForRender}
                     edges={edges}

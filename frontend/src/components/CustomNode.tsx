@@ -770,7 +770,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
             : 'forensic-badge forensic-badge-imported';
     const shellClassName = `forensic-node-shell ${nodeShellToneClass} flex h-full w-full min-w-[288px] flex-col rounded-[0.8rem] p-4 transition-colors duration-300 group relative overflow-visible ${selected ? 'ring-2 ring-cyber-cyan forensic-selection-ring' : ''} ${isEditing ? 'shadow-[0_0_0_1px_rgba(129,227,255,0.08),0_0_34px_rgba(129,227,255,0.12)]' : ''} ${recentImportShellClass} ${connectionHighlightShellClass} ${nodeEntryShellClass} ${personaScanShellClass} ${layoutChoreographyShellClass} ${timelineFocusShellClass} ${supportEvidenceShellClass} ${expandedShellClass} ${expandedOpaqueShellClass} ${supportTetherSourceShellClass} ${supportTetherTargetShellClass}`;
     const iconControlClass = 'forensic-node-control nodrag nowheel flex items-center justify-center rounded-md p-1 text-[rgba(201,216,229,0.62)] transition-all hover:border-[rgba(129,227,255,0.28)] hover:bg-[rgba(129,227,255,0.08)] hover:text-[var(--forensic-accent)]';
-    const footerActionClass = 'flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
+    const footerActionClass = 'forensic-node-footer-action flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight transition-all';
     const footerPillClass = 'rounded-md border px-2.5 py-1 text-[10px] font-black uppercase tracking-tight transition-all';
     const detailMotionClassName = reducedMotion
         ? 'forensic-node-detail-motion forensic-node-detail-reduced-motion'
@@ -1174,6 +1174,10 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                         ) : (data.title || 'ARCHIVED_INTEL')}
                     </div>
                     <div className="flex items-center gap-1.5 ml-2">
+                        <div className="forensic-badge forensic-badge-verified flex items-center gap-1 px-1.5 py-0.5" title="Evidence verified">
+                            <div className="h-1 w-1 rounded-full bg-emerald-200 animate-pulse" />
+                            <span className="text-[8px] font-bold tracking-[0.14em]">VERIFIED</span>
+                        </div>
                         {!isEditing && !isPortalNode && !isDiscoveryNode && (
                             <>
                                 <button
@@ -1601,10 +1605,6 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
 
 
             {/* Status Indicator */}
-            <div className="forensic-badge forensic-badge-verified absolute -top-2.5 -right-2 flex items-center gap-1 px-1.5 py-1">
-                <div className="h-1 w-1 rounded-full bg-emerald-200 animate-pulse" />
-                <span className="text-[8px] font-bold tracking-[0.14em]">VERIFIED</span>
-            </div>
         </div>
     );
 };
