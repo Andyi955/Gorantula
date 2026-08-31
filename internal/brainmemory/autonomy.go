@@ -118,6 +118,25 @@ func (s *Service) AutonomyForInvestigation(investigationID string) (BrainAutonom
 	}, nil
 }
 
+// reevaluateAutonomyFromPersistedSuggestions rebuilds the autonomy decision
+// from the suggestions already persisted for an investigation. Read-path safe:
+// unlike the full recompute pass it never parses boards.
+func (s *Service) reevaluateAutonomyFromPersistedSuggestions(investigationID string) error {
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return err
+	}
+	visible := make([]BrainSuggestion, 0)
+	for _, suggestion := range suggestions {
+		if suggestion.InvestigationID != investigationID || suggestion.Status == SuggestionStatusDismissed {
+			continue
+		}
+		visible = append(visible, normalizeSuggestionCollections(suggestion))
+	}
+	sortSuggestions(visible)
+	return s.evaluateAutonomyForInvestigation(investigationID, visible, time.Now().UTC().Format(time.RFC3339))
+}
+
 func (s *Service) UpdateAutonomySettings(settings BrainAutonomySettings) (BrainAutonomySettings, error) {
 	settings = normalizeAutonomySettings(settings)
 	if !validAutonomyMode(settings.Mode) {
@@ -126,6 +145,19 @@ func (s *Service) UpdateAutonomySettings(settings BrainAutonomySettings) (BrainA
 	settings.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := s.saveAutonomySettings(settings); err != nil {
 		return BrainAutonomySettings{}, err
+	}
+
+	// Re-apply the new mode immediately across every investigation so flipping
+	// the switch updates queues and prepared actions without waiting for the
+	// next evidence event or panel refresh.
+	records, err := s.store.List()
+	if err != nil {
+		return BrainAutonomySettings{}, err
+	}
+	for _, record := range records {
+		if err := s.reevaluateAutonomyFromPersistedSuggestions(record.ID); err != nil {
+			return BrainAutonomySettings{}, err
+		}
 	}
 	return settings, nil
 }

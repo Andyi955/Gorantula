@@ -52,6 +52,7 @@ import {
   markBrainSuggestionOutcome,
   prepareBrainFollowUp,
   promoteBrainSignal,
+  recomputeBrainSignals,
   reviewBrainSuggestion,
   toggleBrainClusterPin,
   unhideBrainCluster,
@@ -4039,8 +4040,16 @@ export default function BrainSignalsPanel({
             type="button"
             aria-label="Refresh brain signals"
             onClick={() => {
-              void loadBrainMemory(true)
               startBrainMemoryFollowup()
+              if (!currentInvestigationId) {
+                void loadBrainMemory(true)
+                return
+              }
+              // Explicit operator action: force a full recompute pass first,
+              // then read the freshly persisted state.
+              void recomputeBrainSignals(currentInvestigationId)
+                .catch(() => {})
+                .then(() => loadBrainMemory(true))
             }}
             disabled={!currentInvestigationId || isLoading || isRefreshing}
             className="forensic-brain-refresh"
