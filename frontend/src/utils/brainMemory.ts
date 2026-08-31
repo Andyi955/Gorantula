@@ -657,3 +657,86 @@ export const coerceBrainFiredEvent = (payload: unknown): BrainFiredEvent | null 
     firedAt: typeof candidate.firedAt === 'string' ? candidate.firedAt : '',
   }
 }
+
+export interface BrainGatewayDefinition {
+  code: string
+  name: string
+  description: string
+  kind: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BrainGatewayUsage {
+  definition: BrainGatewayDefinition
+  firingCount: number
+  activeCount: number
+  investigationCount: number
+  lastFiredAt?: string
+  topSignalScore: number
+  topSignalTitle?: string
+}
+
+export interface BrainGatewayRoute {
+  signalId: string
+  investigationId: string
+  investigationTitle: string
+  targetInvestigationId: string
+  targetTitle: string
+  value: string
+  label: string
+  detail: string
+  score: number
+  relevance?: string
+  activationCount: number
+  lastFiredAt?: string
+  currentNodeIds: string[]
+  targetNodeIds: string[]
+}
+
+export interface BrainGatewayDetail {
+  definition: BrainGatewayDefinition
+  routes: BrainGatewayRoute[]
+  totalRoutes: number
+  firingCount: number
+  activeCount: number
+}
+
+const asArray = <T,>(payload: unknown): T[] => (Array.isArray(payload) ? (payload as T[]) : [])
+
+export const fetchBrainGateways = async (investigationId: string): Promise<BrainGatewayUsage[]> =>
+  asArray<BrainGatewayUsage>(
+    await requestJSON<unknown>(`${API_BASE}/gateways?investigationId=${encodeURIComponent(investigationId)}`),
+  )
+
+export const fetchBrainGatewayDetail = async (
+  code: string,
+  options?: { investigationId?: string; value?: string },
+): Promise<BrainGatewayDetail | null> => {
+  const params = new URLSearchParams()
+  if (options?.investigationId) {
+    params.set('investigationId', options.investigationId)
+  }
+  if (options?.value) {
+    params.set('value', options.value)
+  }
+  const query = params.toString()
+  const detail = await requestJSON<unknown>(
+    `${API_BASE}/gateways/${encodeURIComponent(code)}${query ? `?${query}` : ''}`,
+  )
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
+    return null
+  }
+  const candidate = detail as Partial<BrainGatewayDetail> & { definition?: Partial<BrainGatewayDefinition> }
+  if (!candidate.definition || typeof candidate.definition.code !== 'string') {
+    return null
+  }
+  return {
+    definition: candidate.definition as BrainGatewayDefinition,
+    routes: asArray<BrainGatewayRoute>(candidate.routes),
+    totalRoutes: typeof candidate.totalRoutes === 'number' ? candidate.totalRoutes : 0,
+    firingCount: typeof candidate.firingCount === 'number' ? candidate.firingCount : 0,
+    activeCount: typeof candidate.activeCount === 'number' ? candidate.activeCount : 0,
+  }
+}

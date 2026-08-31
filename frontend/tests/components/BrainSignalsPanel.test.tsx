@@ -5,6 +5,8 @@ import type {
   BrainAttentionSummary,
   BrainAutonomyState,
   BrainFollowUpAction,
+  BrainGatewayDetail,
+  BrainGatewayUsage,
   BrainSignal,
   BrainSuggestion,
   MemoryCluster,
@@ -496,6 +498,74 @@ const installBrainFetch = ({
   signals = [],
   links = [],
   clusters = [],
+  gateways = [
+    {
+      definition: {
+        code: 'entity-date',
+        name: 'Entity & Date',
+        description: 'Fires when a named entity or a calendar date appears in both investigations.',
+        kind: 'recall',
+        enabled: true,
+        createdAt: '2026-07-18T20:00:00Z',
+        updatedAt: '2026-07-18T20:00:00Z',
+      },
+      firingCount: 3,
+      activeCount: 2,
+      investigationCount: 1,
+      lastFiredAt: '2026-06-06T09:00:00Z',
+      topSignalScore: 0.92,
+      topSignalTitle: 'Older Substation Case',
+    },
+    {
+      definition: {
+        code: 'source-domain',
+        name: 'Source Domain',
+        description: 'Fires when both investigations cite sources from the same domain.',
+        kind: 'recall',
+        enabled: true,
+        createdAt: '2026-07-18T20:00:00Z',
+        updatedAt: '2026-07-18T20:00:00Z',
+      },
+      firingCount: 1,
+      activeCount: 1,
+      investigationCount: 1,
+      lastFiredAt: '2026-06-06T09:00:00Z',
+      topSignalScore: 0.74,
+      topSignalTitle: 'Older Substation Case',
+    },
+  ],
+  gatewayDetail = {
+    definition: {
+      code: 'entity-date',
+      name: 'Entity & Date',
+      description: 'Fires when a named entity or a calendar date appears in both investigations.',
+      kind: 'recall',
+      enabled: true,
+      createdAt: '2026-07-18T20:00:00Z',
+      updatedAt: '2026-07-18T20:00:00Z',
+    },
+    routes: [
+      {
+        signalId: signal.id,
+        investigationId: 'inv-current',
+        investigationTitle: 'Current Grid Case',
+        targetInvestigationId: 'inv-older',
+        targetTitle: 'Older Substation Case',
+        value: 'ORG|acme grid',
+        label: 'Acme Grid',
+        detail: 'Shared ORG "Acme Grid" appears in both investigations.',
+        score: 0.92,
+        relevance: 'strong-memory',
+        activationCount: 2,
+        lastFiredAt: '2026-06-06T09:00:00Z',
+        currentNodeIds: ['node-current'],
+        targetNodeIds: ['node-older'],
+      },
+    ],
+    totalRoutes: 1,
+    firingCount: 1,
+    activeCount: 1,
+  },
   suggestions = [],
   followUps = [],
   brainMap = emptyBackendBrainMap,
@@ -507,6 +577,8 @@ const installBrainFetch = ({
   signals?: BrainSignal[]
   links?: MemoryLink[]
   clusters?: MemoryCluster[]
+  gateways?: BrainGatewayUsage[]
+  gatewayDetail?: BrainGatewayDetail
   suggestions?: BrainSuggestion[]
   followUps?: BrainFollowUpAction[]
   brainMap?: typeof backendBrainMap
@@ -531,6 +603,12 @@ const installBrainFetch = ({
     }
     if (url.includes('/api/brain/clusters?')) {
       return Promise.resolve(jsonResponse(clusters) as Response)
+    }
+    if (url.includes('/api/brain/gateways?')) {
+      return Promise.resolve(jsonResponse(gateways) as Response)
+    }
+    if (url.includes('/api/brain/gateways/')) {
+      return Promise.resolve(jsonResponse(gatewayDetail) as Response)
     }
     if (url.includes('/api/brain/suggestions?')) {
       return Promise.resolve(jsonResponse(suggestions) as Response)
@@ -2729,6 +2807,27 @@ describe('BrainSignalsPanel', () => {
       'http://localhost:8080/api/brain/signals/recompute?investigationId=inv-current',
       expect.objectContaining({ method: 'PUT' }),
     )
+  })
+
+  it('lists the gateway registry and drills into a route trail', async () => {
+    installBrainFetch({ signals: [signal], links: [], clusters: [] })
+    const user = userEvent.setup()
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card to render')
+    }
+    expect(card).toHaveTextContent('Entity & Date')
+    expect(within(card).getByText(/3 firings/)).toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: /view routes for entity & date/i }))
+    const detail = await screen.findByTestId('brain-gateway-detail')
+    expect(detail).toHaveTextContent('Older Substation Case')
+    expect(within(detail).getByTestId('brain-gateway-route')).toHaveTextContent('Acme Grid')
   })
 
   it('releases the loading state when a full load is superseded by a background refresh', async () => {

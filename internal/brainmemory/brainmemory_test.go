@@ -2778,3 +2778,117 @@ func TestRecomputeEndpointFiresSynapses(t *testing.T) {
 		t.Fatalf("expected %d persisted active signals, got %#v", firing.FiredCount, after)
 	}
 }
+
+func TestGatewayRegistrySeedsBuiltIns(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	service := NewService(root)
+
+	gateways, err := service.ListGateways()
+	if err != nil {
+		t.Fatalf("ListGateways failed: %v", err)
+	}
+	codes := map[string]GatewayUsage{}
+	for _, gateway := range gateways {
+		codes[gateway.Definition.Code] = gateway
+		if gateway.Definition.Name == "" || gateway.Definition.Description == "" || !gateway.Definition.Enabled {
+			t.Fatalf("expected complete built-in definition, got %#v", gateway.Definition)
+		}
+	}
+	for _, expected := range []string{GatewayEntityDate, GatewaySourceDomain, GatewayRelationshipTag, GatewayContradiction} {
+		if _, ok := codes[expected]; !ok {
+			t.Fatalf("expected built-in gateway %q in %#v", expected, gateways)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "brain", "gateways.json")); err != nil {
+		t.Fatalf("expected gateway registry persisted in vault state: %v", err)
+	}
+
+	again, err := service.ListGateways()
+	if err != nil {
+		t.Fatalf("second ListGateways failed: %v", err)
+	}
+	if len(again) != len(gateways) {
+		t.Fatalf("expected registry seeding to be idempotent, got %d then %d", len(gateways), len(again))
+	}
+}
+
+func TestGatewayDetailRoutesFirings(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"summary":"[ORG:Acme Grid] resurfaces during [DATE:2026-05-20] capacity talks.",
+				"sourceURL":"https://intel.example.com/current"
+			}
+		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Grid Memory"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"sourceURL":"https://intel.example.com/archive"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+
+	detail, err := service.GatewayDetail(GatewayEntityDate, "")
+	if err != nil {
+		t.Fatalf("GatewayDetail failed: %v", err)
+	}
+	if detail.Definition.Code != GatewayEntityDate {
+		t.Fatalf("expected entity-date definition, got %#v", detail.Definition)
+	}
+	if len(detail.Routes) == 0 || detail.TotalRoutes != len(detail.Routes) {
+		t.Fatalf("expected routed firings through entity-date, got %#v", detail)
+	}
+	route := detail.Routes[0]
+	if route.SignalID == "" || route.TargetTitle != "Older Grid Memory" {
+		t.Fatalf("expected route pointing at Older Grid Memory, got %#v", route)
+	}
+	foundAcme := false
+	for _, candidate := range detail.Routes {
+		if candidate.Label == "Acme Grid" {
+			foundAcme = true
+			route = candidate
+		}
+	}
+	if !foundAcme {
+		t.Fatalf("expected an Acme Grid reason route, got %#v", detail.Routes)
+	}
+
+	filtered, err := service.GatewayDetail(GatewayEntityDate, route.Value)
+	if err != nil {
+		t.Fatalf("filtered GatewayDetail failed: %v", err)
+	}
+	if filtered.TotalRoutes == 0 {
+		t.Fatalf("expected value-filtered routes, got %#v", filtered)
+	}
+	for _, candidate := range filtered.Routes {
+		if candidate.Value != route.Value {
+			t.Fatalf("expected only %q routes, got %#v", route.Value, candidate)
+		}
+	}
+
+	none, err := service.GatewayDetail(GatewayEntityDate, "ORG|nowhere")
+	if err != nil {
+		t.Fatalf("empty GatewayDetail failed: %v", err)
+	}
+	if none.TotalRoutes != 0 || none.Definition.Code != GatewayEntityDate {
+		t.Fatalf("expected definition with zero routes for unknown value, got %#v", none)
+	}
+
+	if _, err := service.GatewayDetail("GW-NOPE", ""); !errors.Is(err, ErrGatewayNotFound) {
+		t.Fatalf("expected gateway-not-found error, got %v", err)
+	}
+}
