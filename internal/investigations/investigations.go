@@ -38,7 +38,11 @@ func SaveRelationshipResult(result models.RelationshipResult) {
 	}
 }
 
-func HandleAPI(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
+// HandleAPI serves the investigation catalog, metadata, board, result,
+// discoveries, and relationships JSON files. When onEvidence is non-nil it is
+// invoked after a successful evidence PUT (board/result/discoveries/
+// relationships) so callers can recompute brain signals for the investigation.
+func HandleAPI(w http.ResponseWriter, r *http.Request, br *brain.Brain, onEvidence func(investigationID, source string)) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,PUT,DELETE,OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -92,13 +96,13 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, br *brain.Brain) {
 
 	switch parts[3] {
 	case "board":
-		handleInvestigationJSON(w, r, investigationID, models.InvestigationBoardFilename, json.RawMessage(`{"mode":"strict-grid","nodes":[],"edges":[]}`))
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationBoardFilename, json.RawMessage(`{"mode":"strict-grid","nodes":[],"edges":[]}`), onEvidence)
 	case "result":
-		handleInvestigationJSON(w, r, investigationID, models.InvestigationResultFilename, json.RawMessage(`{}`))
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationResultFilename, json.RawMessage(`{}`), onEvidence)
 	case "discoveries":
-		handleInvestigationJSON(w, r, investigationID, models.InvestigationDiscoveryFilename, json.RawMessage(`[]`))
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationDiscoveryFilename, json.RawMessage(`[]`), onEvidence)
 	case "relationships":
-		handleInvestigationRelationships(w, r, investigationID)
+		handleInvestigationRelationships(w, r, investigationID, onEvidence)
 	default:
 		http.NotFound(w, r)
 	}
@@ -112,7 +116,7 @@ func emptyRelationshipResult(investigationID string) json.RawMessage {
 	return emptyRelationships
 }
 
-func handleInvestigationRelationships(w http.ResponseWriter, r *http.Request, investigationID string) {
+func handleInvestigationRelationships(w http.ResponseWriter, r *http.Request, investigationID string, onEvidence func(investigationID, source string)) {
 	store := Store()
 
 	switch r.Method {
@@ -142,7 +146,7 @@ func handleInvestigationRelationships(w http.ResponseWriter, r *http.Request, in
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	case http.MethodPut:
-		handleInvestigationJSON(w, r, investigationID, models.InvestigationRelationshipsFilename, emptyRelationshipResult(investigationID))
+		handleInvestigationJSON(w, r, investigationID, models.InvestigationRelationshipsFilename, emptyRelationshipResult(investigationID), onEvidence)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -322,7 +326,7 @@ func handleInvestigationMetadata(w http.ResponseWriter, r *http.Request, investi
 	}
 }
 
-func handleInvestigationJSON(w http.ResponseWriter, r *http.Request, investigationID, filename string, emptyPayload json.RawMessage) {
+func handleInvestigationJSON(w http.ResponseWriter, r *http.Request, investigationID, filename string, emptyPayload json.RawMessage, onEvidence func(investigationID, source string)) {
 	store := Store()
 
 	switch r.Method {
@@ -358,6 +362,9 @@ func handleInvestigationJSON(w http.ResponseWriter, r *http.Request, investigati
 			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if onEvidence != nil {
+			onEvidence(investigationID, filename)
 		}
 		w.Write(body)
 	default:

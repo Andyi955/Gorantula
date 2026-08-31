@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Andyi955/Gorantula/models"
@@ -480,6 +481,10 @@ type BrainMapSummary struct {
 type Service struct {
 	vaultRoot string
 	store     *models.InvestigationStore
+
+	// mu serialises signal recompute/notify cycles so concurrent evidence
+	// events and panel refreshes cannot interleave load/save of signals.json.
+	mu sync.Mutex
 }
 
 func NewService(vaultRoot string) *Service {
@@ -579,6 +584,13 @@ func (s *Service) GenerateSignals(investigationID string) ([]BrainSignal, error)
 		return nil, models.ErrInvalidInvestigationID
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generateSignalsLocked(investigationID)
+}
+
+// generateSignalsLocked recomputes activation signals while s.mu is held.
+func (s *Service) generateSignalsLocked(investigationID string) ([]BrainSignal, error) {
 	records, err := s.store.List()
 	if err != nil {
 		return nil, err
@@ -694,6 +706,91 @@ func (s *Service) GenerateSignals(investigationID string) ([]BrainSignal, error)
 		return nil, err
 	}
 	return activeSignals, nil
+}
+
+// EvidenceFiring summarises the synapse activity caused by one evidence event.
+type EvidenceFiring struct {
+	InvestigationID string  `json:"investigationId"`
+	Source          string  `json:"source,omitempty"`
+	FiredCount      int     `json:"firedCount"`
+	PromotedCount   int     `json:"promotedCount"`
+	TopScore        float64 `json:"topScore"`
+	TopTitle        string  `json:"topTitle,omitempty"`
+	FiredAt         string  `json:"firedAt"`
+}
+
+type evidenceActivationSnapshot struct {
+	activationCount int
+	linked          bool
+}
+
+// NotifyEvidence recomputes brain signals for an investigation after new
+// evidence landed (board save, relationship result, discoveries) and reports
+// which synapses fired. The diff compares activation counts and link state
+// rather than timestamps, so repeated events inside the same clock second are
+// still counted.
+func (s *Service) NotifyEvidence(investigationID string, source string) (EvidenceFiring, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return EvidenceFiring{}, models.ErrInvalidInvestigationID
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	before, err := s.loadSignals()
+	if err != nil {
+		return EvidenceFiring{}, err
+	}
+	snapshot := make(map[string]evidenceActivationSnapshot, len(before))
+	for id, signal := range before {
+		if signal.InvestigationID == investigationID && !signal.Dismissed {
+			snapshot[id] = evidenceActivationSnapshot{activationCount: signal.ActivationCount, linked: signal.Linked}
+		}
+	}
+
+	if _, err := s.generateSignalsLocked(investigationID); err != nil {
+		return EvidenceFiring{}, err
+	}
+
+	after, err := s.loadSignals()
+	if err != nil {
+		return EvidenceFiring{}, err
+	}
+
+	firing := EvidenceFiring{
+		InvestigationID: investigationID,
+		Source:          strings.TrimSpace(source),
+		FiredAt:         time.Now().UTC().Format(time.RFC3339),
+	}
+	for id, signal := range after {
+		if signal.InvestigationID != investigationID || signal.Dismissed {
+			continue
+		}
+		was, existed := snapshot[id]
+		switch {
+		case !existed:
+			// A brand new synapse lit up for this investigation.
+			if signal.Linked {
+				firing.PromotedCount++
+			} else {
+				firing.FiredCount++
+			}
+		case !was.linked && signal.Linked:
+			// Strong enough to auto-promote into a durable memory link.
+			firing.PromotedCount++
+		case !was.linked && !signal.Linked && signal.ActivationCount > was.activationCount:
+			firing.FiredCount++
+		default:
+			// Already-linked memory reinforced quietly; not a user-visible firing.
+			continue
+		}
+		if signal.Score > firing.TopScore {
+			firing.TopScore = signal.Score
+			firing.TopTitle = signal.TargetTitle
+		}
+	}
+	return firing, nil
 }
 
 func (s *Service) DismissSignal(signalID string) (BrainSignal, error) {

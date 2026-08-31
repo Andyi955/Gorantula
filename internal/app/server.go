@@ -44,10 +44,10 @@ func Run() error {
 	mux.HandleFunc("/api/pipeline-runs", pipeline.HandleRuns)
 	mux.HandleFunc("/api/pipeline-runs/", pipeline.HandleRuns)
 	mux.HandleFunc("/api/investigations", func(w http.ResponseWriter, r *http.Request) {
-		investigations.HandleAPI(w, r, br)
+		investigations.HandleAPI(w, r, br, brainEvidenceNotifier(brainMemoryService))
 	})
 	mux.HandleFunc("/api/investigations/", func(w http.ResponseWriter, r *http.Request) {
-		investigations.HandleAPI(w, r, br)
+		investigations.HandleAPI(w, r, br, brainEvidenceNotifier(brainMemoryService))
 	})
 	registerBrainMemoryRoutes(mux, brainMemoryService)
 
