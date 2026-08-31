@@ -2710,4 +2710,61 @@ describe('BrainSignalsPanel', () => {
     await screen.findByTestId('brain-signal-card')
     expect(screen.queryByTestId('brain-signal-new-chip')).toBeNull()
   })
+
+  it('releases the loading state when a full load is superseded by a background refresh', async () => {
+    window.localStorage.clear()
+    let signalsCalls = 0
+    let resolveFirstSignals: (response: Response) => void = () => {}
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/brain/signals?')) {
+        signalsCalls += 1
+        if (signalsCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveFirstSignals = resolve
+          })
+        }
+        return Promise.resolve(jsonResponse([signal]) as Response)
+      }
+      if (url.includes('/api/brain/map?') || url.includes('/api/brain/autonomy?') || url.includes('/api/brain/attention?')) {
+        // Optional endpoints 404 so the panel keeps their state null instead of
+        // normalizing an empty payload into synthesized content.
+        return Promise.resolve(jsonResponse({}, 404) as Response)
+      }
+      return Promise.resolve(jsonResponse([]) as Response)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const view = render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={0}
+      />,
+    )
+
+    // Full load A is in flight behind the deferred signals fetch.
+    expect(await screen.findByText(/Reading Brain focus/i)).toBeInTheDocument()
+
+    // A background refresh (BRAIN_FIRED token) starts while A is still pending.
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await waitFor(() => {
+      expect(signalsCalls).toBeGreaterThanOrEqual(2)
+    })
+    await act(async () => {})
+    expect(screen.getByText(/Reading Brain focus/i)).toBeInTheDocument()
+
+    // The superseded full load lands; it must release the loading flag because
+    // the request that superseded it is a background refresh.
+    await act(async () => {
+      resolveFirstSignals(jsonResponse([signal]) as Response)
+    })
+    expect(await screen.findByText(/No Brain focus yet/i)).toBeInTheDocument()
+  })
 })

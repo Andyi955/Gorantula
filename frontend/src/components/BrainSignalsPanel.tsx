@@ -537,6 +537,7 @@ export default function BrainSignalsPanel({
     y: number
   } | null>(null)
   const requestIdRef = useRef(0)
+  const latestRequestIsBackgroundRef = useRef(false)
   const boardRefreshTimerRef = useRef<number | null>(null)
   const latestBoardRefreshSignatureRef = useRef<string | null>(null)
 
@@ -574,6 +575,7 @@ export default function BrainSignalsPanel({
 
     const requestId = requestIdRef.current + 1
     requestIdRef.current = requestId
+    latestRequestIsBackgroundRef.current = isBackgroundRefresh
     setError(null)
     if (isManualRefresh) {
       setIsRefreshing(true)
@@ -646,7 +648,17 @@ export default function BrainSignalsPanel({
           setIsLoading(false)
         }
         setIsRefreshing(false)
+      } else if (latestRequestIsBackgroundRef.current) {
+        // Superseded by a BACKGROUND refresh, which never owns the loading or
+        // refreshing flags. Release them here or they stick forever (the
+        // "Reading Brain focus..." deadlock).
+        if (!isBackgroundRefresh) {
+          setIsLoading(false)
+        }
+        setIsRefreshing(false)
       }
+      // Superseded by a newer full/manual request: that request set the flags
+      // itself and will clear them when it lands.
     }
   }, [currentInvestigationId])
 
