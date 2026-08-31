@@ -11,6 +11,7 @@ import type {
   MemoryLink,
 } from '../../src/utils/brainMemory'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
+import { markBrainSignalsSeen } from '../../src/utils/brainSeen'
 
 const signal: BrainSignal = {
   id: 'brain-signal-alpha',
@@ -2624,5 +2625,148 @@ describe('BrainSignalsPanel', () => {
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
     expect(await screen.findByTestId('brain-error-state')).toHaveTextContent(/Brain signals unavailable/i)
+  })
+
+  it('refreshes brain memory in the background when a firing token arrives', async () => {
+    const fetchMock = installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
+
+    const view = render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={0}
+      />,
+    )
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
+        .toBeGreaterThan(0)
+    })
+    const callsAfterMount = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length
+
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
+        .toBeGreaterThan(callsAfterMount)
+    })
+
+    // Re-rendering with the same token must not trigger another refresh.
+    const callsAfterFiring = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
+      .toBe(callsAfterFiring)
+  })
+
+  it('shows the New chip for signals the operator has not seen yet', async () => {
+    window.localStorage.clear()
+    installBrainFetch({ signals: [signal], links: [] })
+    const onSignalsLoaded = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onSignalsLoaded={onSignalsLoaded}
+      />,
+    )
+    await openBrainView(user, /active signals view/i)
+
+    expect(await screen.findByTestId('brain-signal-new-chip')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(onSignalsLoaded).toHaveBeenCalledWith(
+        'inv-current',
+        expect.arrayContaining([expect.objectContaining({ id: signal.id })]),
+      )
+    })
+  })
+
+  it('hides the New chip once the signal has been marked seen', async () => {
+    window.localStorage.clear()
+    markBrainSignalsSeen('inv-current', [{ id: signal.id, score: signal.score }])
+    installBrainFetch({ signals: [signal], links: [] })
+    const user = userEvent.setup()
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+      />,
+    )
+    await openBrainView(user, /active signals view/i)
+
+    await screen.findByTestId('brain-signal-card')
+    expect(screen.queryByTestId('brain-signal-new-chip')).toBeNull()
+  })
+
+  it('releases the loading state when a full load is superseded by a background refresh', async () => {
+    window.localStorage.clear()
+    let signalsCalls = 0
+    let resolveFirstSignals: (response: Response) => void = () => {}
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/brain/signals?')) {
+        signalsCalls += 1
+        if (signalsCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveFirstSignals = resolve
+          })
+        }
+        return Promise.resolve(jsonResponse([signal]) as Response)
+      }
+      if (url.includes('/api/brain/map?') || url.includes('/api/brain/autonomy?') || url.includes('/api/brain/attention?')) {
+        // Optional endpoints 404 so the panel keeps their state null instead of
+        // normalizing an empty payload into synthesized content.
+        return Promise.resolve(jsonResponse({}, 404) as Response)
+      }
+      return Promise.resolve(jsonResponse([]) as Response)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const view = render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={0}
+      />,
+    )
+
+    // Full load A is in flight behind the deferred signals fetch.
+    expect(await screen.findByText(/Reading Brain focus/i)).toBeInTheDocument()
+    expect(screen.getByTestId('brain-loading-overlay')).toBeInTheDocument()
+
+    // A background refresh (BRAIN_FIRED token) starts while A is still pending.
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await waitFor(() => {
+      expect(signalsCalls).toBeGreaterThanOrEqual(2)
+    })
+    await act(async () => {})
+    expect(screen.getByText(/Reading Brain focus/i)).toBeInTheDocument()
+
+    // The superseded full load lands; it must release the loading flag because
+    // the request that superseded it is a background refresh.
+    await act(async () => {
+      resolveFirstSignals(jsonResponse([signal]) as Response)
+    })
+    expect(await screen.findByText(/No Brain focus yet/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('brain-loading-overlay')).not.toBeInTheDocument()
   })
 })

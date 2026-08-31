@@ -7796,6 +7796,73 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-card-new-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid rgba(255, 122, 24, 0.55);
+  background: rgba(255, 122, 24, 0.14);
+  padding: 0.22rem 0.38rem;
+  color: #ffb066;
+  font-size: 0.55rem;
+  font-style: normal;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.forensic-brain-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  background: rgba(4, 10, 18, 0.74);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.forensic-brain-loading-emblem {
+  width: 76px;
+  height: auto;
+  opacity: 0.9;
+  animation: forensic-brain-loading-pulse 1.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 18px rgba(129, 227, 255, 0.35));
+}
+
+.forensic-brain-loading-text {
+  margin: 0;
+  color: var(--forensic-accent);
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+@keyframes forensic-brain-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.97);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-brain-loading-emblem {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
 .forensic-brain-relevance-chip-strong-memory {
   border-color: rgba(0, 255, 65, 0.46);
   background: rgba(0, 255, 65, 0.08);

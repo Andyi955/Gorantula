@@ -2510,3 +2510,152 @@ func findCluster(t *testing.T, clusters []MemoryCluster, gateway string, label s
 	t.Fatalf("expected cluster gateway=%q label=%q in %#v", gateway, label, clusters)
 	return MemoryCluster{}
 }
+
+func TestNotifyEvidenceReportsFiredSynapses(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"title":"Current Grid Lead",
+				"summary":"[ORG:Acme Grid] resurfaces during [DATE:2026-05-20] capacity talks.",
+				"sourceURL":"https://intel.example.com/current"
+			}
+		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Grid Memory"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"title":"Older Grid Lead",
+				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"sourceURL":"https://intel.example.com/archive"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+
+	firing, err := service.NotifyEvidence("inv-current", models.InvestigationBoardFilename)
+	if err != nil {
+		t.Fatalf("NotifyEvidence failed: %v", err)
+	}
+	if firing.FiredCount != 1 || firing.PromotedCount != 0 {
+		t.Fatalf("expected one fired synapse and no promotion, got %#v", firing)
+	}
+	if firing.InvestigationID != "inv-current" {
+		t.Fatalf("expected investigation id inv-current, got %q", firing.InvestigationID)
+	}
+	if firing.Source != models.InvestigationBoardFilename {
+		t.Fatalf("expected source %q, got %q", models.InvestigationBoardFilename, firing.Source)
+	}
+	if firing.TopTitle != "Older Grid Memory" {
+		t.Fatalf("expected top firing target Older Grid Memory, got %#v", firing)
+	}
+	if firing.TopScore < 0.65 {
+		t.Fatalf("expected strong top score, got %.2f", firing.TopScore)
+	}
+	if strings.TrimSpace(firing.FiredAt) == "" {
+		t.Fatal("expected firedAt timestamp to be set")
+	}
+
+	// A second evidence event re-activates the same synapse; the diff must
+	// still report it even if both events land inside the same second.
+	repeat, err := service.NotifyEvidence("inv-current", models.InvestigationBoardFilename)
+	if err != nil {
+		t.Fatalf("repeat NotifyEvidence failed: %v", err)
+	}
+	if repeat.FiredCount != 1 {
+		t.Fatalf("expected repeat evidence to re-fire the synapse, got %#v", repeat)
+	}
+
+	// Dismissed signals must stay quiet on later evidence events.
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("expected one active signal, got %#v", signals)
+	}
+	if _, err := service.DismissSignal(signals[0].ID); err != nil {
+		t.Fatalf("DismissSignal failed: %v", err)
+	}
+	quiet, err := service.NotifyEvidence("inv-current", models.InvestigationBoardFilename)
+	if err != nil {
+		t.Fatalf("NotifyEvidence after dismissal failed: %v", err)
+	}
+	if quiet.FiredCount != 0 || quiet.PromotedCount != 0 {
+		t.Fatalf("expected dismissed signal to stay quiet, got %#v", quiet)
+	}
+}
+
+func TestNotifyEvidenceCountsAutoPromotion(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"summary":"[ORG:Acme Grid] appears during [DATE:2026-05-20].",
+				"sourceURL":"https://intel.example.com/current"
+			}
+		}],
+		"edges":[{
+			"source":"current-node",
+			"target":"current-node",
+			"data":{"tag":"INFRASTRUCTURE_STRESS"}
+		}]
+	}`, `{
+		"vaultId":"inv-current",
+		"connections":[{"source":"current-node","target":"current-node","tag":"INFRASTRUCTURE_STRESS"}]
+	}`)
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Grid Memory"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20].",
+				"sourceURL":"https://intel.example.com/archive"
+			}
+		}],
+		"edges":[{
+			"source":"old-node",
+			"target":"old-node",
+			"data":{"tag":"INFRASTRUCTURE_STRESS"}
+		}]
+	}`, `{
+		"vaultId":"inv-old",
+		"connections":[{"source":"old-node","target":"old-node","tag":"INFRASTRUCTURE_STRESS"}]
+	}`)
+
+	service := NewService(root)
+	firing, err := service.NotifyEvidence("inv-current", models.InvestigationRelationshipsFilename)
+	if err != nil {
+		t.Fatalf("NotifyEvidence failed: %v", err)
+	}
+	if firing.PromotedCount != 1 || firing.FiredCount != 0 {
+		t.Fatalf("expected one auto-promotion and no plain firing, got %#v", firing)
+	}
+	if firing.TopTitle != "Older Grid Memory" {
+		t.Fatalf("expected promotion target Older Grid Memory, got %#v", firing)
+	}
+
+	links, err := service.LinksForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("LinksForInvestigation failed: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("expected one durable memory link, got %#v", links)
+	}
+}
+
+func TestNotifyEvidenceRejectsInvalidInvestigationID(t *testing.T) {
+	service := NewService(filepath.Join(t.TempDir(), "abdomen_vault"))
+	if _, err := service.NotifyEvidence("../escape", models.InvestigationBoardFilename); !errors.Is(err, models.ErrInvalidInvestigationID) {
+		t.Fatalf("expected invalid investigation id error, got %v", err)
+	}
+}
