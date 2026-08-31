@@ -55,6 +55,15 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    watch: {
+      // Editors and agents can write files through a sibling temp dir before an
+      // atomic rename (e.g. .index.css.<id>.tmpdir/index.css.tmp). Watching
+      // those transient files crashes the watcher on Windows (EBUSY) and wedges
+      // HMR/transform invalidation for the real file afterwards.
+      ignored: ['**/.*.tmpdir/**', '**/.*.tmp'],
+    },
+  },
   build: {
     // Spider View ships a deferred Three.js runtime chunk that is intentionally
     // larger than the generic Vite warning threshold.
