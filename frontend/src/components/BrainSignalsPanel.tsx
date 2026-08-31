@@ -1999,64 +1999,77 @@ export default function BrainSignalsPanel({
 
   const renderGatewaysView = () => (
     <div className="forensic-brain-view forensic-brain-view-gateways" data-testid="brain-gateways-view">
-      {gatewayUsages.length === 0 ? (
-        <div className="forensic-brain-empty">No gateways registered yet.</div>
-      ) : (
-        gatewayUsages.map((usage) => (
-          <article
-            key={usage.definition.code}
-            data-testid="brain-gateway-card"
-            data-gateway-code={usage.definition.code}
-            className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
-          >
-            <span className="forensic-brain-card-label">{usage.definition.code}</span>
-            <h4>{usage.definition.name}</h4>
-            <p>{usage.definition.description}</p>
-            <div className="forensic-brain-gateway-stats" aria-label={`Usage for ${usage.definition.name}`}>
-              <span>{usage.firingCount} firings</span>
-              <span>{usage.activeCount} active</span>
-              <span>{usage.investigationCount} investigations</span>
-              {usage.topSignalTitle && <span>top: {usage.topSignalTitle}</span>}
-            </div>
-            <button
-              type="button"
-              aria-label={`View routes for ${usage.definition.name}`}
-              onClick={() => {
-                void openGatewayDetail(usage.definition.code)
-              }}
-              disabled={gatewayDetailLoading}
-            >
-              {gatewayDetailLoading && gatewayDetail?.definition.code === usage.definition.code
-                ? 'Reading routes...'
-                : 'View routes'}
-            </button>
-          </article>
-        ))
-      )}
-      {gatewayDetail && (
-        <section data-testid="brain-gateway-detail" aria-label={`Routes for ${gatewayDetail.definition.name}`}>
-          <h4>
-            {gatewayDetail.definition.name} route trail ({gatewayDetail.totalRoutes})
-          </h4>
-          {gatewayDetail.routes.length === 0 ? (
-            <div className="forensic-brain-empty">No firings recorded through this gateway yet.</div>
+      <section className="forensic-brain-panel forensic-brain-panel-gateways">
+        <div className="forensic-brain-panel-header">
+          <div>
+            <span className="forensic-brain-panel-kicker">Addressable matchers</span>
+            <h3>Gateway Registry</h3>
+          </div>
+          <div className="forensic-brain-cluster-summary">
+            <span>{gatewayUsages.length} defined</span>
+          </div>
+        </div>
+        <div className="forensic-brain-gateway-list">
+          {gatewayUsages.length === 0 ? (
+            <div className="forensic-brain-empty">No gateways registered yet.</div>
           ) : (
-            gatewayDetail.routes.map((route) => (
+            gatewayUsages.map((usage) => (
               <article
-                key={`${route.signalId}:${route.value}:${route.targetInvestigationId}`}
-                data-testid="brain-gateway-route"
-                className="forensic-brain-gateway-route"
+                key={usage.definition.code}
+                data-testid="brain-gateway-card"
+                data-gateway-code={usage.definition.code}
+                className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
               >
-                <strong>{route.targetTitle}</strong>
-                <span>{route.label || route.value}</span>
-                <span>{formatScore(route.score)}</span>
-                <span>{formatActivationCount(route.activationCount)}</span>
-                <p>{route.detail}</p>
+                <span className="forensic-brain-card-label">{usage.definition.code}</span>
+                <h4>{usage.definition.name}</h4>
+                <p>{usage.definition.description}</p>
+                <div className="forensic-brain-gateway-stats" aria-label={`Usage for ${usage.definition.name}`}>
+                  <span>{usage.firingCount} firings</span>
+                  <span>{usage.activeCount} active</span>
+                  <span>{usage.investigationCount} investigations</span>
+                  {usage.topSignalTitle && <span>top: {usage.topSignalTitle}</span>}
+                </div>
+                <button
+                  type="button"
+                  aria-label={`View routes for ${usage.definition.name}`}
+                  onClick={() => {
+                    void openGatewayDetail(usage.definition.code)
+                  }}
+                  disabled={gatewayDetailLoading}
+                >
+                  {gatewayDetailLoading && gatewayDetail?.definition.code === usage.definition.code
+                    ? 'Reading routes...'
+                    : 'View routes'}
+                </button>
               </article>
             ))
           )}
-        </section>
-      )}
+          {gatewayDetail && (
+            <section data-testid="brain-gateway-detail" aria-label={`Routes for ${gatewayDetail.definition.name}`}>
+              <h4>
+                {gatewayDetail.definition.name} route trail ({gatewayDetail.totalRoutes})
+              </h4>
+              {gatewayDetail.routes.length === 0 ? (
+                <div className="forensic-brain-empty">No firings recorded through this gateway yet.</div>
+              ) : (
+                gatewayDetail.routes.map((route) => (
+                  <article
+                    key={`${route.signalId}:${route.value}:${route.targetInvestigationId}`}
+                    data-testid="brain-gateway-route"
+                    className="forensic-brain-gateway-route"
+                  >
+                    <strong>{route.targetTitle}</strong>
+                    <span>{route.label || route.value}</span>
+                    <span>{formatScore(route.score)}</span>
+                    <span>{formatActivationCount(route.activationCount)}</span>
+                    <p>{route.detail}</p>
+                  </article>
+                ))
+              )}
+            </section>
+          )}
+        </div>
+      </section>
     </div>
   )
 
