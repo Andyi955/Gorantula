@@ -618,3 +618,32 @@ export const updateBrainAutonomySettings = (settings: BrainAutonomySettings) =>
     method: 'PUT',
     body: JSON.stringify(settings),
   }).then(normalizeBrainAutonomySettings)
+
+export interface BrainFiredEvent {
+  investigationId: string
+  source?: string
+  firedCount: number
+  promotedCount: number
+  topScore: number
+  topTitle?: string
+  firedAt: string
+}
+
+export const coerceBrainFiredEvent = (payload: unknown): BrainFiredEvent | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+  const candidate = payload as Partial<BrainFiredEvent>
+  if (typeof candidate.investigationId !== 'string' || !candidate.investigationId.trim()) {
+    return null
+  }
+  return {
+    investigationId: candidate.investigationId,
+    source: typeof candidate.source === 'string' ? candidate.source : undefined,
+    firedCount: typeof candidate.firedCount === 'number' ? candidate.firedCount : 0,
+    promotedCount: typeof candidate.promotedCount === 'number' ? candidate.promotedCount : 0,
+    topScore: typeof candidate.topScore === 'number' ? candidate.topScore : 0,
+    topTitle: typeof candidate.topTitle === 'string' ? candidate.topTitle : undefined,
+    firedAt: typeof candidate.firedAt === 'string' ? candidate.firedAt : '',
+  }
+}

@@ -36,7 +36,7 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
-import type { BrainFollowUpAction } from './utils/brainMemory'
+import { coerceBrainFiredEvent, type BrainFollowUpAction } from './utils/brainMemory'
 import {
   BOARD_RESTORE_COMPLETE_EVENT,
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
@@ -705,6 +705,16 @@ function App() {
   }
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('spider')
+  // Brain synapse engine: bumped whenever the backend broadcasts BRAIN_FIRED so
+  // the open Brain panel refreshes and the tab can badge unseen firings.
+  const [brainFiredToken, setBrainFiredToken] = useState(0)
+  const [brainUnreadCount, setBrainUnreadCount] = useState(0)
+
+  useEffect(() => {
+    if (activeTab === 'brain') {
+      setBrainUnreadCount(0)
+    }
+  }, [activeTab, brainFiredToken])
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<SpiderOperationMode>('web')
   const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
@@ -1185,6 +1195,16 @@ function App() {
 
         if (msg.type === 'PIPELINE_PROFILE_SAVED') {
           void refreshPipelineProfiles()
+          return
+        }
+
+        if (msg.type === 'BRAIN_FIRED') {
+          const firing = coerceBrainFiredEvent(msg.payload)
+          if (!firing) {
+            return
+          }
+          setBrainFiredToken((current) => current + 1)
+          setBrainUnreadCount((current) => current + 1)
           return
         }
 
@@ -2500,6 +2520,11 @@ function App() {
           >
             <Brain size={18} />
             Brain
+            {brainUnreadCount > 0 && (
+              <span className="ml-1 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-cyber-purple px-1.5 text-[11px] font-bold text-white">
+                {brainUnreadCount > 9 ? '9+' : brainUnreadCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab('chat')}
@@ -3082,6 +3107,7 @@ function App() {
                   currentInvestigationTitle={currentInvestigation?.displayTopic || currentInvestigation?.topic || null}
                   onOpenInvestigation={handleOpenBrainInvestigation}
                   onLaunchFocusedRabbitHole={handleLaunchFocusedRabbitHole}
+                  externalFiredToken={brainFiredToken}
                 />
               </Suspense>
             )}

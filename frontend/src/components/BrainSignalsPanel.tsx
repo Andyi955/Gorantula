@@ -122,6 +122,7 @@ interface BrainSignalsPanelProps {
   currentInvestigationTitle?: string | null
   onOpenInvestigation?: (investigationId: string) => void
   onLaunchFocusedRabbitHole?: (action: BrainFollowUpAction) => void
+  externalFiredToken?: number
 }
 
 const PRIORITY_SIGNAL_LIMIT = 10
@@ -481,6 +482,7 @@ export default function BrainSignalsPanel({
   currentInvestigationTitle,
   onOpenInvestigation,
   onLaunchFocusedRabbitHole,
+  externalFiredToken,
 }: BrainSignalsPanelProps) {
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
@@ -513,6 +515,7 @@ export default function BrainSignalsPanel({
   const [gatewayFilter, setGatewayFilter] = useState<GatewayFilter>('all')
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
+  const lastFiredTokenRef = useRef(externalFiredToken ?? 0)
   const brainMapDragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -653,6 +656,17 @@ export default function BrainSignalsPanel({
 
     return () => window.clearInterval(intervalId)
   }, [brainMemoryFollowupRunId, currentInvestigationId, loadBrainMemory])
+
+  // The backend broadcasts BRAIN_FIRED when evidence landing fired synapses;
+  // refresh quietly in the background so the panel stays current without a
+  // manual refresh.
+  useEffect(() => {
+    if (externalFiredToken === undefined || externalFiredToken === lastFiredTokenRef.current) {
+      return
+    }
+    lastFiredTokenRef.current = externalFiredToken
+    void loadBrainMemory(false, true)
+  }, [externalFiredToken, loadBrainMemory])
 
   useEffect(() => {
     if (!currentInvestigationId || typeof window === 'undefined') {

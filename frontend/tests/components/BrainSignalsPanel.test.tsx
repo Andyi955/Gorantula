@@ -2625,4 +2625,46 @@ describe('BrainSignalsPanel', () => {
 
     expect(await screen.findByTestId('brain-error-state')).toHaveTextContent(/Brain signals unavailable/i)
   })
+
+  it('refreshes brain memory in the background when a firing token arrives', async () => {
+    const fetchMock = installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
+
+    const view = render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={0}
+      />,
+    )
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
+        .toBeGreaterThan(0)
+    })
+    const callsAfterMount = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length
+
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
+        .toBeGreaterThan(callsAfterMount)
+    })
+
+    // Re-rendering with the same token must not trigger another refresh.
+    const callsAfterFiring = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
+      .toBe(callsAfterFiring)
+  })
 })
