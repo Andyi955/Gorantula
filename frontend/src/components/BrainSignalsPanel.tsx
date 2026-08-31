@@ -116,6 +116,7 @@ import {
   type MemoryLinkGroup,
   type StrengthFilter,
 } from '../utils/brainMemoryUtils'
+import { BRAIN_STRENGTHEN_DELTA, loadSeenBrainSignalScores } from '../utils/brainSeen'
 
 interface BrainSignalsPanelProps {
   currentInvestigationId: string | null
@@ -123,6 +124,7 @@ interface BrainSignalsPanelProps {
   onOpenInvestigation?: (investigationId: string) => void
   onLaunchFocusedRabbitHole?: (action: BrainFollowUpAction) => void
   externalFiredToken?: number
+  onSignalsLoaded?: (investigationId: string, signals: BrainSignal[]) => void
 }
 
 const PRIORITY_SIGNAL_LIMIT = 10
@@ -483,6 +485,7 @@ export default function BrainSignalsPanel({
   onOpenInvestigation,
   onLaunchFocusedRabbitHole,
   externalFiredToken,
+  onSignalsLoaded,
 }: BrainSignalsPanelProps) {
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
@@ -516,6 +519,16 @@ export default function BrainSignalsPanel({
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>('all')
   const [brainMemoryFollowupRunId, setBrainMemoryFollowupRunId] = useState(0)
   const lastFiredTokenRef = useRef(externalFiredToken ?? 0)
+  const onSignalsLoadedRef = useRef(onSignalsLoaded)
+  onSignalsLoadedRef.current = onSignalsLoaded
+  const seenSnapshotRef = useRef<Record<string, number>>({})
+
+  // Capture what the operator had already seen for this investigation when the
+  // panel mounts, so "new" chips stay stable for the whole visit even after the
+  // seen-state is persisted.
+  useEffect(() => {
+    seenSnapshotRef.current = loadSeenBrainSignalScores(currentInvestigationId ?? '')
+  }, [currentInvestigationId])
   const brainMapDragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -597,7 +610,9 @@ export default function BrainSignalsPanel({
         return
       }
 
-      setSignals(sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked)))
+      const visibleSignals = sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked))
+      setSignals(visibleSignals)
+      onSignalsLoadedRef.current?.(currentInvestigationId ?? '', visibleSignals)
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
       setSuggestions(sortSuggestionsForView(nextSuggestions))
@@ -1940,6 +1955,11 @@ export default function BrainSignalsPanel({
     )
   }
 
+  const isNewBrainSignal = (candidate: BrainSignal) => {
+    const knownScore = seenSnapshotRef.current[candidate.id]
+    return knownScore === undefined || candidate.score - knownScore >= BRAIN_STRENGTHEN_DELTA
+  }
+
   const renderSignalGroup = (group: BrainSignalGroup) => {
     const relatedFiringText = getRelatedFiringText(group.signals.length)
     const signal = group.primary
@@ -1988,6 +2008,11 @@ export default function BrainSignalsPanel({
               <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
                 {relevanceLabel}
               </span>
+              {isNewBrainSignal(signal) && (
+                <span className="forensic-brain-card-new-chip" data-testid="brain-signal-new-chip">
+                  New
+                </span>
+              )}
               {relatedFiringText && (
                 <span className="forensic-brain-card-group-count">{relatedFiringText}</span>
               )}

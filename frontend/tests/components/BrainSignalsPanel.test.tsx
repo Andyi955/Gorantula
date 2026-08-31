@@ -11,6 +11,7 @@ import type {
   MemoryLink,
 } from '../../src/utils/brainMemory'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
+import { markBrainSignalsSeen } from '../../src/utils/brainSeen'
 
 const signal: BrainSignal = {
   id: 'brain-signal-alpha',
@@ -2666,5 +2667,47 @@ describe('BrainSignalsPanel', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
       .toBe(callsAfterFiring)
+  })
+
+  it('shows the New chip for signals the operator has not seen yet', async () => {
+    window.localStorage.clear()
+    installBrainFetch({ signals: [signal], links: [] })
+    const onSignalsLoaded = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        onSignalsLoaded={onSignalsLoaded}
+      />,
+    )
+    await openBrainView(user, /active signals view/i)
+
+    expect(await screen.findByTestId('brain-signal-new-chip')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(onSignalsLoaded).toHaveBeenCalledWith(
+        'inv-current',
+        expect.arrayContaining([expect.objectContaining({ id: signal.id })]),
+      )
+    })
+  })
+
+  it('hides the New chip once the signal has been marked seen', async () => {
+    window.localStorage.clear()
+    markBrainSignalsSeen('inv-current', [{ id: signal.id, score: signal.score }])
+    installBrainFetch({ signals: [signal], links: [] })
+    const user = userEvent.setup()
+
+    render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+      />,
+    )
+    await openBrainView(user, /active signals view/i)
+
+    await screen.findByTestId('brain-signal-card')
+    expect(screen.queryByTestId('brain-signal-new-chip')).toBeNull()
   })
 })
