@@ -705,7 +705,42 @@ func (s *Service) generateSignalsLocked(investigationID string) ([]BrainSignal, 
 	if err := s.saveSignals(nextSignals); err != nil {
 		return nil, err
 	}
+
+	// Keep the derived stores (clusters, suggestions, autonomy) consistent
+	// with the fresh signals in the same recompute pass.
+	if _, err := s.recomputeClustersLocked(investigationID, now); err != nil {
+		return nil, err
+	}
+	if err := s.recomputeSuggestionsLocked(investigationID, now); err != nil {
+		return nil, err
+	}
 	return activeSignals, nil
+}
+
+// SignalsForInvestigation returns the persisted active signals for an
+// investigation WITHOUT recomputing. Reads are cheap; recompute passes parse
+// every stored board and run only on evidence events and explicit recompute
+// requests.
+func (s *Service) SignalsForInvestigation(investigationID string) ([]BrainSignal, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	if !models.ValidInvestigationID(investigationID) {
+		return nil, models.ErrInvalidInvestigationID
+	}
+	if _, err := s.store.LoadMetadata(investigationID); err != nil {
+		return nil, err
+	}
+	signals, err := s.loadSignals()
+	if err != nil {
+		return nil, err
+	}
+	active := make([]BrainSignal, 0)
+	for _, signal := range signals {
+		if signal.InvestigationID == investigationID && !signal.Dismissed && !signal.Linked {
+			active = append(active, signal)
+		}
+	}
+	sortSignals(active)
+	return active, nil
 }
 
 // EvidenceFiring summarises the synapse activity caused by one evidence event.
@@ -930,7 +965,28 @@ func (s *Service) ClustersForInvestigation(investigationID string) ([]MemoryClus
 	if !models.ValidInvestigationID(investigationID) {
 		return nil, models.ErrInvalidInvestigationID
 	}
+	if _, err := s.store.LoadMetadata(investigationID); err != nil {
+		return nil, err
+	}
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]MemoryCluster, 0)
+	for _, cluster := range clusters {
+		if containsString(cluster.MemberInvestigationIDs, investigationID) {
+			visible = append(visible, cluster)
+		}
+	}
+	sortClusters(visible)
+	return visible, nil
+}
 
+// recomputeClustersLocked rebuilds the persisted memory clusters for an
+// investigation while s.mu is held. Cluster derivation parses every stored
+// board, so it belongs in the recompute pass (evidence events and explicit
+// recompute requests), never in read paths.
+func (s *Service) recomputeClustersLocked(investigationID string, now string) ([]MemoryCluster, error) {
 	records, err := s.store.List()
 	if err != nil {
 		return nil, err
@@ -964,7 +1020,6 @@ func (s *Service) ClustersForInvestigation(investigationID string) ([]MemoryClus
 		return nil, err
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
 	recomputed := buildMemoryClusters(investigationID, profiles, signals, links, existingClusters, now)
 	nextClusters := make(map[string]MemoryCluster, len(existingClusters)+len(recomputed))
 	for id, cluster := range existingClusters {
@@ -1037,25 +1092,42 @@ func (s *Service) SuggestionsForInvestigation(investigationID string) ([]BrainSu
 	if _, err := s.store.LoadMetadata(investigationID); err != nil {
 		return nil, err
 	}
-
-	signals, err := s.loadSignals()
-	if err != nil {
-		return nil, err
-	}
-	links, err := s.loadLinks()
-	if err != nil {
-		return nil, err
-	}
-	clusters, err := s.loadClusters()
-	if err != nil {
-		return nil, err
-	}
 	existing, err := s.loadSuggestions()
 	if err != nil {
 		return nil, err
 	}
+	visible := make([]BrainSuggestion, 0)
+	for _, suggestion := range existing {
+		if suggestion.InvestigationID != investigationID || suggestion.Status == SuggestionStatusDismissed {
+			continue
+		}
+		visible = append(visible, normalizeSuggestionCollections(suggestion))
+	}
+	sortSuggestions(visible)
+	return visible, nil
+}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+// recomputeSuggestionsLocked rebuilds the persisted suggestions for an
+// investigation (and re-evaluates autonomy) while s.mu is held. Part of the
+// recompute pass, never the read path.
+func (s *Service) recomputeSuggestionsLocked(investigationID string, now string) error {
+	signals, err := s.loadSignals()
+	if err != nil {
+		return err
+	}
+	links, err := s.loadLinks()
+	if err != nil {
+		return err
+	}
+	clusters, err := s.loadClusters()
+	if err != nil {
+		return err
+	}
+	existing, err := s.loadSuggestions()
+	if err != nil {
+		return err
+	}
+
 	recomputed := buildBrainSuggestions(investigationID, signals, links, clusters, existing, now)
 	nextSuggestions := make(map[string]BrainSuggestion, len(existing)+len(recomputed))
 	for id, suggestion := range existing {
@@ -1078,13 +1150,9 @@ func (s *Service) SuggestionsForInvestigation(investigationID string) ([]BrainSu
 		}
 	}
 	if err := s.saveSuggestions(nextSuggestions); err != nil {
-		return nil, err
+		return err
 	}
-	if err := s.evaluateAutonomyForInvestigation(investigationID, visible, now); err != nil {
-		return nil, err
-	}
-	sortSuggestions(visible)
-	return visible, nil
+	return s.evaluateAutonomyForInvestigation(investigationID, visible, now)
 }
 
 func (s *Service) DismissSuggestion(suggestionID string) (BrainSuggestion, error) {
@@ -1302,7 +1370,7 @@ func (s *Service) MapForInvestigation(investigationID string) (BrainMapView, err
 	if err != nil {
 		return BrainMapView{}, err
 	}
-	signals, err := s.GenerateSignals(investigationID)
+	signals, err := s.SignalsForInvestigation(investigationID)
 	if err != nil {
 		return BrainMapView{}, err
 	}
@@ -4227,8 +4295,17 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 			return
 		}
 		investigationID := r.URL.Query().Get("investigationId")
-		signals, err := service.GenerateSignals(investigationID)
+		signals, err := service.SignalsForInvestigation(investigationID)
 		writeAPIResult(w, signals, err)
+		return
+	}
+	if path == "api/brain/signals/recompute" {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		firing, err := service.NotifyEvidence(r.URL.Query().Get("investigationId"), "manual-refresh")
+		writeAPIResult(w, firing, err)
 		return
 	}
 	if path == "api/brain/links" {

@@ -561,6 +561,9 @@ const installBrainFetch = ({
       }
       return Promise.resolve(jsonResponse(currentAutonomy.settings) as Response)
     }
+    if (method === 'PUT' && url.includes('/api/brain/signals/recompute')) {
+      return Promise.resolve(jsonResponse({ investigationId: 'inv-current', firedCount: 1, promotedCount: 0, topScore: 0.9, firedAt: '2026-07-18T20:30:00Z' }) as Response)
+    }
     if (method === 'PUT' && url.endsWith('/dismiss')) {
       return Promise.resolve(jsonResponse({ ...signal, dismissed: true }) as Response)
     }
@@ -2709,6 +2712,23 @@ describe('BrainSignalsPanel', () => {
 
     await screen.findByTestId('brain-signal-card')
     expect(screen.queryByTestId('brain-signal-new-chip')).toBeNull()
+  })
+
+  it('forces a recompute pass before reading when the operator refreshes', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [signal], links: [link], clusters: [cluster] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
+    await screen.findByTestId('brain-signal-card')
+
+    await user.click(screen.getByRole('button', { name: /refresh brain signals/i }))
+
+    expect(await screen.findByTestId('brain-signal-card')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/signals/recompute?investigationId=inv-current',
+      expect.objectContaining({ method: 'PUT' }),
+    )
   })
 
   it('releases the loading state when a full load is superseded by a background refresh', async () => {

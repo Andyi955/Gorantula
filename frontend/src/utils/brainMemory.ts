@@ -516,6 +516,16 @@ const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttenti
 export const fetchBrainSignals = (investigationId: string) =>
   requestJSON<BrainSignal[]>(`${API_BASE}/signals?investigationId=${encodeURIComponent(investigationId)}`)
 
+// Force a full recompute pass (signals + clusters + suggestions + autonomy)
+// for an investigation. Expensive on purpose: reads are cheap, this is the
+// operator's explicit "re-think now" action.
+export const recomputeBrainSignals = async (investigationId: string): Promise<BrainFiredEvent | null> => {
+  const firing = await requestJSON<unknown>(`${API_BASE}/signals/recompute?investigationId=${encodeURIComponent(investigationId)}`, {
+    method: 'PUT',
+  })
+  return coerceBrainFiredEvent(firing)
+}
+
 export const fetchBrainLinks = (investigationId: string) =>
   requestJSON<MemoryLink[]>(`${API_BASE}/links?investigationId=${encodeURIComponent(investigationId)}`)
 
