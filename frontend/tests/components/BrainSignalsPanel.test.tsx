@@ -2745,7 +2745,7 @@ describe('BrainSignalsPanel', () => {
 
     // Full load A is in flight behind the deferred signals fetch.
     expect(await screen.findByText(/Reading Brain focus/i)).toBeInTheDocument()
-    expect(screen.getByTestId('brain-load-bar')).toBeInTheDocument()
+    expect(screen.getByTestId('brain-loading-overlay')).toBeInTheDocument()
 
     // A background refresh (BRAIN_FIRED token) starts while A is still pending.
     view.rerender(
@@ -2767,6 +2767,6 @@ describe('BrainSignalsPanel', () => {
       resolveFirstSignals(jsonResponse([signal]) as Response)
     })
     expect(await screen.findByText(/No Brain focus yet/i)).toBeInTheDocument()
-    expect(screen.queryByTestId('brain-load-bar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('brain-loading-overlay')).not.toBeInTheDocument()
   })
 })

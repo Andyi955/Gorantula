@@ -7812,38 +7812,54 @@ body {
   text-transform: uppercase;
 }
 
-.forensic-brain-load-bar {
-  position: relative;
-  height: 2px;
-  overflow: hidden;
-  background: rgba(129, 227, 255, 0.08);
-}
-
-.forensic-brain-load-bar span {
+.forensic-brain-loading-overlay {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 34%;
-  background: linear-gradient(90deg, transparent, var(--forensic-accent), transparent);
-  animation: forensic-brain-load-sweep 1.15s ease-in-out infinite;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  background: rgba(4, 10, 18, 0.74);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
 }
 
-@keyframes forensic-brain-load-sweep {
-  0% {
-    transform: translateX(-110%);
+.forensic-brain-loading-emblem {
+  width: 76px;
+  height: auto;
+  opacity: 0.9;
+  animation: forensic-brain-loading-pulse 1.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 18px rgba(129, 227, 255, 0.35));
+}
+
+.forensic-brain-loading-text {
+  margin: 0;
+  color: var(--forensic-accent);
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+@keyframes forensic-brain-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.97);
   }
 
-  100% {
-    transform: translateX(320%);
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .forensic-brain-load-bar span {
+  .forensic-brain-loading-emblem {
     animation: none;
-    left: 33%;
-    opacity: 0.7;
+    opacity: 0.85;
   }
 }
 

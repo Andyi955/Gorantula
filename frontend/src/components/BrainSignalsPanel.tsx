@@ -4052,8 +4052,9 @@ export default function BrainSignalsPanel({
       </header>
 
       {isLoading && (
-        <div className="forensic-brain-load-bar" data-testid="brain-load-bar" aria-hidden="true">
-          <span />
+        <div className="forensic-brain-loading-overlay" data-testid="brain-loading-overlay" role="status">
+          <img src={brainRadarEmblem} alt="" className="forensic-brain-loading-emblem" />
+          <p className="forensic-brain-loading-text">Reading brain signals...</p>
         </div>
       )}
 
