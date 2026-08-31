@@ -4016,7 +4016,7 @@ export default function BrainSignalsPanel({
   ]
 
   return (
-    <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals">
+    <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals" aria-busy={isLoading}>
       <div className="forensic-brain-grid-bg" aria-hidden="true" />
       <header className="forensic-brain-command">
         <div className="forensic-brain-title-block">
@@ -4050,6 +4050,12 @@ export default function BrainSignalsPanel({
           </button>
         </div>
       </header>
+
+      {isLoading && (
+        <div className="forensic-brain-load-bar" data-testid="brain-load-bar" aria-hidden="true">
+          <span />
+        </div>
+      )}
 
       <nav data-testid="brain-subnav" className="forensic-brain-subnav" aria-label="Brain sections">
         {brainViewOptions.map((option) => (

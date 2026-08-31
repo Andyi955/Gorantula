@@ -7812,6 +7812,41 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-load-bar {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(129, 227, 255, 0.08);
+}
+
+.forensic-brain-load-bar span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, var(--forensic-accent), transparent);
+  animation: forensic-brain-load-sweep 1.15s ease-in-out infinite;
+}
+
+@keyframes forensic-brain-load-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-brain-load-bar span {
+    animation: none;
+    left: 33%;
+    opacity: 0.7;
+  }
+}
+
 .forensic-brain-relevance-chip-strong-memory {
   border-color: rgba(0, 255, 65, 0.46);
   background: rgba(0, 255, 65, 0.08);
