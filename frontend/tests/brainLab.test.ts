@@ -6,8 +6,8 @@ afterEach(() => {
 })
 
 describe('brainLab persistence', () => {
-  it('defaults to enabled when no preference is stored', () => {
-    expect(loadBrainLabEnabled()).toBe(true)
+  it('defaults to compact when no preference is stored', () => {
+    expect(loadBrainLabEnabled()).toBe(false)
   })
 
   it('persists a disabled lab across loads', () => {
@@ -21,13 +21,13 @@ describe('brainLab persistence', () => {
     expect(loadBrainLabEnabled()).toBe(true)
   })
 
-  it('falls back to enabled on corrupted storage', () => {
+  it('falls back to compact on corrupted storage', () => {
     window.localStorage.setItem('gorantula.brainLab.v1', '{not json')
-    expect(loadBrainLabEnabled()).toBe(true)
+    expect(loadBrainLabEnabled()).toBe(false)
   })
 
-  it('falls back to enabled on non-boolean payloads', () => {
+  it('falls back to compact on non-boolean payloads', () => {
     window.localStorage.setItem('gorantula.brainLab.v1', JSON.stringify('yes'))
-    expect(loadBrainLabEnabled()).toBe(true)
+    expect(loadBrainLabEnabled()).toBe(false)
   })
 })

@@ -5893,9 +5893,12 @@ body {
 .forensic-brain-subnav {
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.45rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(129, 227, 255, 0.36) rgba(1, 5, 8, 0.68);
   border-bottom: 1px solid rgba(129, 227, 255, 0.12);
   background:
     linear-gradient(90deg, rgba(255, 78, 129, 0.055), transparent 36%),
@@ -5907,8 +5910,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  flex: 0 1 auto;
-  min-width: 8.8rem;
+  flex: 0 0 auto;
+  min-width: 7.5rem;
   border: 1px solid rgba(129, 227, 255, 0.16);
   background: rgba(129, 227, 255, 0.045);
   padding: 0.5rem 0.62rem;
@@ -6036,7 +6039,6 @@ body {
   overflow: hidden;
 }
 
-.forensic-brain-view-map,
 .forensic-brain-view-focus,
 .forensic-brain-view-moves,
 .forensic-brain-view-autonomy,
@@ -6050,7 +6052,6 @@ body {
 }
 
 .forensic-brain-view-focus .forensic-brain-focus-panel,
-.forensic-brain-view-map .forensic-brain-map-radar,
 .forensic-brain-view-moves .forensic-brain-panel,
 .forensic-brain-view-autonomy .forensic-brain-panel,
 .forensic-brain-view-signals .forensic-brain-panel,
@@ -6060,17 +6061,6 @@ body {
 .forensic-brain-view-pulse .forensic-brain-panel {
   flex: 1 1 0;
   min-height: 0;
-}
-
-.forensic-brain-view-map .forensic-brain-map-radar {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 0;
-}
-
-.forensic-brain-view-map .forensic-brain-map-shell {
-  flex: 1 1 0;
-  height: auto;
 }
 
 .forensic-brain-focus-panel {
@@ -7001,6 +6991,36 @@ body {
   transform: translate(-50%, -50%) scale(1.02);
 }
 
+/* BRAIN_FIRED echo: the just-fired node glows with an expanding ring, then
+   settles. Reduced motion gets a static green highlight instead. */
+.forensic-brain-map-node.is-pulsing {
+  border-color: rgba(0, 255, 65, 0.66);
+  animation: forensic-brain-map-node-pulse 1.2s ease-out 2;
+}
+
+@keyframes forensic-brain-map-node-pulse {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(0, 255, 65, 0.55),
+      0 0 26px rgba(0, 255, 65, 0.3);
+  }
+
+  100% {
+    box-shadow:
+      0 0 0 0.9rem rgba(0, 255, 65, 0),
+      0 0 26px rgba(0, 255, 65, 0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-brain-map-node.is-pulsing {
+    animation: none;
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 65, 0.4),
+      0 0 20px rgba(0, 255, 65, 0.22);
+  }
+}
+
 .forensic-brain-map-node-current {
   border-color: rgba(0, 255, 65, 0.36);
   background:
@@ -7642,11 +7662,10 @@ body {
   filter: drop-shadow(0 0 16px rgba(0, 255, 65, 0.2)) drop-shadow(0 0 12px rgba(129, 227, 255, 0.16));
 }
 
-.forensic-brain-rail-scope img {
+.forensic-brain-rail-scope svg {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
 }
 
 .forensic-brain-rail-label {
@@ -7895,7 +7914,7 @@ body {
 
 .forensic-brain-loading-emblem {
   width: 76px;
-  height: auto;
+  height: 76px;
   opacity: 0.9;
   animation: forensic-brain-loading-pulse 1.4s ease-in-out infinite;
   filter: drop-shadow(0 0 18px rgba(129, 227, 255, 0.35));
@@ -7927,6 +7946,70 @@ body {
   .forensic-brain-loading-emblem {
     animation: none;
     opacity: 0.85;
+  }
+}
+
+/* ── Brain radar emblem (shared SVG mark) ────────────────────────────── */
+
+.brain-radar-emblem {
+  display: block;
+}
+
+.brain-radar-emblem-bezel {
+  fill: rgba(129, 227, 255, 0.04);
+  stroke: rgba(129, 227, 255, 0.55);
+  stroke-width: 1.4;
+}
+
+.brain-radar-emblem-ring {
+  fill: none;
+  stroke: rgba(129, 227, 255, 0.34);
+  stroke-width: 1;
+}
+
+.brain-radar-emblem-tick {
+  stroke: rgba(129, 227, 255, 0.4);
+  stroke-width: 1.2;
+}
+
+.brain-radar-emblem-contact.is-hot {
+  fill: #7cff91;
+}
+
+.brain-radar-emblem-contact.is-warm {
+  fill: #8ee8ff;
+}
+
+.brain-radar-emblem-contact.is-cool {
+  fill: rgba(129, 227, 255, 0.5);
+}
+
+.brain-radar-emblem-glow {
+  fill: rgba(129, 227, 255, 0.16);
+}
+
+.brain-radar-emblem-sweep-g {
+  transform-origin: 48px 48px;
+}
+
+.brain-radar-emblem-animated .brain-radar-emblem-sweep-g {
+  animation: brain-radar-emblem-rotate 2.4s linear infinite;
+}
+
+/* Ambient mode: a slow radar scan for emblems embedded in cards/rails. */
+.brain-radar-emblem-ambient .brain-radar-emblem-sweep-g {
+  animation-duration: 7.5s;
+}
+
+@keyframes brain-radar-emblem-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brain-radar-emblem-animated .brain-radar-emblem-sweep-g {
+    animation: none;
   }
 }
 
@@ -8280,6 +8363,99 @@ body {
     transition: none;
   }
 }
+
+/* ── Brain Memory surface (map + links + clusters merged) ────────────── */
+
+.forensic-brain-view-memory {
+  display: flex;
+  flex-direction: column;
+}
+
+.forensic-brain-view-memory .forensic-brain-panel-memory {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(129, 227, 255, 0.36) rgba(1, 5, 8, 0.68);
+}
+ */
+
+.forensic-brain-view-memory .forensic-brain-map-shell {
+  /* Cap the map so the durable-memory ledger peeks above the fold. */
+  height: clamp(16rem, 34vh, 21rem);
+}
+
+.forensic-brain-memory-stack {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.72rem;
+}
+
+.forensic-brain-memory-ledger {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.forensic-brain-memory-ledger-col {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  min-width: 0;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  background: rgba(1, 4, 7, 0.72);
+  padding: 0.6rem 0.65rem;
+}
+
+.forensic-brain-memory-ledger-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.forensic-brain-memory-ledger-header span:last-child {
+  color: var(--forensic-text-faint);
+  font-size: 0.62rem;
+  font-weight: 950;
+}
+
+.forensic-brain-memory-ledger-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.forensic-brain-memory-ledger-empty {
+  margin: 0;
+  color: var(--forensic-text-faint);
+  font-size: 0.72rem;
+}
+
+.forensic-brain-memory-detail {
+  position: absolute;
+  right: 1.05rem;
+  bottom: 1.05rem;
+  z-index: 12;
+  overflow: auto;
+  width: min(34rem, calc(100% - 2.1rem));
+  max-height: calc(100% - 7.2rem);
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background:
+    linear-gradient(135deg, rgba(129, 227, 255, 0.08), transparent 35%),
+    linear-gradient(180deg, rgba(5, 11, 16, 0.98), rgba(1, 4, 7, 0.98));
+  padding: 0.4rem;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.forensic-brain-memory-detail .forensic-brain-cluster-detail {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  padding: 0.6rem;
+}
+
+
 
 .forensic-brain-pulse-kind {
   width: fit-content;

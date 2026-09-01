@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { openSmokeApp, seedBrowserQaData } from './helpers'
+import { emitBackendMessage, openSmokeApp, seedBrowserQaData } from './helpers'
 
 // Render-critique harness: captures the Brain panel views as screenshots so the
 // design can be reviewed visually (frontend-craft render->critique loop).
@@ -102,6 +102,14 @@ const signals = [
     reason('entity-date', 'LOC|europe', 'Europe', 'Shared LOC "Europe" appears in both investigations.'),
   ]),
 ]
+
+// After the BRAIN_FIRED event the refresh reads a strengthened score, which is
+// what the pulse diff needs to glow the affected map node.
+const stormSignals = signals.map((signal) => ({
+  ...signal,
+  score: Math.min(1, signal.score + 0.08),
+  lastFiredAt: '2026-06-06T09:40:00Z',
+}))
 
 const suggestions = [
   {
@@ -318,17 +326,26 @@ const map = {
   },
 }
 
-test.use({ viewport: { width: 1600, height: 1000 } })
+// Full screen: capture at the operator's actual display (1920x1080 @ 100%) so
+// the critique loop sees the same layout they see.
+test.use({ viewport: { width: 1920, height: 1080 } })
 
 test('capture brain views for design critique', async ({ page }) => {
   await openSmokeApp(page)
   await seedBrowserQaData(page)
+
+  // Pre-load the lazy Brain chunk. On a cold dev server the first dynamic
+  // import can trigger a Vite dep-optimization page reload, which would drop
+  // the app back to the default tab and race the Brain tab click below.
+  await page.evaluate(() => import('/src/components/BrainSignalsPanel.tsx'))
 
   // Register the brain fixture routes AFTER openSmokeApp so they take
   // precedence over the smoke network guard (Playwright consults handlers in
   // reverse registration order; a guard continue() would skip this fixture).
   // The pattern must carry the full origin: a leading '**/' glob does not match
   // 'http://localhost:8080/...' the way you would expect.
+  let boostSignals = false
+  let heldSignalsFetches = 0
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -339,7 +356,14 @@ test('capture brain views for design critique', async ({ page }) => {
     })
 
     if (path.endsWith('/api/brain/signals')) {
-      return json(signals)
+      // StrictMode double-mounts the panel, firing two full loads; hold BOTH
+      // so the loading overlay (emblem) stays up long enough for the critique
+      // loop, even on cold dev-server runs.
+      if (heldSignalsFetches < 2) {
+        heldSignalsFetches += 1
+        await new Promise((resolve) => setTimeout(resolve, 1800))
+      }
+      return json(boostSignals ? stormSignals : signals)
     }
     if (path.endsWith('/api/brain/links')) {
       return json(links)
@@ -371,16 +395,48 @@ test('capture brain views for design critique', async ({ page }) => {
     return json({})
   })
 
+  // ── Compact operator surfaces (the default layout) ──
   await page.getByRole('button', { name: /^brain$/i }).click()
-  await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+  await expect(page.getByTestId('brain-loading-overlay')).toBeVisible()
+  await shot(page, '00a-loading')
   await expect(page.getByTestId('brain-pulse-view')).toBeVisible()
   await expect(page.getByTestId('brain-signal-card').first()).toBeVisible()
   await page.waitForTimeout(400)
   await shot(page, '01-pulse')
 
-  await page.getByRole('button', { name: /toggle brain lab/i }).click()
+  await page.getByRole('button', { name: /^memory view$/i }).click()
+  await expect(page.getByTestId('brain-memory-view')).toBeVisible()
+  await expect(page.getByTestId('brain-map-radar')).toBeVisible()
+  await expect(page.getByTestId('brain-link-card').first()).toBeVisible()
+  await page.waitForTimeout(400)
+  await shot(page, '02-memory')
+
+  // Tap-to-act: the compact action card on a selected memory node.
+  await page.getByRole('button', { name: /select memory northgate substation case/i }).click()
+  await expect(page.getByTestId('brain-map-selected-node')).toContainText('Linked memory')
   await page.waitForTimeout(200)
-  await shot(page, '01b-pulse-lab-off')
+  await shot(page, '02a-map-actions')
+
+  // Live pulse: a real BRAIN_FIRED websocket event strengthens the hot signal;
+  // the refresh diffs it and the map node glows until it settles.
+  boostSignals = true
+  await emitBackendMessage(page, {
+    type: 'BRAIN_FIRED',
+    payload: {
+      investigationId: 'qa-browser-target',
+      source: 'board',
+      firedCount: 2,
+      promotedCount: 0,
+      topScore: 1,
+      topTitle: 'Northgate Substation Case',
+      firedAt: '2026-06-06T09:40:00Z',
+    },
+  })
+  await expect(page.locator('[data-testid="brain-map-node"][data-pulsing="true"]').first()).toBeVisible()
+  await page.waitForTimeout(350)
+  await shot(page, '02b-map-pulse')
+
+  // ── Lab expanded: the deep diagnostic views ──
   await page.getByRole('button', { name: /toggle brain lab/i }).click()
 
   await page.getByRole('button', { name: /active signals view/i }).click()
@@ -389,15 +445,11 @@ test('capture brain views for design critique', async ({ page }) => {
     await lowerPriorityToggle.click()
   }
   await page.waitForTimeout(300)
-  await shot(page, '02-signals')
+  await shot(page, '03-signals')
 
   await page.getByRole('button', { name: /next moves view/i }).click()
   await page.waitForTimeout(300)
-  await shot(page, '03-moves')
-
-  await page.getByRole('button', { name: /memory map view/i }).click()
-  await page.waitForTimeout(400)
-  await shot(page, '04-map')
+  await shot(page, '04-moves')
 
   await page.getByRole('button', { name: /memory links view/i }).click()
   await page.waitForTimeout(300)
