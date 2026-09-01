@@ -5932,6 +5932,20 @@ body {
   box-shadow: inset 3px 0 0 var(--forensic-accent), 0 0 24px rgba(129, 227, 255, 0.08);
 }
 
+.forensic-brain-subnav button.forensic-brain-lab-toggle {
+  margin-left: auto;
+  border-color: rgba(188, 19, 254, 0.32);
+  color: rgba(217, 143, 255, 0.85);
+}
+
+.forensic-brain-subnav button.forensic-brain-lab-toggle.is-on {
+  border-color: rgba(188, 19, 254, 0.62);
+  background:
+    linear-gradient(90deg, rgba(188, 19, 254, 0.12), transparent 58%),
+    rgba(3, 10, 14, 0.94);
+  color: #d98fff;
+}
+
 .forensic-brain-subnav span,
 .forensic-brain-subnav strong {
   overflow: hidden;

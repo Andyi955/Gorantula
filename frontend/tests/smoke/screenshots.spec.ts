@@ -378,6 +378,11 @@ test('capture brain views for design critique', async ({ page }) => {
   await page.waitForTimeout(400)
   await shot(page, '01-pulse')
 
+  await page.getByRole('button', { name: /toggle brain lab/i }).click()
+  await page.waitForTimeout(200)
+  await shot(page, '01b-pulse-lab-off')
+  await page.getByRole('button', { name: /toggle brain lab/i }).click()
+
   await page.getByRole('button', { name: /active signals view/i }).click()
   const lowerPriorityToggle = page.getByRole('button', { name: /show lower-priority signals/i })
   if (await lowerPriorityToggle.count()) {

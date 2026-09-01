@@ -14,6 +14,7 @@ import type {
 } from '../../src/utils/brainMemory'
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 import { markBrainSignalsSeen } from '../../src/utils/brainSeen'
+import { loadBrainLabEnabled, saveBrainLabEnabled } from '../../src/utils/brainLab'
 
 const signal: BrainSignal = {
   id: 'brain-signal-alpha',
@@ -713,6 +714,12 @@ const openBrainView = async (user: ReturnType<typeof userEvent.setup>, name: Reg
 }
 
 describe('BrainSignalsPanel', () => {
+  beforeEach(() => {
+    // The existing suite exercises the deep diagnostic views; keep the lab
+    // expanded unless a test opts into the collapsed layout explicitly.
+    saveBrainLabEnabled(true)
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -2874,6 +2881,27 @@ describe('BrainSignalsPanel', () => {
         detailCallUrls().some((url) => url.includes('value=ORG%7Cacme+grid&limit=40')),
       ).toBe(true)
     })
+  })
+
+  it('collapses the deep views behind the lab toggle', async () => {
+    window.localStorage.clear()
+    saveBrainLabEnabled(false)
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    await screen.findByTestId('brain-pulse-view')
+    expect(screen.queryByRole('button', { name: /active signals view/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /memory clusters view/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /memory map view/i })).toBeInTheDocument()
+    const labToggle = screen.getByRole('button', { name: /toggle brain lab/i })
+    expect(labToggle).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(labToggle)
+    expect(await screen.findByRole('button', { name: /active signals view/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /toggle brain lab/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(loadBrainLabEnabled()).toBe(true)
   })
 
   it('releases the loading state when a full load is superseded by a background refresh', async () => {

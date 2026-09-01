@@ -19,6 +19,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FlaskConical,
   Link2,
   Maximize2,
   Minimize2,
@@ -30,6 +31,7 @@ import {
   X,
 } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
+import { loadBrainLabEnabled, saveBrainLabEnabled } from '../utils/brainLab'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
   type BoardWorkspaceStateUpdatedDetail,
@@ -502,6 +504,7 @@ export default function BrainSignalsPanel({
   const [gatewayDetailLoading, setGatewayDetailLoading] = useState(false)
   const [gatewayValueFilter, setGatewayValueFilter] = useState<string | null>(null)
   const [pulseLimit, setPulseLimit] = useState(PULSE_FEED_LIMIT)
+  const [labMode, setLabMode] = useState(() => loadBrainLabEnabled())
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
@@ -541,6 +544,14 @@ export default function BrainSignalsPanel({
   useEffect(() => {
     seenSnapshotRef.current = loadSeenBrainSignalScores(currentInvestigationId ?? '')
   }, [currentInvestigationId])
+
+  // With the Lab collapsed, deep diagnostic views are unreachable: snap back to
+  // the pulse feed rather than stranding the operator on a hidden view.
+  useEffect(() => {
+    if (!labMode && activeBrainView !== 'pulse' && activeBrainView !== 'map') {
+      setActiveBrainView('pulse')
+    }
+  }, [labMode, activeBrainView])
   const brainMapDragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -4317,7 +4328,10 @@ export default function BrainSignalsPanel({
       )}
 
       <nav data-testid="brain-subnav" className="forensic-brain-subnav" aria-label="Brain sections">
-        {brainViewOptions.map((option) => (
+        {(labMode
+          ? brainViewOptions
+          : brainViewOptions.filter((option) => option.view === 'pulse' || option.view === 'map')
+        ).map((option) => (
           <button
             key={option.view}
             type="button"
@@ -4330,6 +4344,21 @@ export default function BrainSignalsPanel({
             <strong className={option.detailClassName}>{option.detail}</strong>
           </button>
         ))}
+        <button
+          type="button"
+          data-testid="brain-lab-toggle"
+          aria-label="Toggle brain lab"
+          aria-pressed={labMode}
+          className={`forensic-brain-lab-toggle${labMode ? ' is-on' : ''}`}
+          onClick={() => {
+            const next = !labMode
+            setLabMode(next)
+            saveBrainLabEnabled(next)
+          }}
+        >
+          <FlaskConical size={14} />
+          <span>Lab</span>
+        </button>
       </nav>
 
       {renderBrainAttentionPanel()}
