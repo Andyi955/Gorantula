@@ -334,6 +334,11 @@ test('capture brain views for design critique', async ({ page }) => {
   await openSmokeApp(page)
   await seedBrowserQaData(page)
 
+  // Pre-load the lazy Brain chunk. On a cold dev server the first dynamic
+  // import can trigger a Vite dep-optimization page reload, which would drop
+  // the app back to the default tab and race the Brain tab click below.
+  await page.evaluate(() => import('/src/components/BrainSignalsPanel.tsx'))
+
   // Register the brain fixture routes AFTER openSmokeApp so they take
   // precedence over the smoke network guard (Playwright consults handlers in
   // reverse registration order; a guard continue() would skip this fixture).
@@ -405,30 +410,11 @@ test('capture brain views for design critique', async ({ page }) => {
   await page.waitForTimeout(400)
   await shot(page, '02-memory')
 
-  // ── Lab expanded: the deep diagnostic views ──
-  await page.getByRole('button', { name: /toggle brain lab/i }).click()
-
-  await page.getByRole('button', { name: /active signals view/i }).click()
-  const lowerPriorityToggle = page.getByRole('button', { name: /show lower-priority signals/i })
-  if (await lowerPriorityToggle.count()) {
-    await lowerPriorityToggle.click()
-  }
-  await page.waitForTimeout(300)
-  await shot(page, '03-signals')
-
-  await page.getByRole('button', { name: /next moves view/i }).click()
-  await page.waitForTimeout(300)
-  await shot(page, '04-moves')
-
-  await page.getByRole('button', { name: /memory map view/i }).click()
-  await page.waitForTimeout(400)
-  await shot(page, '05-map')
-
   // Tap-to-act: the compact action card on a selected memory node.
   await page.getByRole('button', { name: /select memory northgate substation case/i }).click()
   await expect(page.getByTestId('brain-map-selected-node')).toContainText('Linked memory')
   await page.waitForTimeout(200)
-  await shot(page, '05a-map-actions')
+  await shot(page, '02a-map-actions')
 
   // Live pulse: a real BRAIN_FIRED websocket event strengthens the hot signal;
   // the refresh diffs it and the map node glows until it settles.
@@ -447,34 +433,49 @@ test('capture brain views for design critique', async ({ page }) => {
   })
   await expect(page.locator('[data-testid="brain-map-node"][data-pulsing="true"]').first()).toBeVisible()
   await page.waitForTimeout(350)
-  await shot(page, '05b-map-pulse')
+  await shot(page, '02b-map-pulse')
+
+  // ── Lab expanded: the deep diagnostic views ──
+  await page.getByRole('button', { name: /toggle brain lab/i }).click()
+
+  await page.getByRole('button', { name: /active signals view/i }).click()
+  const lowerPriorityToggle = page.getByRole('button', { name: /show lower-priority signals/i })
+  if (await lowerPriorityToggle.count()) {
+    await lowerPriorityToggle.click()
+  }
+  await page.waitForTimeout(300)
+  await shot(page, '03-signals')
+
+  await page.getByRole('button', { name: /next moves view/i }).click()
+  await page.waitForTimeout(300)
+  await shot(page, '04-moves')
 
   await page.getByRole('button', { name: /memory links view/i }).click()
   await page.waitForTimeout(300)
-  await shot(page, '06-links')
+  await shot(page, '05-links')
 
   await page.getByRole('button', { name: /memory clusters view/i }).click()
   await page.waitForTimeout(300)
-  await shot(page, '07-clusters')
+  await shot(page, '06-clusters')
 
   await page.getByRole('button', { name: /gateway registry view/i }).click()
   await expect(page.getByTestId('brain-gateway-card').first()).toBeVisible()
-  await shot(page, '08-gateways')
+  await shot(page, '07-gateways')
 
   await page.getByRole('button', { name: /view routes for entity & date/i }).click()
   await expect(page.getByTestId('brain-gateway-detail')).toBeVisible()
   await expect(page.getByTestId('brain-gateway-route').first()).toBeVisible()
   await page.getByTestId('brain-gateway-detail').scrollIntoViewIfNeeded()
   await page.waitForTimeout(300)
-  await shot(page, '09-gateway-routes')
+  await shot(page, '08-gateway-routes')
 
   await page.getByRole('button', { name: /focus view/i }).click()
   await expect(page.getByTestId('brain-focus-view')).toBeVisible()
-  await shot(page, '10-focus')
+  await shot(page, '09-focus')
 
   await page.getByRole('button', { name: /autonomy queue view/i }).click()
   await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
-  await shot(page, '11-autonomy')
+  await shot(page, '10-autonomy')
 
   await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
 })

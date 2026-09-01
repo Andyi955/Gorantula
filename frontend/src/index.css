@@ -5893,9 +5893,12 @@ body {
 .forensic-brain-subnav {
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.45rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(129, 227, 255, 0.36) rgba(1, 5, 8, 0.68);
   border-bottom: 1px solid rgba(129, 227, 255, 0.12);
   background:
     linear-gradient(90deg, rgba(255, 78, 129, 0.055), transparent 36%),
@@ -5907,8 +5910,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  flex: 0 1 auto;
-  min-width: 8.8rem;
+  flex: 0 0 auto;
+  min-width: 7.5rem;
   border: 1px solid rgba(129, 227, 255, 0.16);
   background: rgba(129, 227, 255, 0.045);
   padding: 0.5rem 0.62rem;
@@ -6036,7 +6039,6 @@ body {
   overflow: hidden;
 }
 
-.forensic-brain-view-map,
 .forensic-brain-view-focus,
 .forensic-brain-view-moves,
 .forensic-brain-view-autonomy,
@@ -6050,7 +6052,6 @@ body {
 }
 
 .forensic-brain-view-focus .forensic-brain-focus-panel,
-.forensic-brain-view-map .forensic-brain-map-radar,
 .forensic-brain-view-moves .forensic-brain-panel,
 .forensic-brain-view-autonomy .forensic-brain-panel,
 .forensic-brain-view-signals .forensic-brain-panel,
@@ -6060,17 +6061,6 @@ body {
 .forensic-brain-view-pulse .forensic-brain-panel {
   flex: 1 1 0;
   min-height: 0;
-}
-
-.forensic-brain-view-map .forensic-brain-map-radar {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 0;
-}
-
-.forensic-brain-view-map .forensic-brain-map-shell {
-  flex: 1 1 0;
-  height: auto;
 }
 
 .forensic-brain-focus-panel {
@@ -8004,6 +7994,11 @@ body {
 
 .brain-radar-emblem-animated .brain-radar-emblem-sweep-g {
   animation: brain-radar-emblem-rotate 2.4s linear infinite;
+}
+
+/* Ambient mode: a slow radar scan for emblems embedded in cards/rails. */
+.brain-radar-emblem-ambient .brain-radar-emblem-sweep-g {
+  animation-duration: 7.5s;
 }
 
 @keyframes brain-radar-emblem-rotate {

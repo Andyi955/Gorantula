@@ -5,6 +5,8 @@
 interface BrainRadarEmblemProps {
   size?: number
   animated?: boolean
+  /** Slow ambient sweep (rails, cards) instead of the quick loading spin. */
+  ambient?: boolean
   className?: string
 }
 
@@ -25,7 +27,14 @@ const EMBLEM_CONTACTS = [
   { id: 'c', angle: 262, radius: 30, tone: 'cool' },
 ]
 
-export default function BrainRadarEmblem({ size = 76, animated = false, className = '' }: BrainRadarEmblemProps) {
+export default function BrainRadarEmblem({ size = 76, animated = false, ambient = false, className = '' }: BrainRadarEmblemProps) {
+  const classes = [
+    'brain-radar-emblem',
+    animated ? 'brain-radar-emblem-animated' : '',
+    ambient ? 'brain-radar-emblem-ambient' : '',
+    className,
+  ].filter(Boolean).join(' ')
+
   return (
     <svg
       width={size}
@@ -33,7 +42,7 @@ export default function BrainRadarEmblem({ size = 76, animated = false, classNam
       viewBox="0 0 96 96"
       aria-hidden="true"
       focusable="false"
-      className={`brain-radar-emblem${animated ? ' brain-radar-emblem-animated' : ''} ${className}`.trim()}
+      className={classes}
     >
       <defs>
         <linearGradient id="brain-radar-emblem-sweep" x1="0" y1="0" x2="1" y2="1">

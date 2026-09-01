@@ -24,7 +24,6 @@ import {
   EyeOff,
   FlaskConical,
   Link2,
-  Map as MapIcon,
   Maximize2,
   Minimize2,
   Network,
@@ -157,7 +156,7 @@ const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 const MAP_PULSE_MS = 2400
 const GATEWAY_ROUTE_LIMIT = 25
 
-type BrainView = 'pulse' | 'focus' | 'map' | 'memory' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
+type BrainView = 'pulse' | 'focus' | 'memory' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
 
 type BrainCompareSelection =
   | { kind: 'signal'; id: string }
@@ -1757,7 +1756,7 @@ export default function BrainSignalsPanel({
       setActiveBrainView('signals')
       return
     }
-    setActiveBrainView('map')
+    setActiveBrainView('memory')
   }
 
   const handleCompareFocus = () => {
@@ -1868,7 +1867,7 @@ export default function BrainSignalsPanel({
     setStrengthFilter('all')
     setIsBrainMapExpanded(true)
     setSelectedBrainMapNodeId(node.id)
-    setActiveBrainView('map')
+    setActiveBrainView('memory')
   }
 
   const renderCompareWorkspace = (context: BrainCompareContext) => {
@@ -2545,7 +2544,7 @@ export default function BrainSignalsPanel({
       >
         <div className="forensic-brain-card-rail" aria-hidden="true">
           <div className="forensic-brain-rail-scope">
-            <BrainRadarEmblem size={78} />
+            <BrainRadarEmblem size={78} animated ambient />
           </div>
           <div className="forensic-brain-rail-label">
             <span>Signal</span>
@@ -3665,7 +3664,7 @@ export default function BrainSignalsPanel({
                 <button
                   type="button"
                   className="forensic-brain-action forensic-brain-action-secondary"
-                  onClick={() => setActiveBrainView('map')}
+                  onClick={() => setActiveBrainView('memory')}
                 >
                   <Brain size={13} />
                   View Map
@@ -4577,7 +4576,6 @@ export default function BrainSignalsPanel({
     { view: 'pulse', label: 'Pulse', detail: `${pulseEntries.length} firing` },
     { view: 'memory', label: 'Memory', detail: `${allLinkGroups.length} ${allLinkGroups.length === 1 ? 'link' : 'links'} · ${visibleClusters.length} ${visibleClusters.length === 1 ? 'cluster' : 'clusters'}` },
     { view: 'focus', label: 'Focus', detail: attentionSummary?.focus ? formatAttentionState(attentionSummary.dominantState) : 'summary' },
-    { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
     { view: 'moves', label: 'Next Moves', detail: `${activeSuggestions.length} active` },
     { view: 'autonomy', label: 'Autonomy Queue', detail: autonomyAutoPrepareEnabled ? 'auto on' : 'auto off', detailClassName: autonomyStateClass },
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
@@ -4589,7 +4587,6 @@ export default function BrainSignalsPanel({
     pulse: Activity,
     focus: ShieldCheck,
     memory: Brain,
-    map: MapIcon,
     moves: Crosshair,
     autonomy: Bot,
     signals: Zap,
@@ -4699,12 +4696,6 @@ export default function BrainSignalsPanel({
       <div className="forensic-brain-active-view">
         {activeBrainView === 'pulse' && renderPulseView()}
         {activeBrainView === 'focus' && renderFocusView()}
-        {activeBrainView === 'map' && (
-          <div className="forensic-brain-view forensic-brain-view-map">
-            {renderBrainHealth()}
-            {renderBrainMap()}
-          </div>
-        )}
         {activeBrainView === 'memory' && renderMemoryView()}
         {activeBrainView === 'signals' && renderSignalsView()}
         {activeBrainView === 'moves' && renderNextMovesView()}

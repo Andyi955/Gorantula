@@ -1158,7 +1158,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(focusView).toContainText('86% attention strength')
     await expect(focusView).toContainText('Brain guidance')
     await expect(focusView).toContainText('Needs bridge evidence')
-    await page.getByRole('button', { name: /memory map view/i }).click()
+    await page.getByRole('button', { name: /memory view$/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 firing case')
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 next move')
     await expect(page.getByRole('button', { name: /show brain attention summary/i })).toContainText('Hot')
@@ -1197,7 +1197,7 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByTestId('brain-suggestion-card').getByRole('button', { name: /dismiss/i }).click()
     await expect(page.getByTestId('brain-suggestion-card')).toHaveCount(0)
 
-    await page.getByRole('button', { name: /memory map view/i }).click()
+    await page.getByRole('button', { name: /memory view$/i }).click()
     await expect(radar).toBeVisible()
     await expect(radar).toContainText('Memory map')
     await expect(radar).toContainText('QA: Imported Target')
@@ -1228,7 +1228,7 @@ test.describe('Gorantula smoke flows', () => {
     await clusterCard.getByRole('button', { name: /pin cluster grid reliability signal/i }).click()
     await expect(clusterCard).toContainText('Pinned')
 
-    await page.getByRole('button', { name: /memory map view/i }).click()
+    await page.getByRole('button', { name: /memory view$/i }).click()
     await radar
       .getByTestId('brain-map-selected-node')
       .getByRole('button', { name: /promote link for qa: source case/i })
@@ -1238,7 +1238,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
     await expect(page.getByTestId('brain-link-card')).toContainText('Grid reliability signal')
     await expect(page.getByTestId('brain-link-card')).toContainText('Cluster: Grid reliability signal')
-    await page.getByRole('button', { name: /memory map view/i }).click()
+    await page.getByRole('button', { name: /memory view$/i }).click()
     await expect(page.getByTestId('brain-health-summary')).toContainText('1 memory group')
     await expect(page.getByTestId('brain-health-summary')).toContainText('Reinforced')
     await page.getByRole('button', { name: /show brain attention summary/i }).click()
@@ -1284,7 +1284,7 @@ test.describe('Gorantula smoke flows', () => {
     await expect(hiddenCluster).toBeVisible()
     await hiddenCluster.getByRole('button', { name: /unhide cluster grid reliability signal/i }).click()
     await expect(page.getByTestId('brain-cluster-card')).toContainText('Grid reliability signal')
-    await page.getByRole('button', { name: /memory map view/i }).click()
+    await page.getByRole('button', { name: /memory view$/i }).click()
     const restoredRadar = page.getByTestId('brain-map-radar')
     await expect(restoredRadar).toContainText('QA: Source Case')
     await expect(restoredRadar.getByRole('button', { name: /select memory qa: source case/i })).toBeVisible()
@@ -1295,7 +1295,7 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /relationship filter/i }).click()
     await expect(page.getByTestId('brain-link-card')).toContainText('QA: Source Case')
 
-    await page.getByRole('button', { name: /memory map view/i }).click()
+    await page.getByRole('button', { name: /memory view$/i }).click()
     await restoredRadar.getByRole('button', { name: /select memory qa: source case/i }).click()
     // The compact node card forgets the memory in place — no view switching.
     await restoredRadar
