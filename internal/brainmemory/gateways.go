@@ -23,6 +23,16 @@ const (
 
 var ErrGatewayNotFound = errors.New("brain gateway not found")
 
+var ErrInvalidGatewayUpdate = errors.New("invalid brain gateway update")
+
+// GatewayUpdate carries an operator edit of one registry gateway. Nil fields
+// leave the current value untouched; the stable code is never editable.
+type GatewayUpdate struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Enabled     *bool   `json:"enabled"`
+}
+
 type GatewayDefinition struct {
 	Code        string `json:"code"`
 	Name        string `json:"name"`
@@ -154,6 +164,70 @@ func (s *Service) saveGateways(gateways map[string]GatewayDefinition) error {
 		return list[i].Code < list[j].Code
 	})
 	return s.saveBrainJSON(gatewaysFilename, list)
+}
+
+// enabledGatewayCodesLocked returns the set of enabled gateway codes while
+// s.mu is held. A nil set means every gateway is enabled and match reasons
+// need no filtering.
+func (s *Service) enabledGatewayCodesLocked() (map[string]bool, error) {
+	registry, err := s.ensureGatewayRegistryLocked()
+	if err != nil {
+		return nil, err
+	}
+	enabled := make(map[string]bool, len(registry))
+	for code, definition := range registry {
+		if definition.Enabled {
+			enabled[code] = true
+		}
+	}
+	if len(enabled) == len(registry) {
+		return nil, nil
+	}
+	return enabled, nil
+}
+
+// UpdateGatewayDefinition applies an operator edit to one registry gateway and
+// persists it. Renames and disables survive reseeding because persisted
+// definitions win over built-ins on later loads. Disabled gateways stop
+// producing match reasons on the next signal recompute.
+func (s *Service) UpdateGatewayDefinition(code string, update GatewayUpdate) (GatewayDefinition, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return GatewayDefinition{}, ErrGatewayNotFound
+	}
+	if update.Name == nil && update.Description == nil && update.Enabled == nil {
+		return GatewayDefinition{}, ErrInvalidGatewayUpdate
+	}
+	if update.Name != nil && strings.TrimSpace(*update.Name) == "" {
+		return GatewayDefinition{}, ErrInvalidGatewayUpdate
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	registry, err := s.ensureGatewayRegistryLocked()
+	if err != nil {
+		return GatewayDefinition{}, err
+	}
+	definition, ok := registry[code]
+	if !ok {
+		return GatewayDefinition{}, ErrGatewayNotFound
+	}
+	if update.Name != nil {
+		definition.Name = strings.TrimSpace(*update.Name)
+	}
+	if update.Description != nil {
+		definition.Description = strings.TrimSpace(*update.Description)
+	}
+	if update.Enabled != nil {
+		definition.Enabled = *update.Enabled
+	}
+	definition.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	registry[code] = definition
+	if err := s.saveGateways(registry); err != nil {
+		return GatewayDefinition{}, err
+	}
+	return definition, nil
 }
 
 // ensureGatewayRegistryLocked seeds the built-in recall gateways on first use

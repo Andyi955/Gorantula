@@ -8060,6 +8060,59 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-gateway-manage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.forensic-brain-gateway-manage button {
+  width: auto;
+}
+
+.forensic-brain-gateway-edit {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.forensic-brain-gateway-edit label {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.forensic-brain-gateway-edit label span {
+  color: var(--forensic-accent);
+  font-size: 0.52rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.forensic-brain-gateway-edit input,
+.forensic-brain-gateway-edit textarea {
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(1, 4, 7, 0.85);
+  padding: 0.35rem 0.45rem;
+  color: var(--forensic-text);
+  font-family: inherit;
+  font-size: 0.72rem;
+  resize: vertical;
+}
+
+.forensic-brain-gateway-edit input:focus,
+.forensic-brain-gateway-edit textarea:focus {
+  outline: 1px solid var(--forensic-accent);
+  outline-offset: 1px;
+}
+
+.forensic-brain-gateway-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .forensic-brain-gateway-values {
   display: flex;
   flex-wrap: wrap;

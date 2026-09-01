@@ -516,6 +516,30 @@ const normalizeAttentionSummary = (summary: BrainAttentionSummary): BrainAttenti
 export const fetchBrainSignals = (investigationId: string) =>
   requestJSON<BrainSignal[]>(`${API_BASE}/signals?investigationId=${encodeURIComponent(investigationId)}`)
 
+// Operator edit of one registry gateway: rename and/or enable/disable. Nil or
+// omitted fields leave the stored value untouched; the code is immutable.
+export interface BrainGatewayUpdate {
+  name?: string
+  description?: string
+  enabled?: boolean
+}
+
+export const updateBrainGateway = async (code: string, update: BrainGatewayUpdate): Promise<BrainGatewayDefinition> => {
+  const definition = await requestJSON<unknown>(`${API_BASE}/gateways/${encodeURIComponent(code)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  })
+  if (!definition || typeof definition !== 'object') {
+    throw new Error('Invalid gateway definition response')
+  }
+  const candidate = definition as Partial<BrainGatewayDefinition>
+  if (typeof candidate.code !== 'string' || !candidate.code) {
+    throw new Error('Invalid gateway definition response')
+  }
+  return definition as BrainGatewayDefinition
+}
+
 // Force a full recompute pass (signals + clusters + suggestions + autonomy)
 // for an investigation. Expensive on purpose: reads are cheap, this is the
 // operator's explicit "re-think now" action.

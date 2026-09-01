@@ -614,6 +614,26 @@ const installBrainFetch = ({
       return Promise.resolve(jsonResponse(gateways) as Response)
     }
     if (url.includes('/api/brain/gateways/')) {
+      if (method === 'PUT') {
+        const code = decodeURIComponent(
+          String(url).slice(String(url).indexOf('/api/brain/gateways/') + '/api/brain/gateways/'.length).split('?')[0],
+        )
+        const target = gateways.find((candidate) => candidate.definition.code === code)
+        if (!target) {
+          return Promise.resolve(jsonResponse({ error: 'gateway not found' }, 404) as Response)
+        }
+        const body = typeof init?.body === 'string'
+          ? JSON.parse(init.body) as { name?: string; description?: string; enabled?: boolean }
+          : {}
+        const definition = {
+          ...target.definition,
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.description !== undefined ? { description: body.description } : {}),
+          ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        }
+        target.definition = definition
+        return Promise.resolve(jsonResponse(definition) as Response)
+      }
       return Promise.resolve(jsonResponse(gatewayDetail) as Response)
     }
     if (url.includes('/api/brain/suggestions?')) {
@@ -3199,6 +3219,72 @@ describe('BrainSignalsPanel', () => {
         detailCallUrls().some((url) => url.includes('value=ORG%7Cacme+grid&limit=40')),
       ).toBe(true)
     })
+  })
+
+  it('disables and enables a gateway from the registry', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card')
+    }
+    expect(card).toHaveAttribute('data-gateway-enabled', 'true')
+
+    await user.click(within(card).getByRole('button', { name: /disable gateway entity & date/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/gateways/entity-date',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"enabled":false'),
+      }),
+    )
+    await waitFor(() => {
+      expect(card).toHaveAttribute('data-gateway-enabled', 'false')
+    })
+    expect(within(card).getByRole('button', { name: /enable gateway entity & date/i })).toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: /enable gateway entity & date/i }))
+    await waitFor(() => {
+      expect(card).toHaveAttribute('data-gateway-enabled', 'true')
+    })
+  })
+
+  it('renames a gateway from the registry', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card')
+    }
+    await user.click(within(card).getByRole('button', { name: /rename gateway entity & date/i }))
+
+    const nameInput = within(card).getByLabelText(/name for entity-date/i)
+    await user.clear(nameInput)
+    await user.type(nameInput, 'Entity & Date (grid)')
+    await user.click(within(card).getByRole('button', { name: /save gateway entity-date/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/gateways/entity-date',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"name":"Entity & Date (grid)"'),
+      }),
+    )
+    await waitFor(() => {
+      expect(within(card).getByText('Entity & Date (grid)')).toBeInTheDocument()
+    })
+    expect(within(card).getByRole('button', { name: /view routes for entity & date \(grid\)/i })).toBeInTheDocument()
   })
 
   it('merges the map, durable links, and clusters into the memory surface', async () => {

@@ -620,6 +620,12 @@ func (s *Service) generateSignalsLocked(investigationID string) ([]BrainSignal, 
 	if err != nil {
 		return nil, err
 	}
+	// Disabled gateways produce no match reasons: a pair that only matched
+	// through a disabled gateway stops firing until it is re-enabled.
+	enabledGateways, err := s.enabledGatewayCodesLocked()
+	if err != nil {
+		return nil, err
+	}
 	linksChanged := false
 	nextSignals := make(map[string]BrainSignal, len(existingSignals)+len(records))
 	for id, signal := range existingSignals {
@@ -637,7 +643,7 @@ func (s *Service) generateSignalsLocked(investigationID string) ([]BrainSignal, 
 		if err != nil {
 			continue
 		}
-		signal, ok := buildSignal(currentProfile, targetProfile, now)
+		signal, ok := buildSignal(currentProfile, targetProfile, now, enabledGateways)
 		if !ok {
 			continue
 		}
@@ -4384,13 +4390,22 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 
 	parts := strings.Split(path, "/")
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "gateways" {
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			detail, err := service.GatewayDetail(parts[3], r.URL.Query().Get("value"), limit)
+			writeAPIResult(w, detail, err)
+		case http.MethodPut:
+			var update GatewayUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				writeAPIResult(w, GatewayDefinition{}, ErrInvalidGatewayUpdate)
+				return
+			}
+			definition, err := service.UpdateGatewayDefinition(parts[3], update)
+			writeAPIResult(w, definition, err)
+		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
 		}
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		detail, err := service.GatewayDetail(parts[3], r.URL.Query().Get("value"), limit)
-		writeAPIResult(w, detail, err)
 		return
 	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "autonomy" && parts[3] == "settings" {
@@ -4713,12 +4728,24 @@ func extractTaggedContradictionEvidence(text string, nodeID string) []extractedE
 	return result
 }
 
-func buildSignal(current memoryProfile, target memoryProfile, timestamp string) (BrainSignal, bool) {
+func buildSignal(current memoryProfile, target memoryProfile, timestamp string, enabledGateways map[string]bool) (BrainSignal, bool) {
 	reasons := make([]SignalReason, 0)
 	reasons = append(reasons, matchingEntityReasons(current, target)...)
 	reasons = append(reasons, matchingSourceReasons(current, target)...)
 	reasons = append(reasons, matchingRelationshipReasons(current, target)...)
 	reasons = append(reasons, matchingContradictionReasons(current, target)...)
+	// A nil set means the whole registry is enabled; otherwise only reasons
+	// from enabled gateways survive, so a pair matching solely through a
+	// disabled gateway produces no signal at all.
+	if len(enabledGateways) > 0 {
+		filtered := make([]SignalReason, 0, len(reasons))
+		for _, reason := range reasons {
+			if enabledGateways[reason.Gateway] {
+				filtered = append(filtered, reason)
+			}
+		}
+		reasons = filtered
+	}
 	if len(reasons) == 0 {
 		return BrainSignal{}, false
 	}

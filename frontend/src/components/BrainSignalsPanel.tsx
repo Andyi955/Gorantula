@@ -66,12 +66,14 @@ import {
   toggleBrainClusterPin,
   unhideBrainCluster,
   updateBrainAutonomySettings,
+  updateBrainGateway,
   type BrainAttentionSummary,
   type BrainAutonomyMode,
   type BrainAutonomyQueueItem,
   type BrainAutonomySettings,
   type BrainAutonomyState,
   type BrainFollowUpAction,
+  type BrainGatewayDefinition,
   type BrainGatewayDetail,
   type BrainGatewayUsage,
   type BrainMemoryStrength,
@@ -475,6 +477,9 @@ export default function BrainSignalsPanel({
   const [gatewayDetail, setGatewayDetail] = useState<BrainGatewayDetail | null>(null)
   const [gatewayDetailLoading, setGatewayDetailLoading] = useState(false)
   const [gatewayValueFilter, setGatewayValueFilter] = useState<string | null>(null)
+  const [gatewaySaving, setGatewaySaving] = useState<string | null>(null)
+  const [gatewayEditing, setGatewayEditing] = useState<string | null>(null)
+  const [gatewayDraft, setGatewayDraft] = useState({ name: '', description: '' })
   const [featuredPulseId, setFeaturedPulseId] = useState<string | null>(null)
   // BRAIN_FIRED echo on the map: ids of signals that just fired (new or
   // strengthened), armed per background refresh and settled after a beat.
@@ -581,6 +586,47 @@ export default function BrainSignalsPanel({
   const startBrainMemoryFollowup = useCallback(() => {
     setBrainMemoryFollowupRunId((current) => current + 1)
   }, [])
+
+  // Gateway registry edits: disable/enable and rename persist in vault state,
+  // and a disabled gateway stops producing match reasons on the next recompute.
+  const patchGatewayDefinition = useCallback((code: string, definition: BrainGatewayDefinition) => {
+    setGatewayUsages((current) => current.map((usage) => (
+      usage.definition.code === code ? { ...usage, definition } : usage
+    )))
+  }, [])
+
+  const handleToggleGatewayEnabled = useCallback(async (code: string, enabled: boolean) => {
+    setGatewaySaving(code)
+    setError(null)
+    try {
+      patchGatewayDefinition(code, await updateBrainGateway(code, { enabled }))
+    } catch {
+      setError('Gateway update failed')
+    } finally {
+      setGatewaySaving(null)
+    }
+  }, [patchGatewayDefinition])
+
+  const startGatewayRename = useCallback((usage: BrainGatewayUsage) => {
+    setGatewayEditing(usage.definition.code)
+    setGatewayDraft({ name: usage.definition.name, description: usage.definition.description })
+  }, [])
+
+  const saveGatewayRename = useCallback(async (code: string) => {
+    setGatewaySaving(code)
+    setError(null)
+    try {
+      patchGatewayDefinition(code, await updateBrainGateway(code, {
+        name: gatewayDraft.name,
+        description: gatewayDraft.description,
+      }))
+      setGatewayEditing(null)
+    } catch {
+      setError('Gateway update failed')
+    } finally {
+      setGatewaySaving(null)
+    }
+  }, [gatewayDraft, patchGatewayDefinition])
 
   const openGatewayDetail = useCallback(async (code: string, options?: { value?: string; showAll?: boolean }) => {
     const value = options?.value
@@ -2202,38 +2248,107 @@ export default function BrainSignalsPanel({
           {gatewayUsages.length === 0 ? (
             <div className="forensic-brain-empty">No gateways registered yet.</div>
           ) : (
-            gatewayUsages.map((usage) => (
-              <article
-                key={usage.definition.code}
-                data-testid="brain-gateway-card"
-                data-gateway-code={usage.definition.code}
-                className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
-              >
-                <span className={`forensic-brain-card-label ${gatewayClassNames[usage.definition.code] || ''}`}>
-                  {usage.definition.code}
-                </span>
-                <h4>{usage.definition.name}</h4>
-                <p>{usage.definition.description}</p>
-                <div className="forensic-brain-gateway-stats" aria-label={`Usage for ${usage.definition.name}`}>
-                  <span>{usage.firingCount} firings</span>
-                  <span>{usage.activeCount} active</span>
-                  <span>{usage.investigationCount} investigations</span>
-                  {usage.topSignalTitle && <span>top: {usage.topSignalTitle}</span>}
-                </div>
-                <button
-                  type="button"
-                  aria-label={`View routes for ${usage.definition.name}`}
-                  onClick={() => {
-                    void openGatewayDetail(usage.definition.code)
-                  }}
-                  disabled={gatewayDetailLoading}
+            gatewayUsages.map((usage) => {
+              const isSaving = gatewaySaving === usage.definition.code
+              const isEditing = gatewayEditing === usage.definition.code
+              return (
+                <article
+                  key={usage.definition.code}
+                  data-testid="brain-gateway-card"
+                  data-gateway-code={usage.definition.code}
+                  data-gateway-enabled={usage.definition.enabled ? 'true' : 'false'}
+                  className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
                 >
-                  {gatewayDetailLoading && gatewayDetail?.definition.code === usage.definition.code
-                    ? 'Reading routes...'
-                    : 'View routes'}
-                </button>
-              </article>
-            ))
+                  <span className={`forensic-brain-card-label ${gatewayClassNames[usage.definition.code] || ''}`}>
+                    {usage.definition.code}
+                  </span>
+                  {isEditing ? (
+                    <div className="forensic-brain-gateway-edit" data-testid="brain-gateway-edit">
+                      <label>
+                        <span>Name</span>
+                        <input
+                          value={gatewayDraft.name}
+                          aria-label={`Name for ${usage.definition.code}`}
+                          onChange={(event) => setGatewayDraft((current) => ({ ...current, name: event.target.value }))}
+                        />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea
+                          value={gatewayDraft.description}
+                          rows={2}
+                          aria-label={`Description for ${usage.definition.code}`}
+                          onChange={(event) => setGatewayDraft((current) => ({ ...current, description: event.target.value }))}
+                        />
+                      </label>
+                      <div className="forensic-brain-gateway-edit-actions">
+                        <button
+                          type="button"
+                          aria-label={`Save gateway ${usage.definition.code}`}
+                          disabled={isSaving || gatewayDraft.name.trim() === ''}
+                          onClick={() => {
+                            void saveGatewayRename(usage.definition.code)
+                          }}
+                        >
+                          {isSaving ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Cancel gateway edit ${usage.definition.code}`}
+                          disabled={isSaving}
+                          onClick={() => setGatewayEditing(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <h4>{usage.definition.name}</h4>
+                      <p>{usage.definition.description}</p>
+                    </>
+                  )}
+                  <div className="forensic-brain-gateway-stats" aria-label={`Usage for ${usage.definition.name}`}>
+                    <span>{usage.firingCount} firings</span>
+                    <span>{usage.activeCount} active</span>
+                    <span>{usage.investigationCount} investigations</span>
+                    {usage.topSignalTitle && <span>top: {usage.topSignalTitle}</span>}
+                  </div>
+                  <div className="forensic-brain-gateway-manage" aria-label={`Manage ${usage.definition.name}`}>
+                    <button
+                      type="button"
+                      aria-label={`View routes for ${usage.definition.name}`}
+                      onClick={() => {
+                        void openGatewayDetail(usage.definition.code)
+                      }}
+                      disabled={gatewayDetailLoading}
+                    >
+                      {gatewayDetailLoading && gatewayDetail?.definition.code === usage.definition.code
+                        ? 'Reading routes...'
+                        : 'View routes'}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Rename gateway ${usage.definition.name}`}
+                      disabled={isSaving}
+                      onClick={() => startGatewayRename(usage)}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`${usage.definition.enabled ? 'Disable' : 'Enable'} gateway ${usage.definition.name}`}
+                      disabled={isSaving}
+                      onClick={() => {
+                        void handleToggleGatewayEnabled(usage.definition.code, !usage.definition.enabled)
+                      }}
+                    >
+                      {isSaving ? 'Saving...' : usage.definition.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                  </div>
+                </article>
+              )
+            })
           )}
           {gatewayDetail && (
             <section data-testid="brain-gateway-detail" aria-label={`Routes for ${gatewayDetail.definition.name}`}>
