@@ -2825,20 +2825,23 @@ describe('BrainSignalsPanel', () => {
     )
   })
 
-  it('interleaves signals and next moves into one ranked pulse feed', async () => {
+  it('interleaves signals and next moves into one ranked pulse', async () => {
+    const user = userEvent.setup()
     installBrainFetch({ signals: [signal], links: [], clusters: [], suggestions: [suggestion] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
-    const viewEl = await screen.findByTestId('brain-pulse-view')
-    const feed = await within(viewEl as HTMLElement).findByTestId('brain-pulse-list')
-    expect(within(feed).getByTestId('brain-signal-card')).toBeInTheDocument()
-    expect(within(feed).getByTestId('brain-suggestion-card')).toBeInTheDocument()
+    const layout = await screen.findByTestId('brain-pulse-layout')
+    expect(within(layout).getByTestId('brain-signal-card')).toBeInTheDocument()
 
-    // Strongest first: the 0.92 signal outranks the 0.86 next move.
-    const kinds = within(feed).getAllByTestId('brain-pulse-kind')
-    expect(kinds[0]).toHaveTextContent('Signal')
-    expect(kinds[1]).toHaveTextContent('Next move')
+    // Strongest first: the 0.92 signal outranks the 0.86 next move in the stream.
+    const rows = within(layout).getAllByTestId('brain-pulse-row')
+    expect(rows[0]).toHaveTextContent('Older Substation Case')
+    expect(rows[1]).toHaveTextContent('Review active memory cluster')
+
+    // Selecting a stream row features it in the main column.
+    await user.click(rows[1])
+    expect(within(layout).getAllByTestId('brain-suggestion-card').length).toBeGreaterThan(0)
   })
 
   it('lists the gateway registry and drills into a route trail', async () => {
