@@ -5993,7 +5993,8 @@ body {
 .forensic-brain-view-signals,
 .forensic-brain-view-links,
 .forensic-brain-view-clusters,
-.forensic-brain-view-gateways {
+.forensic-brain-view-gateways,
+.forensic-brain-view-pulse {
   display: flex;
   flex-direction: column;
 }
@@ -6005,7 +6006,8 @@ body {
 .forensic-brain-view-signals .forensic-brain-panel,
 .forensic-brain-view-links .forensic-brain-panel,
 .forensic-brain-view-clusters .forensic-brain-panel,
-.forensic-brain-view-gateways .forensic-brain-panel {
+.forensic-brain-view-gateways .forensic-brain-panel,
+.forensic-brain-view-pulse .forensic-brain-panel {
   flex: 1 1 0;
   min-height: 0;
 }
@@ -7371,6 +7373,15 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-panel-pulse .forensic-brain-panel-header {
+  align-items: flex-end;
+}
+
+.forensic-brain-panel-pulse .forensic-brain-cluster-summary {
+  align-self: flex-end;
+  padding-bottom: 0.05rem;
+}
+
 .forensic-brain-panel-autonomy {
   border-radius: 0.58rem;
   border-color: rgba(129, 227, 255, 0.24);
@@ -7423,6 +7434,7 @@ body {
 .forensic-brain-autonomy-list,
 .forensic-brain-cluster-list,
 .forensic-brain-gateway-list,
+.forensic-brain-pulse-list,
 .forensic-brain-hidden-cluster-list {
   display: flex;
   flex-direction: column;
@@ -7456,6 +7468,7 @@ body {
 .forensic-brain-autonomy-list::-webkit-scrollbar,
 .forensic-brain-cluster-list::-webkit-scrollbar,
 .forensic-brain-gateway-list::-webkit-scrollbar,
+.forensic-brain-pulse-list::-webkit-scrollbar,
 .forensic-brain-hidden-cluster-list::-webkit-scrollbar,
 .forensic-brain-map-node-stack::-webkit-scrollbar,
 .forensic-brain-map-digest::-webkit-scrollbar,
@@ -7471,6 +7484,7 @@ body {
 .forensic-brain-autonomy-list::-webkit-scrollbar-track,
 .forensic-brain-cluster-list::-webkit-scrollbar-track,
 .forensic-brain-gateway-list::-webkit-scrollbar-track,
+.forensic-brain-pulse-list::-webkit-scrollbar-track,
 .forensic-brain-hidden-cluster-list::-webkit-scrollbar-track,
 .forensic-brain-map-node-stack::-webkit-scrollbar-track,
 .forensic-brain-map-digest::-webkit-scrollbar-track,
@@ -7486,6 +7500,7 @@ body {
 .forensic-brain-autonomy-list::-webkit-scrollbar-thumb,
 .forensic-brain-cluster-list::-webkit-scrollbar-thumb,
 .forensic-brain-gateway-list::-webkit-scrollbar-thumb,
+.forensic-brain-pulse-list::-webkit-scrollbar-thumb,
 .forensic-brain-hidden-cluster-list::-webkit-scrollbar-thumb,
 .forensic-brain-map-node-stack::-webkit-scrollbar-thumb,
 .forensic-brain-map-digest::-webkit-scrollbar-thumb,
@@ -7996,6 +8011,36 @@ body {
   margin: 0;
   font-size: 0.64rem;
   opacity: 0.6;
+}
+
+.forensic-brain-pulse-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.forensic-brain-pulse-kind {
+  width: fit-content;
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  padding: 0.18rem 0.42rem;
+  font-size: 0.55rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.forensic-brain-pulse-kind-signal {
+  border-color: rgba(129, 227, 255, 0.4);
+  background: rgba(129, 227, 255, 0.08);
+  color: var(--forensic-accent);
+}
+
+.forensic-brain-pulse-kind-move {
+  border-color: rgba(188, 19, 254, 0.45);
+  background: rgba(188, 19, 254, 0.1);
+  color: #d98fff;
 }
 
 .forensic-brain-relevance-chip-strong-memory {
