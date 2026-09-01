@@ -1147,6 +1147,8 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    await expect(page.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
+    await page.getByRole('button', { name: /focus view/i }).click()
     await expect(page.getByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
     const focusView = page.getByTestId('brain-focus-view')
     await expect(focusView).toContainText('QA: Source Case is the strongest older case firing right now')
