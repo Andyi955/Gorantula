@@ -10,26 +10,34 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
+  Activity,
   ArrowRight,
+  Bot,
   Bell,
   Brain,
   ChevronDown,
   ChevronUp,
   Clock3,
+  Crosshair,
   ExternalLink,
   Eye,
   EyeOff,
+  FlaskConical,
   Link2,
+  Map as MapIcon,
   Maximize2,
   Minimize2,
+  Network,
   Pin,
   RefreshCw,
   Rocket,
   ShieldCheck,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react'
 import brainRadarEmblem from '../assets/brain-radar-emblem.png'
+import { loadBrainLabEnabled, saveBrainLabEnabled } from '../utils/brainLab'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
   type BoardWorkspaceStateUpdatedDetail,
@@ -146,7 +154,6 @@ const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 const GATEWAY_ROUTE_LIMIT = 25
-const PULSE_FEED_LIMIT = 30
 
 type BrainView = 'pulse' | 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
 
@@ -501,7 +508,8 @@ export default function BrainSignalsPanel({
   const [gatewayDetail, setGatewayDetail] = useState<BrainGatewayDetail | null>(null)
   const [gatewayDetailLoading, setGatewayDetailLoading] = useState(false)
   const [gatewayValueFilter, setGatewayValueFilter] = useState<string | null>(null)
-  const [pulseLimit, setPulseLimit] = useState(PULSE_FEED_LIMIT)
+  const [featuredPulseId, setFeaturedPulseId] = useState<string | null>(null)
+  const [labMode, setLabMode] = useState(() => loadBrainLabEnabled())
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
@@ -541,6 +549,19 @@ export default function BrainSignalsPanel({
   useEffect(() => {
     seenSnapshotRef.current = loadSeenBrainSignalScores(currentInvestigationId ?? '')
   }, [currentInvestigationId])
+
+  const isNewBrainSignal = (candidate: BrainSignal) => {
+    const knownScore = seenSnapshotRef.current[candidate.id]
+    return knownScore === undefined || candidate.score - knownScore >= BRAIN_STRENGTHEN_DELTA
+  }
+
+  // With the Lab collapsed, deep diagnostic views are unreachable: snap back to
+  // the pulse feed rather than stranding the operator on a hidden view.
+  useEffect(() => {
+    if (!labMode && activeBrainView !== 'pulse' && activeBrainView !== 'map') {
+      setActiveBrainView('pulse')
+    }
+  }, [labMode, activeBrainView])
   const brainMapDragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -584,7 +605,6 @@ export default function BrainSignalsPanel({
       setGatewayUsages([])
       setGatewayDetail(null)
       setGatewayValueFilter(null)
-      setPulseLimit(PULSE_FEED_LIMIT)
       setSuggestions([])
       setFollowUps([])
       setBrainMapView(null)
@@ -878,13 +898,41 @@ export default function BrainSignalsPanel({
   )
   // The pulse feed: signals and next moves interleaved into one ranked stream —
   // the "inbox" view of everything the brain is thinking, strongest first.
-  const pulseEntries = useMemo(
+  type PulseEntry =
+    | { kind: 'signal'; score: number; group: BrainSignalGroup }
+    | { kind: 'move'; score: number; suggestion: BrainSuggestion }
+
+  const pulseEntryId = (entry: PulseEntry) =>
+    entry.kind === 'signal' ? `pulse-signal-${entry.group.key}` : `pulse-move-${entry.suggestion.id}`
+
+  const pulseEntries = useMemo<PulseEntry[]>(
     () => [
       ...signalGroups.map((group) => ({ kind: 'signal' as const, score: group.score, group })),
       ...activeSuggestions.map((suggestion) => ({ kind: 'move' as const, score: suggestion.score ?? 0, suggestion })),
     ].sort((a, b) => b.score - a.score),
     [signalGroups, activeSuggestions],
   )
+  const featuredPulseEntry = useMemo(
+    () => pulseEntries.find((entry) => pulseEntryId(entry) === featuredPulseId) ?? pulseEntries[0] ?? null,
+    [pulseEntries, featuredPulseId],
+  )
+  // Honest 24h activity counters derived from persisted signal state — no
+  // decorative fake intelligence.
+  const pulseActivity = useMemo(() => {
+    const dayAgoMs = Date.now() - 24 * 60 * 60 * 1000
+    let newCount = 0
+    let resolvedCount = 0
+    signals.forEach((signal) => {
+      if (signal.lastFiredAt && new Date(signal.lastFiredAt).getTime() >= dayAgoMs && isNewBrainSignal(signal)) {
+        newCount += 1
+      }
+      if ((signal.dismissed || signal.linked) && signal.updatedAt && new Date(signal.updatedAt).getTime() >= dayAgoMs) {
+        resolvedCount += 1
+      }
+    })
+    return { newCount, resolvedCount }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signals, seenSnapshotRef.current])
   const visibleReviewedSuggestions = useMemo(
     () => focusedReviewSuggestion
       ? reviewedSuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
@@ -2155,8 +2203,8 @@ export default function BrainSignalsPanel({
   )
 
   const renderPulseView = () => {
-    const visiblePulseEntries = pulseEntries.slice(0, pulseLimit)
-    const hiddenPulseCount = pulseEntries.length - visiblePulseEntries.length
+    const healthScore = attentionSummary?.overallScore ?? featuredPulseEntry?.score ?? 0
+    const dismissedCount = signals.filter((signal) => signal.dismissed).length
 
     return (
       <div className="forensic-brain-view forensic-brain-view-pulse" data-testid="brain-pulse-view">
@@ -2180,44 +2228,119 @@ export default function BrainSignalsPanel({
             <div data-testid="brain-loading-state" className="forensic-brain-empty">
               Reading brain signals...
             </div>
-          ) : visiblePulseEntries.length === 0 ? (
+          ) : pulseEntries.length === 0 ? (
             <div data-testid="brain-pulse-empty-state" className="forensic-brain-empty">
               Nothing firing yet. Evidence landing here will light this feed up.
             </div>
           ) : (
-            <div className="forensic-brain-pulse-list" data-testid="brain-pulse-list">
-              {visiblePulseEntries.map((entry) => (
-                <div key={entry.kind === 'signal' ? `pulse-signal-${entry.group.key}` : `pulse-move-${entry.suggestion.id}`} className="forensic-brain-pulse-item">
-                  <span
-                    data-testid="brain-pulse-kind"
-                    className={`forensic-brain-pulse-kind forensic-brain-pulse-kind-${entry.kind}`}
-                  >
-                    {entry.kind === 'signal' ? 'Signal' : 'Next move'}
-                  </span>
-                  {entry.kind === 'signal'
-                    ? renderSignalGroup(entry.group)
-                    : renderSuggestionCard(entry.suggestion)}
-                </div>
-              ))}
-              {hiddenPulseCount > 0 && (
-                <button
-                  type="button"
-                  className="forensic-brain-gateway-show-all"
-                  onClick={() => setPulseLimit((current) => current + PULSE_FEED_LIMIT)}
-                >
-                  Show more activity ({hiddenPulseCount} hidden)
-                </button>
-              )}
+            <div className="forensic-brain-pulse-layout" data-testid="brain-pulse-layout">
+              <div className="forensic-brain-pulse-featured" data-testid="brain-pulse-featured">
+                {featuredPulseEntry && (
+                  <>
+                    <span
+                      data-testid="brain-pulse-kind"
+                      className={`forensic-brain-pulse-kind forensic-brain-pulse-kind-${featuredPulseEntry.kind}`}
+                    >
+                      {featuredPulseEntry.kind === 'signal' ? 'Signal' : 'Next move'}
+                    </span>
+                    {featuredPulseEntry.kind === 'signal'
+                      ? renderSignalGroup(featuredPulseEntry.group)
+                      : renderSuggestionCard(featuredPulseEntry.suggestion)}
+                  </>
+                )}
+              </div>
+
+              <aside className="forensic-brain-pulse-rail">
+                <section className="forensic-brain-pulse-rail-block" aria-label="The stream">
+                  <div className="forensic-brain-pulse-rail-header">
+                    <span className="forensic-brain-panel-kicker">The stream</span>
+                    <span>{pulseEntries.length}</span>
+                  </div>
+                  <div className="forensic-brain-pulse-stream">
+                    {pulseEntries.map((entry) => {
+                      const entryId = pulseEntryId(entry)
+                      const isSelected = featuredPulseEntry ? pulseEntryId(featuredPulseEntry) === entryId : false
+                      const rowTitle = entry.kind === 'signal' ? entry.group.primary.targetTitle : entry.suggestion.title
+                      const rowMeta = entry.kind === 'signal'
+                        ? entry.group.primary.reasons[0]?.label || formatGateway(entry.group.primary.gateways[0] ?? '')
+                        : formatSuggestionKind(entry.suggestion.kind)
+                      const rowWhen = entry.kind === 'signal' ? entry.group.primary.lastFiredAt : entry.suggestion.updatedAt
+                      const rowTier = getScoreTier(entry.score).toLocaleLowerCase()
+                      return (
+                        <button
+                          key={entryId}
+                          type="button"
+                          data-testid="brain-pulse-row"
+                          className={`forensic-brain-pulse-row${isSelected ? ' is-selected' : ''}`}
+                          onClick={() => setFeaturedPulseId(entryId)}
+                        >
+                          <span className={`forensic-brain-pulse-dot forensic-brain-score-${rowTier}`} aria-hidden="true" />
+                          <span className="forensic-brain-pulse-row-text">
+                            <strong>{rowTitle}</strong>
+                            <span>{rowMeta}</span>
+                          </span>
+                          <span className="forensic-brain-pulse-row-side">
+                            <strong className={`forensic-brain-score-${rowTier}`}>{formatScore(entry.score)}</strong>
+                            {rowWhen && <span>{formatTimestamp(rowWhen)}</span>}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+
+                <section className="forensic-brain-pulse-rail-block" aria-label="Activity summary" data-testid="brain-pulse-activity">
+                  <div className="forensic-brain-pulse-rail-header">
+                    <span className="forensic-brain-panel-kicker">Activity summary</span>
+                    <span>24h</span>
+                  </div>
+                  <div className="forensic-brain-pulse-activity">
+                    <div>
+                      <strong>{signalGroups.length + activeSuggestions.length}</strong>
+                      <span>active</span>
+                    </div>
+                    <div>
+                      <strong>{pulseActivity.newCount}</strong>
+                      <span>new 24h</span>
+                    </div>
+                    <div>
+                      <strong>{pulseActivity.resolvedCount}</strong>
+                      <span>resolved 24h</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="forensic-brain-pulse-rail-block" aria-label="Memory health" data-testid="brain-pulse-health">
+                  <div className="forensic-brain-pulse-rail-header">
+                    <span className="forensic-brain-panel-kicker">Memory health</span>
+                  </div>
+                  <div className="forensic-brain-pulse-health">
+                    <div className="forensic-brain-health-ring" aria-hidden="true">
+                      <svg viewBox="0 0 64 64">
+                        <circle cx="32" cy="32" r="26" className="track" />
+                        <circle
+                          cx="32"
+                          cy="32"
+                          r="26"
+                          className="value"
+                          style={{ strokeDashoffset: `${(163.4 * (1 - Math.max(0, Math.min(1, healthScore)))).toFixed(1)}` }}
+                        />
+                      </svg>
+                      <strong>{formatScore(healthScore)}</strong>
+                    </div>
+                    <div className="forensic-brain-pulse-health-lines">
+                      <span>{formatCountLabel(links.length, 'durable link')}</span>
+                      <span>{formatCountLabel(clusters.length, 'active cluster')}</span>
+                      <span>{formatCountLabel(dismissedCount, 'dismissed signal')}</span>
+                    </div>
+                  </div>
+                </section>
+              </aside>
             </div>
           )}
         </section>
       </div>
     )
-  }
-
-  const isNewBrainSignal = (candidate: BrainSignal) => {
-    const knownScore = seenSnapshotRef.current[candidate.id]
-    return knownScore === undefined || candidate.score - knownScore >= BRAIN_STRENGTHEN_DELTA
   }
 
   const renderSignalGroup = (group: BrainSignalGroup) => {
@@ -4264,6 +4387,17 @@ export default function BrainSignalsPanel({
     { view: 'clusters', label: 'Memory Clusters', detail: `${visibleClusters.length} visible` },
     { view: 'gateways', label: 'Gateway Registry', detail: `${gatewayUsages.length} defined` },
   ]
+  const brainViewIcons: Partial<Record<BrainView, typeof Activity>> = {
+    pulse: Activity,
+    focus: ShieldCheck,
+    map: MapIcon,
+    moves: Crosshair,
+    autonomy: Bot,
+    signals: Zap,
+    links: Link2,
+    clusters: Network,
+    gateways: ArrowRight,
+  }
 
   return (
     <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals" aria-busy={isLoading}>
@@ -4317,19 +4451,48 @@ export default function BrainSignalsPanel({
       )}
 
       <nav data-testid="brain-subnav" className="forensic-brain-subnav" aria-label="Brain sections">
-        {brainViewOptions.map((option) => (
-          <button
-            key={option.view}
-            type="button"
-            aria-label={`${option.label} view`}
-            aria-pressed={activeBrainView === option.view}
-            className={activeBrainView === option.view ? 'is-active' : ''}
-            onClick={() => setActiveBrainView(option.view)}
-          >
-            <span>{option.label}</span>
-            <strong className={option.detailClassName}>{option.detail}</strong>
-          </button>
-        ))}
+        {(labMode
+          ? brainViewOptions
+          : brainViewOptions.filter((option) => option.view === 'pulse' || option.view === 'map')
+        ).map((option) => {
+          const Icon = brainViewIcons[option.view] ?? Activity
+          return (
+            <button
+              key={option.view}
+              type="button"
+              aria-label={`${option.label} view`}
+              aria-pressed={activeBrainView === option.view}
+              className={`forensic-brain-subnav-card${activeBrainView === option.view ? ' is-active' : ''}`}
+              onClick={() => setActiveBrainView(option.view)}
+            >
+              <span className="forensic-brain-subnav-card-top">
+                <span className="forensic-brain-subnav-card-label">{option.label}</span>
+                <Icon size={15} aria-hidden="true" />
+              </span>
+              <strong className={`forensic-brain-subnav-card-value${option.detailClassName ? ` ${option.detailClassName}` : ''}`}>
+                {option.detail}
+              </strong>
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          data-testid="brain-lab-toggle"
+          aria-label="Toggle brain lab"
+          aria-pressed={labMode}
+          className={`forensic-brain-subnav-card forensic-brain-lab-toggle${labMode ? ' is-on' : ''}`}
+          onClick={() => {
+            const next = !labMode
+            setLabMode(next)
+            saveBrainLabEnabled(next)
+          }}
+        >
+          <span className="forensic-brain-subnav-card-top">
+            <span className="forensic-brain-subnav-card-label">Lab</span>
+            <FlaskConical size={15} aria-hidden="true" />
+          </span>
+          <strong className="forensic-brain-subnav-card-value">{labMode ? 'expanded' : 'compact'}</strong>
+        </button>
       </nav>
 
       {renderBrainAttentionPanel()}
