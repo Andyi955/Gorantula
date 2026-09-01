@@ -146,8 +146,9 @@ const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 const GATEWAY_ROUTE_LIMIT = 25
+const PULSE_FEED_LIMIT = 30
 
-type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
+type BrainView = 'pulse' | 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
 
 type BrainCompareSelection =
   | { kind: 'signal'; id: string }
@@ -500,6 +501,7 @@ export default function BrainSignalsPanel({
   const [gatewayDetail, setGatewayDetail] = useState<BrainGatewayDetail | null>(null)
   const [gatewayDetailLoading, setGatewayDetailLoading] = useState(false)
   const [gatewayValueFilter, setGatewayValueFilter] = useState<string | null>(null)
+  const [pulseLimit, setPulseLimit] = useState(PULSE_FEED_LIMIT)
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
@@ -520,7 +522,7 @@ export default function BrainSignalsPanel({
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
   const [expandedPromptSuggestionId, setExpandedPromptSuggestionId] = useState<string | null>(null)
   const [focusedReviewSuggestionId, setFocusedReviewSuggestionId] = useState<string | null>(null)
-  const [activeBrainView, setActiveBrainView] = useState<BrainView>('focus')
+  const [activeBrainView, setActiveBrainView] = useState<BrainView>('pulse')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
   const [isBrainMapExpanded, setIsBrainMapExpanded] = useState(false)
   const [brainMapViewport, setBrainMapViewport] = useState({ scale: 1, x: 0, y: 0 })
@@ -582,6 +584,7 @@ export default function BrainSignalsPanel({
       setGatewayUsages([])
       setGatewayDetail(null)
       setGatewayValueFilter(null)
+      setPulseLimit(PULSE_FEED_LIMIT)
       setSuggestions([])
       setFollowUps([])
       setBrainMapView(null)
@@ -872,6 +875,15 @@ export default function BrainSignalsPanel({
       ? lowerPrioritySuggestions.filter((suggestion) => suggestion.id !== focusedReviewSuggestion.id)
       : lowerPrioritySuggestions,
     [focusedReviewSuggestion, lowerPrioritySuggestions],
+  )
+  // The pulse feed: signals and next moves interleaved into one ranked stream —
+  // the "inbox" view of everything the brain is thinking, strongest first.
+  const pulseEntries = useMemo(
+    () => [
+      ...signalGroups.map((group) => ({ kind: 'signal' as const, score: group.score, group })),
+      ...activeSuggestions.map((suggestion) => ({ kind: 'move' as const, score: suggestion.score ?? 0, suggestion })),
+    ].sort((a, b) => b.score - a.score),
+    [signalGroups, activeSuggestions],
   )
   const visibleReviewedSuggestions = useMemo(
     () => focusedReviewSuggestion
@@ -2141,6 +2153,67 @@ export default function BrainSignalsPanel({
       </section>
     </div>
   )
+
+  const renderPulseView = () => {
+    const visiblePulseEntries = pulseEntries.slice(0, pulseLimit)
+    const hiddenPulseCount = pulseEntries.length - visiblePulseEntries.length
+
+    return (
+      <div className="forensic-brain-view forensic-brain-view-pulse" data-testid="brain-pulse-view">
+        <section className="forensic-brain-panel forensic-brain-panel-pulse">
+          <div className="forensic-brain-panel-header">
+            <div>
+              <span className="forensic-brain-panel-kicker">Everything the brain is thinking</span>
+              <h3>Pulse</h3>
+            </div>
+            <div className="forensic-brain-cluster-summary">
+              <span>{signalGroups.length} signals</span>
+              <span>{activeSuggestions.length} moves</span>
+            </div>
+          </div>
+
+          {!currentInvestigationId ? (
+            <div data-testid="brain-pulse-empty-state" className="forensic-brain-empty">
+              Select an investigation to feel its pulse.
+            </div>
+          ) : isLoading ? (
+            <div data-testid="brain-loading-state" className="forensic-brain-empty">
+              Reading brain signals...
+            </div>
+          ) : visiblePulseEntries.length === 0 ? (
+            <div data-testid="brain-pulse-empty-state" className="forensic-brain-empty">
+              Nothing firing yet. Evidence landing here will light this feed up.
+            </div>
+          ) : (
+            <div className="forensic-brain-pulse-list" data-testid="brain-pulse-list">
+              {visiblePulseEntries.map((entry) => (
+                <div key={entry.kind === 'signal' ? `pulse-signal-${entry.group.key}` : `pulse-move-${entry.suggestion.id}`} className="forensic-brain-pulse-item">
+                  <span
+                    data-testid="brain-pulse-kind"
+                    className={`forensic-brain-pulse-kind forensic-brain-pulse-kind-${entry.kind}`}
+                  >
+                    {entry.kind === 'signal' ? 'Signal' : 'Next move'}
+                  </span>
+                  {entry.kind === 'signal'
+                    ? renderSignalGroup(entry.group)
+                    : renderSuggestionCard(entry.suggestion)}
+                </div>
+              ))}
+              {hiddenPulseCount > 0 && (
+                <button
+                  type="button"
+                  className="forensic-brain-gateway-show-all"
+                  onClick={() => setPulseLimit((current) => current + PULSE_FEED_LIMIT)}
+                >
+                  Show more activity ({hiddenPulseCount} hidden)
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
 
   const isNewBrainSignal = (candidate: BrainSignal) => {
     const knownScore = seenSnapshotRef.current[candidate.id]
@@ -4181,6 +4254,7 @@ export default function BrainSignalsPanel({
 
   const autonomyStateClass = autonomyAutoPrepareEnabled ? 'forensic-brain-state-on' : 'forensic-brain-state-off'
   const brainViewOptions: Array<{ view: BrainView; label: string; detail: string; detailClassName?: string }> = [
+    { view: 'pulse', label: 'Pulse', detail: `${pulseEntries.length} firing` },
     { view: 'focus', label: 'Focus', detail: attentionSummary?.focus ? formatAttentionState(attentionSummary.dominantState) : 'summary' },
     { view: 'map', label: 'Memory Map', detail: `${brainMapModel.summary.visibleCount} visible` },
     { view: 'moves', label: 'Next Moves', detail: `${activeSuggestions.length} active` },
@@ -4261,6 +4335,7 @@ export default function BrainSignalsPanel({
       {renderBrainAttentionPanel()}
 
       <div className="forensic-brain-active-view">
+        {activeBrainView === 'pulse' && renderPulseView()}
         {activeBrainView === 'focus' && renderFocusView()}
         {activeBrainView === 'map' && (
           <div className="forensic-brain-view forensic-brain-view-map">

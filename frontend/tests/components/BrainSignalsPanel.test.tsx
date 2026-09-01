@@ -2085,12 +2085,16 @@ describe('BrainSignalsPanel', () => {
     expect(screen.queryByTestId('brain-attention-summary')).not.toBeInTheDocument()
   })
 
-  it('opens with a plain language Brain focus view', async () => {
-    installBrainFetch({ attention: attentionSummary })
+  it('opens with the pulse feed and falls through to the plain language focus view', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ attention: attentionSummary, signals: [signal], links: [], clusters: [] })
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
-    expect(await screen.findByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByTestId('brain-pulse-view')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
+
+    await openBrainView(user, /focus view/i)
     const focus = await screen.findByTestId('brain-focus-view')
     expect(focus).toHaveTextContent('Older Substation Case is the strongest remembered case right now')
     expect(focus).toHaveTextContent('Current Grid Case is strongly connected to older memory Older Substation Case')
@@ -2292,8 +2296,8 @@ describe('BrainSignalsPanel', () => {
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
 
-    expect(await screen.findByTestId('brain-focus-view')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByTestId('brain-pulse-view')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByTestId('brain-map-radar')).not.toBeInTheDocument()
     await openBrainView(user, /memory map view/i)
     expect(await screen.findByTestId('brain-map-radar')).toBeInTheDocument()
@@ -2814,6 +2818,22 @@ describe('BrainSignalsPanel', () => {
     )
   })
 
+  it('interleaves signals and next moves into one ranked pulse feed', async () => {
+    installBrainFetch({ signals: [signal], links: [], clusters: [], suggestions: [suggestion] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const viewEl = await screen.findByTestId('brain-pulse-view')
+    const feed = await within(viewEl as HTMLElement).findByTestId('brain-pulse-list')
+    expect(within(feed).getByTestId('brain-signal-card')).toBeInTheDocument()
+    expect(within(feed).getByTestId('brain-suggestion-card')).toBeInTheDocument()
+
+    // Strongest first: the 0.92 signal outranks the 0.86 next move.
+    const kinds = within(feed).getAllByTestId('brain-pulse-kind')
+    expect(kinds[0]).toHaveTextContent('Signal')
+    expect(kinds[1]).toHaveTextContent('Next move')
+  })
+
   it('lists the gateway registry and drills into a route trail', async () => {
     const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
     const user = userEvent.setup()
@@ -2879,6 +2899,7 @@ describe('BrainSignalsPanel', () => {
       return Promise.resolve(jsonResponse([]) as Response)
     })
     vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
 
     const view = render(
       <BrainSignalsPanel
@@ -2888,7 +2909,9 @@ describe('BrainSignalsPanel', () => {
       />,
     )
 
-    // Full load A is in flight behind the deferred signals fetch.
+    // Full load A is in flight behind the deferred signals fetch. Navigate to
+    // the focus view (no refetch) to see its placeholder.
+    await openBrainView(user, /focus view/i)
     expect(await screen.findByText(/Reading Brain focus/i)).toBeInTheDocument()
     expect(screen.getByTestId('brain-loading-overlay')).toBeInTheDocument()
 
