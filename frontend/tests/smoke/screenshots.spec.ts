@@ -327,7 +327,9 @@ test('capture brain views for design critique', async ({ page }) => {
   // Register the brain fixture routes AFTER openSmokeApp so they take
   // precedence over the smoke network guard (Playwright consults handlers in
   // reverse registration order; a guard continue() would skip this fixture).
-  await page.route('**/api/brain/**', async (route) => {
+  // The pattern must carry the full origin: a leading '**/' glob does not match
+  // 'http://localhost:8080/...' the way you would expect.
+  await page.route('http://localhost:8080/api/brain/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
     const json = (data: unknown) => route.fulfill({
@@ -368,9 +370,6 @@ test('capture brain views for design critique', async ({ page }) => {
     }
     return json({})
   })
-
-  await openSmokeApp(page)
-  await seedBrowserQaData(page)
 
   await page.getByRole('button', { name: /^brain$/i }).click()
   await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
