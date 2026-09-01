@@ -1148,6 +1148,8 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
+    // The compact default hides the deep diagnostic views; this flow exercises them.
+    await page.getByRole('button', { name: /toggle brain lab/i }).click()
     await page.getByRole('button', { name: /focus view/i }).click()
     await expect(page.getByRole('button', { name: /focus view/i })).toHaveAttribute('aria-pressed', 'true')
     const focusView = page.getByTestId('brain-focus-view')
@@ -1229,7 +1231,7 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /memory map view/i }).click()
     await radar
       .getByTestId('brain-map-selected-node')
-      .getByRole('button', { name: /promote radar signal qa: source case/i })
+      .getByRole('button', { name: /promote link for qa: source case/i })
       .click()
 
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
@@ -1257,6 +1259,8 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
+    // The compact default hides the deep diagnostic views; this flow exercises them.
+    await page.getByRole('button', { name: /toggle brain lab/i }).click()
     await page.getByRole('button', { name: /focus view/i }).click()
     await expect(page.getByTestId('brain-focus-view')).toContainText('Focused follow-up ready')
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
@@ -1293,12 +1297,11 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /memory map view/i }).click()
     await restoredRadar.getByRole('button', { name: /select memory qa: source case/i }).click()
-    await restoredRadar.getByRole('button', { name: /inspect radar memory qa: source case/i }).click()
-    const detail = page.getByTestId('brain-link-detail')
-    await expect(detail).toContainText('qa-target-existing')
-    await expect(detail).toContainText('qa-source-lead')
-
-    await detail.getByRole('button', { name: /forget memory link qa: source case/i }).click()
+    // The compact node card forgets the memory in place — no view switching.
+    await restoredRadar
+      .getByTestId('brain-map-selected-node')
+      .getByRole('button', { name: /forget map memory qa: source case/i })
+      .click()
     await expect(page.getByTestId('brain-link-card')).toHaveCount(0)
   })
 
