@@ -2030,7 +2030,9 @@ export default function BrainSignalsPanel({
                 data-gateway-code={usage.definition.code}
                 className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
               >
-                <span className="forensic-brain-card-label">{usage.definition.code}</span>
+                <span className={`forensic-brain-card-label ${gatewayClassNames[usage.definition.code] || ''}`}>
+                  {usage.definition.code}
+                </span>
                 <h4>{usage.definition.name}</h4>
                 <p>{usage.definition.description}</p>
                 <div className="forensic-brain-gateway-stats" aria-label={`Usage for ${usage.definition.name}`}>
@@ -2102,19 +2104,36 @@ export default function BrainSignalsPanel({
               {gatewayDetail.routes.length === 0 ? (
                 <div className="forensic-brain-empty">No firings recorded through this gateway yet.</div>
               ) : (
-                gatewayDetail.routes.map((route) => (
-                  <article
-                    key={`${route.signalId}:${route.value}:${route.targetInvestigationId}`}
-                    data-testid="brain-gateway-route"
-                    className="forensic-brain-gateway-route"
-                  >
-                    <strong>{route.targetTitle}</strong>
-                    <span>{route.label || route.value}</span>
-                    <span>{formatScore(route.score)}</span>
-                    <span>{formatActivationCount(route.activationCount)}</span>
-                    <p>{route.detail}</p>
-                  </article>
-                ))
+                gatewayDetail.routes.map((route) => {
+                  const scoreTier = getScoreTier(route.score)
+                  return (
+                    <article
+                      key={`${route.signalId}:${route.value}:${route.targetInvestigationId}`}
+                      data-testid="brain-gateway-route"
+                      className="forensic-brain-gateway-route"
+                    >
+                      <div className="forensic-brain-gateway-route-top">
+                        <strong>{route.targetTitle}</strong>
+                        <strong className={`forensic-brain-score-${scoreTier.toLocaleLowerCase()}`}>
+                          {formatScore(route.score)}
+                        </strong>
+                      </div>
+                      <div className="forensic-brain-gateway-route-meta">
+                        <span className={`forensic-brain-chip ${gatewayClassNames[gatewayDetail.definition.code] || ''}`}>
+                          {route.label || route.value}
+                        </span>
+                        {route.relevance && (
+                          <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${normalizeRelevance(route.relevance)}`}>
+                            {formatRelevance({ relevance: route.relevance })}
+                          </span>
+                        )}
+                        <span>{formatActivationCount(route.activationCount)}</span>
+                        {route.lastFiredAt && <span>fired {formatTimestamp(route.lastFiredAt)}</span>}
+                      </div>
+                      <p>{route.detail}</p>
+                    </article>
+                  )
+                })
               )}
             </section>
           )}

@@ -7964,18 +7964,32 @@ body {
 .forensic-brain-gateway-route {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.25rem;
   border-top: 1px dashed rgba(129, 227, 255, 0.16);
-  padding: 0.45rem 0;
+  padding: 0.5rem 0;
 }
 
-.forensic-brain-gateway-route strong {
-  font-size: 0.78rem;
+.forensic-brain-gateway-route-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
 }
 
-.forensic-brain-gateway-route span {
-  font-size: 0.62rem;
-  opacity: 0.75;
+.forensic-brain-gateway-route-top strong {
+  font-size: 0.8rem;
+}
+
+.forensic-brain-gateway-route-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.forensic-brain-gateway-route-meta > span {
+  font-size: 0.6rem;
+  opacity: 0.78;
 }
 
 .forensic-brain-gateway-route p {
