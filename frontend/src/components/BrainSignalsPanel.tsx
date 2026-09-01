@@ -496,6 +496,10 @@ export default function BrainSignalsPanel({
   const [showHiddenClusters, setShowHiddenClusters] = useState(false)
   const [selectedMemoryLinkId, setSelectedMemoryLinkId] = useState<string | null>(null)
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
+  // Detail overlays on the Memory surface open only for selections made on the
+  // Memory surface itself; a selection carried over from a Lab view (e.g. an
+  // inspected cluster) must never pop an overlay over the map on arrival.
+  const [memorySelectionActive, setMemorySelectionActive] = useState(false)
   const [selectedBrainMapNodeId, setSelectedBrainMapNodeId] = useState<string | null>(null)
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
@@ -534,6 +538,12 @@ export default function BrainSignalsPanel({
       setActiveBrainView('pulse')
     }
   }, [labMode, activeBrainView])
+
+  // Drop the memory-surface overlay gate whenever the view changes: arriving
+  // at Memory from Focus/Signals/Clusters starts clean.
+  useEffect(() => {
+    setMemorySelectionActive(false)
+  }, [activeBrainView])
   const brainMapDragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -610,6 +620,7 @@ export default function BrainSignalsPanel({
       setShowHiddenClusters(false)
       setSelectedMemoryLinkId(null)
       setSelectedClusterId(null)
+      setMemorySelectionActive(false)
       setSelectedBrainMapNodeId(null)
       setMapPulse({ key: 0, signalIds: [] })
       setIsMapPulseActive(false)
@@ -2322,7 +2333,7 @@ export default function BrainSignalsPanel({
                   <p className="forensic-brain-memory-ledger-empty">No memory links promoted yet.</p>
                 ) : (
                   <div className="forensic-brain-memory-ledger-list">
-                    {priorityLinkGroups.map(renderMemoryLink)}
+                    {priorityLinkGroups.map((group) => renderMemoryLink(group, { inMemory: true }))}
                     {olderLinkGroups.length > 0 && (
                       <div data-testid="brain-memory-older-links" className="forensic-brain-lower-priority">
                         <button
@@ -2336,7 +2347,7 @@ export default function BrainSignalsPanel({
                         </button>
                         {showOlderMemoryLinks && (
                           <div className="forensic-brain-lower-priority-list">
-                            {olderLinkGroups.map(renderMemoryLink)}
+                            {olderLinkGroups.map((group) => renderMemoryLink(group, { inMemory: true }))}
                           </div>
                         )}
                       </div>
@@ -2354,7 +2365,7 @@ export default function BrainSignalsPanel({
                   <p className="forensic-brain-memory-ledger-empty">No memory clusters yet.</p>
                 ) : (
                   <div className="forensic-brain-memory-ledger-list">
-                    {visibleClusters.map((cluster) => renderClusterCard(cluster))}
+                    {visibleClusters.map((cluster) => renderClusterCard(cluster, false, { inMemory: true }))}
                     {hiddenClusters.length > 0 && (
                       <div data-testid="brain-memory-hidden-clusters" className="forensic-brain-lower-priority">
                         <button
@@ -2368,7 +2379,7 @@ export default function BrainSignalsPanel({
                         </button>
                         {showHiddenClusters && (
                           <div className="forensic-brain-hidden-cluster-list">
-                            {hiddenClusters.map((cluster) => renderClusterCard(cluster, true))}
+                            {hiddenClusters.map((cluster) => renderClusterCard(cluster, true, { inMemory: true }))}
                           </div>
                         )}
                       </div>
@@ -2679,7 +2690,7 @@ export default function BrainSignalsPanel({
     )
   }
 
-  const renderMemoryLink = (group: MemoryLinkGroup) => {
+  const renderMemoryLink = (group: MemoryLinkGroup, opts?: { inMemory?: boolean }) => {
     const link = group.primary
     const relatedMemoryText = getRelatedMemoryText(group.links.length)
     const relatedClusters = relatedClustersForLinkGroup(group, rankedClusters)
@@ -2692,7 +2703,12 @@ export default function BrainSignalsPanel({
         className="forensic-brain-link-open"
         aria-label={`Inspect memory link ${link.toTitle}`}
         aria-expanded={selectedMemoryLinkGroup?.key === group.key}
-        onClick={() => setSelectedMemoryLinkId(link.id)}
+        onClick={() => {
+          setSelectedMemoryLinkId(link.id)
+          if (opts?.inMemory) {
+            setMemorySelectionActive(true)
+          }
+        }}
       >
         <span className="forensic-brain-link-header">
           <Link2 size={14} />
@@ -2877,7 +2893,7 @@ export default function BrainSignalsPanel({
     )
   }
 
-  const renderClusterCard = (cluster: MemoryCluster, isHidden = false) => {
+  const renderClusterCard = (cluster: MemoryCluster, isHidden = false, opts?: { inMemory?: boolean }) => {
     const statusLabel = formatClusterStatus(cluster.status)
     const signalCount = getClusterSignalCount(cluster)
     const linkCount = getClusterLinkCount(cluster)
@@ -2933,7 +2949,12 @@ export default function BrainSignalsPanel({
               type="button"
               aria-label={`Inspect cluster ${cluster.label}`}
               className="forensic-brain-action forensic-brain-action-primary"
-              onClick={() => setSelectedClusterId(cluster.id)}
+              onClick={() => {
+                setSelectedClusterId(cluster.id)
+                if (opts?.inMemory) {
+                  setMemorySelectionActive(true)
+                }
+              }}
             >
               <ExternalLink size={13} />
               Inspect
@@ -4470,7 +4491,7 @@ export default function BrainSignalsPanel({
             </div>
           ) : (
             <div className="forensic-brain-link-list">
-              {priorityLinkGroups.map(renderMemoryLink)}
+              {priorityLinkGroups.map((group) => renderMemoryLink(group))}
 
               {olderLinkGroups.length > 0 && (
                 <div data-testid="brain-older-links-section" className="forensic-brain-lower-priority">
@@ -4486,7 +4507,7 @@ export default function BrainSignalsPanel({
 
                   {showOlderMemoryLinks && (
                     <div className="forensic-brain-lower-priority-list">
-                      {olderLinkGroups.map(renderMemoryLink)}
+                      {olderLinkGroups.map((group) => renderMemoryLink(group))}
                     </div>
                   )}
                 </div>
@@ -4705,9 +4726,11 @@ export default function BrainSignalsPanel({
         {activeBrainView === 'gateways' && renderGatewaysView()}
       </div>
 
-      {(activeBrainView === 'links' || activeBrainView === 'memory') && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
+      {activeBrainView === 'links' && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
 
-      {activeBrainView === 'memory' && selectedCluster && !selectedCluster.hidden && (
+      {activeBrainView === 'memory' && memorySelectionActive && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
+
+      {activeBrainView === 'memory' && memorySelectionActive && selectedCluster && !selectedCluster.hidden && (
         <div className="forensic-brain-memory-detail" data-testid="brain-memory-cluster-detail">
           {renderClusterDetail(selectedCluster)}
         </div>

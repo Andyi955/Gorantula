@@ -345,7 +345,7 @@ test('capture brain views for design critique', async ({ page }) => {
   // The pattern must carry the full origin: a leading '**/' glob does not match
   // 'http://localhost:8080/...' the way you would expect.
   let boostSignals = false
-  let firstSignalsFetch = true
+  let heldSignalsFetches = 0
   await page.route('http://localhost:8080/api/brain/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -356,10 +356,11 @@ test('capture brain views for design critique', async ({ page }) => {
     })
 
     if (path.endsWith('/api/brain/signals')) {
-      if (firstSignalsFetch) {
-        // Hold the first read long enough that the loading overlay (emblem)
-        // is always caught by the critique loop, even on cold dev-server runs.
-        firstSignalsFetch = false
+      // StrictMode double-mounts the panel, firing two full loads; hold BOTH
+      // so the loading overlay (emblem) stays up long enough for the critique
+      // loop, even on cold dev-server runs.
+      if (heldSignalsFetches < 2) {
+        heldSignalsFetches += 1
         await new Promise((resolve) => setTimeout(resolve, 1800))
       }
       return json(boostSignals ? stormSignals : signals)

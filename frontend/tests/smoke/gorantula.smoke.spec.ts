@@ -1259,8 +1259,8 @@ test.describe('Gorantula smoke flows', () => {
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
     await expect(page.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
-    // The compact default hides the deep diagnostic views; this flow exercises them.
-    await page.getByRole('button', { name: /toggle brain lab/i }).click()
+    // Lab is still expanded from the pre-reload part of this test (the
+    // preference persists in localStorage across reloads).
     await page.getByRole('button', { name: /focus view/i }).click()
     await expect(page.getByTestId('brain-focus-view')).toContainText('Focused follow-up ready')
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
@@ -1311,6 +1311,8 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    // The compact default hides the deep diagnostic views; this flow exercises them.
+    await page.getByRole('button', { name: /toggle brain lab/i }).click()
 
     await page.getByRole('button', { name: /next moves view/i }).click()
     const suggestionCard = page.getByTestId('brain-suggestion-card').filter({ hasText: 'Review active memory cluster' })
