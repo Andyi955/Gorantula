@@ -9570,13 +9570,6 @@ body {
   line-height: 1.45;
 }
 
-.forensic-brain-reason-stack {
-  display: grid;
-  gap: 0.5rem;
-  margin-top: 0.9rem;
-}
-
-.forensic-brain-reason-stack p,
 .forensic-brain-link-card p {
   margin: 0;
   color: var(--forensic-text-muted);
@@ -9584,21 +9577,95 @@ body {
   line-height: 1.55;
 }
 
-.forensic-brain-signal-card .forensic-brain-reason-stack p {
-  display: grid;
-  grid-template-columns: minmax(5.4rem, auto) minmax(0, 1fr);
+/* Click-a-pulse route trail: evidence → gateway → remembered nodes. */
+.forensic-brain-route-trail-toggle {
+  display: inline-flex;
   align-items: center;
-  gap: 0.62rem;
-  border: 1px solid rgba(129, 227, 255, 0.1);
-  background: rgba(129, 227, 255, 0.035);
-  padding: 0.55rem 0.65rem;
+  gap: 0.35rem;
+  width: fit-content;
+  margin-top: 0.7rem;
+  border: 1px solid rgba(129, 227, 255, 0.22);
+  background: rgba(129, 227, 255, 0.05);
+  padding: 0.28rem 0.52rem;
+  color: var(--forensic-accent);
+  font-size: 0.56rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
 }
 
-.forensic-brain-reason-stack p span {
+.forensic-brain-route-trail-toggle:hover,
+.forensic-brain-route-trail-toggle.is-open {
+  border-color: rgba(129, 227, 255, 0.5);
+  background: rgba(129, 227, 255, 0.09);
+  color: #ffffff;
+}
+
+.forensic-brain-route-trail {
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.55rem 0 0;
+  padding: 0;
+}
+
+.forensic-brain-route-trail li {
+  display: grid;
+  gap: 0.28rem;
+  border: 1px solid rgba(129, 227, 255, 0.12);
+  border-left: 2px solid rgba(129, 227, 255, 0.42);
+  background: rgba(2, 7, 10, 0.62);
+  padding: 0.5rem 0.6rem;
+}
+
+.forensic-brain-route-trail-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.forensic-brain-route-trail-top strong {
+  overflow: hidden;
+  color: var(--forensic-text);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forensic-brain-route-trail p {
+  margin: 0;
+  color: var(--forensic-text-muted);
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
+.forensic-brain-route-trail-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.45rem;
+}
+
+.forensic-brain-route-trail-nodes span {
   color: var(--forensic-accent);
-  font-size: 0.58rem;
+  font-size: 0.52rem;
   font-weight: 950;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.forensic-brain-route-trail-nodes b {
+  color: var(--forensic-text-muted);
+  font-size: 0.6rem;
+  font-weight: 850;
+}
+
+.forensic-brain-route-trail-nodes i {
+  color: var(--forensic-text-faint);
+  font-style: normal;
 }
 
 .forensic-brain-action-panel {
@@ -12820,8 +12887,9 @@ body {
     justify-content: flex-start;
   }
 
-  .forensic-brain-signal-card .forensic-brain-reason-stack p {
-    grid-template-columns: minmax(0, 1fr);
+  .forensic-brain-route-trail-nodes {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
