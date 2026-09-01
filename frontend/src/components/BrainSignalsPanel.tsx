@@ -504,6 +504,9 @@ export default function BrainSignalsPanel({
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
   const [expandedPromptSuggestionId, setExpandedPromptSuggestionId] = useState<string | null>(null)
+  // Route trails on signal cards: explicit overrides per group key; the
+  // featured pulse signal card is expanded unless explicitly collapsed.
+  const [expandedRouteTrails, setExpandedRouteTrails] = useState<Record<string, boolean>>({})
   const [focusedReviewSuggestionId, setFocusedReviewSuggestionId] = useState<string | null>(null)
   const [activeBrainView, setActiveBrainView] = useState<BrainView>('pulse')
   const [isAttentionOpen, setIsAttentionOpen] = useState(false)
@@ -622,6 +625,7 @@ export default function BrainSignalsPanel({
       setSelectedClusterId(null)
       setMemorySelectionActive(false)
       setSelectedBrainMapNodeId(null)
+      setExpandedRouteTrails({})
       setMapPulse({ key: 0, signalIds: [] })
       setIsMapPulseActive(false)
       mapPrevScoresRef.current = { investigationId: null, scores: {} }
@@ -2682,14 +2686,62 @@ export default function BrainSignalsPanel({
                 )}
               </div>
 
-              <div className="forensic-brain-reason-stack">
-                {group.reasons.slice(0, 3).map((reason, index) => (
-                  <p key={`${group.key}:detail:${reason.gateway}:${reason.value}:${index}`}>
-                    <span>{formatGateway(reason.gateway)}</span>
-                    {reason.detail || reason.label}
-                  </p>
-                ))}
-              </div>
+              {(() => {
+                // Clicking a pulse features its card with the full route trail
+                // open (on the pulse feed itself); everywhere else the trail
+                // stays collapsed until asked for, replacing the always-on
+                // reason-chip sprawl.
+                const isFeaturedPulseSignal =
+                  activeBrainView === 'pulse' &&
+                  featuredPulseEntry?.kind === 'signal' &&
+                  featuredPulseEntry.group.key === group.key
+                const trailExpanded = expandedRouteTrails[group.key] ?? isFeaturedPulseSignal
+                const toggleRouteTrail = () => {
+                  setExpandedRouteTrails((current) => ({
+                    ...current,
+                    [group.key]: !(current[group.key] ?? isFeaturedPulseSignal),
+                  }))
+                }
+
+                return (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="brain-route-trail-toggle"
+                      className={`forensic-brain-route-trail-toggle${trailExpanded ? ' is-open' : ''}`}
+                      aria-expanded={trailExpanded}
+                      aria-label={`Route trail for ${signal.targetTitle}`}
+                      onClick={toggleRouteTrail}
+                    >
+                      Route trail · {group.reasons.length} {group.reasons.length === 1 ? 'match' : 'matches'}
+                      {trailExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+
+                    {trailExpanded && (
+                      <ol className="forensic-brain-route-trail" data-testid="brain-route-trail">
+                        {group.reasons.map((reason, index) => (
+                          <li key={`${group.key}:route:${reason.gateway}:${reason.value}:${index}`}>
+                            <div className="forensic-brain-route-trail-top">
+                              <span className={`forensic-brain-chip ${gatewayClassNames[reason.gateway] || ''}`}>
+                                {formatGateway(reason.gateway)}
+                              </span>
+                              <strong>{reason.label || reason.value}</strong>
+                            </div>
+                            <p>{reason.detail || reason.label}</p>
+                            <div className="forensic-brain-route-trail-nodes">
+                              <span>Current</span>
+                              <b>{formatNodeIds(reason.currentNodeIds)}</b>
+                              <i aria-hidden="true">→</i>
+                              <span>Remembered</span>
+                              <b>{formatNodeIds(reason.targetNodeIds)}</b>
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </>
+                )
+              })()}
             </div>
 
             <aside className="forensic-brain-action-panel">

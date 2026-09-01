@@ -761,8 +761,19 @@ describe('BrainSignalsPanel', () => {
     expect(card).toHaveTextContent('92%')
     expect(card).toHaveTextContent('Entity/Date')
     expect(card).toHaveTextContent('Source Domain')
-    expect(card).toHaveTextContent(/Northgate Substation A-17 appears in both investigations/i)
     expect(card).toHaveTextContent('Review older case')
+
+    // The route trail stays collapsed until asked for.
+    const trailToggle = within(card).getByRole('button', { name: /route trail for older substation case/i })
+    expect(trailToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(card).queryByText('Northgate Substation A-17 appears in both investigations.')).not.toBeInTheDocument()
+
+    await user.click(trailToggle)
+
+    const trail = within(card).getByTestId('brain-route-trail')
+    expect(trail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+    expect(trail).toHaveTextContent('node-current')
+    expect(trail).toHaveTextContent('node-older')
 
     await openBrainView(user, /memory links view/i)
 
@@ -2970,6 +2981,66 @@ describe('BrainSignalsPanel', () => {
     // Selecting a stream row features it in the main column.
     await user.click(rows[1])
     expect(within(layout).getAllByTestId('brain-suggestion-card').length).toBeGreaterThan(0)
+  })
+
+  it('opens the route trail automatically on the featured pulse signal', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const layout = await screen.findByTestId('brain-pulse-layout')
+    const featuredCard = within(layout).getByTestId('brain-signal-card')
+
+    // Clicking a pulse features it with the route trail already open.
+    const trail = within(featuredCard).getByTestId('brain-route-trail')
+    expect(trail).toHaveTextContent('Northgate Substation A-17 appears in both investigations.')
+    expect(trail).toHaveTextContent('node-current')
+    expect(trail).toHaveTextContent('node-older')
+
+    await user.click(within(featuredCard).getByRole('button', { name: /route trail for older substation case/i }))
+    expect(within(featuredCard).queryByTestId('brain-route-trail')).not.toBeInTheDocument()
+
+    await user.click(within(featuredCard).getByRole('button', { name: /route trail for older substation case/i }))
+    expect(within(featuredCard).getByTestId('brain-route-trail')).toBeInTheDocument()
+  })
+
+  it('lists every firing in an expanded route trail, not just the first three', async () => {
+    const user = userEvent.setup()
+    const multiReasonSignal = makeSignal({
+      id: 'brain-signal-multi-reason',
+      reasons: [
+        signal.reasons[0],
+        signal.reasons[1],
+        {
+          ...signal.reasons[0],
+          gateway: 'relationship-tag',
+          value: 'SUPPLY_RISK',
+          label: 'SUPPLY_RISK',
+          detail: 'A repeated SUPPLY_RISK relationship appears across the memory cases.',
+        },
+        {
+          ...signal.reasons[1],
+          value: 'archive.example.org',
+          label: 'archive.example.org',
+          detail: 'Both investigations cite archive.example.org.',
+        },
+      ],
+    })
+    installBrainFetch({ signals: [multiReasonSignal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
+
+    const card = await screen.findByTestId('brain-signal-card')
+    await user.click(within(card).getByRole('button', { name: /route trail for older substation case/i }))
+
+    const trail = within(card).getByTestId('brain-route-trail')
+    expect(within(trail).getAllByRole('listitem')).toHaveLength(4)
+    expect(trail).toHaveTextContent('Entity/Date')
+    expect(trail).toHaveTextContent('Source Domain')
+    expect(trail).toHaveTextContent('Relationship')
+    expect(trail).toHaveTextContent('A repeated SUPPLY_RISK relationship appears across the memory cases.')
   })
 
   it('surfaces the autonomy strip on the pulse feed and jumps to the queue', async () => {
