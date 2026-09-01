@@ -1433,6 +1433,20 @@ export default function BrainSignalsPanel({
     }
   }
 
+  // Link mutations change cluster relations (memoryLinkIds, link counts).
+  // Re-read clusters right after so chips and counts reflect the mutation
+  // immediately instead of waiting for the next background pass.
+  const refreshClustersAfterLinkMutation = useCallback(async () => {
+    if (!currentInvestigationId) {
+      return
+    }
+    try {
+      setClusters(sortClusters(await fetchBrainClusters(currentInvestigationId)))
+    } catch {
+      // Keep the current clusters; the next full load will reconcile.
+    }
+  }, [currentInvestigationId])
+
   const handlePromote = async (group: BrainSignalGroup) => {
     const signalIds = group.signals.map((signal) => signal.id)
     setBusyAction(`promote:${group.key}`)
@@ -1443,6 +1457,7 @@ export default function BrainSignalsPanel({
       setLinks((current) => sortByScore([link, ...current.filter((candidate) => candidate.id !== link.id)]))
       setSelectedMemoryLinkId(link.id)
       setActiveBrainView('links')
+      await refreshClustersAfterLinkMutation()
     } catch {
       setError('Brain memory link failed')
     } finally {
@@ -1458,6 +1473,7 @@ export default function BrainSignalsPanel({
       await Promise.all(linkIds.map((linkId) => forgetBrainLink(linkId)))
       setLinks((current) => current.filter((candidate) => !linkIds.includes(candidate.id)))
       setSelectedMemoryLinkId((current) => (current && linkIds.includes(current) ? null : current))
+      await refreshClustersAfterLinkMutation()
     } catch {
       setError('Brain memory forget failed')
     } finally {
@@ -1479,6 +1495,7 @@ export default function BrainSignalsPanel({
       setSelectedMemoryLinkId(link.id)
       setSelectedBrainMapNodeId(`brain-map-link-${link.id}`)
       setActiveBrainView('links')
+      await refreshClustersAfterLinkMutation()
     } catch {
       setError('Brain memory link failed')
     } finally {

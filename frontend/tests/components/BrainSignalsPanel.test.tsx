@@ -2664,6 +2664,25 @@ describe('BrainSignalsPanel', () => {
     expect(onOpenInvestigation).toHaveBeenCalledWith('inv-older')
   })
 
+  it('refreshes clusters after promoting so the link card shows its cluster chip', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [cluster], promoteLink: link })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /active signals view/i)
+
+    const card = await screen.findByTestId('brain-signal-card')
+    await user.click(within(card).getByRole('button', { name: /promote signal for older substation case/i }))
+
+    // Promote switches to the links view; the promoted link must immediately
+    // carry its cluster chip - no waiting for a background refresh.
+    const linkedMemory = await screen.findByTestId('brain-link-card')
+    expect(linkedMemory).toHaveTextContent('Cluster: Acme Grid')
+
+    const clusterCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/clusters?'))
+    expect(clusterCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
   it('forgets a linked memory from the detail view', async () => {
     const user = userEvent.setup()
     const detailedLink = makeLink({
