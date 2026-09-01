@@ -7373,6 +7373,15 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-panel-pulse .forensic-brain-panel-header {
+  align-items: flex-end;
+}
+
+.forensic-brain-panel-pulse .forensic-brain-cluster-summary {
+  align-self: flex-end;
+  padding-bottom: 0.05rem;
+}
+
 .forensic-brain-panel-autonomy {
   border-radius: 0.58rem;
   border-color: rgba(129, 227, 255, 0.24);
