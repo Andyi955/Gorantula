@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -4326,6 +4327,15 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		writeAPIResult(w, brainMap, err)
 		return
 	}
+	if path == "api/brain/gateways" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		gateways, err := service.ListGateways()
+		writeAPIResult(w, gateways, err)
+		return
+	}
 	if path == "api/brain/clusters" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -4373,6 +4383,16 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 	}
 
 	parts := strings.Split(path, "/")
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "gateways" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		detail, err := service.GatewayDetail(parts[3], r.URL.Query().Get("value"), limit)
+		writeAPIResult(w, detail, err)
+		return
+	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "brain" && parts[2] == "autonomy" && parts[3] == "settings" {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

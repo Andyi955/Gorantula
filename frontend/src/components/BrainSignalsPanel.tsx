@@ -42,6 +42,8 @@ import {
   fetchBrainAutonomy,
   fetchBrainClusters,
   fetchBrainFollowUps,
+  fetchBrainGatewayDetail,
+  fetchBrainGateways,
   fetchBrainLinks,
   fetchBrainMap,
   fetchBrainSuggestions,
@@ -63,6 +65,8 @@ import {
   type BrainAutonomySettings,
   type BrainAutonomyState,
   type BrainFollowUpAction,
+  type BrainGatewayDetail,
+  type BrainGatewayUsage,
   type BrainMemoryStrength,
   type BrainSuggestion,
   type BrainSignal,
@@ -141,8 +145,9 @@ const clampBrainMapValue = (value: number, min: number, max: number) => Math.min
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
+const GATEWAY_ROUTE_LIMIT = 25
 
-type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'autonomy'
+type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
 
 type BrainCompareSelection =
   | { kind: 'signal'; id: string }
@@ -491,6 +496,10 @@ export default function BrainSignalsPanel({
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
+  const [gatewayUsages, setGatewayUsages] = useState<BrainGatewayUsage[]>([])
+  const [gatewayDetail, setGatewayDetail] = useState<BrainGatewayDetail | null>(null)
+  const [gatewayDetailLoading, setGatewayDetailLoading] = useState(false)
+  const [gatewayValueFilter, setGatewayValueFilter] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
@@ -546,11 +555,33 @@ export default function BrainSignalsPanel({
     setBrainMemoryFollowupRunId((current) => current + 1)
   }, [])
 
+  const openGatewayDetail = useCallback(async (code: string, options?: { value?: string; showAll?: boolean }) => {
+    const value = options?.value
+    setGatewayValueFilter(value === undefined ? null : value)
+    const limit = options?.showAll ? gatewayDetail?.totalRoutes ?? 0 : GATEWAY_ROUTE_LIMIT
+    setGatewayDetailLoading(true)
+    try {
+      const detail = await fetchBrainGatewayDetail(code, {
+        investigationId: currentInvestigationId ?? undefined,
+        value,
+        limit,
+      })
+      setGatewayDetail(detail)
+    } catch {
+      setGatewayDetail(null)
+    } finally {
+      setGatewayDetailLoading(false)
+    }
+  }, [currentInvestigationId, gatewayDetail])
+
   const loadBrainMemory = useCallback(async (isManualRefresh = false, isBackgroundRefresh = false) => {
     if (!currentInvestigationId) {
       setSignals([])
       setLinks([])
       setClusters([])
+      setGatewayUsages([])
+      setGatewayDetail(null)
+      setGatewayValueFilter(null)
       setSuggestions([])
       setFollowUps([])
       setBrainMapView(null)
@@ -594,6 +625,13 @@ export default function BrainSignalsPanel({
         nextBrainMap = null
       }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
+      let nextGateways: BrainGatewayUsage[] = []
+      try {
+        nextGateways = await fetchBrainGateways(currentInvestigationId)
+      } catch {
+        // The gateway registry is auxiliary; never fail the whole load for it.
+        nextGateways = []
+      }
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
       const nextFollowUps = await fetchBrainFollowUps(currentInvestigationId)
       let nextAutonomyState: BrainAutonomyState | null = null
@@ -618,6 +656,7 @@ export default function BrainSignalsPanel({
       onSignalsLoadedRef.current?.(currentInvestigationId ?? '', visibleSignals)
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
+      setGatewayUsages(nextGateways)
       setSuggestions(sortSuggestionsForView(nextSuggestions))
       setFollowUps(nextFollowUps)
       setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
@@ -1967,6 +2006,141 @@ export default function BrainSignalsPanel({
       </section>
     )
   }
+
+  const renderGatewaysView = () => (
+    <div className="forensic-brain-view forensic-brain-view-gateways" data-testid="brain-gateways-view">
+      <section className="forensic-brain-panel forensic-brain-panel-gateways">
+        <div className="forensic-brain-panel-header">
+          <div>
+            <span className="forensic-brain-panel-kicker">Addressable matchers</span>
+            <h3>Gateway Registry</h3>
+          </div>
+          <div className="forensic-brain-cluster-summary">
+            <span>{gatewayUsages.length} defined</span>
+          </div>
+        </div>
+        <div className="forensic-brain-gateway-list">
+          {gatewayUsages.length === 0 ? (
+            <div className="forensic-brain-empty">No gateways registered yet.</div>
+          ) : (
+            gatewayUsages.map((usage) => (
+              <article
+                key={usage.definition.code}
+                data-testid="brain-gateway-card"
+                data-gateway-code={usage.definition.code}
+                className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
+              >
+                <span className={`forensic-brain-card-label ${gatewayClassNames[usage.definition.code] || ''}`}>
+                  {usage.definition.code}
+                </span>
+                <h4>{usage.definition.name}</h4>
+                <p>{usage.definition.description}</p>
+                <div className="forensic-brain-gateway-stats" aria-label={`Usage for ${usage.definition.name}`}>
+                  <span>{usage.firingCount} firings</span>
+                  <span>{usage.activeCount} active</span>
+                  <span>{usage.investigationCount} investigations</span>
+                  {usage.topSignalTitle && <span>top: {usage.topSignalTitle}</span>}
+                </div>
+                <button
+                  type="button"
+                  aria-label={`View routes for ${usage.definition.name}`}
+                  onClick={() => {
+                    void openGatewayDetail(usage.definition.code)
+                  }}
+                  disabled={gatewayDetailLoading}
+                >
+                  {gatewayDetailLoading && gatewayDetail?.definition.code === usage.definition.code
+                    ? 'Reading routes...'
+                    : 'View routes'}
+                </button>
+              </article>
+            ))
+          )}
+          {gatewayDetail && (
+            <section data-testid="brain-gateway-detail" aria-label={`Routes for ${gatewayDetail.definition.name}`}>
+              <h4>
+                {gatewayDetail.definition.name} route trail
+                {gatewayDetail.routes.length < gatewayDetail.totalRoutes
+                  ? ` (showing ${gatewayDetail.routes.length} of ${gatewayDetail.totalRoutes})`
+                  : ` (${gatewayDetail.totalRoutes})`}
+              </h4>
+              <div className="forensic-brain-gateway-values" aria-label="Matched values">
+                <button
+                  type="button"
+                  className={`forensic-brain-gateway-chip${gatewayValueFilter ? '' : ' is-active'}`}
+                  onClick={() => {
+                    void openGatewayDetail(gatewayDetail.definition.code, { value: '' })
+                  }}
+                >
+                  All ({gatewayDetail.totalRoutes})
+                </button>
+                {gatewayDetail.values.map((entry) => (
+                  <button
+                    key={entry.value}
+                    type="button"
+                    className={`forensic-brain-gateway-chip${gatewayValueFilter === entry.value ? ' is-active' : ''}`}
+                    onClick={() => {
+                      void openGatewayDetail(gatewayDetail.definition.code, { value: entry.value })
+                    }}
+                  >
+                    {entry.label || entry.value} ({entry.count})
+                  </button>
+                ))}
+              </div>
+              {gatewayDetail.routes.length < gatewayDetail.totalRoutes && (
+                <button
+                  type="button"
+                  className="forensic-brain-gateway-show-all"
+                  onClick={() => {
+                    void openGatewayDetail(gatewayDetail.definition.code, {
+                      value: gatewayValueFilter ?? undefined,
+                      showAll: true,
+                    })
+                  }}
+                >
+                  Show all {gatewayDetail.totalRoutes} routes
+                </button>
+              )}
+              {gatewayDetail.routes.length === 0 ? (
+                <div className="forensic-brain-empty">No firings recorded through this gateway yet.</div>
+              ) : (
+                gatewayDetail.routes.map((route) => {
+                  const scoreTier = getScoreTier(route.score)
+                  return (
+                    <article
+                      key={`${route.signalId}:${route.value}:${route.targetInvestigationId}`}
+                      data-testid="brain-gateway-route"
+                      className="forensic-brain-gateway-route"
+                    >
+                      <div className="forensic-brain-gateway-route-top">
+                        <strong>{route.targetTitle}</strong>
+                        <strong className={`forensic-brain-score-${scoreTier.toLocaleLowerCase()}`}>
+                          {formatScore(route.score)}
+                        </strong>
+                      </div>
+                      <div className="forensic-brain-gateway-route-meta">
+                        <span className={`forensic-brain-chip ${gatewayClassNames[gatewayDetail.definition.code] || ''}`}>
+                          {route.label || route.value}
+                        </span>
+                        {route.relevance && (
+                          <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${normalizeRelevance(route.relevance)}`}>
+                            {formatRelevance({ relevance: route.relevance })}
+                          </span>
+                        )}
+                        <span>{formatActivationCount(route.activationCount)}</span>
+                        {route.lastFiredAt && <span>fired {formatTimestamp(route.lastFiredAt)}</span>}
+                      </div>
+                      <p>{route.detail}</p>
+                    </article>
+                  )
+                })
+              )}
+            </section>
+          )}
+        </div>
+      </section>
+    </div>
+  )
 
   const isNewBrainSignal = (candidate: BrainSignal) => {
     const knownScore = seenSnapshotRef.current[candidate.id]
@@ -4014,6 +4188,7 @@ export default function BrainSignalsPanel({
     { view: 'signals', label: 'Active Signals', detail: `${allSignalGroups.length} firing` },
     { view: 'links', label: 'Memory Links', detail: `${allLinkGroups.length} saved` },
     { view: 'clusters', label: 'Memory Clusters', detail: `${visibleClusters.length} visible` },
+    { view: 'gateways', label: 'Gateway Registry', detail: `${gatewayUsages.length} defined` },
   ]
 
   return (
@@ -4098,6 +4273,7 @@ export default function BrainSignalsPanel({
         {activeBrainView === 'autonomy' && renderAutonomyView()}
         {activeBrainView === 'links' && renderLinksView()}
         {activeBrainView === 'clusters' && renderClustersView()}
+        {activeBrainView === 'gateways' && renderGatewaysView()}
       </div>
 
       {activeBrainView === 'links' && selectedMemoryLinkGroup && renderMemoryLinkDetail(selectedMemoryLinkGroup)}
