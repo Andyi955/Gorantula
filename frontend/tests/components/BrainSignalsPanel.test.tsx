@@ -2972,6 +2972,103 @@ describe('BrainSignalsPanel', () => {
     expect(within(layout).getAllByTestId('brain-suggestion-card').length).toBeGreaterThan(0)
   })
 
+  it('surfaces the autonomy strip on the pulse feed and jumps to the queue', async () => {
+    window.localStorage.clear()
+    saveBrainLabEnabled(false)
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [], clusters: [], autonomy: makeAutonomyState() })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const strip = await screen.findByTestId('brain-autonomy-strip')
+    expect(strip).toHaveTextContent('Auto-prepare Off')
+    expect(strip).toHaveTextContent('nothing queued')
+    expect(within(strip).getByRole('switch', { name: /auto-prepare rabbit holes/i })).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(within(strip).getByRole('button', { name: /open autonomy queue/i }))
+
+    // The strip expands the Lab and lands on the autonomy queue.
+    expect(await screen.findByTestId('brain-autonomy-view')).toBeInTheDocument()
+    expect(loadBrainLabEnabled()).toBe(true)
+  })
+
+  it('flags blocked and awaiting-approval autonomy work on the pulse strip', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({
+      signals: [signal],
+      links: [],
+      clusters: [],
+      autonomy: makeAutonomyState({
+        queue: [
+          {
+            id: 'brain-autonomy-strip-approval',
+            investigationId: 'inv-current',
+            suggestionId: suggestion.id,
+            decision: 'prepared',
+            status: 'prepared',
+            mode: 'prepare-only',
+            title: 'Review active memory cluster',
+            summary: 'Acme Grid has an active memory cluster worth checking.',
+            score: 0.86,
+            relevance: 'strong-memory',
+            reason: 'Autonomy prepared one focused follow-up.',
+            blockers: [],
+            approvalRequired: true,
+            targetInvestigationIds: ['inv-older'],
+            createdAt: '2026-06-05T12:05:00Z',
+            updatedAt: '2026-06-05T12:05:00Z',
+          },
+          {
+            id: 'brain-autonomy-strip-blocked',
+            investigationId: 'inv-current',
+            suggestionId: 'brain-suggestion-gap',
+            decision: 'blocked',
+            status: 'blocked',
+            mode: 'prepare-only',
+            title: 'Compare durable memory link',
+            summary: 'A candidate follow-up is waiting on gap review.',
+            score: 0.9,
+            relevance: 'strong-memory',
+            reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
+            blockers: ['unresolved-gap'],
+            targetInvestigationIds: ['inv-older'],
+            createdAt: '2026-06-05T12:06:00Z',
+            updatedAt: '2026-06-05T12:06:00Z',
+          },
+        ],
+      }),
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const strip = await screen.findByTestId('brain-autonomy-strip')
+    expect(strip).toHaveClass('is-attention')
+    expect(strip).toHaveTextContent('2 queued')
+    expect(strip).toHaveTextContent('1 blocked')
+    expect(strip).toHaveTextContent('1 awaiting approval')
+  })
+
+  it('toggles auto-prepare from the pulse autonomy strip', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ autonomy: makeAutonomyState() })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    const strip = await screen.findByTestId('brain-autonomy-strip')
+    await user.click(within(strip).getByRole('switch', { name: /auto-prepare rabbit holes/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/autonomy/settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"mode":"prepare-only"'),
+      }),
+    )
+    await waitFor(() => {
+      expect(strip).toHaveTextContent('Auto-prepare On')
+    })
+  })
+
   it('lists the gateway registry and drills into a route trail', async () => {
     const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
     const user = userEvent.setup()

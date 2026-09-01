@@ -8468,6 +8468,84 @@ body {
   line-height: 1;
 }
 
+/* ── Brain autonomy strip (pulse feed) ───────────────────────────────── */
+
+.forensic-brain-autonomy-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.1rem 0.72rem 0.55rem;
+  border: 1px solid rgba(129, 227, 255, 0.14);
+  border-left: 3px solid rgba(129, 227, 255, 0.45);
+  background:
+    linear-gradient(90deg, rgba(129, 227, 255, 0.06), transparent 55%),
+    rgba(1, 4, 7, 0.8);
+  padding: 0.45rem 0.6rem;
+}
+
+.forensic-brain-autonomy-strip.is-attention {
+  border-left-color: rgba(255, 78, 129, 0.6);
+}
+
+.forensic-brain-autonomy-strip-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(129, 227, 255, 0.05);
+  padding: 0.26rem 0.5rem;
+  color: var(--forensic-text-muted);
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.forensic-brain-autonomy-strip-state:hover {
+  border-color: rgba(129, 227, 255, 0.5);
+  color: #ffffff;
+}
+
+.forensic-brain-autonomy-strip-state.forensic-brain-state-on {
+  border-color: rgba(0, 255, 65, 0.4);
+  color: #7cff91;
+}
+
+.forensic-brain-autonomy-strip-state[aria-disabled='true'] {
+  cursor: default;
+}
+
+.forensic-brain-autonomy-strip-note {
+  color: var(--forensic-text-muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.forensic-brain-autonomy-strip-review {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: auto;
+  border: 1px solid rgba(129, 227, 255, 0.3);
+  background: rgba(129, 227, 255, 0.07);
+  padding: 0.26rem 0.5rem;
+  color: var(--forensic-accent);
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.forensic-brain-autonomy-strip-review:hover {
+  border-color: rgba(129, 227, 255, 0.55);
+  color: #ffffff;
+}
+
 .forensic-brain-pulse-kind-signal {
   border-color: rgba(129, 227, 255, 0.4);
   background: rgba(129, 227, 255, 0.08);

@@ -2394,6 +2394,59 @@ export default function BrainSignalsPanel({
     </div>
   )
 
+  const autonomyApprovalCount = autonomyQueue.filter((item) => item.approvalRequired).length
+
+  // The autonomy strip: guarded autonomy at a glance on the operator's pulse
+  // feed — state, honest counts, and one tap into the queue. This is the last
+  // structural-collapse item: autonomy no longer hides behind the Lab.
+  const openAutonomyQueue = () => {
+    if (!labMode) {
+      setLabMode(true)
+      saveBrainLabEnabled(true)
+    }
+    setActiveBrainView('autonomy')
+  }
+
+  const renderAutonomyStrip = () => (
+    <div
+      data-testid="brain-autonomy-strip"
+      className={`forensic-brain-autonomy-strip${autonomyApprovalCount > 0 || blockedAutonomyCount > 0 ? ' is-attention' : ''}`}
+      aria-label="Brain autonomy status"
+    >
+      <span className="forensic-brain-panel-kicker">Autonomy</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={autonomyAutoPrepareEnabled}
+        aria-disabled={busyAction === 'autonomy-toggle'}
+        aria-label="Auto-prepare Rabbit Holes"
+        className={`forensic-brain-autonomy-strip-state ${autonomyStateClass}`}
+        onClick={() => void handleToggleAutonomyAutoPrepare()}
+      >
+        <ShieldCheck size={12} />
+        Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}
+      </button>
+      {autonomyQueue.length === 0 ? (
+        <span className="forensic-brain-autonomy-strip-note">Idle — nothing queued</span>
+      ) : (
+        <span className="forensic-brain-autonomy-strip-note">
+          {autonomyQueue.length} queued
+          {blockedAutonomyCount > 0 && ` · ${blockedAutonomyCount} blocked`}
+          {autonomyApprovalCount > 0 && ` · ${autonomyApprovalCount} awaiting approval`}
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label="Open autonomy queue"
+        className="forensic-brain-autonomy-strip-review"
+        onClick={openAutonomyQueue}
+      >
+        Review queue
+        <ArrowRight size={12} />
+      </button>
+    </div>
+  )
+
   const renderPulseView = () => {
     const healthScore = attentionSummary?.overallScore ?? featuredPulseEntry?.score ?? 0
     const dismissedCount = signals.filter((signal) => signal.dismissed).length
@@ -2411,6 +2464,8 @@ export default function BrainSignalsPanel({
               <span>{activeSuggestions.length} moves</span>
             </div>
           </div>
+
+          {currentInvestigationId && renderAutonomyStrip()}
 
           {!currentInvestigationId ? (
             <div data-testid="brain-pulse-empty-state" className="forensic-brain-empty">
