@@ -695,10 +695,21 @@ export interface BrainGatewayRoute {
   targetNodeIds: string[]
 }
 
+export interface BrainGatewayValueRollup {
+  value: string
+  label: string
+  count: number
+  topScore: number
+  topTitle?: string
+  lastFiredAt?: string
+}
+
 export interface BrainGatewayDetail {
   definition: BrainGatewayDefinition
+  values: BrainGatewayValueRollup[]
   routes: BrainGatewayRoute[]
   totalRoutes: number
+  limit: number
   firingCount: number
   activeCount: number
 }
@@ -712,7 +723,7 @@ export const fetchBrainGateways = async (investigationId: string): Promise<Brain
 
 export const fetchBrainGatewayDetail = async (
   code: string,
-  options?: { investigationId?: string; value?: string },
+  options?: { investigationId?: string; value?: string; limit?: number },
 ): Promise<BrainGatewayDetail | null> => {
   const params = new URLSearchParams()
   if (options?.investigationId) {
@@ -720,6 +731,9 @@ export const fetchBrainGatewayDetail = async (
   }
   if (options?.value) {
     params.set('value', options.value)
+  }
+  if (options?.limit && options.limit > 0) {
+    params.set('limit', String(options.limit))
   }
   const query = params.toString()
   const detail = await requestJSON<unknown>(
@@ -734,8 +748,10 @@ export const fetchBrainGatewayDetail = async (
   }
   return {
     definition: candidate.definition as BrainGatewayDefinition,
+    values: asArray<BrainGatewayValueRollup>(candidate.values),
     routes: asArray<BrainGatewayRoute>(candidate.routes),
     totalRoutes: typeof candidate.totalRoutes === 'number' ? candidate.totalRoutes : 0,
+    limit: typeof candidate.limit === 'number' ? candidate.limit : 0,
     firingCount: typeof candidate.firingCount === 'number' ? candidate.firingCount : 0,
     activeCount: typeof candidate.activeCount === 'number' ? candidate.activeCount : 0,
   }

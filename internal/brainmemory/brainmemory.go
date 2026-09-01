@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -4387,7 +4388,8 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		detail, err := service.GatewayDetail(parts[3], r.URL.Query().Get("value"))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		detail, err := service.GatewayDetail(parts[3], r.URL.Query().Get("value"), limit)
 		writeAPIResult(w, detail, err)
 		return
 	}

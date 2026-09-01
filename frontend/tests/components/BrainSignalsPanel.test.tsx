@@ -562,7 +562,12 @@ const installBrainFetch = ({
         targetNodeIds: ['node-older'],
       },
     ],
-    totalRoutes: 1,
+    values: [
+      { value: 'ORG|acme grid', label: 'Acme Grid', count: 1, topScore: 0.92, topTitle: 'Older Substation Case' },
+      { value: 'DATE|2026-05-20', label: '2026-05-20', count: 1, topScore: 0.92, topTitle: 'Older Substation Case' },
+    ],
+    totalRoutes: 40,
+    limit: 25,
     firingCount: 1,
     activeCount: 1,
   },
@@ -2810,7 +2815,7 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('lists the gateway registry and drills into a route trail', async () => {
-    installBrainFetch({ signals: [signal], links: [], clusters: [] })
+    const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
     const user = userEvent.setup()
 
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
@@ -2828,6 +2833,27 @@ describe('BrainSignalsPanel', () => {
     const detail = await screen.findByTestId('brain-gateway-detail')
     expect(detail).toHaveTextContent('Older Substation Case')
     expect(within(detail).getByTestId('brain-gateway-route')).toHaveTextContent('Acme Grid')
+    expect(detail).toHaveTextContent(/showing 1 of 40/i)
+
+    // Value chips drill into one matched value and stay inside the cap.
+    await user.click(within(detail).getByRole('button', { name: /acme grid \(1\)/i }))
+    const detailCallUrls = () =>
+      fetchMock.mock.calls
+        .filter(([input]) => String(input).includes('/api/brain/gateways/entity-date?'))
+        .map(([input]) => String(input))
+    await waitFor(() => {
+      expect(
+        detailCallUrls().some((url) => url.includes('value=ORG%7Cacme+grid&limit=25')),
+      ).toBe(true)
+    })
+
+    // Show all lifts the cap explicitly and keeps the active value filter.
+    await user.click(within(detail).getByRole('button', { name: /show all 40 routes/i }))
+    await waitFor(() => {
+      expect(
+        detailCallUrls().some((url) => url.includes('value=ORG%7Cacme+grid&limit=40')),
+      ).toBe(true)
+    })
   })
 
   it('releases the loading state when a full load is superseded by a background refresh', async () => {

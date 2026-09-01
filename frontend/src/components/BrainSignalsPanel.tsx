@@ -145,6 +145,7 @@ const clampBrainMapValue = (value: number, min: number, max: number) => Math.min
 const BOARD_MEMORY_REFRESH_DEBOUNCE_MS = 350
 const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
+const GATEWAY_ROUTE_LIMIT = 25
 
 type BrainView = 'focus' | 'map' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
 
@@ -498,6 +499,7 @@ export default function BrainSignalsPanel({
   const [gatewayUsages, setGatewayUsages] = useState<BrainGatewayUsage[]>([])
   const [gatewayDetail, setGatewayDetail] = useState<BrainGatewayDetail | null>(null)
   const [gatewayDetailLoading, setGatewayDetailLoading] = useState(false)
+  const [gatewayValueFilter, setGatewayValueFilter] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
   const [brainMapView, setBrainMapView] = useState<BrainMapView | null>(null)
@@ -553,17 +555,24 @@ export default function BrainSignalsPanel({
     setBrainMemoryFollowupRunId((current) => current + 1)
   }, [])
 
-  const openGatewayDetail = useCallback(async (code: string) => {
+  const openGatewayDetail = useCallback(async (code: string, options?: { value?: string; showAll?: boolean }) => {
+    const value = options?.value
+    setGatewayValueFilter(value === undefined ? null : value)
+    const limit = options?.showAll ? gatewayDetail?.totalRoutes ?? 0 : GATEWAY_ROUTE_LIMIT
     setGatewayDetailLoading(true)
     try {
-      const detail = await fetchBrainGatewayDetail(code, { investigationId: currentInvestigationId ?? undefined })
+      const detail = await fetchBrainGatewayDetail(code, {
+        investigationId: currentInvestigationId ?? undefined,
+        value,
+        limit,
+      })
       setGatewayDetail(detail)
     } catch {
       setGatewayDetail(null)
     } finally {
       setGatewayDetailLoading(false)
     }
-  }, [currentInvestigationId])
+  }, [currentInvestigationId, gatewayDetail])
 
   const loadBrainMemory = useCallback(async (isManualRefresh = false, isBackgroundRefresh = false) => {
     if (!currentInvestigationId) {
@@ -572,6 +581,7 @@ export default function BrainSignalsPanel({
       setClusters([])
       setGatewayUsages([])
       setGatewayDetail(null)
+      setGatewayValueFilter(null)
       setSuggestions([])
       setFollowUps([])
       setBrainMapView(null)
@@ -2047,8 +2057,48 @@ export default function BrainSignalsPanel({
           {gatewayDetail && (
             <section data-testid="brain-gateway-detail" aria-label={`Routes for ${gatewayDetail.definition.name}`}>
               <h4>
-                {gatewayDetail.definition.name} route trail ({gatewayDetail.totalRoutes})
+                {gatewayDetail.definition.name} route trail
+                {gatewayDetail.routes.length < gatewayDetail.totalRoutes
+                  ? ` (showing ${gatewayDetail.routes.length} of ${gatewayDetail.totalRoutes})`
+                  : ` (${gatewayDetail.totalRoutes})`}
               </h4>
+              <div className="forensic-brain-gateway-values" aria-label="Matched values">
+                <button
+                  type="button"
+                  className={`forensic-brain-gateway-chip${gatewayValueFilter ? '' : ' is-active'}`}
+                  onClick={() => {
+                    void openGatewayDetail(gatewayDetail.definition.code, { value: '' })
+                  }}
+                >
+                  All ({gatewayDetail.totalRoutes})
+                </button>
+                {gatewayDetail.values.map((entry) => (
+                  <button
+                    key={entry.value}
+                    type="button"
+                    className={`forensic-brain-gateway-chip${gatewayValueFilter === entry.value ? ' is-active' : ''}`}
+                    onClick={() => {
+                      void openGatewayDetail(gatewayDetail.definition.code, { value: entry.value })
+                    }}
+                  >
+                    {entry.label || entry.value} ({entry.count})
+                  </button>
+                ))}
+              </div>
+              {gatewayDetail.routes.length < gatewayDetail.totalRoutes && (
+                <button
+                  type="button"
+                  className="forensic-brain-gateway-show-all"
+                  onClick={() => {
+                    void openGatewayDetail(gatewayDetail.definition.code, {
+                      value: gatewayValueFilter ?? undefined,
+                      showAll: true,
+                    })
+                  }}
+                >
+                  Show all {gatewayDetail.totalRoutes} routes
+                </button>
+              )}
               {gatewayDetail.routes.length === 0 ? (
                 <div className="forensic-brain-empty">No firings recorded through this gateway yet.</div>
               ) : (

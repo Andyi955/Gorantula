@@ -7916,6 +7916,43 @@ body {
   text-transform: uppercase;
 }
 
+.forensic-brain-gateway-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.forensic-brain-gateway-chip {
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(129, 227, 255, 0.06);
+  padding: 0.22rem 0.45rem;
+  color: var(--forensic-accent);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.forensic-brain-gateway-chip.is-active {
+  border-color: rgba(255, 122, 24, 0.55);
+  background: rgba(255, 122, 24, 0.12);
+  color: #ffb066;
+}
+
+.forensic-brain-gateway-show-all {
+  width: fit-content;
+  border: 1px solid rgba(129, 227, 255, 0.35);
+  background: rgba(129, 227, 255, 0.08);
+  padding: 0.3rem 0.55rem;
+  color: var(--forensic-accent);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
 .forensic-brain-gateway-detail h4 {
   margin: 0.8rem 0 0.4rem;
   font-size: 0.72rem;

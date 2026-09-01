@@ -65,13 +65,30 @@ type GatewayRoute struct {
 	TargetNodeIDs         []string `json:"targetNodeIds"`
 }
 
-type GatewayDetail struct {
-	Definition  GatewayDefinition `json:"definition"`
-	Routes      []GatewayRoute    `json:"routes"`
-	TotalRoutes int               `json:"totalRoutes"`
-	FiringCount int               `json:"firingCount"`
-	ActiveCount int               `json:"activeCount"`
+// GatewayValueRollup groups the routes of one gateway by the matched value:
+// the natural first-level navigation when a gateway has hundreds of firings.
+type GatewayValueRollup struct {
+	Value      string  `json:"value"`
+	Label      string  `json:"label"`
+	Count      int     `json:"count"`
+	TopScore   float64 `json:"topScore"`
+	TopTitle   string  `json:"topTitle,omitempty"`
+	LastFiredAt string `json:"lastFiredAt,omitempty"`
 }
+
+type GatewayDetail struct {
+	Definition  GatewayDefinition    `json:"definition"`
+	Values      []GatewayValueRollup `json:"values"`
+	Routes      []GatewayRoute       `json:"routes"`
+	TotalRoutes int                  `json:"totalRoutes"`
+	Limit       int                  `json:"limit"`
+	FiringCount int                  `json:"firingCount"`
+	ActiveCount int                  `json:"activeCount"`
+}
+
+// gatewayValueRollupLimit bounds the value chip bar so a gateway with thousands
+// of distinct matched values cannot flood the response or the UI.
+const gatewayValueRollupLimit = 50
 
 func builtinGatewayDefinitions(now string) []GatewayDefinition {
 	return []GatewayDefinition{
@@ -237,7 +254,9 @@ func (s *Service) ListGateways() ([]GatewayUsage, error) {
 // GatewayDetail resolves one gateway by code and lists its concrete routes:
 // every persisted firing that went through it, optionally narrowed to a single
 // matched value. This is the "new investigation can go look a gateway up" query.
-func (s *Service) GatewayDetail(code string, value string) (GatewayDetail, error) {
+// Routes are capped to limit (0 = unlimited) and accompanied by a per-value
+// rollup so large gateways can be navigated without dumping every firing.
+func (s *Service) GatewayDetail(code string, value string, limit int) (GatewayDetail, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return GatewayDetail{}, ErrGatewayNotFound
@@ -258,8 +277,9 @@ func (s *Service) GatewayDetail(code string, value string) (GatewayDetail, error
 		return GatewayDetail{}, err
 	}
 
-	detail := GatewayDetail{Definition: definition}
+	detail := GatewayDetail{Definition: definition, Limit: limit}
 	value = strings.TrimSpace(value)
+	allRoutes := make([]GatewayRoute, 0)
 	for _, signal := range signals {
 		if !signal.HasGateway(code) {
 			continue
@@ -275,7 +295,7 @@ func (s *Service) GatewayDetail(code string, value string) (GatewayDetail, error
 			if value != "" && reason.Value != value && reason.Label != value {
 				continue
 			}
-			detail.Routes = append(detail.Routes, GatewayRoute{
+			allRoutes = append(allRoutes, GatewayRoute{
 				SignalID:              signal.ID,
 				InvestigationID:       signal.InvestigationID,
 				InvestigationTitle:    signal.InvestigationTitle,
@@ -293,12 +313,52 @@ func (s *Service) GatewayDetail(code string, value string) (GatewayDetail, error
 			})
 		}
 	}
-	detail.TotalRoutes = len(detail.Routes)
-	sort.SliceStable(detail.Routes, func(i, j int) bool {
-		if detail.Routes[i].Score == detail.Routes[j].Score {
-			return detail.Routes[i].LastFiredAt > detail.Routes[j].LastFiredAt
+
+	// Roll the full set up by matched value: the first-level navigation for a
+	// gateway with hundreds of firings.
+	rollup := map[string]*GatewayValueRollup{}
+	for _, route := range allRoutes {
+		entry, ok := rollup[route.Value]
+		if !ok {
+			entry = &GatewayValueRollup{Value: route.Value, Label: route.Label}
+			rollup[route.Value] = entry
 		}
-		return detail.Routes[i].Score > detail.Routes[j].Score
+		entry.Count++
+		if route.Score > entry.TopScore {
+			entry.TopScore = route.Score
+			entry.TopTitle = route.TargetTitle
+		}
+		if route.LastFiredAt > entry.LastFiredAt {
+			entry.LastFiredAt = route.LastFiredAt
+		}
+	}
+	for _, entry := range rollup {
+		detail.Values = append(detail.Values, *entry)
+	}
+	sort.SliceStable(detail.Values, func(i, j int) bool {
+		if detail.Values[i].Count == detail.Values[j].Count {
+			if detail.Values[i].TopScore == detail.Values[j].TopScore {
+				return detail.Values[i].Value < detail.Values[j].Value
+			}
+			return detail.Values[i].TopScore > detail.Values[j].TopScore
+		}
+		return detail.Values[i].Count > detail.Values[j].Count
 	})
+	if len(detail.Values) > gatewayValueRollupLimit {
+		detail.Values = detail.Values[:gatewayValueRollupLimit]
+	}
+
+	detail.TotalRoutes = len(allRoutes)
+	sort.SliceStable(allRoutes, func(i, j int) bool {
+		if allRoutes[i].Score == allRoutes[j].Score {
+			return allRoutes[i].LastFiredAt > allRoutes[j].LastFiredAt
+		}
+		return allRoutes[i].Score > allRoutes[j].Score
+	})
+	if limit > 0 && len(allRoutes) > limit {
+		detail.Routes = allRoutes[:limit]
+	} else {
+		detail.Routes = allRoutes
+	}
 	return detail, nil
 }

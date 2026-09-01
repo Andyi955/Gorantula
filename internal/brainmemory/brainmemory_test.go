@@ -2842,7 +2842,7 @@ func TestGatewayDetailRoutesFirings(t *testing.T) {
 		t.Fatalf("GenerateSignals failed: %v", err)
 	}
 
-	detail, err := service.GatewayDetail(GatewayEntityDate, "")
+	detail, err := service.GatewayDetail(GatewayEntityDate, "", 0)
 	if err != nil {
 		t.Fatalf("GatewayDetail failed: %v", err)
 	}
@@ -2852,7 +2852,18 @@ func TestGatewayDetailRoutesFirings(t *testing.T) {
 	if len(detail.Routes) == 0 || detail.TotalRoutes != len(detail.Routes) {
 		t.Fatalf("expected routed firings through entity-date, got %#v", detail)
 	}
-	route := detail.Routes[0]
+	if len(detail.Values) == 0 {
+		t.Fatalf("expected value rollup, got %#v", detail.Values)
+	}
+
+	capped, err := service.GatewayDetail(GatewayEntityDate, "", 1)
+	if err != nil {
+		t.Fatalf("capped GatewayDetail failed: %v", err)
+	}
+	if len(capped.Routes) != 1 || capped.TotalRoutes != detail.TotalRoutes || capped.Limit != 1 {
+		t.Fatalf("expected one capped route with full total, got %#v", capped)
+	}
+	route := capped.Routes[0]
 	if route.SignalID == "" || route.TargetTitle != "Older Grid Memory" {
 		t.Fatalf("expected route pointing at Older Grid Memory, got %#v", route)
 	}
@@ -2867,7 +2878,7 @@ func TestGatewayDetailRoutesFirings(t *testing.T) {
 		t.Fatalf("expected an Acme Grid reason route, got %#v", detail.Routes)
 	}
 
-	filtered, err := service.GatewayDetail(GatewayEntityDate, route.Value)
+	filtered, err := service.GatewayDetail(GatewayEntityDate, route.Value, 0)
 	if err != nil {
 		t.Fatalf("filtered GatewayDetail failed: %v", err)
 	}
@@ -2879,8 +2890,11 @@ func TestGatewayDetailRoutesFirings(t *testing.T) {
 			t.Fatalf("expected only %q routes, got %#v", route.Value, candidate)
 		}
 	}
+	if len(filtered.Values) != 1 || filtered.Values[0].Value != route.Value {
+		t.Fatalf("expected single-value rollup, got %#v", filtered.Values)
+	}
 
-	none, err := service.GatewayDetail(GatewayEntityDate, "ORG|nowhere")
+	none, err := service.GatewayDetail(GatewayEntityDate, "ORG|nowhere", 0)
 	if err != nil {
 		t.Fatalf("empty GatewayDetail failed: %v", err)
 	}
@@ -2888,7 +2902,7 @@ func TestGatewayDetailRoutesFirings(t *testing.T) {
 		t.Fatalf("expected definition with zero routes for unknown value, got %#v", none)
 	}
 
-	if _, err := service.GatewayDetail("GW-NOPE", ""); !errors.Is(err, ErrGatewayNotFound) {
+	if _, err := service.GatewayDetail("GW-NOPE", "", 0); !errors.Is(err, ErrGatewayNotFound) {
 		t.Fatalf("expected gateway-not-found error, got %v", err)
 	}
 }
