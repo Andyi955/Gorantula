@@ -321,6 +321,12 @@ const map = {
 test.use({ viewport: { width: 1600, height: 1000 } })
 
 test('capture brain views for design critique', async ({ page }) => {
+  await openSmokeApp(page)
+  await seedBrowserQaData(page)
+
+  // Register the brain fixture routes AFTER openSmokeApp so they take
+  // precedence over the smoke network guard (Playwright consults handlers in
+  // reverse registration order; a guard continue() would skip this fixture).
   await page.route('**/api/brain/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname

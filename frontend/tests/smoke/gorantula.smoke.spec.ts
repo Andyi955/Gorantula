@@ -1256,6 +1256,8 @@ test.describe('Gorantula smoke flows', () => {
 
     await page.getByRole('button', { name: /^brain$/i }).click()
     await expect(page.getByTestId('brain-signals-panel')).toBeVisible()
+    await expect(page.getByRole('button', { name: /pulse view/i })).toHaveAttribute('aria-pressed', 'true')
+    await page.getByRole('button', { name: /focus view/i }).click()
     await expect(page.getByTestId('brain-focus-view')).toContainText('Focused follow-up ready')
     await expect(page.getByTestId('brain-signal-card')).toHaveCount(0)
     await page.getByRole('button', { name: /next moves view/i }).click()
