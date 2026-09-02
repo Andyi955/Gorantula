@@ -4560,7 +4560,7 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
 
     const addManualNode = useCallback(() => {
         const id = `manual-${Date.now()}`;
-        const frame = calculateNodeFrame('', '', true, false);
+        const frame = calculateNodeFrame('', '', false, false);
         setBoardMode('strict-grid');
         const newNode: Node = {
             id,
@@ -4585,10 +4585,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 onRemoveImage: (nodeId: string, imageId: string) => handleRemoveImage(nodeId, imageId),
                 onResizeCommit: handleNodeResizeCommit,
                 onSetEditing: (id: string | null) => handleSetEditing(id),
+                // Start collapsed: after analyze the card must look like every
+                // other analyzed node (the expanded dossier view is the
+                // operator's choice via the expand chevron, not a default).
                 isEditing: true,
                 isDeepDiveSource: false,
                 isRecentlyImported: false,
-                expanded: true,
+                expanded: false,
                 boardMode: 'strict-grid',
             },
         };

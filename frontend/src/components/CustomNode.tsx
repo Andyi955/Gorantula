@@ -967,6 +967,15 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         if (onSaveNode && data.id) {
             onSaveNode(data.id, editTitle, editText, mode);
         }
+        // A save always hands back the compact card: collapse the expanded
+        // dossier view so the saved node reads like every other analyzed
+        // node. Re-expanding is a deliberate click on the chevron.
+        if (isExpanded) {
+            setIsExpanded(false);
+            if (data.onExpand && data.id) {
+                data.onExpand(data.id, false);
+            }
+        }
         if (onSetEditing) onSetEditing(null);
     };
 
