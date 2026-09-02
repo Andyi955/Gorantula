@@ -2949,6 +2949,7 @@ describe('BrainSignalsPanel', () => {
 
     await openBrainView(user, /active signals view/i)
     const card = await screen.findByTestId('brain-signal-card')
+    const mapCallsBeforePromote = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/map?')).length
     await user.click(within(card).getByRole('button', { name: /promote signal for older substation case/i }))
 
     // Promote re-reads the attention summary immediately (not just clusters),
@@ -2959,6 +2960,116 @@ describe('BrainSignalsPanel', () => {
     })
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/attention?')).length)
       .toBeGreaterThanOrEqual(2)
+
+    // The memory map is also re-read so its nodes reflect the new memory.
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/map?')).length)
+        .toBeGreaterThan(mapCallsBeforePromote)
+    })
+  })
+
+  it('a background load started before a promote cannot wipe the promoted link', async () => {
+    const user = userEvent.setup()
+    let promoted = false
+    let gateNextSignalsGet = false
+    let releaseGatedLoad: (() => void) | null = null
+    const gatedLoad = new Promise<void>((resolve) => {
+      releaseGatedLoad = resolve
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (method === 'PUT' && url.includes('/api/brain/signals/brain-signal-alpha/link')) {
+        promoted = true
+        return jsonResponse(link) as Response
+      }
+      if (url.includes('/api/brain/signals?')) {
+        if (gateNextSignalsGet) {
+          // This load began before the promote; freeze its read here so the
+          // promote lands while it is still mid-flight.
+          gateNextSignalsGet = false
+          const staleSignals = promoted ? [] : [signal]
+          await gatedLoad
+          return jsonResponse(staleSignals) as Response
+        }
+        return jsonResponse(promoted ? [] : [signal]) as Response
+      }
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(promoted ? [link] : []) as Response
+      }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/map?')) {
+        return jsonResponse(emptyBackendBrainMap) as Response
+      }
+      if (url.includes('/api/brain/gateways?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/followups?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/autonomy?')) {
+        return jsonResponse(makeAutonomyState()) as Response
+      }
+      if (url.includes('/api/brain/attention?')) {
+        return jsonResponse(attentionSummary) as Response
+      }
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const view = render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={0}
+      />,
+    )
+    await openBrainView(user, /active signals view/i)
+    await screen.findByTestId('brain-signal-card')
+
+    // A background refresh (BRAIN_FIRED echo) starts and hangs mid-flight
+    // with pre-promote reads.
+    gateNextSignalsGet = true
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+    await waitFor(() => {
+      expect(gateNextSignalsGet).toBe(false)
+    })
+
+    // The operator promotes while that load is still pending.
+    await user.click(
+      within(screen.getByTestId('brain-signal-card')).getByRole('button', { name: /promote signal for older substation case/i }),
+    )
+    expect(await screen.findByTestId('brain-link-card')).toHaveTextContent('Older Substation Case')
+
+    // Release the stale load. The promote's reconcile superseded it, so its
+    // pre-promote reads must be discarded instead of wiping the new link.
+    const attentionCallsBeforeRelease = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes('/api/brain/attention?')).length
+    releaseGatedLoad?.()
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/attention?')).length,
+      ).toBeGreaterThan(attentionCallsBeforeRelease)
+    })
+    await act(async () => {})
+
+    // Back on the signals feed: the stale pre-promote read must not
+    // resurrect the promoted signal card.
+    await openBrainView(user, /active signals view/i)
+    expect(screen.queryByTestId('brain-signal-card')).not.toBeInTheDocument()
+    await openBrainView(user, /memory links view/i)
+    expect(screen.getByTestId('brain-link-card')).toHaveTextContent('Older Substation Case')
   })
 
   it('renders backend errors without crashing the tab', async () => {
