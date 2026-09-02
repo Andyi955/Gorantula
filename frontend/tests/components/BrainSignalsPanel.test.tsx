@@ -2891,6 +2891,76 @@ describe('BrainSignalsPanel', () => {
     expect(await screen.findByTestId('brain-link-card')).toHaveTextContent('Older Substation Case')
   })
 
+  it('refreshes the attention summary after a promote so the health strip counts the new memory', async () => {
+    const user = userEvent.setup()
+    let promoted = false
+    const staleAttention = {
+      ...attentionSummary,
+      counts: { ...attentionSummary.counts, linkedMemories: 0 },
+    }
+    const freshAttention = {
+      ...attentionSummary,
+      counts: { ...attentionSummary.counts, linkedMemories: 1 },
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (method === 'PUT' && url.includes('/api/brain/signals/brain-signal-alpha/link')) {
+        promoted = true
+        return jsonResponse(link) as Response
+      }
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse(promoted ? [] : [signal]) as Response
+      }
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(promoted ? [link] : []) as Response
+      }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/attention?')) {
+        return jsonResponse(promoted ? freshAttention : staleAttention) as Response
+      }
+      if (url.includes('/api/brain/map?')) {
+        return jsonResponse(emptyBackendBrainMap) as Response
+      }
+      if (url.includes('/api/brain/gateways?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/followups?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/autonomy?')) {
+        return jsonResponse(makeAutonomyState()) as Response
+      }
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    // Stale attention is served on first load; the strip trusts it and shows 0.
+    await openBrainView(user, /memory view$/i)
+    const health = await screen.findByTestId('brain-health-summary')
+    expect(health).toHaveTextContent('0 memory groups')
+
+    await openBrainView(user, /active signals view/i)
+    const card = await screen.findByTestId('brain-signal-card')
+    await user.click(within(card).getByRole('button', { name: /promote signal for older substation case/i }))
+
+    // Promote re-reads the attention summary immediately (not just clusters),
+    // so the health strip counts the new memory without a background pass.
+    await openBrainView(user, /memory view$/i)
+    await waitFor(() => {
+      expect(screen.getByTestId('brain-health-summary')).toHaveTextContent('1 memory group')
+    })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/attention?')).length)
+      .toBeGreaterThanOrEqual(2)
+  })
+
   it('renders backend errors without crashing the tab', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'missing' }, 500)))
 

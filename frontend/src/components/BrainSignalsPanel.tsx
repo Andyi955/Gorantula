@@ -1499,17 +1499,25 @@ export default function BrainSignalsPanel({
     }
   }
 
-  // Link mutations change cluster relations (memoryLinkIds, link counts).
-  // Re-read clusters right after so chips and counts reflect the mutation
+  // Link mutations change cluster relations (memoryLinkIds, link counts) and
+  // the attention summary (its linkedMemories count drives the health strip).
+  // Re-read both right after so chips and counts reflect the mutation
   // immediately instead of waiting for the next background pass.
   const refreshClustersAfterLinkMutation = useCallback(async () => {
     if (!currentInvestigationId) {
       return
     }
-    try {
-      setClusters(sortClusters(await fetchBrainClusters(currentInvestigationId)))
-    } catch {
-      // Keep the current clusters; the next full load will reconcile.
+    const [nextClusters, nextAttention] = await Promise.allSettled([
+      fetchBrainClusters(currentInvestigationId),
+      fetchBrainAttention(currentInvestigationId),
+    ])
+    // Keep the current data for whichever read failed; the next full load
+    // will reconcile.
+    if (nextClusters.status === 'fulfilled') {
+      setClusters(sortClusters(nextClusters.value))
+    }
+    if (nextAttention.status === 'fulfilled') {
+      setAttentionSummary(nextAttention.value)
     }
   }, [currentInvestigationId])
 
