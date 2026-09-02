@@ -1507,9 +1507,10 @@ export default function BrainSignalsPanel({
   // poll (CI caught this: the follow-up poller's in-flight load landed after
   // a map promote). Bumping the request id here supersedes that in-flight
   // read; a manual load it supersedes can no longer clear its own loading
-  // flags, so release them explicitly. Clusters and the attention summary are
-  // then re-read so chips and the health strip reflect the mutation
-  // immediately instead of waiting for the next background pass.
+  // flags, so release them explicitly. Clusters, the attention summary, and
+  // the memory map are then re-read so chips, the health strip, and the
+  // map's memory nodes reflect the mutation immediately instead of waiting
+  // for the next background pass.
   const reconcileAfterBrainMutation = useCallback(async () => {
     if (!currentInvestigationId) {
       return
@@ -1518,12 +1519,16 @@ export default function BrainSignalsPanel({
     latestRequestIsBackgroundRef.current = true
     setIsLoading(false)
     setIsRefreshing(false)
-    const [nextClusters, nextAttention] = await Promise.allSettled([
+    const [nextMap, nextClusters, nextAttention] = await Promise.allSettled([
+      fetchBrainMap(currentInvestigationId),
       fetchBrainClusters(currentInvestigationId),
       fetchBrainAttention(currentInvestigationId),
     ])
     // Keep the current data for whichever read failed; the next full load
     // will reconcile.
+    if (nextMap.status === 'fulfilled') {
+      setBrainMapView(nextMap.value && Array.isArray(nextMap.value.nodes) ? nextMap.value : null)
+    }
     if (nextClusters.status === 'fulfilled') {
       setClusters(sortClusters(nextClusters.value))
     }

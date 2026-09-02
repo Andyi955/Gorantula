@@ -2949,6 +2949,7 @@ describe('BrainSignalsPanel', () => {
 
     await openBrainView(user, /active signals view/i)
     const card = await screen.findByTestId('brain-signal-card')
+    const mapCallsBeforePromote = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/map?')).length
     await user.click(within(card).getByRole('button', { name: /promote signal for older substation case/i }))
 
     // Promote re-reads the attention summary immediately (not just clusters),
@@ -2959,6 +2960,12 @@ describe('BrainSignalsPanel', () => {
     })
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/attention?')).length)
       .toBeGreaterThanOrEqual(2)
+
+    // The memory map is also re-read so its nodes reflect the new memory.
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/map?')).length)
+        .toBeGreaterThan(mapCallsBeforePromote)
+    })
   })
 
   it('a background load started before a promote cannot wipe the promoted link', async () => {
