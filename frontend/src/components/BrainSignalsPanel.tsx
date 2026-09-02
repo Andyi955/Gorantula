@@ -647,6 +647,26 @@ export default function BrainSignalsPanel({
     }
   }, [currentInvestigationId, gatewayDetail])
 
+  // The route detail renders below the whole registry, so every time the detail
+  // starts targeting a different gateway the operator is scrolled to it.
+  const gatewayDetailRef = useRef<HTMLElement | null>(null)
+  const gatewayDetailScrollCodeRef = useRef<string | null>(null)
+  useEffect(() => {
+    const detailCode = gatewayDetail?.definition.code ?? null
+    if (!detailCode) {
+      gatewayDetailScrollCodeRef.current = null
+      return
+    }
+    if (gatewayDetailScrollCodeRef.current === detailCode) return
+    gatewayDetailScrollCodeRef.current = detailCode
+    const detailNode = gatewayDetailRef.current
+    if (!detailNode) return
+    detailNode.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    })
+  }, [gatewayDetail])
+
   const loadBrainMemory = useCallback(async (isManualRefresh = false, isBackgroundRefresh = false) => {
     if (!currentInvestigationId) {
       setSignals([])
@@ -2251,13 +2271,14 @@ export default function BrainSignalsPanel({
             gatewayUsages.map((usage) => {
               const isSaving = gatewaySaving === usage.definition.code
               const isEditing = gatewayEditing === usage.definition.code
+              const isRouteDetailOpen = gatewayDetail?.definition.code === usage.definition.code
               return (
                 <article
                   key={usage.definition.code}
                   data-testid="brain-gateway-card"
                   data-gateway-code={usage.definition.code}
                   data-gateway-enabled={usage.definition.enabled ? 'true' : 'false'}
-                  className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}`}
+                  className={`forensic-brain-gateway-card${usage.definition.enabled ? '' : ' is-disabled'}${isRouteDetailOpen ? ' is-source' : ''}`}
                 >
                   <span className={`forensic-brain-card-label ${gatewayClassNames[usage.definition.code] || ''}`}>
                     {usage.definition.code}
@@ -2317,15 +2338,34 @@ export default function BrainSignalsPanel({
                   <div className="forensic-brain-gateway-manage" aria-label={`Manage ${usage.definition.name}`}>
                     <button
                       type="button"
-                      aria-label={`View routes for ${usage.definition.name}`}
+                      className={isRouteDetailOpen ? 'is-active' : undefined}
+                      aria-expanded={isRouteDetailOpen}
+                      aria-label={`${isRouteDetailOpen ? 'Hide routes' : 'View routes'} for ${usage.definition.name}`}
                       onClick={() => {
+                        if (isRouteDetailOpen) {
+                          setGatewayDetail(null)
+                          setGatewayValueFilter(null)
+                          return
+                        }
                         void openGatewayDetail(usage.definition.code)
                       }}
                       disabled={gatewayDetailLoading}
                     >
-                      {gatewayDetailLoading && gatewayDetail?.definition.code === usage.definition.code
+                      {gatewayDetailLoading && isRouteDetailOpen
                         ? 'Reading routes...'
-                        : 'View routes'}
+                        : isRouteDetailOpen
+                          ? (
+                              <>
+                                Hide routes
+                                <ChevronUp size={12} />
+                              </>
+                            )
+                          : (
+                              <>
+                                View routes
+                                <ChevronDown size={12} />
+                              </>
+                            )}
                     </button>
                     <button
                       type="button"
@@ -2351,7 +2391,11 @@ export default function BrainSignalsPanel({
             })
           )}
           {gatewayDetail && (
-            <section data-testid="brain-gateway-detail" aria-label={`Routes for ${gatewayDetail.definition.name}`}>
+            <section
+              ref={gatewayDetailRef}
+              data-testid="brain-gateway-detail"
+              aria-label={`Routes for ${gatewayDetail.definition.name}`}
+            >
               <h4>
                 {gatewayDetail.definition.name} route trail
                 {gatewayDetail.routes.length < gatewayDetail.totalRoutes

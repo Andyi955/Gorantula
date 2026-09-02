@@ -8068,7 +8068,26 @@ body {
 }
 
 .forensic-brain-gateway-manage button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   width: auto;
+}
+
+.forensic-brain-gateway-manage button.is-active {
+  border-color: rgba(255, 122, 24, 0.55);
+  background: rgba(255, 122, 24, 0.12);
+  color: #ffb066;
+}
+
+.forensic-brain-gateway-card.is-source {
+  border-color: rgba(255, 122, 24, 0.45);
+  background: rgba(255, 122, 24, 0.05);
+  box-shadow: inset 2px 0 0 rgba(255, 122, 24, 0.55);
+}
+
+.forensic-brain-gateway-detail {
+  scroll-margin-top: 0.9rem;
 }
 
 .forensic-brain-gateway-edit {

@@ -3221,6 +3221,43 @@ describe('BrainSignalsPanel', () => {
     })
   })
 
+  it('toggles the route detail closed and scrolls to it on open', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card')
+    }
+
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+
+    const viewButton = within(card).getByRole('button', { name: /view routes for entity & date/i })
+    expect(viewButton).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(viewButton)
+
+    await screen.findByTestId('brain-gateway-detail')
+    const hideButton = within(card).getByRole('button', { name: /hide routes for entity & date/i })
+    expect(hideButton).toHaveAttribute('aria-expanded', 'true')
+    expect(card).toHaveClass('is-source')
+    await waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalled()
+    })
+
+    // Clicking the same card's button again collapses the detail.
+    await user.click(hideButton)
+    await waitFor(() => {
+      expect(screen.queryByTestId('brain-gateway-detail')).not.toBeInTheDocument()
+    })
+    expect(within(card).getByRole('button', { name: /view routes for entity & date/i })).toHaveAttribute('aria-expanded', 'false')
+    expect(card).not.toHaveClass('is-source')
+  })
+
   it('disables and enables a gateway from the registry', async () => {
     const user = userEvent.setup()
     const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
