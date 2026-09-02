@@ -732,6 +732,23 @@ const installBrainFetch = ({
       const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
       return Promise.resolve(jsonResponse({ ...target, status: 'reviewed', reviewedAt: '2026-06-06T10:00:00Z' }) as Response)
     }
+    if (method === 'PUT' && url.includes('/api/brain/suggestions/') && url.endsWith('/source-evidence')) {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { sourceUrl?: string; note?: string } : {}
+      const target = suggestions.find((candidate) => url.includes(candidate.id)) || suggestion
+      return Promise.resolve(jsonResponse({
+        ...target,
+        status: 'reviewed',
+        reviewOutcome: 'resolved',
+        reviewSource: 'source-evidence',
+        resolvedAt: '2026-06-06T10:00:00Z',
+        sourceEvidence: [{
+          id: 'brain-source-evidence-1',
+          sourceUrl: body.sourceUrl || '',
+          note: body.note || '',
+          evidenceId: 'web-source',
+        }],
+      }) as Response)
+    }
     if (method === 'PUT' && url.endsWith('/api/brain/followups/prepare')) {
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { sourceId?: string } : {}
       const target = followUps.find((candidate) => candidate.sourceId === body.sourceId) || followUpAction
@@ -3435,6 +3452,55 @@ describe('BrainSignalsPanel', () => {
     const fresh = await screen.findByTestId('brain-autonomy-strip-fresh')
     expect(fresh).toHaveTextContent('Prepared: Focused follow-up for the new signal')
     expect(strip).toHaveClass('is-pulsing')
+  })
+
+  it('attaches manual source evidence to a needs-source suggestion', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({
+      suggestions: [makeSuggestion({
+        id: 'brain-suggestion-verify-source',
+        kind: 'memory-link-compare',
+        title: 'Verify conflicting claim',
+        summary: 'Supplier denial may conflict with remembered evidence.',
+        suggestedAction: 'Verify conflicting claim',
+        actionMode: 'verify',
+        searchPrompt: 'Find source evidence for the conflicting claim.',
+        reviewOutcome: 'needs-source',
+        status: 'reviewed',
+        missingEvidence: ['source'],
+      })],
+      signals: [],
+      links: [],
+      clusters: [],
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /next moves view/i)
+
+    const card = await screen.findByTestId('brain-suggestion-card')
+    expect(within(card).getByRole('button', { name: /attach source evidence/i })).toBeInTheDocument()
+
+    // The manual source entry is hidden until asked for.
+    expect(screen.queryByTestId('brain-source-evidence-form')).not.toBeInTheDocument()
+    await user.click(within(card).getByRole('button', { name: /attach source evidence/i }))
+    const form = await screen.findByTestId('brain-source-evidence-form')
+    await user.type(
+      within(form).getByLabelText(/source url for verify conflicting claim/i),
+      'https://sources.example.com/verification',
+    )
+    await user.click(within(form).getByRole('button', { name: /attach source/i }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:8080/api/brain/suggestions/brain-suggestion-verify-source/source-evidence',
+        expect.objectContaining({
+          method: 'PUT',
+          body: expect.stringContaining('https://sources.example.com/verification'),
+        }),
+      )
+    })
+    const list = await screen.findByTestId('brain-source-evidence-list')
+    expect(list).toHaveTextContent('https://sources.example.com/verification')
   })
 
   it('toggles auto-prepare from the pulse autonomy strip', async () => {

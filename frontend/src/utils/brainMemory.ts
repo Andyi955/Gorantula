@@ -84,6 +84,14 @@ export interface MemoryCluster {
   lastActivatedAt: string
 }
 
+export interface BrainSuggestionSourceEvidence {
+  id: string
+  sourceUrl: string
+  evidenceId?: string
+  note?: string
+  createdAt?: string
+}
+
 export interface BrainSuggestion {
   id: string
   investigationId: string
@@ -117,6 +125,7 @@ export interface BrainSuggestion {
   relatedMemoryLinkIds: string[]
   relatedClusterIds: string[]
   targetInvestigationIds: string[]
+  sourceEvidence?: BrainSuggestionSourceEvidence[]
   createdAt: string
   updatedAt: string
   dismissedAt?: string
@@ -431,6 +440,7 @@ const normalizeBrainSuggestion = (suggestion: BrainSuggestion): BrainSuggestion 
   relatedMemoryLinkIds: asStringArray(suggestion.relatedMemoryLinkIds),
   relatedClusterIds: asStringArray(suggestion.relatedClusterIds),
   targetInvestigationIds: asStringArray(suggestion.targetInvestigationIds),
+  sourceEvidence: Array.isArray(suggestion.sourceEvidence) ? suggestion.sourceEvidence : [],
 })
 
 const normalizeBrainFollowUpAction = (action: BrainFollowUpAction): BrainFollowUpAction => ({
@@ -636,6 +646,18 @@ export const markBrainSuggestionOutcome = (suggestionId: string, outcome: string
     method: 'PUT',
     body: JSON.stringify({ outcome }),
   }).then(normalizeBrainSuggestion)
+
+export const attachBrainSuggestionSourceEvidence = (
+  suggestionId: string,
+  request: { sourceUrl: string; evidenceId?: string; note?: string },
+) =>
+  requestJSON<BrainSuggestion>(
+    `${API_BASE}/suggestions/${encodeURIComponent(suggestionId)}/source-evidence`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(request),
+    },
+  ).then(normalizeBrainSuggestion)
 
 export const prepareBrainFollowUp = (request: PrepareBrainFollowUpRequest) =>
   requestJSON<BrainFollowUpAction>(`${API_BASE}/followups/prepare`, {

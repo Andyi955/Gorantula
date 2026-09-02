@@ -35,6 +35,7 @@ func Run() error {
 		return fmt.Errorf("startup error: %w", err)
 	}
 	brainMemoryService := brainmemory.NewService("abdomen_vault")
+	brainMemoryService.SetSourceEvidenceFinder(brainSourceEvidenceFinder{runner: ns})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {

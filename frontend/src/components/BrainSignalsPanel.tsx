@@ -59,6 +59,7 @@ import {
   hideBrainCluster,
   launchBrainFollowUp,
   markBrainSuggestionOutcome,
+  attachBrainSuggestionSourceEvidence,
   prepareBrainFollowUp,
   promoteBrainSignal,
   recomputeBrainSignals,
@@ -516,6 +517,8 @@ export default function BrainSignalsPanel({
   const [compareSelection, setCompareSelection] = useState<BrainCompareSelection | null>(null)
   const [pendingFollowUp, setPendingFollowUp] = useState<BrainFollowUpAction | null>(null)
   const [expandedPromptSuggestionId, setExpandedPromptSuggestionId] = useState<string | null>(null)
+  const [sourceEvidenceDrafts, setSourceEvidenceDrafts] = useState<Record<string, { sourceUrl: string; note: string }>>({})
+  const [manualSourceEvidenceSuggestionId, setManualSourceEvidenceSuggestionId] = useState<string | null>(null)
   // Route trails on signal cards: explicit overrides per group key; the
   // featured pulse signal card is expanded unless explicitly collapsed.
   const [expandedRouteTrails, setExpandedRouteTrails] = useState<Record<string, boolean>>({})
@@ -1750,6 +1753,36 @@ export default function BrainSignalsPanel({
       updateSuggestion(updated)
     } catch {
       setError('Brain suggestion outcome failed')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const updateSourceEvidenceDraft = (suggestionId: string, field: 'sourceUrl' | 'note', value: string) => {
+    setSourceEvidenceDrafts((current) => {
+      const previous = current[suggestionId] || { sourceUrl: '', note: '' }
+      return { ...current, [suggestionId]: { ...previous, [field]: value } }
+    })
+  }
+
+  const handleAttachSourceEvidence = async (suggestion: BrainSuggestion) => {
+    const draft = sourceEvidenceDrafts[suggestion.id] || { sourceUrl: '', note: '' }
+    setBusyAction(`suggestion-source-evidence:${suggestion.id}`)
+    setError(null)
+    try {
+      const updated = await attachBrainSuggestionSourceEvidence(suggestion.id, {
+        sourceUrl: draft.sourceUrl,
+        note: draft.note,
+      })
+      updateSuggestion(updated)
+      setSourceEvidenceDrafts((current) => {
+        const next = { ...current }
+        delete next[suggestion.id]
+        return next
+      })
+      setManualSourceEvidenceSuggestionId((current) => (current === suggestion.id ? null : current))
+    } catch {
+      setError('Brain source evidence attach failed')
     } finally {
       setBusyAction(null)
     }
@@ -4199,6 +4232,7 @@ export default function BrainSignalsPanel({
     const sourceEvidenceNeeded = suggestion.reviewOutcome === 'needs-source'
     const sourceEvidenceItems = (suggestion.missingEvidence || []).length > 0 ? suggestion.missingEvidence || [] : ['source']
     const promptIsOpen = expandedPromptSuggestionId === suggestion.id
+    const sourceEvidenceDraft = sourceEvidenceDrafts[suggestion.id] || { sourceUrl: '', note: '' }
 
     return (
       <section className="forensic-brain-thinking-action-panel" aria-label="Verification action">
@@ -4228,6 +4262,24 @@ export default function BrainSignalsPanel({
         ) : (
           <p>No matched evidence ids recorded for this verification cue.</p>
         )}
+        {(suggestion.sourceEvidence || []).length > 0 && (
+          <div className="forensic-brain-source-evidence-list" aria-label="Attached source evidence" data-testid="brain-source-evidence-list">
+            {(suggestion.sourceEvidence || []).map((item) => (
+              <a
+                key={item.id}
+                href={item.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                className="forensic-brain-source-evidence-item"
+                title={item.note || item.sourceUrl}
+              >
+                <span>{item.sourceUrl}</span>
+                {item.note && <em>{item.note}</em>}
+              </a>
+            ))}
+          </div>
+        )}
         {sourceEvidenceNeeded && (
           <>
             <div className="forensic-brain-gap-list">
@@ -4244,9 +4296,41 @@ export default function BrainSignalsPanel({
               >
                 Show Source Prompt
               </button>
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-secondary forensic-brain-action-compact"
+                aria-expanded={manualSourceEvidenceSuggestionId === suggestion.id}
+                onClick={() => setManualSourceEvidenceSuggestionId((current) => (current === suggestion.id ? null : suggestion.id))}
+              >
+                {manualSourceEvidenceSuggestionId === suggestion.id ? 'Hide Manual Source' : 'Attach Source Evidence'}
+              </button>
             </div>
             {promptIsOpen && suggestion.searchPrompt && (
               <p className="forensic-brain-search-prompt">{suggestion.searchPrompt}</p>
+            )}
+            {manualSourceEvidenceSuggestionId === suggestion.id && (
+              <div className="forensic-brain-source-evidence-form" aria-label="Attach source evidence" data-testid="brain-source-evidence-form">
+                <input
+                  value={sourceEvidenceDraft?.sourceUrl ?? ''}
+                  placeholder="https://source-url.example.com/report"
+                  aria-label={`Source URL for ${suggestion.title}`}
+                  onChange={(event) => updateSourceEvidenceDraft(suggestion.id, 'sourceUrl', event.target.value)}
+                />
+                <input
+                  value={sourceEvidenceDraft?.note ?? ''}
+                  placeholder="Note (optional)"
+                  aria-label={`Source note for ${suggestion.title}`}
+                  onChange={(event) => updateSourceEvidenceDraft(suggestion.id, 'note', event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="forensic-brain-action forensic-brain-action-compact"
+                  disabled={busyAction === `suggestion-source-evidence:${suggestion.id}` || !(sourceEvidenceDraft?.sourceUrl ?? '').trim()}
+                  onClick={() => void handleAttachSourceEvidence(suggestion)}
+                >
+                  {busyAction === `suggestion-source-evidence:${suggestion.id}` ? 'Attaching...' : 'Attach Source'}
+                </button>
+              </div>
             )}
           </>
         )}
