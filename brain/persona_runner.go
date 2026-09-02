@@ -5,10 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Andyi955/Gorantula/models"
 )
+
+// personaMaxConcurrency caps how many persona prompts hit the model
+// provider at the same instant. Full-board analysis fires seven large
+// prompts; providers like DeepSeek respond to that burst by returning
+// empty or truncated bodies, so the personas flow through in waves
+// instead of one simultaneous salvo.
+const personaMaxConcurrency = 4
 
 type personaAnalysisResult struct {
 	personaName string
@@ -54,9 +62,17 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 	scopeID := b.newTokenUsageScope("persona-full-board")
 	insightsChan := make(chan personaAnalysisResult, len(personas))
 
-	// Run each persona analysis in parallel
+	// Run each persona analysis in parallel, throttled: at most
+	// personaMaxConcurrency personas are in flight at once, the rest queue
+	// behind them in waves.
+	semaphore := make(chan struct{}, personaMaxConcurrency)
+	var wg sync.WaitGroup
 	for _, persona := range personas {
+		wg.Add(1)
 		go func(p Persona) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
 			prompt := BuildPersonaPrompt(p, findingsText)
 			personaCtx := withTokenUsageTracking(ctx, scopeID, tokenUsageOperationLabel("full_board_persona", p.Name))
 			insight, execution, err := b.runPersonaAnalysisWithPromptDiagnostic(personaCtx, p, prompt)
@@ -69,32 +85,39 @@ func (b *Brain) analyzeWithPersonas(ctx context.Context, investigationID string,
 			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight, diagnostic: diagnostic}
 		}(persona)
 	}
+	go func() {
+		wg.Wait()
+		close(insightsChan)
+	}()
 
 	// Collect insights from all personas
 	insights := make([]PersonaInsight, 0, len(personas))
 	failedPersonas := make(map[string]struct{})
-	for i := 0; i < len(personas); i++ {
-		var result personaAnalysisResult
+collect:
+	for range personas {
 		select {
 		case <-ctx.Done():
 			return insights, ctx.Err()
-		case result = <-insightsChan:
-		}
-		if result.err != nil {
-			recordPersonaDiagnostic(progress, result.diagnostic)
-			failedPersonas[result.personaName] = struct{}{}
-			continue
-		}
-		insight := result.insight
-		if insight.Confidence > 0 {
-			recordPersonaDiagnostic(progress, result.diagnostic)
-			insights = append(insights, insight)
-			brainLog("persona").Info("persona completed", "vault", investigationID, "persona", insight.PersonaName, "confidence", insight.Confidence)
-		} else {
-			result.diagnostic.Status = "zero_confidence"
-			result.diagnostic.ErrorCategory = "zero_confidence"
-			result.diagnostic.ErrorSummary = "persona returned no positive confidence"
-			recordPersonaDiagnostic(progress, result.diagnostic)
+		case result, ok := <-insightsChan:
+			if !ok {
+				break collect
+			}
+			if result.err != nil {
+				recordPersonaDiagnostic(progress, result.diagnostic)
+				failedPersonas[result.personaName] = struct{}{}
+				continue
+			}
+			insight := result.insight
+			if insight.Confidence > 0 {
+				recordPersonaDiagnostic(progress, result.diagnostic)
+				insights = append(insights, insight)
+				brainLog("persona").Info("persona completed", "vault", investigationID, "persona", insight.PersonaName, "confidence", insight.Confidence)
+			} else {
+				result.diagnostic.Status = "zero_confidence"
+				result.diagnostic.ErrorCategory = "zero_confidence"
+				result.diagnostic.ErrorSummary = "persona returned no positive confidence"
+				recordPersonaDiagnostic(progress, result.diagnostic)
+			}
 		}
 	}
 
@@ -154,8 +177,14 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 	scopeID := b.newTokenUsageScope("persona-incremental")
 	insightsChan := make(chan personaAnalysisResult, len(personas))
 
+	semaphore := make(chan struct{}, personaMaxConcurrency)
+	var wg sync.WaitGroup
 	for _, persona := range personas {
+		wg.Add(1)
 		go func(p Persona) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
 			prompt := BuildIncrementalPersonaPrompt(p, pendingFindings, contextFindings, validPendingNodeIDs)
 			personaCtx := withTokenUsageTracking(ctx, scopeID, tokenUsageOperationLabel("incremental_persona", p.Name))
 			insight, execution, err := b.runPersonaAnalysisWithPromptDiagnostic(personaCtx, p, prompt)
@@ -168,31 +197,38 @@ func (b *Brain) analyzeIncrementalWithPersonas(ctx context.Context, investigatio
 			insightsChan <- personaAnalysisResult{personaName: p.Name, insight: insight, diagnostic: diagnostic}
 		}(persona)
 	}
+	go func() {
+		wg.Wait()
+		close(insightsChan)
+	}()
 
 	insights := make([]PersonaInsight, 0, len(personas))
 	failedPersonas := make(map[string]struct{})
-	for i := 0; i < len(personas); i++ {
-		var result personaAnalysisResult
+collectIncremental:
+	for range personas {
 		select {
 		case <-ctx.Done():
 			return insights, ctx.Err()
-		case result = <-insightsChan:
-		}
-		if result.err != nil {
-			recordPersonaDiagnostic(progress, result.diagnostic)
-			failedPersonas[result.personaName] = struct{}{}
-			continue
-		}
-		insight := result.insight
-		if insight.Confidence > 0 {
-			recordPersonaDiagnostic(progress, result.diagnostic)
-			insights = append(insights, insight)
-			brainLog("persona").Info("incremental persona completed", "vault", investigationID, "persona", insight.PersonaName, "confidence", insight.Confidence)
-		} else {
-			result.diagnostic.Status = "zero_confidence"
-			result.diagnostic.ErrorCategory = "zero_confidence"
-			result.diagnostic.ErrorSummary = "persona returned no positive confidence"
-			recordPersonaDiagnostic(progress, result.diagnostic)
+		case result, ok := <-insightsChan:
+			if !ok {
+				break collectIncremental
+			}
+			if result.err != nil {
+				recordPersonaDiagnostic(progress, result.diagnostic)
+				failedPersonas[result.personaName] = struct{}{}
+				continue
+			}
+			insight := result.insight
+			if insight.Confidence > 0 {
+				recordPersonaDiagnostic(progress, result.diagnostic)
+				insights = append(insights, insight)
+				brainLog("persona").Info("incremental persona completed", "vault", investigationID, "persona", insight.PersonaName, "confidence", insight.Confidence)
+			} else {
+				result.diagnostic.Status = "zero_confidence"
+				result.diagnostic.ErrorCategory = "zero_confidence"
+				result.diagnostic.ErrorSummary = "persona returned no positive confidence"
+				recordPersonaDiagnostic(progress, result.diagnostic)
+			}
 		}
 	}
 
