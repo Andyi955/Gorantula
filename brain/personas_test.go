@@ -90,7 +90,7 @@ func TestBuildPersonaPrompt(t *testing.T) {
 		{"Contains Perspective", "Testing things"},
 		{"Contains Questions", "Does it work?"},
 		{"Contains Summary First Guidance", "Treat omitted text as unavailable evidence rather than implied support"},
-		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your prompt."},
+		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your assigned role's prompt."},
 		{"Contains Exact Node ID Rule", "CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings"},
 	}
 

@@ -153,9 +153,11 @@ func GetDefaultPersonas() []Persona {
 // BuildPersonaPrompt creates a prompt for a specific persona to analyze the given findings
 func BuildPersonaPrompt(persona Persona, findings string) string {
 	connectionsSchema, proposedConnectionsSchema := personaRelationshipJSONSchema(persona)
-	return fmt.Sprintf(`%s
-
-You are analyzing the following investigation findings:
+	// Shared-first, persona-last: the evidence block and output contract are
+	// identical for every persona, so DeepSeek's automatic prefix cache hits
+	// for every persona after the first. The persona-specific role sits at
+	// the end, where instruction adherence stays strong.
+	return fmt.Sprintf(`You are analyzing the following investigation findings:
 
 ---
 
@@ -166,22 +168,13 @@ You are analyzing the following investigation findings:
 These findings are summary-first. Some nodes may include a bounded "Full Text Excerpt" instead of the complete source body.
 Treat omitted text as unavailable evidence rather than implied support, and work only from the material shown.
 
-Your expertise: %s
-Your perspective: %s
-
-Specifically, consider these questions:
-%s
-
-Relationship output policy:
-%s
-
 Provide your analysis in JSON format with the following structure:
 {
-  "keyFindings": ["list of short strings answering your prompt. IF you are Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
+  "keyFindings": ["list of short strings answering your assigned role's prompt. IF your role is Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
   "observations": ["direct evidence-grounded observations tied to exact node IDs"],
   "hypotheses": ["optional grounded hypotheses or interpretations; omit weak speculation"],
-  "connections": %s,
-  "proposedConnections": %s,
+  "connections": "see your relationship output policy below",
+  "proposedConnections": "see your relationship output policy below",
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
   "fullAnalysis": "Short grounded summary, maximum 5 sentences",
@@ -195,7 +188,7 @@ Provide your analysis in JSON format with the following structure:
   ]
 }
 
-Connection object shape, only when the relationship output policy allows proposals:
+Connection object shape, only when your relationship output policy allows proposals:
 [
     {
       "source": "exact node id",
@@ -210,14 +203,29 @@ Connection object shape, only when the relationship output policy allows proposa
 CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the [NodeID: xxx] markers in the input above. Do NOT use titles, entity names, or make up IDs. Use only IDs like: node-1772294753812066795-0
 CRITICAL: Every proposed connection MUST use exact source/target node IDs and exact evidenceNodeIDs. If you cannot ground a relationship directly in the evidence, omit it.
 CRITICAL: Separate direct observations from hypotheses. Do not frame speculation as fact. Avoid strategic or future-looking claims unless they are explicitly present in the node text.
-Respond ONLY with the JSON.`, persona.SystemPrompt, findings, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
+
+YOUR ROLE AND OUTPUT POLICY:
+%s
+Your expertise: %s
+Your perspective: %s
+
+Specifically, consider these questions:
+%s
+
+Relationship output policy:
+%s
+
+%s
+%s
+Respond ONLY with the JSON described above.`, findings, persona.SystemPrompt, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
 }
 
 func BuildIncrementalPersonaPrompt(persona Persona, pendingFindings string, contextFindings string, pendingNodeIDs []string) string {
 	connectionsSchema, proposedConnectionsSchema := personaRelationshipJSONSchema(persona)
-	return fmt.Sprintf(`%s
-
-You are analyzing new evidence that must be integrated into an existing investigation board.
+	// Shared-first, persona-last (see BuildPersonaPrompt): the pending and
+	// context blocks are identical for every persona, so the prefix cache
+	// hits for all but the first call.
+	return fmt.Sprintf(`You are analyzing new evidence that must be integrated into an existing investigation board.
 
 PENDING NODE IDS:
 %s
@@ -232,22 +240,13 @@ EXISTING BOARD CONTEXT (compact summaries only):
 %s
 ---
 
-Your expertise: %s
-Your perspective: %s
-
-Specifically, consider these questions:
-%s
-
-Relationship output policy:
-%s
-
 Provide your analysis in JSON format with the following structure:
 {
-  "keyFindings": ["list of short strings answering your prompt. IF you are Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
+  "keyFindings": ["list of short strings answering your assigned role's prompt. IF your role is Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
   "observations": ["direct evidence-grounded observations tied to exact node IDs"],
   "hypotheses": ["optional grounded hypotheses or interpretations; omit weak speculation"],
-  "connections": %s,
-  "proposedConnections": %s,
+  "connections": "see your relationship output policy below",
+  "proposedConnections": "see your relationship output policy below",
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
   "fullAnalysis": "Short grounded summary, maximum 5 sentences",
@@ -261,7 +260,7 @@ Provide your analysis in JSON format with the following structure:
   ]
 }
 
-Connection object shape, only when the relationship output policy allows proposals:
+Connection object shape, only when your relationship output policy allows proposals:
 [
     {
       "source": "exact node id",
@@ -278,7 +277,21 @@ CRITICAL: Focus on relationships between pending nodes and the existing board, p
 CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the input above. Do NOT use titles, entity names, or make up IDs.
 CRITICAL: Every proposed connection MUST use exact source/target node IDs and exact evidenceNodeIDs. If you cannot ground a relationship directly in the evidence, omit it.
 CRITICAL: Separate direct observations from hypotheses. Do not frame speculation as fact. Avoid strategic or future-looking claims unless they are explicitly present in the node text.
-Respond ONLY with the JSON.`, persona.SystemPrompt, strings.Join(pendingNodeIDs, ", "), pendingFindings, contextFindings, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
+
+YOUR ROLE AND OUTPUT POLICY:
+%s
+Your expertise: %s
+Your perspective: %s
+
+Specifically, consider these questions:
+%s
+
+Relationship output policy:
+%s
+
+%s
+%s
+Respond ONLY with the JSON described above.`, strings.Join(pendingNodeIDs, ", "), pendingFindings, contextFindings, persona.SystemPrompt, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
 }
 
 // PersonaJSONResponse represents the expected JSON structure from persona analysis
