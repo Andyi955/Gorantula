@@ -1492,6 +1492,7 @@ export default function BrainSignalsPanel({
     try {
       await Promise.all(signalIds.map((signalId) => dismissBrainSignal(signalId)))
       setSignals((current) => current.filter((signal) => !signalIds.includes(signal.id)))
+      await reconcileAfterBrainMutation()
     } catch {
       setError('Brain signal dismiss failed')
     } finally {
@@ -1499,14 +1500,24 @@ export default function BrainSignalsPanel({
     }
   }
 
-  // Link mutations change cluster relations (memoryLinkIds, link counts) and
-  // the attention summary (its linkedMemories count drives the health strip).
-  // Re-read both right after so chips and counts reflect the mutation
+  // Promote, forget, and dismiss persist server-side before the PUT resolves,
+  // but a background load that started earlier is still mid-flight with
+  // pre-mutation reads. When it lands it applies stale links/signals right
+  // over the optimistic update — the promoted link vanishes until the next
+  // poll (CI caught this: the follow-up poller's in-flight load landed after
+  // a map promote). Bumping the request id here supersedes that in-flight
+  // read; a manual load it supersedes can no longer clear its own loading
+  // flags, so release them explicitly. Clusters and the attention summary are
+  // then re-read so chips and the health strip reflect the mutation
   // immediately instead of waiting for the next background pass.
-  const refreshClustersAfterLinkMutation = useCallback(async () => {
+  const reconcileAfterBrainMutation = useCallback(async () => {
     if (!currentInvestigationId) {
       return
     }
+    requestIdRef.current += 1
+    latestRequestIsBackgroundRef.current = true
+    setIsLoading(false)
+    setIsRefreshing(false)
     const [nextClusters, nextAttention] = await Promise.allSettled([
       fetchBrainClusters(currentInvestigationId),
       fetchBrainAttention(currentInvestigationId),
@@ -1531,7 +1542,7 @@ export default function BrainSignalsPanel({
       setLinks((current) => sortByScore([link, ...current.filter((candidate) => candidate.id !== link.id)]))
       setSelectedMemoryLinkId(link.id)
       setActiveBrainView('links')
-      await refreshClustersAfterLinkMutation()
+      await reconcileAfterBrainMutation()
     } catch {
       setError('Brain memory link failed')
     } finally {
@@ -1547,7 +1558,7 @@ export default function BrainSignalsPanel({
       await Promise.all(linkIds.map((linkId) => forgetBrainLink(linkId)))
       setLinks((current) => current.filter((candidate) => !linkIds.includes(candidate.id)))
       setSelectedMemoryLinkId((current) => (current && linkIds.includes(current) ? null : current))
-      await refreshClustersAfterLinkMutation()
+      await reconcileAfterBrainMutation()
     } catch {
       setError('Brain memory forget failed')
     } finally {
@@ -1569,7 +1580,7 @@ export default function BrainSignalsPanel({
       setSelectedMemoryLinkId(link.id)
       setSelectedBrainMapNodeId(`brain-map-link-${link.id}`)
       setActiveBrainView('links')
-      await refreshClustersAfterLinkMutation()
+      await reconcileAfterBrainMutation()
     } catch {
       setError('Brain memory link failed')
     } finally {
@@ -1588,6 +1599,7 @@ export default function BrainSignalsPanel({
       await dismissBrainSignal(node.signalId)
       setSignals((current) => current.filter((signal) => signal.id !== node.signalId))
       setSelectedBrainMapNodeId(null)
+      await reconcileAfterBrainMutation()
     } catch {
       setError('Brain signal dismiss failed')
     } finally {
