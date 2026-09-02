@@ -8560,6 +8560,58 @@ body {
   border-left-color: rgba(255, 78, 129, 0.6);
 }
 
+/* Live-stream echo: a fresh prepared item landed, the strip glows then
+   settles. Reduced motion gets a static highlight instead. */
+.forensic-brain-autonomy-strip.is-pulsing {
+  border-left-color: rgba(0, 255, 65, 0.66);
+  animation: forensic-brain-autonomy-strip-pulse 1.2s ease-out 2;
+}
+
+@keyframes forensic-brain-autonomy-strip-pulse {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(0, 255, 65, 0.4),
+      0 0 24px rgba(0, 255, 65, 0.2);
+  }
+
+  100% {
+    box-shadow:
+      0 0 0 0.8rem rgba(0, 255, 65, 0),
+      0 0 24px rgba(0, 255, 65, 0.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forensic-brain-autonomy-strip.is-pulsing {
+    animation: none;
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 65, 0.35),
+      0 0 18px rgba(0, 255, 65, 0.18);
+  }
+}
+
+.forensic-brain-autonomy-strip-note.is-fresh {
+  color: #7cff91;
+  font-weight: 800;
+}
+
+.forensic-brain-autonomy-provenance {
+  align-items: center;
+}
+
+.forensic-brain-autonomy-provenance-kicker {
+  color: var(--forensic-text-muted);
+  font-size: 0.52rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.forensic-brain-autonomy-provenance-chip {
+  font-size: 0.55rem;
+}
+
 .forensic-brain-autonomy-strip-state {
   display: inline-flex;
   align-items: center;

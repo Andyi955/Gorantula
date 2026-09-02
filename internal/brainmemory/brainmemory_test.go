@@ -1120,6 +1120,20 @@ func TestBrainAutonomyPrepareOnlyCreatesQueuedFollowUp(t *testing.T) {
 	if len(state.Audit) == 0 || state.Audit[0].Decision != AutonomyDecisionPrepared {
 		t.Fatalf("expected prepared audit entry, got %#v", state.Audit)
 	}
+	// Stream provenance: the queue item and the audit entry must record which
+	// live signals and gateway drove the decision.
+	if len(item.SourceSignalIds) == 0 {
+		t.Fatalf("expected prepared queue item to carry stream provenance, got %#v", item)
+	}
+	if !containsString(item.SourceSignalIds, preparedSuggestion.RelatedSignalIDs[0]) {
+		t.Fatalf("expected queue provenance to match the suggestion signals, got item=%#v suggestion=%#v", item.SourceSignalIds, preparedSuggestion.RelatedSignalIDs)
+	}
+	if item.Gateway != strings.TrimSpace(preparedSuggestion.ThinkingGateway) || item.GatewayLabel != strings.TrimSpace(preparedSuggestion.ThinkingLabel) {
+		t.Fatalf("expected queue item to carry the routing gateway, got item=%#v suggestion=%#v", item, preparedSuggestion)
+	}
+	if len(state.Audit[0].SourceSignalIds) == 0 {
+		t.Fatalf("expected audit entry to carry stream provenance, got %#v", state.Audit[0])
+	}
 }
 
 func TestBrainAutonomyRequiresHighConfidencePossibleBridge(t *testing.T) {
