@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Andyi955/Gorantula/models"
 )
@@ -795,6 +796,10 @@ func TestBuildCandidateSourcesSplitsSourcesAndNormalizesPersonas(t *testing.T) {
 
 
 func TestSynthesizedRelationshipCandidatesRetryOnParseFailure(t *testing.T) {
+	originalDelays := relationshipJSONRetryDelays
+	relationshipJSONRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { relationshipJSONRetryDelays = originalDelays }()
+
 	calls := 0
 	mock := &MockProvider{
 		NameFunc: func() string { return "mock" },
@@ -827,5 +832,32 @@ func TestSynthesizedRelationshipCandidatesRetryOnParseFailure(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected exactly one retry, got %d calls", calls)
+	}
+}
+
+func TestSynthesizedRelationshipCandidatesFailsAfterRetriesExhausted(t *testing.T) {
+	originalDelays := relationshipJSONRetryDelays
+	relationshipJSONRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { relationshipJSONRetryDelays = originalDelays }()
+
+	calls := 0
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			calls++
+			return errors.New("failed to parse JSON response: unexpected end of JSON input, original content: ")
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"mock": mock},
+	}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	_, err := brain.generateSynthesizedRelationshipCandidates(context.Background(), []models.MemoryNode{}, nil)
+	if err == nil {
+		t.Fatalf("expected the workflow to fail after retries are exhausted")
+	}
+	if calls != 3 {
+		t.Fatalf("expected three attempts (primary + two retries), got %d", calls)
 	}
 }

@@ -19,7 +19,7 @@ const (
 	relationshipSpecificTagInstruction   = "Use content-specific uppercase tags up to 32 characters that name the actual subject or tension, such as SAMSUNG_MEMORY_SHORTAGE, COST_CLAIM_CONFLICT, GBT_MILESTONE_DUPLICATE, or CONTRACT_PRECEDES_LAUNCH. Do not use category-only final labels: RELATED, SAME_ENTITY, COMMON_ENTITY, SAME_TOPIC, SAME_EVENT, SAME_EVENT_WINDOW, SAME_PROGRAM, PRECEDES, FOLLOWS, CORROBORATES, CONTRADICTS, INCONSISTENCY, DUPLICATE_CONTENT, DUPLICATES, EXEMPLIFIES."
 )
 
-// Appended on the one-shot JSON retry: DeepSeek occasionally returns an
+// Appended on each JSON retry: DeepSeek occasionally returns an
 // empty or truncated body under concurrent load, and a stricter restatement
 // of the output contract recovers most of those.
 const relationshipJSONRetryInstructions = `
@@ -29,6 +29,10 @@ Your previous response could not be parsed as JSON. Try again once.
 Return exactly one JSON object with a "connections" array matching the requested schema.
 Do not include markdown, comments, prose, trailing commas, or duplicate object keys.
 Use an empty "connections" array when the evidence supports no connection.`
+
+// Backoff between relationship-synthesis JSON retries. Provider overload
+// windows last minutes, so the delays grow instead of retrying immediately.
+var relationshipJSONRetryDelays = []time.Duration{8 * time.Second, 16 * time.Second}
 
 var (
 	relationshipNumberPattern = regexp.MustCompile(`\b\d[\d,]*(?:\.\d+)?(?:%|x|tb|gb|mb|kb|m|b|k)?\b`)
@@ -409,23 +413,43 @@ Evidence:
 Persona outputs:
 %s`, relationshipSpecificTagInstruction, buildNodeMapping(nodes), nodeBuilder.String(), insightBuilder.String())
 
+	// DeepSeek intermittently returns empty or truncated bodies under
+	// concurrent load. Retry with backoff (the overload windows last
+	// minutes, so an immediate retry just hits the same wall) and stricter
+	// output instructions on each retry.
 	var response relationshipCandidateJSONResponse
-	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
-		if !shouldRetryPersonaJSON(err) {
-			return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+	var lastErr error
+	for attempt := 1; attempt <= 1+len(relationshipJSONRetryDelays); attempt++ {
+		if attempt > 1 {
+			brainLog("relationships").Warn(
+				"relationship candidate json retry",
+				"provider", provider.Name(),
+				"attempt", attempt,
+				"err", models.SanitizePipelineDiagnosticText(lastErr.Error()),
+			)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", ctx.Err())
+			case <-time.After(relationshipJSONRetryDelays[attempt-2]):
+			}
 		}
-		// DeepSeek intermittently returns empty or truncated bodies under
-		// concurrent load; retry once with stricter output instructions
-		// instead of failing the whole relationship workflow.
-		brainLog("relationships").Warn(
-			"relationship candidate json retry",
-			"provider", provider.Name(),
-			"err", models.SanitizePipelineDiagnosticText(err.Error()),
-		)
-		retryErr := provider.GenerateJSON(ctx, prompt+relationshipJSONRetryInstructions, &response)
-		if retryErr != nil {
-			return nil, fmt.Errorf("failed to synthesize relationship candidates: primary error: %v; retry error: %w", err, retryErr)
+		retryPrompt := prompt
+		if attempt > 1 {
+			retryPrompt = prompt + relationshipJSONRetryInstructions
 		}
+		if err := provider.GenerateJSON(ctx, retryPrompt, &response); err != nil {
+			lastErr = err
+			response = relationshipCandidateJSONResponse{}
+			if !shouldRetryPersonaJSON(err) {
+				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+			}
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", lastErr)
 	}
 
 	return response.Connections, nil
