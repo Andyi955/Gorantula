@@ -614,6 +614,26 @@ const installBrainFetch = ({
       return Promise.resolve(jsonResponse(gateways) as Response)
     }
     if (url.includes('/api/brain/gateways/')) {
+      if (method === 'PUT') {
+        const code = decodeURIComponent(
+          String(url).slice(String(url).indexOf('/api/brain/gateways/') + '/api/brain/gateways/'.length).split('?')[0],
+        )
+        const target = gateways.find((candidate) => candidate.definition.code === code)
+        if (!target) {
+          return Promise.resolve(jsonResponse({ error: 'gateway not found' }, 404) as Response)
+        }
+        const body = typeof init?.body === 'string'
+          ? JSON.parse(init.body) as { name?: string; description?: string; enabled?: boolean }
+          : {}
+        const definition = {
+          ...target.definition,
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.description !== undefined ? { description: body.description } : {}),
+          ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        }
+        target.definition = definition
+        return Promise.resolve(jsonResponse(definition) as Response)
+      }
       return Promise.resolve(jsonResponse(gatewayDetail) as Response)
     }
     if (url.includes('/api/brain/suggestions?')) {
@@ -2871,6 +2891,76 @@ describe('BrainSignalsPanel', () => {
     expect(await screen.findByTestId('brain-link-card')).toHaveTextContent('Older Substation Case')
   })
 
+  it('refreshes the attention summary after a promote so the health strip counts the new memory', async () => {
+    const user = userEvent.setup()
+    let promoted = false
+    const staleAttention = {
+      ...attentionSummary,
+      counts: { ...attentionSummary.counts, linkedMemories: 0 },
+    }
+    const freshAttention = {
+      ...attentionSummary,
+      counts: { ...attentionSummary.counts, linkedMemories: 1 },
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (method === 'PUT' && url.includes('/api/brain/signals/brain-signal-alpha/link')) {
+        promoted = true
+        return jsonResponse(link) as Response
+      }
+      if (url.includes('/api/brain/signals?')) {
+        return jsonResponse(promoted ? [] : [signal]) as Response
+      }
+      if (url.includes('/api/brain/links?')) {
+        return jsonResponse(promoted ? [link] : []) as Response
+      }
+      if (url.includes('/api/brain/clusters?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/attention?')) {
+        return jsonResponse(promoted ? freshAttention : staleAttention) as Response
+      }
+      if (url.includes('/api/brain/map?')) {
+        return jsonResponse(emptyBackendBrainMap) as Response
+      }
+      if (url.includes('/api/brain/gateways?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/suggestions?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/followups?')) {
+        return jsonResponse([]) as Response
+      }
+      if (url.includes('/api/brain/autonomy?')) {
+        return jsonResponse(makeAutonomyState()) as Response
+      }
+      return jsonResponse({}, 404) as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+
+    // Stale attention is served on first load; the strip trusts it and shows 0.
+    await openBrainView(user, /memory view$/i)
+    const health = await screen.findByTestId('brain-health-summary')
+    expect(health).toHaveTextContent('0 memory groups')
+
+    await openBrainView(user, /active signals view/i)
+    const card = await screen.findByTestId('brain-signal-card')
+    await user.click(within(card).getByRole('button', { name: /promote signal for older substation case/i }))
+
+    // Promote re-reads the attention summary immediately (not just clusters),
+    // so the health strip counts the new memory without a background pass.
+    await openBrainView(user, /memory view$/i)
+    await waitFor(() => {
+      expect(screen.getByTestId('brain-health-summary')).toHaveTextContent('1 memory group')
+    })
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/attention?')).length)
+      .toBeGreaterThanOrEqual(2)
+  })
+
   it('renders backend errors without crashing the tab', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'missing' }, 500)))
 
@@ -3199,6 +3289,109 @@ describe('BrainSignalsPanel', () => {
         detailCallUrls().some((url) => url.includes('value=ORG%7Cacme+grid&limit=40')),
       ).toBe(true)
     })
+  })
+
+  it('toggles the route detail closed and scrolls to it on open', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card')
+    }
+
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+
+    const viewButton = within(card).getByRole('button', { name: /view routes for entity & date/i })
+    expect(viewButton).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(viewButton)
+
+    await screen.findByTestId('brain-gateway-detail')
+    const hideButton = within(card).getByRole('button', { name: /hide routes for entity & date/i })
+    expect(hideButton).toHaveAttribute('aria-expanded', 'true')
+    expect(card).toHaveClass('is-source')
+    await waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalled()
+    })
+
+    // Clicking the same card's button again collapses the detail.
+    await user.click(hideButton)
+    await waitFor(() => {
+      expect(screen.queryByTestId('brain-gateway-detail')).not.toBeInTheDocument()
+    })
+    expect(within(card).getByRole('button', { name: /view routes for entity & date/i })).toHaveAttribute('aria-expanded', 'false')
+    expect(card).not.toHaveClass('is-source')
+  })
+
+  it('disables and enables a gateway from the registry', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card')
+    }
+    expect(card).toHaveAttribute('data-gateway-enabled', 'true')
+
+    await user.click(within(card).getByRole('button', { name: /disable gateway entity & date/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/gateways/entity-date',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"enabled":false'),
+      }),
+    )
+    await waitFor(() => {
+      expect(card).toHaveAttribute('data-gateway-enabled', 'false')
+    })
+    expect(within(card).getByRole('button', { name: /enable gateway entity & date/i })).toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: /enable gateway entity & date/i }))
+    await waitFor(() => {
+      expect(card).toHaveAttribute('data-gateway-enabled', 'true')
+    })
+  })
+
+  it('renames a gateway from the registry', async () => {
+    const user = userEvent.setup()
+    const fetchMock = installBrainFetch({ signals: [signal], links: [], clusters: [] })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /gateway registry view/i)
+
+    const cards = await screen.findAllByTestId('brain-gateway-card')
+    const card = cards.find((candidate) => candidate.getAttribute('data-gateway-code') === 'entity-date')
+    if (!card) {
+      throw new Error('expected an entity-date gateway card')
+    }
+    await user.click(within(card).getByRole('button', { name: /rename gateway entity & date/i }))
+
+    const nameInput = within(card).getByLabelText(/name for entity-date/i)
+    await user.clear(nameInput)
+    await user.type(nameInput, 'Entity & Date (grid)')
+    await user.click(within(card).getByRole('button', { name: /save gateway entity-date/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8080/api/brain/gateways/entity-date',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"name":"Entity & Date (grid)"'),
+      }),
+    )
+    await waitFor(() => {
+      expect(within(card).getByText('Entity & Date (grid)')).toBeInTheDocument()
+    })
+    expect(within(card).getByRole('button', { name: /view routes for entity & date \(grid\)/i })).toBeInTheDocument()
   })
 
   it('merges the map, durable links, and clusters into the memory surface', async () => {

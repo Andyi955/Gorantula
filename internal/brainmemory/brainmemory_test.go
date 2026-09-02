@@ -2906,3 +2906,194 @@ func TestGatewayDetailRoutesFirings(t *testing.T) {
 		t.Fatalf("expected gateway-not-found error, got %v", err)
 	}
 }
+
+func TestUpdateGatewayDefinitionPersistsOperatorEdits(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	service := NewService(root)
+
+	renamed, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{
+		Name:        strPtr("Entity & Date (grid)"),
+		Description: strPtr("Operator-tuned description."),
+	})
+	if err != nil {
+		t.Fatalf("UpdateGatewayDefinition rename failed: %v", err)
+	}
+	if renamed.Name != "Entity & Date (grid)" || renamed.Description != "Operator-tuned description." {
+		t.Fatalf("expected renamed definition, got %#v", renamed)
+	}
+
+	disabled, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{Enabled: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("UpdateGatewayDefinition disable failed: %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatalf("expected disabled gateway, got %#v", disabled)
+	}
+
+	// A fresh service on the same vault must see the persisted edits: reseeding
+	// must not resurrect built-in names or the enabled flag.
+	reopened := NewService(root)
+	usages, err := reopened.ListGateways()
+	if err != nil {
+		t.Fatalf("ListGateways failed: %v", err)
+	}
+	found := false
+	for _, usage := range usages {
+		if usage.Definition.Code != GatewayEntityDate {
+			continue
+		}
+		found = true
+		if usage.Definition.Enabled {
+			t.Fatalf("expected persisted disable, got %#v", usage.Definition)
+		}
+		if usage.Definition.Name != "Entity & Date (grid)" {
+			t.Fatalf("expected persisted rename, got %#v", usage.Definition)
+		}
+	}
+	if !found {
+		t.Fatalf("expected entity-date gateway in registry, got %#v", usages)
+	}
+
+	if _, err := service.UpdateGatewayDefinition("GW-NOPE", GatewayUpdate{Enabled: boolPtr(false)}); !errors.Is(err, ErrGatewayNotFound) {
+		t.Fatalf("expected gateway-not-found error, got %v", err)
+	}
+	if _, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{Name: strPtr("   ")}); !errors.Is(err, ErrInvalidGatewayUpdate) {
+		t.Fatalf("expected invalid-update error for blank name, got %v", err)
+	}
+	if _, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{}); !errors.Is(err, ErrInvalidGatewayUpdate) {
+		t.Fatalf("expected invalid-update error for empty update, got %v", err)
+	}
+}
+
+func TestGenerateSignalsSkipDisabledGateways(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	writeTestInvestigation(t, root, rootRecord("inv-current", "Current Grid Case"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"current-node",
+			"data":{
+				"title":"Current Grid Lead",
+				"summary":"[ORG:Acme Grid] resurfaces during [DATE:2026-05-20] capacity talks.",
+				"fullText":"[ORG:Acme Grid] resurfaces during [DATE:2026-05-20] capacity talks.",
+				"sourceURL":"https://intel.example.com/current"
+			}
+		}],
+		"edges":[]
+	}`, "")
+	writeTestInvestigation(t, root, rootRecord("inv-old", "Older Grid Memory"), `{
+		"mode":"strict-grid",
+		"nodes":[{
+			"id":"old-node",
+			"data":{
+				"title":"Older Grid Lead",
+				"summary":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"fullText":"Prior notes tied [ORG:Acme Grid] to [DATE:2026-05-20] cooling stress.",
+				"sourceURL":"https://intel.example.com/archive"
+			}
+		}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	signals, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	if len(signals) != 1 || !signals[0].HasGateway(GatewayEntityDate) {
+		t.Fatalf("expected baseline entity-date signal, got %#v", signals)
+	}
+
+	if _, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{Enabled: boolPtr(false)}); err != nil {
+		t.Fatalf("disable entity-date failed: %v", err)
+	}
+	filtered, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals after disable failed: %v", err)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("expected source-domain signal to survive, got %#v", filtered)
+	}
+	if filtered[0].HasGateway(GatewayEntityDate) {
+		t.Fatalf("expected entity-date reasons dropped, got %#v", filtered[0])
+	}
+	if !filtered[0].HasGateway(GatewaySourceDomain) {
+		t.Fatalf("expected source-domain reasons kept, got %#v", filtered[0])
+	}
+
+	if _, err := service.UpdateGatewayDefinition(GatewaySourceDomain, GatewayUpdate{Enabled: boolPtr(false)}); err != nil {
+		t.Fatalf("disable source-domain failed: %v", err)
+	}
+	quiet, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals after disabling both gateways failed: %v", err)
+	}
+	if len(quiet) != 0 {
+		t.Fatalf("expected no signals with all gateways disabled, got %#v", quiet)
+	}
+
+	if _, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{Enabled: boolPtr(true)}); err != nil {
+		t.Fatalf("re-enable entity-date failed: %v", err)
+	}
+	restored, err := service.GenerateSignals("inv-current")
+	if err != nil {
+		t.Fatalf("GenerateSignals after re-enable failed: %v", err)
+	}
+	if len(restored) != 1 || !restored[0].HasGateway(GatewayEntityDate) {
+		t.Fatalf("expected entity-date signal restored, got %#v", restored)
+	}
+}
+
+func TestHandleAPIRoutesGatewayUpdate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	service := NewService(root)
+
+	request := httptest.NewRequest(http.MethodPut, "/api/brain/gateways/"+GatewaySourceDomain, strings.NewReader(`{"name":"Source Domain (renamed)","enabled":false}`))
+	recorder := httptest.NewRecorder()
+	HandleAPI(recorder, request, service)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected gateway PUT 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var definition GatewayDefinition
+	if err := json.Unmarshal(recorder.Body.Bytes(), &definition); err != nil {
+		t.Fatalf("decode gateway definition failed: %v", err)
+	}
+	if definition.Name != "Source Domain (renamed)" || definition.Enabled {
+		t.Fatalf("expected renamed disabled gateway, got %#v", definition)
+	}
+
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/brain/gateways/"+GatewaySourceDomain, nil)
+	detailRecorder := httptest.NewRecorder()
+	HandleAPI(detailRecorder, detailRequest, service)
+	if detailRecorder.Code != http.StatusOK {
+		t.Fatalf("expected gateway GET 200, got %d body=%s", detailRecorder.Code, detailRecorder.Body.String())
+	}
+	var detail GatewayDetail
+	if err := json.Unmarshal(detailRecorder.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode gateway detail failed: %v", err)
+	}
+	if detail.Definition.Name != "Source Domain (renamed)" || detail.Definition.Enabled {
+		t.Fatalf("expected persisted edit in gateway detail, got %#v", detail.Definition)
+	}
+
+	missingRequest := httptest.NewRequest(http.MethodPut, "/api/brain/gateways/GW-NOPE", strings.NewReader(`{"enabled":false}`))
+	missingRecorder := httptest.NewRecorder()
+	HandleAPI(missingRecorder, missingRequest, service)
+	if missingRecorder.Code == http.StatusOK {
+		t.Fatalf("expected gateway PUT for unknown code to fail, got %s", missingRecorder.Body.String())
+	}
+
+	invalidRequest := httptest.NewRequest(http.MethodPut, "/api/brain/gateways/"+GatewaySourceDomain, strings.NewReader(`{not json`))
+	invalidRecorder := httptest.NewRecorder()
+	HandleAPI(invalidRecorder, invalidRequest, service)
+	if invalidRecorder.Code == http.StatusOK {
+		t.Fatalf("expected invalid body to fail, got %s", invalidRecorder.Body.String())
+	}
+}
+
+func strPtr(value string) *string {
+	return &value
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
