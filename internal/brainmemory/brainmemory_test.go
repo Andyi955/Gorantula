@@ -1,6 +1,7 @@
 package brainmemory
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -1450,6 +1451,331 @@ func TestBrainAutonomyPreflightPrioritizesSpecificMissingEvidence(t *testing.T) 
 	}
 	if strings.TrimSpace(sourceGap.SearchPrompt) == "" {
 		t.Fatalf("expected source gap to prepare a source prompt, got %#v", sourceGap)
+	}
+}
+
+type recordingSourceEvidenceFinder struct {
+	calls    int
+	evidence []BrainSuggestionSourceEvidence
+}
+
+func (f *recordingSourceEvidenceFinder) FindSourceEvidence(context.Context, SourceEvidenceLookupRequest) ([]BrainSuggestionSourceEvidence, error) {
+	f.calls++
+	return f.evidence, nil
+}
+
+func TestAutoResolveSkipsResolvedSuggestions(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	finder := &recordingSourceEvidenceFinder{evidence: []BrainSuggestionSourceEvidence{{
+		SourceURL: "https://sources.example.com/acme-grid",
+	}}}
+	service.SetSourceEvidenceFinder(finder)
+
+	// A resolved review whose recomputed missing list still mentions source
+	// must NOT re-trigger the evidence lookup (the Leg 0 storm).
+	resolved := BrainSuggestion{
+		ID:                     "brain-suggestion-verify-source",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusReviewed,
+		ActionMode:             SuggestionActionVerify,
+		Title:                  "Verify conflicting claim",
+		ReviewOutcome:          SuggestionOutcomeResolved,
+		MissingEvidence:        []string{SuggestionMissingSource},
+		ReasonSamples: []SignalReason{{
+			Gateway:        GatewayEntityDate,
+			Value:          "ORG|Acme Grid",
+			Label:          "Acme Grid",
+			CurrentNodeIDs: []string{"current-node"},
+		}},
+		TargetInvestigationIDs: []string{"inv-old-strong"},
+	}
+	_, changed, err := service.autoResolveSuggestionSourceEvidence(resolved, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolveSuggestionSourceEvidence failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected a resolved suggestion to stay untouched")
+	}
+	if finder.calls != 0 {
+		t.Fatalf("expected no lookup for a resolved suggestion, got %d", finder.calls)
+	}
+}
+
+func TestAutoResolveCooldownSkipsRepeatLookups(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	finder := &recordingSourceEvidenceFinder{evidence: []BrainSuggestionSourceEvidence{{
+		SourceURL: "https://sources.example.com/acme-grid",
+	}}}
+	service.SetSourceEvidenceFinder(finder)
+
+	needsSource := func(lastLookup string) BrainSuggestion {
+		return BrainSuggestion{
+			ID:                 "brain-suggestion-verify-source",
+			InvestigationID:    "inv-current",
+			Status:             SuggestionStatusReviewed,
+			ActionMode:         SuggestionActionVerify,
+			Title:              "Verify conflicting claim",
+			ReviewOutcome:      SuggestionOutcomeNeedsSource,
+			LastSourceLookupAt: lastLookup,
+			// ReasonSamples reference nodes that do not exist in the board:
+			// no saved evidence, so the web finder path (and its cooldown)
+			// is what gets exercised.
+			ReasonSamples: []SignalReason{{
+				Gateway:        GatewayEntityDate,
+				Value:          "ORG|Acme Grid",
+				Label:          "Acme Grid",
+				CurrentNodeIDs: []string{"ghost-node"},
+			}},
+			TargetInvestigationIDs: []string{"inv-old-strong"},
+		}
+	}
+
+	// A lookup attempted 5 minutes ago is inside the cooldown: skipped.
+	_, changed, err := service.autoResolveSuggestionSourceEvidence(needsSource("2026-06-17T11:55:00Z"), "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolve inside cooldown failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected the cooldown to skip the lookup")
+	}
+	if finder.calls != 0 {
+		t.Fatalf("expected no lookup inside the cooldown, got %d", finder.calls)
+	}
+
+	// After the cooldown the lookup runs once and attaches evidence.
+	after, changed, err := service.autoResolveSuggestionSourceEvidence(needsSource("2026-06-17T10:00:00Z"), "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolve after cooldown failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected the post-cooldown lookup to attach evidence")
+	}
+	if finder.calls != 1 {
+		t.Fatalf("expected exactly one lookup after the cooldown, got %d", finder.calls)
+	}
+	if after.LastSourceLookupAt != "2026-06-17T12:00:00Z" {
+		t.Fatalf("expected the lookup attempt marker to persist, got %q", after.LastSourceLookupAt)
+	}
+}
+
+func TestSavedSourceEvidenceForNodesScansBoardSources(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+
+	evidence, err := service.savedSourceEvidenceForNodes("brain-suggestion-1", "inv-current", []string{"current-node"}, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("savedSourceEvidenceForNodes failed: %v", err)
+	}
+	if len(evidence) != 1 {
+		t.Fatalf("expected one saved source evidence, got %#v", evidence)
+	}
+	if evidence[0].SourceURL != "https://intel.example.com/current" {
+		t.Fatalf("expected the board node source URL, got %#v", evidence[0])
+	}
+	if evidence[0].EvidenceID != "current-node" {
+		t.Fatalf("expected evidence to reference the board node, got %#v", evidence[0])
+	}
+
+	unknown, err := service.savedSourceEvidenceForNodes("brain-suggestion-1", "inv-current", []string{"missing-node"}, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("savedSourceEvidenceForNodes for unknown node failed: %v", err)
+	}
+	if len(unknown) != 0 {
+		t.Fatalf("expected no evidence for unknown nodes, got %#v", unknown)
+	}
+}
+
+func TestAddSuggestionSourceEvidenceResolvesNeedsSource(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	target := suggestions[0]
+	if _, err := service.MarkSuggestionOutcome(target.ID, SuggestionOutcomeNeedsSource); err != nil {
+		t.Fatalf("MarkSuggestionOutcome needs-source failed: %v", err)
+	}
+
+	if _, err := service.AddSuggestionSourceEvidence(target.ID, SuggestionSourceEvidenceRequest{SourceURL: "notaurl"}); !errors.Is(err, ErrInvalidSourceEvidence) {
+		t.Fatalf("expected invalid source URL to be rejected, got err=%v", err)
+	}
+
+	updated, err := service.AddSuggestionSourceEvidence(target.ID, SuggestionSourceEvidenceRequest{
+		SourceURL:  "https://sources.example.com/acme-grid",
+		EvidenceID: "web-source",
+		Note:       "Auto-found online by Brain source lookup.",
+	})
+	if err != nil {
+		t.Fatalf("AddSuggestionSourceEvidence failed: %v", err)
+	}
+	if updated.ReviewOutcome != SuggestionOutcomeResolved || updated.ReviewSource != SuggestionReviewSourceSourceEvidence {
+		t.Fatalf("expected evidence to resolve the needs-source review, got %#v", updated)
+	}
+	if len(updated.SourceEvidence) != 1 || updated.SourceEvidence[0].SourceURL != "https://sources.example.com/acme-grid" {
+		t.Fatalf("expected attached source evidence, got %#v", updated.SourceEvidence)
+	}
+	if containsString(updated.MissingEvidence, SuggestionMissingSource) {
+		t.Fatalf("expected missing source to be cleared, got %#v", updated.MissingEvidence)
+	}
+}
+
+func TestHandleAPIRoutesSuggestionSourceEvidence(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	if _, err := service.GenerateSignals("inv-current"); err != nil {
+		t.Fatalf("GenerateSignals failed: %v", err)
+	}
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	target := suggestions[0]
+	if _, err := service.MarkSuggestionOutcome(target.ID, SuggestionOutcomeNeedsSource); err != nil {
+		t.Fatalf("MarkSuggestionOutcome needs-source failed: %v", err)
+	}
+
+	invalidRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+target.ID+"/source-evidence", strings.NewReader(`{"sourceUrl":"notaurl"}`))
+	invalidRecorder := httptest.NewRecorder()
+	HandleAPI(invalidRecorder, invalidRequest, service)
+	if invalidRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid source URL to 400, got %d body=%s", invalidRecorder.Code, invalidRecorder.Body.String())
+	}
+
+	validRequest := httptest.NewRequest(http.MethodPut, "/api/brain/suggestions/"+target.ID+"/source-evidence", strings.NewReader(`{"sourceUrl":"https://sources.example.com/acme-grid","note":"Found online."}`))
+	validRecorder := httptest.NewRecorder()
+	HandleAPI(validRecorder, validRequest, service)
+	if validRecorder.Code != http.StatusOK {
+		t.Fatalf("expected source evidence PUT 200, got %d body=%s", validRecorder.Code, validRecorder.Body.String())
+	}
+	var updated BrainSuggestion
+	if err := json.Unmarshal(validRecorder.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated suggestion failed: %v", err)
+	}
+	if updated.ReviewOutcome != SuggestionOutcomeResolved || len(updated.SourceEvidence) != 1 {
+		t.Fatalf("expected resolved suggestion with attached evidence, got %#v", updated)
+	}
+}
+
+func TestAutoResolveSuggestionSourceEvidenceUsesSavedBoardEvidence(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+
+	// A verify suggestion whose reason references the fixture board node: the
+	// saved-evidence scan should attach that node's source URL and resolve.
+	suggestion := BrainSuggestion{
+		ID:              "brain-suggestion-verify-source",
+		InvestigationID: "inv-current",
+		Status:          SuggestionStatusActive,
+		ActionMode:      SuggestionActionVerify,
+		Title:           "Verify possible contradiction",
+		ReviewOutcome:   SuggestionOutcomeNeedsSource,
+		ReasonSamples: []SignalReason{{
+			Gateway:        GatewayEntityDate,
+			Value:          "ORG|Acme Grid",
+			Label:          "Acme Grid",
+			CurrentNodeIDs: []string{"current-node"},
+		}},
+		TargetInvestigationIDs: []string{"inv-old-strong"},
+	}
+	resolved, changed, err := service.autoResolveSuggestionSourceEvidence(suggestion, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolveSuggestionSourceEvidence failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected saved board evidence to auto-resolve the suggestion, got %#v", resolved)
+	}
+	if resolved.ReviewOutcome != SuggestionOutcomeResolved || resolved.ReviewSource != SuggestionReviewSourceSourceEvidence {
+		t.Fatalf("expected resolved-by-evidence review, got %#v", resolved)
+	}
+	if len(resolved.SourceEvidence) == 0 || resolved.SourceEvidence[0].SourceURL != "https://intel.example.com/current" {
+		t.Fatalf("expected the board node source URL attached, got %#v", resolved.SourceEvidence)
+	}
+	if containsString(resolved.MissingEvidence, SuggestionMissingSource) {
+		t.Fatalf("expected missing source cleared, got %#v", resolved.MissingEvidence)
+	}
+}
+
+type stubEmptySourceEvidenceFinder struct{}
+
+func (stubEmptySourceEvidenceFinder) FindSourceEvidence(context.Context, SourceEvidenceLookupRequest) ([]BrainSuggestionSourceEvidence, error) {
+	return nil, nil
+}
+
+func TestAddSuggestionSourceEvidenceUnblocksAutonomyQueue(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	// An empty finder: the only source evidence available is what the
+	// operator attaches by hand.
+	service.SetSourceEvidenceFinder(stubEmptySourceEvidenceFinder{})
+
+	candidate := BrainSuggestion{
+		ID:                     "brain-suggestion-launch",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusActive,
+		Kind:                   "cluster-review",
+		Title:                  "Review durable memory link",
+		ActionMode:             SuggestionActionLaunchFollowUp,
+		Relevance:              RelevanceStrongMemory,
+		Score:                  0.9,
+		TargetInvestigationIDs: []string{"inv-old-strong"},
+	}
+	blocker := BrainSuggestion{
+		ID:                     "brain-suggestion-verify",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusReviewed,
+		ActionMode:             SuggestionActionVerify,
+		Title:                  "Verify conflicting claim",
+		ReviewOutcome:          SuggestionOutcomeNeedsSource,
+		TargetInvestigationIDs: []string{"inv-old-strong"},
+	}
+	if err := service.saveSuggestions(map[string]BrainSuggestion{
+		candidate.ID: candidate,
+		blocker.ID:   blocker,
+	}); err != nil {
+		t.Fatalf("saveSuggestions failed: %v", err)
+	}
+
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               3,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	// The unresolved needs-source review keeps the launch-ready candidate
+	// blocked: no saved evidence exists and the finder returns nothing.
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation before attach failed: %v", err)
+	}
+	blockedItem := findAutonomyQueueItem(t, state.Queue, candidate.ID)
+	if blockedItem.Decision != AutonomyDecisionBlocked || !containsString(blockedItem.Blockers, AutonomyBlockerUnresolvedContradiction) {
+		t.Fatalf("expected the candidate blocked by the unresolved review, got %#v", blockedItem)
+	}
+
+	// Attaching source evidence resolves the review and re-evaluates the
+	// queue immediately, so the candidate gets prepared.
+	if _, err := service.AddSuggestionSourceEvidence(blocker.ID, SuggestionSourceEvidenceRequest{
+		SourceURL: "https://sources.example.com/verification",
+		Note:      "Found by operator.",
+	}); err != nil {
+		t.Fatalf("AddSuggestionSourceEvidence failed: %v", err)
+	}
+
+	state, err = service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation after attach failed: %v", err)
+	}
+	preparedItem := findAutonomyQueueItem(t, state.Queue, candidate.ID)
+	if preparedItem.Decision != AutonomyDecisionPrepared || preparedItem.Status != AutonomyQueueStatusPrepared {
+		t.Fatalf("expected the candidate prepared after evidence attached, got %#v", preparedItem)
 	}
 }
 

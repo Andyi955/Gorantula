@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -789,5 +790,42 @@ func TestBuildCandidateSourcesSplitsSourcesAndNormalizesPersonas(t *testing.T) {
 		if sources[idx] != source {
 			t.Fatalf("expected source %q at index %d, got %q", source, idx, sources[idx])
 		}
+	}
+}
+
+
+func TestSynthesizedRelationshipCandidatesRetryOnParseFailure(t *testing.T) {
+	calls := 0
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			calls++
+			if calls == 1 {
+				return errors.New("failed to parse JSON response: unexpected end of JSON input, original content: ")
+			}
+			target.(*relationshipCandidateJSONResponse).Connections = []models.RelationshipCandidate{{
+				Source:     "node-1",
+				Target:     "node-2",
+				Tag:        "REFERENCES",
+				Reasoning:  "The evidence references the baseline directly.",
+				Confidence: 0.9,
+			}}
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"mock": mock},
+	}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	connections, err := brain.generateSynthesizedRelationshipCandidates(context.Background(), []models.MemoryNode{}, nil)
+	if err != nil {
+		t.Fatalf("expected the json retry to recover, got %v", err)
+	}
+	if len(connections) != 1 {
+		t.Fatalf("expected one synthesized connection, got %#v", connections)
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly one retry, got %d calls", calls)
 	}
 }

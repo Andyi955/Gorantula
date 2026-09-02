@@ -9330,6 +9330,57 @@ body {
   gap: 0.38rem;
 }
 
+.forensic-brain-source-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid rgba(0, 255, 65, 0.22);
+  background: rgba(0, 255, 65, 0.04);
+  padding: 0.45rem 0.55rem;
+}
+
+.forensic-brain-source-evidence-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  color: var(--forensic-text);
+  font-size: 0.62rem;
+  text-decoration: none;
+}
+
+.forensic-brain-source-evidence-item span {
+  color: #7cff91;
+  word-break: break-all;
+}
+
+.forensic-brain-source-evidence-item em {
+  color: var(--forensic-text-faint);
+  font-size: 0.56rem;
+}
+
+.forensic-brain-source-evidence-item:hover span {
+  color: #ffffff;
+}
+
+.forensic-brain-source-evidence-form {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.forensic-brain-source-evidence-form input {
+  border: 1px solid rgba(129, 227, 255, 0.24);
+  background: rgba(1, 4, 7, 0.85);
+  padding: 0.35rem 0.45rem;
+  color: var(--forensic-text);
+  font-family: inherit;
+  font-size: 0.68rem;
+}
+
+.forensic-brain-source-evidence-form input:focus {
+  outline: 1px solid var(--forensic-accent);
+  outline-offset: 1px;
+}
+
 .forensic-brain-thinking-action-header {
   justify-content: space-between;
 }

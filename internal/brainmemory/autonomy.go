@@ -1,6 +1,8 @@
 package brainmemory
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -275,6 +277,18 @@ func (s *Service) autonomyPreflightBlockerSuggestions(suggestions []BrainSuggest
 
 	changed := false
 	for index, suggestion := range suggestions {
+		// Evidence resolver: a needs-source suggestion resolves itself when
+		// saved board evidence or a web lookup can attach a source.
+		updated, autoResolved, err := s.autoResolveSuggestionSourceEvidence(suggestion, timestamp)
+		if err != nil {
+			return nil, err
+		}
+		if autoResolved {
+			suggestions[index] = updated
+			existing[updated.ID] = updated
+			suggestion = updated
+			changed = true
+		}
 		updated, ok := autonomyPreflightBlockerSuggestion(suggestion, timestamp)
 		if !ok {
 			continue
@@ -291,6 +305,228 @@ func (s *Service) autonomyPreflightBlockerSuggestions(suggestions []BrainSuggest
 		return nil, err
 	}
 	return suggestions, nil
+}
+
+// autoResolveSuggestionSourceEvidence resolves a needs-source suggestion by
+// attaching source evidence: saved board evidence first (a related node's
+// source URLs), then a web lookup via the wired evidence finder. Attaching
+// clears the missing-source marker and flips the review to resolved so the
+// unresolved-contradiction blocker stops scoring.
+func (s *Service) autoResolveSuggestionSourceEvidence(suggestion BrainSuggestion, timestamp string) (BrainSuggestion, bool, error) {
+	suggestion = normalizeSuggestionCollections(suggestion)
+	if !suggestionNeedsSourceEvidence(suggestion) {
+		return suggestion, false, nil
+	}
+	lookupAttempted := false
+
+	evidence, err := s.savedSourceEvidenceForSuggestion(suggestion, timestamp)
+	if err != nil {
+		return suggestion, false, err
+	}
+	if len(evidence) == 0 {
+		// The web lookup is expensive: a fruitless attempt is recorded and
+		// not repeated inside the cooldown window.
+		if sourceLookupInCooldown(suggestion.LastSourceLookupAt, timestamp) {
+			return suggestion, false, nil
+		}
+		evidence = s.findSourceEvidenceForSuggestion(suggestion, timestamp)
+		suggestion.LastSourceLookupAt = timestamp
+		lookupAttempted = true
+	}
+	if len(evidence) == 0 {
+		if lookupAttempted {
+			suggestion.UpdatedAt = timestamp
+			return normalizeSuggestionCollections(suggestion), true, nil
+		}
+		return suggestion, false, nil
+	}
+
+	previousEvidenceCount := len(suggestion.SourceEvidence)
+	suggestion.SourceEvidence = normalizeSuggestionSourceEvidence(append(suggestion.SourceEvidence, evidence...))
+	hadSourceMissing := containsString(suggestion.MissingEvidence, SuggestionMissingSource)
+	suggestion.MissingEvidence = removeString(suggestion.MissingEvidence, SuggestionMissingSource)
+	if suggestion.ReviewOutcome == SuggestionOutcomeNeedsSource {
+		suggestion.Status = SuggestionStatusReviewed
+		suggestion.ReviewOutcome = SuggestionOutcomeResolved
+		suggestion.ReviewSource = SuggestionReviewSourceSourceEvidence
+		if strings.TrimSpace(suggestion.ReviewedAt) == "" {
+			suggestion.ReviewedAt = timestamp
+		}
+		suggestion.ResolvedAt = timestamp
+	}
+	if len(suggestion.SourceEvidence) == previousEvidenceCount && !hadSourceMissing && !lookupAttempted {
+		return suggestion, false, nil
+	}
+	suggestion.UpdatedAt = timestamp
+	return normalizeSuggestionCollections(suggestion), true, nil
+}
+
+func suggestionNeedsSourceEvidence(suggestion BrainSuggestion) bool {
+	if suggestion.ReviewOutcome == SuggestionOutcomeNeedsSource {
+		return true
+	}
+	// A resolved review stays resolved even if the recomputed missing list
+	// still mentions source: otherwise the evidence lookup would re-run on
+	// every evidence event forever (the Leg 0 storm).
+	if suggestionOutcomeIsResolved(suggestion.ReviewOutcome) {
+		return false
+	}
+	return containsString(suggestion.MissingEvidence, SuggestionMissingSource)
+}
+
+func (s *Service) findSourceEvidenceForSuggestion(suggestion BrainSuggestion, timestamp string) []BrainSuggestionSourceEvidence {
+	if s.sourceEvidence == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	items, err := s.sourceEvidence.FindSourceEvidence(ctx, SourceEvidenceLookupRequest{
+		Suggestion:   normalizeSuggestionCollections(suggestion),
+		SearchPrompt: sourceEvidenceLookupPrompt(suggestion),
+	})
+	if err != nil {
+		return nil
+	}
+	return normalizeLookupSourceEvidence(suggestion.ID, items, timestamp)
+}
+
+func sourceEvidenceLookupPrompt(suggestion BrainSuggestion) string {
+	return nonEmptyString(
+		suggestion.SearchPrompt,
+		buildAutonomySourceSearchPrompt(suggestion),
+		suggestion.Title,
+		suggestion.Summary,
+		suggestion.Reason,
+	)
+}
+
+// savedSourceEvidenceForSuggestion scans the current and target boards for
+// nodes related to the suggestion that already carry a source URL.
+func (s *Service) savedSourceEvidenceForSuggestion(suggestion BrainSuggestion, timestamp string) ([]BrainSuggestionSourceEvidence, error) {
+	currentNodeIDs, targetNodeIDs := suggestionSourceEvidenceNodeIDs(suggestion)
+	if len(currentNodeIDs) == 0 && len(targetNodeIDs) == 0 {
+		return nil, nil
+	}
+
+	evidence := make([]BrainSuggestionSourceEvidence, 0)
+	if strings.TrimSpace(suggestion.InvestigationID) != "" && len(currentNodeIDs) > 0 {
+		items, err := s.savedSourceEvidenceForNodes(suggestion.ID, suggestion.InvestigationID, currentNodeIDs, timestamp)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, items...)
+	}
+	for _, targetID := range cleanStringSet(suggestion.TargetInvestigationIDs) {
+		items, err := s.savedSourceEvidenceForNodes(suggestion.ID, targetID, targetNodeIDs, timestamp)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, items...)
+	}
+	return normalizeSuggestionSourceEvidence(evidence), nil
+}
+
+func suggestionSourceEvidenceNodeIDs(suggestion BrainSuggestion) ([]string, []string) {
+	current := make([]string, 0)
+	target := make([]string, 0)
+	for _, reason := range suggestion.ReasonSamples {
+		current = append(current, reason.CurrentNodeIDs...)
+		target = append(target, reason.TargetNodeIDs...)
+	}
+	return cleanStringSet(current), cleanStringSet(target)
+}
+
+func (s *Service) savedSourceEvidenceForNodes(suggestionID string, investigationID string, nodeIDs []string, timestamp string) ([]BrainSuggestionSourceEvidence, error) {
+	investigationID = strings.TrimSpace(investigationID)
+	nodeIDs = cleanStringSet(nodeIDs)
+	if investigationID == "" || len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	wanted := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		wanted[nodeID] = struct{}{}
+	}
+
+	rawBoard, err := s.store.LoadJSON(investigationID, models.InvestigationBoardFilename)
+	if err != nil {
+		if errors.Is(err, models.ErrInvestigationNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var board persistedBoard
+	if err := json.Unmarshal(rawBoard, &board); err != nil {
+		return nil, err
+	}
+
+	evidence := make([]BrainSuggestionSourceEvidence, 0)
+	for _, node := range board.Nodes {
+		nodeID := strings.TrimSpace(node.ID)
+		if nodeID == "" {
+			nodeID = strings.TrimSpace(node.Data.ID)
+		}
+		if _, ok := wanted[nodeID]; !ok {
+			continue
+		}
+		for _, sourceURL := range cleanStringSet(append([]string{node.Data.SourceURL}, node.Data.SourceURLs...)) {
+			if !validSourceEvidenceURL(sourceURL) {
+				continue
+			}
+			evidence = append(evidence, BrainSuggestionSourceEvidence{
+				ID:         deterministicID("brain-source-evidence", suggestionID, investigationID, nodeID, sourceURL),
+				SourceURL:  sourceURL,
+				EvidenceID: nodeID,
+				Note:       "Auto-attached from saved board evidence.",
+				CreatedAt:  timestamp,
+			})
+		}
+	}
+	return normalizeSuggestionSourceEvidence(evidence), nil
+}
+
+// sourceEvidenceLookupCooldown keeps a fruitless web lookup from being
+// re-dispatched on every evidence event (the Leg 0 storm).
+const sourceEvidenceLookupCooldown = 30 * time.Minute
+
+func sourceLookupInCooldown(lastAttempt string, now string) bool {
+	last, err := time.Parse(time.RFC3339, strings.TrimSpace(lastAttempt))
+	if err != nil {
+		return false
+	}
+	current, err := time.Parse(time.RFC3339, strings.TrimSpace(now))
+	if err != nil {
+		return false
+	}
+	return current.Sub(last) < sourceEvidenceLookupCooldown
+}
+
+func normalizeLookupSourceEvidence(suggestionID string, items []BrainSuggestionSourceEvidence, timestamp string) []BrainSuggestionSourceEvidence {
+	cleaned := make([]BrainSuggestionSourceEvidence, 0, len(items))
+	for _, item := range items {
+		item.SourceURL = strings.TrimSpace(item.SourceURL)
+		if !validSourceEvidenceURL(item.SourceURL) {
+			continue
+		}
+		item.EvidenceID = strings.TrimSpace(item.EvidenceID)
+		if item.EvidenceID == "" {
+			item.EvidenceID = "source-lookup"
+		}
+		item.Note = strings.TrimSpace(item.Note)
+		if item.Note == "" {
+			item.Note = "Auto-attached from source lookup."
+		}
+		item.CreatedAt = strings.TrimSpace(item.CreatedAt)
+		if item.CreatedAt == "" {
+			item.CreatedAt = timestamp
+		}
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" {
+			item.ID = deterministicID("brain-source-evidence", suggestionID, item.EvidenceID, item.SourceURL, item.Note)
+		}
+		cleaned = append(cleaned, item)
+	}
+	return normalizeSuggestionSourceEvidence(cleaned)
 }
 
 func autonomyPreflightBlockerSuggestion(suggestion BrainSuggestion, timestamp string) (BrainSuggestion, bool) {

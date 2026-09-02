@@ -19,6 +19,17 @@ const (
 	relationshipSpecificTagInstruction   = "Use content-specific uppercase tags up to 32 characters that name the actual subject or tension, such as SAMSUNG_MEMORY_SHORTAGE, COST_CLAIM_CONFLICT, GBT_MILESTONE_DUPLICATE, or CONTRACT_PRECEDES_LAUNCH. Do not use category-only final labels: RELATED, SAME_ENTITY, COMMON_ENTITY, SAME_TOPIC, SAME_EVENT, SAME_EVENT_WINDOW, SAME_PROGRAM, PRECEDES, FOLLOWS, CORROBORATES, CONTRADICTS, INCONSISTENCY, DUPLICATE_CONTENT, DUPLICATES, EXEMPLIFIES."
 )
 
+// Appended on the one-shot JSON retry: DeepSeek occasionally returns an
+// empty or truncated body under concurrent load, and a stricter restatement
+// of the output contract recovers most of those.
+const relationshipJSONRetryInstructions = `
+
+RETRY INSTRUCTIONS:
+Your previous response could not be parsed as JSON. Try again once.
+Return exactly one JSON object with a "connections" array matching the requested schema.
+Do not include markdown, comments, prose, trailing commas, or duplicate object keys.
+Use an empty "connections" array when the evidence supports no connection.`
+
 var (
 	relationshipNumberPattern = regexp.MustCompile(`\b\d[\d,]*(?:\.\d+)?(?:%|x|tb|gb|mb|kb|m|b|k)?\b`)
 	relationshipYearPattern   = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
@@ -400,7 +411,21 @@ Persona outputs:
 
 	var response relationshipCandidateJSONResponse
 	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
-		return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+		if !shouldRetryPersonaJSON(err) {
+			return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+		}
+		// DeepSeek intermittently returns empty or truncated bodies under
+		// concurrent load; retry once with stricter output instructions
+		// instead of failing the whole relationship workflow.
+		brainLog("relationships").Warn(
+			"relationship candidate json retry",
+			"provider", provider.Name(),
+			"err", models.SanitizePipelineDiagnosticText(err.Error()),
+		)
+		retryErr := provider.GenerateJSON(ctx, prompt+relationshipJSONRetryInstructions, &response)
+		if retryErr != nil {
+			return nil, fmt.Errorf("failed to synthesize relationship candidates: primary error: %v; retry error: %w", err, retryErr)
+		}
 	}
 
 	return response.Connections, nil

@@ -1,6 +1,7 @@
 package brainmemory
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -73,6 +74,7 @@ const (
 
 	SuggestionReviewSourceManual            = "manual"
 	SuggestionReviewSourceAutonomyPreflight = "autonomy-preflight"
+	SuggestionReviewSourceSourceEvidence    = "source-evidence"
 
 	SuggestionMissingSource        = "source"
 	SuggestionMissingDate          = "date"
@@ -118,6 +120,7 @@ var (
 	ErrFollowUpNotFound         = errors.New("brain follow-up action not found")
 	ErrInvalidFollowUp          = errors.New("invalid brain follow-up request")
 	ErrInvalidSuggestionOutcome = errors.New("invalid brain suggestion outcome")
+	ErrInvalidSourceEvidence    = errors.New("invalid brain source evidence")
 
 	taggedEntityPattern        = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
 	taggedContradictionPattern = regexp.MustCompile(`\[(CONTRADICTION|CONFLICT):([^\]]+)]`)
@@ -251,11 +254,44 @@ type BrainSuggestion struct {
 	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
 	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
 	TargetInvestigationIDs []string       `json:"targetInvestigationIds"`
+	SourceEvidence         []BrainSuggestionSourceEvidence `json:"sourceEvidence"`
+	LastSourceLookupAt     string         `json:"lastSourceLookupAt,omitempty"`
 	CreatedAt              string         `json:"createdAt"`
 	UpdatedAt              string         `json:"updatedAt"`
 	DismissedAt            string         `json:"dismissedAt,omitempty"`
 	ReviewedAt             string         `json:"reviewedAt,omitempty"`
 	ResolvedAt             string         `json:"resolvedAt,omitempty"`
+}
+
+// BrainSuggestionSourceEvidence is one source attached to a suggestion so a
+// needs-source review can resolve: either saved board evidence (a node's
+// source URL) or a web lookup result found by the evidence finder.
+type BrainSuggestionSourceEvidence struct {
+	ID         string `json:"id"`
+	SourceURL  string `json:"sourceUrl"`
+	EvidenceID string `json:"evidenceId,omitempty"`
+	Note       string `json:"note,omitempty"`
+	CreatedAt  string `json:"createdAt,omitempty"`
+}
+
+type SuggestionSourceEvidenceRequest struct {
+	SourceURL  string `json:"sourceUrl"`
+	EvidenceID string `json:"evidenceId"`
+	Note       string `json:"note"`
+}
+
+// SourceEvidenceLookupRequest drives an evidence finder lookup for one
+// suggestion: the suggestion itself plus the preferred search prompt.
+type SourceEvidenceLookupRequest struct {
+	Suggestion   BrainSuggestion `json:"suggestion"`
+	SearchPrompt string          `json:"searchPrompt"`
+}
+
+// SourceEvidenceFinder executes a source lookup for a suggestion. The app
+// layer wires a web-search implementation; brainmemory only depends on the
+// interface so persistence stays testable.
+type SourceEvidenceFinder interface {
+	FindSourceEvidence(ctx context.Context, request SourceEvidenceLookupRequest) ([]BrainSuggestionSourceEvidence, error)
 }
 
 type PrepareFollowUpRequest struct {
@@ -482,6 +518,10 @@ type BrainMapSummary struct {
 type Service struct {
 	vaultRoot string
 	store     *models.InvestigationStore
+
+	// sourceEvidence is the optional finder used to auto-attach source
+	// evidence to needs-source suggestions (wired by the app layer).
+	sourceEvidence SourceEvidenceFinder
 
 	// mu serialises signal recompute/notify cycles so concurrent evidence
 	// events and panel refreshes cannot interleave load/save of signals.json.
@@ -1199,6 +1239,67 @@ func (s *Service) MarkSuggestionOutcome(suggestionID string, outcome string) (Br
 	suggestions[suggestionID] = suggestion
 	if err := s.saveSuggestions(suggestions); err != nil {
 		return BrainSuggestion{}, err
+	}
+	return suggestion, nil
+}
+
+// SetSourceEvidenceFinder wires the optional evidence finder used to
+// auto-attach source evidence to needs-source suggestions.
+func (s *Service) SetSourceEvidenceFinder(finder SourceEvidenceFinder) {
+	s.sourceEvidence = finder
+}
+
+// AddSuggestionSourceEvidence attaches one source to a suggestion. When the
+// suggestion was stuck on a needs-source review, the evidence resolves it and
+// the autonomy queue is re-evaluated so blockers clear immediately.
+func (s *Service) AddSuggestionSourceEvidence(suggestionID string, request SuggestionSourceEvidenceRequest) (BrainSuggestion, error) {
+	suggestionID = strings.TrimSpace(suggestionID)
+	sourceURL := strings.TrimSpace(request.SourceURL)
+	if !validSourceEvidenceURL(sourceURL) {
+		return BrainSuggestion{}, ErrInvalidSourceEvidence
+	}
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return BrainSuggestion{}, err
+	}
+	suggestion, ok := suggestions[suggestionID]
+	if !ok {
+		return BrainSuggestion{}, ErrSuggestionNotFound
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	evidence := BrainSuggestionSourceEvidence{
+		SourceURL:  sourceURL,
+		EvidenceID: strings.TrimSpace(request.EvidenceID),
+		Note:       strings.TrimSpace(request.Note),
+		CreatedAt:  now,
+	}
+	suggestion.SourceEvidence = append(suggestion.SourceEvidence, evidence)
+	suggestion.SourceEvidence = normalizeSuggestionSourceEvidence(suggestion.SourceEvidence)
+	hadSourceMissing := containsString(suggestion.MissingEvidence, SuggestionMissingSource)
+	suggestion.MissingEvidence = removeString(suggestion.MissingEvidence, SuggestionMissingSource)
+	if suggestion.ReviewOutcome == SuggestionOutcomeNeedsSource {
+		suggestion.Status = SuggestionStatusReviewed
+		suggestion.ReviewOutcome = SuggestionOutcomeResolved
+		suggestion.ReviewSource = SuggestionReviewSourceSourceEvidence
+		if strings.TrimSpace(suggestion.ReviewedAt) == "" {
+			suggestion.ReviewedAt = now
+		}
+		suggestion.ResolvedAt = now
+	}
+	if hadSourceMissing || suggestion.ReviewOutcome == SuggestionOutcomeResolved {
+		suggestion.UpdatedAt = now
+	}
+	suggestion = normalizeSuggestionCollections(suggestion)
+	suggestions[suggestionID] = suggestion
+	if err := s.saveSuggestions(suggestions); err != nil {
+		return BrainSuggestion{}, err
+	}
+
+	// The verify blocker is scored against the persisted suggestions, so a
+	// needs-source resolution must re-evaluate the autonomy queue now.
+	if err := s.reevaluateAutonomyFromPersistedSuggestions(suggestion.InvestigationID); err != nil {
+		return suggestion, nil
 	}
 	return suggestion, nil
 }
@@ -3967,6 +4068,10 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 	suggestion.ReviewOutcome = previous.ReviewOutcome
 	suggestion.ReviewSource = previous.ReviewSource
 	suggestion.ResolvedAt = previous.ResolvedAt
+	// Attached source evidence is operator/system state, not derived content:
+	// a recompute must carry it forward instead of wiping it.
+	suggestion.SourceEvidence = previous.SourceEvidence
+	suggestion.LastSourceLookupAt = previous.LastSourceLookupAt
 	if suggestion.Status == SuggestionStatusDismissed && suggestion.DismissedAt == "" {
 		suggestion.DismissedAt = timestamp
 	}
@@ -3987,7 +4092,49 @@ func normalizeSuggestionCollections(suggestion BrainSuggestion) BrainSuggestion 
 	suggestion.RelatedMemoryLinkIDs = cleanStringSet(suggestion.RelatedMemoryLinkIDs)
 	suggestion.RelatedClusterIDs = cleanStringSet(suggestion.RelatedClusterIDs)
 	suggestion.TargetInvestigationIDs = cleanStringSet(suggestion.TargetInvestigationIDs)
+	suggestion.SourceEvidence = normalizeSuggestionSourceEvidence(suggestion.SourceEvidence)
 	return suggestion
+}
+
+func normalizeSuggestionSourceEvidence(items []BrainSuggestionSourceEvidence) []BrainSuggestionSourceEvidence {
+	cleaned := make([]BrainSuggestionSourceEvidence, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		item.SourceURL = strings.TrimSpace(item.SourceURL)
+		if !validSourceEvidenceURL(item.SourceURL) {
+			continue
+		}
+		if _, ok := seen[item.SourceURL]; ok {
+			continue
+		}
+		seen[item.SourceURL] = struct{}{}
+		item.EvidenceID = strings.TrimSpace(item.EvidenceID)
+		item.Note = strings.TrimSpace(item.Note)
+		item.ID = strings.TrimSpace(item.ID)
+		if item.ID == "" {
+			item.ID = deterministicID("brain-source-evidence", item.SourceURL, item.EvidenceID, item.Note)
+		}
+		cleaned = append(cleaned, item)
+	}
+	return cleaned
+}
+
+func validSourceEvidenceURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	return parsed.Scheme == "http" || parsed.Scheme == "https"
+}
+
+func removeString(values []string, target string) []string {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != target {
+			cleaned = append(cleaned, value)
+		}
+	}
+	return cleaned
 }
 
 func routeSuggestionThinking(suggestion BrainSuggestion) BrainSuggestion {
@@ -4473,6 +4620,14 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 			}
 			suggestion, err := service.MarkSuggestionOutcome(parts[3], request.Outcome)
 			writeAPIResult(w, suggestion, err)
+		case "source-evidence":
+			var request SuggestionSourceEvidenceRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				writeAPIResult(w, BrainSuggestion{}, ErrInvalidSourceEvidence)
+				return
+			}
+			suggestion, err := service.AddSuggestionSourceEvidence(parts[3], request)
+			writeAPIResult(w, suggestion, err)
 		default:
 			http.NotFound(w, r)
 		}
@@ -4554,6 +4709,8 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 			http.Error(w, "invalid brain follow-up request", http.StatusBadRequest)
 		case errors.Is(err, ErrInvalidSuggestionOutcome):
 			http.Error(w, "invalid brain suggestion outcome", http.StatusBadRequest)
+		case errors.Is(err, ErrInvalidSourceEvidence):
+			http.Error(w, "invalid brain source evidence", http.StatusBadRequest)
 		case errors.Is(err, ErrInvalidAutonomySettings):
 			http.Error(w, "invalid brain autonomy settings", http.StatusBadRequest)
 		default:
