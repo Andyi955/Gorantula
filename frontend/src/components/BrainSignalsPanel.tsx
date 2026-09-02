@@ -156,6 +156,8 @@ const BRAIN_MEMORY_FOLLOWUP_INTERVAL_MS = 1100
 const BRAIN_MEMORY_FOLLOWUP_MAX_ATTEMPTS = 4
 // How long a BRAIN_FIRED node keeps its glow before the map settles.
 const MAP_PULSE_MS = 2400
+// How long the autonomy strip stays lit after a fresh prepared item lands.
+const AUTONOMY_PULSE_MS = 6000
 const GATEWAY_ROUTE_LIMIT = 25
 
 type BrainView = 'pulse' | 'focus' | 'memory' | 'moves' | 'signals' | 'links' | 'clusters' | 'gateways' | 'autonomy'
@@ -485,6 +487,11 @@ export default function BrainSignalsPanel({
   // strengthened), armed per background refresh and settled after a beat.
   const [mapPulse, setMapPulse] = useState<{ key: number; signalIds: string[] }>({ key: 0, signalIds: [] })
   const [isMapPulseActive, setIsMapPulseActive] = useState(false)
+  const [autonomyPulse, setAutonomyPulse] = useState<{ key: number; items: { id: string; title: string }[] }>({
+    key: 0,
+    items: [],
+  })
+  const [isAutonomyPulseActive, setIsAutonomyPulseActive] = useState(false)
   const [labMode, setLabMode] = useState(() => loadBrainLabEnabled())
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
@@ -569,6 +576,12 @@ export default function BrainSignalsPanel({
     investigationId: null,
     scores: {},
   })
+  // Already-seen prepared autonomy items: the strip pulses only for prepared
+  // work that arrives after the first load (the primed pass marks the base).
+  const autonomyPulseSeenRef = useRef<{ primed: boolean; ids: Set<string> }>({
+    primed: false,
+    ids: new Set<string>(),
+  })
 
   // A pulse arms on the refresh that echoes a BRAIN_FIRED broadcast and
   // settles after MAP_PULSE_MS — the map glows, then rests.
@@ -582,6 +595,42 @@ export default function BrainSignalsPanel({
     }, MAP_PULSE_MS)
     return () => window.clearTimeout(timer)
   }, [mapPulse])
+
+  // Autonomy consumes the live stream: the backend re-evaluates the guarded
+  // queue on every evidence event, so when a refresh carries prepared work we
+  // have not seen yet, the strip lights up with the fresh decision.
+  useEffect(() => {
+    // Skip the pre-load null pass — prime on the first real state instead.
+    if (!autonomyState) {
+      return
+    }
+    const preparedItems = (autonomyState.queue ?? [])
+      .filter((item) => item.status === 'prepared')
+      .map((item) => ({ id: item.id, title: item.title }))
+    const seen = autonomyPulseSeenRef.current
+    if (!seen.primed) {
+      seen.primed = true
+      seen.ids = new Set(preparedItems.map((item) => item.id))
+      return
+    }
+    const fresh = preparedItems.filter((item) => !seen.ids.has(item.id))
+    preparedItems.forEach((item) => seen.ids.add(item.id))
+    if (fresh.length > 0) {
+      setAutonomyPulse((current) => ({ key: current.key + 1, items: fresh }))
+    }
+  }, [autonomyState])
+
+  // The strip pulse settles after AUTONOMY_PULSE_MS, like the map glow.
+  useEffect(() => {
+    if (autonomyPulse.key === 0 || autonomyPulse.items.length === 0) {
+      return undefined
+    }
+    setIsAutonomyPulseActive(true)
+    const timer = window.setTimeout(() => {
+      setIsAutonomyPulseActive(false)
+    }, AUTONOMY_PULSE_MS)
+    return () => window.clearTimeout(timer)
+  }, [autonomyPulse])
 
   const startBrainMemoryFollowup = useCallback(() => {
     setBrainMemoryFollowupRunId((current) => current + 1)
@@ -2615,7 +2664,7 @@ export default function BrainSignalsPanel({
   const renderAutonomyStrip = () => (
     <div
       data-testid="brain-autonomy-strip"
-      className={`forensic-brain-autonomy-strip${autonomyApprovalCount > 0 || blockedAutonomyCount > 0 ? ' is-attention' : ''}`}
+      className={`forensic-brain-autonomy-strip${autonomyApprovalCount > 0 || blockedAutonomyCount > 0 ? ' is-attention' : ''}${isAutonomyPulseActive ? ' is-pulsing' : ''}`}
       aria-label="Brain autonomy status"
     >
       <span className="forensic-brain-panel-kicker">Autonomy</span>
@@ -2631,7 +2680,11 @@ export default function BrainSignalsPanel({
         <ShieldCheck size={12} />
         Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}
       </button>
-      {autonomyQueue.length === 0 ? (
+      {isAutonomyPulseActive && autonomyPulse.items.length > 0 ? (
+        <span className="forensic-brain-autonomy-strip-note is-fresh" data-testid="brain-autonomy-strip-fresh">
+          Prepared: {autonomyPulse.items[0].title}
+        </span>
+      ) : autonomyQueue.length === 0 ? (
         <span className="forensic-brain-autonomy-strip-note">Idle — nothing queued</span>
       ) : (
         <span className="forensic-brain-autonomy-strip-note">
@@ -4500,6 +4553,25 @@ export default function BrainSignalsPanel({
               </span>
             )}
           </div>
+          {(item.gatewayLabel || item.sourceSignalIds.length > 0) && (
+            <div
+              className="forensic-brain-chip-row forensic-brain-autonomy-provenance"
+              aria-label="Signal stream provenance"
+              data-testid="brain-autonomy-provenance"
+            >
+              <span className="forensic-brain-autonomy-provenance-kicker">from the stream</span>
+              {item.gatewayLabel && (
+                <span className="forensic-brain-chip forensic-brain-chip-source forensic-brain-autonomy-provenance-chip">
+                  {item.gatewayLabel}
+                </span>
+              )}
+              {item.sourceSignalIds.length > 0 && (
+                <span className="forensic-brain-chip forensic-brain-autonomy-provenance-chip">
+                  {item.sourceSignalIds.length} source signal{item.sourceSignalIds.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+          )}
           {item.blockers.length > 0 && (
             <section className="forensic-brain-autonomy-unblock" aria-label="How to unblock this autonomy decision">
               <div>

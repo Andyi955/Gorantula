@@ -340,7 +340,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					rawText, _ := payloadMap["text"].(string)
 
 					go func() {
-						processedText, err := br.ProcessManualNodeText(context.Background(), rawText)
+						// Bounded analyze: a hung LLM call must broadcast an
+						// ERROR instead of leaving the node stuck in
+						// analyzing forever.
+						ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+						defer cancel()
+						processedText, err := br.ProcessManualNodeText(ctx, rawText)
 						if err != nil {
 							appLog("websocket").Error("manual node processing failed", "message_type", msgType, "node", nodeID, "err", err)
 							broadcast(models.WSMessage{Type: "ERROR", Payload: "Analysis failed: " + err.Error()})

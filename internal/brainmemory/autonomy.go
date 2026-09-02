@@ -65,8 +65,12 @@ type BrainAutonomyQueueItem struct {
 	Blockers               []string `json:"blockers"`
 	ApprovalRequired       bool     `json:"approvalRequired"`
 	TargetInvestigationIDs []string `json:"targetInvestigationIds"`
-	CreatedAt              string   `json:"createdAt"`
-	UpdatedAt              string   `json:"updatedAt"`
+	// Stream provenance: which live signals and gateway drove this decision.
+	SourceSignalIds []string `json:"sourceSignalIds"`
+	Gateway         string   `json:"gateway,omitempty"`
+	GatewayLabel    string   `json:"gatewayLabel,omitempty"`
+	CreatedAt       string   `json:"createdAt"`
+	UpdatedAt       string   `json:"updatedAt"`
 }
 
 type BrainAutonomyAuditEntry struct {
@@ -80,6 +84,7 @@ type BrainAutonomyAuditEntry struct {
 	Reason           string   `json:"reason"`
 	Blockers         []string `json:"blockers"`
 	ApprovalRequired bool     `json:"approvalRequired"`
+	SourceSignalIds  []string `json:"sourceSignalIds"`
 	CreatedAt        string   `json:"createdAt"`
 }
 
@@ -251,6 +256,7 @@ func (s *Service) saveAutonomyDecision(
 		Reason:           item.Reason,
 		Blockers:         cleanStringSet(item.Blockers),
 		ApprovalRequired: item.ApprovalRequired,
+		SourceSignalIds:  cleanStringSet(item.SourceSignalIds),
 		CreatedAt:        item.UpdatedAt,
 	}
 	audit[entry.ID] = entry
@@ -507,6 +513,9 @@ func buildAutonomyQueueItem(suggestion BrainSuggestion, settings BrainAutonomySe
 		Score:                  suggestion.Score,
 		Relevance:              suggestion.Relevance,
 		TargetInvestigationIDs: cleanStringSet(suggestion.TargetInvestigationIDs),
+		SourceSignalIds:        cleanStringSet(suggestion.RelatedSignalIDs),
+		Gateway:                strings.TrimSpace(suggestion.ThinkingGateway),
+		GatewayLabel:           strings.TrimSpace(suggestion.ThinkingLabel),
 		CreatedAt:              timestamp,
 		UpdatedAt:              timestamp,
 	}
@@ -554,6 +563,7 @@ func validAutonomyMode(mode string) bool {
 func normalizeAutonomyQueueItem(item BrainAutonomyQueueItem) BrainAutonomyQueueItem {
 	item.Blockers = cleanStringSet(item.Blockers)
 	item.TargetInvestigationIDs = cleanStringSet(item.TargetInvestigationIDs)
+	item.SourceSignalIds = cleanStringSet(item.SourceSignalIds)
 	return item
 }
 
@@ -643,6 +653,7 @@ func (s *Service) loadAutonomyAudit() (map[string]BrainAutonomyAuditEntry, error
 	byID := make(map[string]BrainAutonomyAuditEntry, len(items))
 	for _, item := range items {
 		item.Blockers = cleanStringSet(item.Blockers)
+		item.SourceSignalIds = cleanStringSet(item.SourceSignalIds)
 		if strings.TrimSpace(item.ID) != "" {
 			byID[item.ID] = item
 		}
@@ -654,6 +665,7 @@ func (s *Service) saveAutonomyAudit(audit map[string]BrainAutonomyAuditEntry) er
 	items := make([]BrainAutonomyAuditEntry, 0, len(audit))
 	for _, item := range audit {
 		item.Blockers = cleanStringSet(item.Blockers)
+		item.SourceSignalIds = cleanStringSet(item.SourceSignalIds)
 		items = append(items, item)
 	}
 	sortAutonomyAudit(items)

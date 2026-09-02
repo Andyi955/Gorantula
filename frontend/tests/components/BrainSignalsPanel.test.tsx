@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
 import type {
   BrainAttentionSummary,
+  BrainAutonomyQueueItem,
   BrainAutonomyState,
   BrainFollowUpAction,
   BrainGatewayDetail,
@@ -487,6 +488,29 @@ const makeAutonomyState = (overrides: Partial<BrainAutonomyState> = {}): BrainAu
   },
   queue: overrides.queue || [],
   audit: overrides.audit || [],
+})
+
+const makeAutonomyQueueItem = (overrides: Partial<BrainAutonomyQueueItem> = {}): BrainAutonomyQueueItem => ({
+  id: 'brain-autonomy-item-1',
+  investigationId: 'inv-current',
+  suggestionId: 'brain-suggestion-1',
+  decision: 'prepared',
+  status: 'prepared',
+  mode: 'prepare-only',
+  title: 'Focused follow-up ready',
+  summary: 'Autonomy prepared one focused follow-up from the live signal stream.',
+  score: 0.91,
+  relevance: 'strong-memory',
+  reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically.',
+  blockers: [],
+  approvalRequired: true,
+  targetInvestigationIds: ['inv-older'],
+  sourceSignalIds: [signal.id],
+  gateway: 'entity-date',
+  gatewayLabel: 'Entity/Date',
+  createdAt: '2026-06-05T12:05:00Z',
+  updatedAt: '2026-06-05T12:05:00Z',
+  ...overrides,
 })
 
 const jsonResponse = (payload: unknown, status = 200) => ({
@@ -1000,6 +1024,9 @@ describe('BrainSignalsPanel', () => {
           blockers: [],
           approvalRequired: true,
           targetInvestigationIds: ['inv-older'],
+          sourceSignalIds: [signal.id],
+          gateway: 'entity-date',
+          gatewayLabel: 'Entity/Date',
           createdAt: '2026-06-05T12:05:00Z',
           updatedAt: '2026-06-05T12:05:00Z',
         },
@@ -1017,6 +1044,7 @@ describe('BrainSignalsPanel', () => {
           reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
           blockers: ['unresolved-gap'],
           targetInvestigationIds: ['inv-older'],
+          sourceSignalIds: [],
           createdAt: '2026-06-05T12:06:00Z',
           updatedAt: '2026-06-05T12:06:00Z',
         },
@@ -1124,6 +1152,7 @@ describe('BrainSignalsPanel', () => {
         blockers: [],
         approvalRequired: true,
         targetInvestigationIds: ['inv-older'],
+        sourceSignalIds: [signal.id],
         createdAt: '2026-06-05T12:05:00Z',
         updatedAt: '2026-06-05T12:05:00Z',
       }],
@@ -1246,6 +1275,7 @@ describe('BrainSignalsPanel', () => {
         reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
         blockers: ['unresolved-gap', 'unresolved-contradiction'],
         targetInvestigationIds: ['inv-older'],
+        sourceSignalIds: [],
         createdAt: '2026-06-05T12:06:00Z',
         updatedAt: '2026-06-05T12:06:00Z',
       }],
@@ -3306,6 +3336,9 @@ describe('BrainSignalsPanel', () => {
             blockers: [],
             approvalRequired: true,
             targetInvestigationIds: ['inv-older'],
+            sourceSignalIds: [signal.id],
+            gateway: 'entity-date',
+            gatewayLabel: 'Entity/Date',
             createdAt: '2026-06-05T12:05:00Z',
             updatedAt: '2026-06-05T12:05:00Z',
           },
@@ -3323,6 +3356,7 @@ describe('BrainSignalsPanel', () => {
             reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
             blockers: ['unresolved-gap'],
             targetInvestigationIds: ['inv-older'],
+            sourceSignalIds: [],
             createdAt: '2026-06-05T12:06:00Z',
             updatedAt: '2026-06-05T12:06:00Z',
           },
@@ -3337,6 +3371,70 @@ describe('BrainSignalsPanel', () => {
     expect(strip).toHaveTextContent('2 queued')
     expect(strip).toHaveTextContent('1 blocked')
     expect(strip).toHaveTextContent('1 awaiting approval')
+  })
+
+  it('shows stream provenance on autonomy queue cards', async () => {
+    const user = userEvent.setup()
+    installBrainFetch({
+      signals: [signal],
+      links: [],
+      clusters: [],
+      autonomy: makeAutonomyState({
+        queue: [makeAutonomyQueueItem()],
+      }),
+    })
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /autonomy queue view/i)
+
+    const provenance = await screen.findByTestId('brain-autonomy-provenance')
+    expect(provenance).toHaveTextContent('from the stream')
+    expect(provenance).toHaveTextContent('Entity/Date')
+    expect(provenance).toHaveTextContent('1 source signal')
+  })
+
+  it('pulses the autonomy strip when a refresh brings a new prepared item', async () => {
+    const autonomyState = makeAutonomyState({
+      queue: [makeAutonomyQueueItem()],
+    })
+    installBrainFetch({
+      signals: [signal],
+      links: [],
+      clusters: [],
+      autonomy: autonomyState,
+    })
+
+    const view = render(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={0}
+      />,
+    )
+    const strip = await screen.findByTestId('brain-autonomy-strip')
+    // The mount load must land (and prime the seen-set) before the echo.
+    await waitFor(() => {
+      expect(strip).toHaveTextContent('1 queued')
+    })
+    // The first load primes the seen-set: no pulse for the base queue.
+    expect(screen.queryByTestId('brain-autonomy-strip-fresh')).not.toBeInTheDocument()
+
+    // The BRAIN_FIRED echo lands with a fresh prepared decision in the queue.
+    autonomyState.queue = [
+      ...autonomyState.queue,
+      makeAutonomyQueueItem({ id: 'brain-autonomy-item-2', title: 'Focused follow-up for the new signal' }),
+    ]
+    view.rerender(
+      <BrainSignalsPanel
+        currentInvestigationId="inv-current"
+        currentInvestigationTitle="Current Grid Case"
+        externalFiredToken={1}
+      />,
+    )
+
+    const fresh = await screen.findByTestId('brain-autonomy-strip-fresh')
+    expect(fresh).toHaveTextContent('Prepared: Focused follow-up for the new signal')
+    expect(strip).toHaveClass('is-pulsing')
   })
 
   it('toggles auto-prepare from the pulse autonomy strip', async () => {
