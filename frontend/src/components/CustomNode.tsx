@@ -5,7 +5,7 @@ import type { NodeProps } from 'reactflow';
 import { NodeResizeControl, ResizeControlVariant } from '@reactflow/node-resizer';
 import '@reactflow/node-resizer/dist/style.css';
 import { ExternalLink, BookOpen, Search, ArrowRight, ChevronDown, ChevronUp, MessageCircle, X, ArrowRightToLine, CheckCircle, Trash2, Edit2, Save, Image as ImageIcon } from 'lucide-react';
-import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, NODE_AUTO_MAX_WIDTH, NODE_FRAME_GRID_SIZE, NODE_IMAGE_PREVIEW_HEIGHT, calculateNodeFrame, getPortSlotsForDimensions } from './boardGeometry';
+import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, MIN_NODE_EDIT_HEIGHT, MIN_NODE_EDIT_WIDTH, NODE_AUTO_MAX_WIDTH, NODE_FRAME_GRID_SIZE, NODE_IMAGE_PREVIEW_HEIGHT, calculateNodeFrame, getPortSlotsForDimensions, snapNodeFrameSize } from './boardGeometry';
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
@@ -609,8 +609,67 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
     const frameHeight = typeof props.height === 'number' ? props.height : fallbackFrame.height;
     const isStrictGrid = data.boardMode === 'strict-grid';
 
+    // Edit mode borrows space: entering grows the frame to fit the edit
+    // layout (the auto-fit pass below deliberately rests while editing);
+    // leaving hands back a frame sized for the saved content, never smaller
+    // than the operator's own pre-edit size.
+    const preEditFrameRef = useRef<{ width: number; height: number } | null>(null);
     useEffect(() => {
-        if (!data.id || !onResizeCommit || isEditing || showDeleteConfirm) {
+        if (!data.id || !onResizeCommit) {
+            return;
+        }
+        if (isEditing) {
+            if (preEditFrameRef.current) {
+                return;
+            }
+            preEditFrameRef.current = { width: frameWidth, height: frameHeight };
+            const nextWidth = snapNodeFrameSize(Math.max(frameWidth, MIN_NODE_EDIT_WIDTH), MIN_NODE_EDIT_WIDTH);
+            const nextHeight = snapNodeFrameSize(Math.max(frameHeight, MIN_NODE_EDIT_HEIGHT), MIN_NODE_EDIT_HEIGHT);
+            if (nextWidth > frameWidth + 1 || nextHeight > frameHeight + 1) {
+                onResizeCommit(data.id, nextWidth, nextHeight);
+            }
+            return;
+        }
+        const captured = preEditFrameRef.current;
+        preEditFrameRef.current = null;
+        if (!captured) {
+            return;
+        }
+        const contentFrame = calculateNodeFrame(
+            data.summary || '',
+            data.fullText || '',
+            isExpanded,
+            nodeHasImages(data.images)
+        );
+        const nextWidth = snapNodeFrameSize(Math.max(captured.width, contentFrame.width), MIN_NODE_WIDTH);
+        const nextHeight = snapNodeFrameSize(Math.max(captured.height, contentFrame.height), MIN_NODE_HEIGHT);
+        if (nextWidth !== frameWidth || nextHeight !== frameHeight) {
+            onResizeCommit(data.id, nextWidth, nextHeight);
+        }
+    }, [isEditing, data.id, data.summary, data.fullText, data.images, isExpanded, frameWidth, frameHeight, onResizeCommit]);
+
+    useEffect(() => {
+        if (!data.id || !onResizeCommit || showDeleteConfirm) {
+            return;
+        }
+
+        // While editing, the frame only ever grows: if the edit content
+        // (image chips wrapping, longer text) needs more room than the frame
+        // offers, hand the node the measured height so nothing overlaps.
+        if (isEditing) {
+            const shell = shellRef.current;
+            if (!shell) {
+                return;
+            }
+            const neededHeight = shell.scrollHeight;
+            if (neededHeight > frameHeight + 2) {
+                const requestKey = `${data.id}:edit:${Math.round(neededHeight)}`;
+                if (autoFitRequestRef.current === requestKey) {
+                    return;
+                }
+                autoFitRequestRef.current = requestKey;
+                onResizeCommit(data.id, frameWidth, snapNodeFrameSize(neededHeight, MIN_NODE_EDIT_HEIGHT));
+            }
             return;
         }
 
@@ -907,6 +966,15 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
         logNodeInteractionDebug('save', { nodeId: data.id, titleLength: editTitle.length, textLength: editText.length, mode });
         if (onSaveNode && data.id) {
             onSaveNode(data.id, editTitle, editText, mode);
+        }
+        // A save always hands back the compact card: collapse the expanded
+        // dossier view so the saved node reads like every other analyzed
+        // node. Re-expanding is a deliberate click on the chevron.
+        if (isExpanded) {
+            setIsExpanded(false);
+            if (data.onExpand && data.id) {
+                data.onExpand(data.id, false);
+            }
         }
         if (onSetEditing) onSetEditing(null);
     };
@@ -1338,7 +1406,7 @@ const CustomNode = ({ data, selected, ...props }: NodeProps<NodeData> & {
                                     onChange={(e) => setEditText(e.target.value)}
                                     onKeyDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="custom-scrollbar nodrag nowheel min-h-0 w-full flex-1 border border-[rgba(129,227,255,0.18)] bg-[rgba(7,12,18,0.9)] p-3 font-mono text-[12px] text-[var(--forensic-text)] outline-none transition-colors focus:border-[rgba(129,227,255,0.45)]"
+                                    className="custom-scrollbar nodrag nowheel min-h-[150px] w-full flex-1 border border-[rgba(129,227,255,0.18)] bg-[rgba(7,12,18,0.9)] p-3 font-mono text-[12px] text-[var(--forensic-text)] outline-none transition-colors focus:border-[rgba(129,227,255,0.45)]"
                                     placeholder="Enter evidence details..."
                                 />
                             </div>

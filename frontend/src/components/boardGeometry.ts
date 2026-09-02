@@ -50,6 +50,10 @@ export const BOARD_GRID_SIZE = 24;
 export const NODE_FRAME_GRID_SIZE = BOARD_GRID_SIZE * 2;
 export const MIN_NODE_WIDTH = 288;
 export const MIN_NODE_HEIGHT = 192;
+// Edit mode borrows room for the image panel, textarea, and action footer;
+// a node entering edit never stays smaller than this frame.
+export const MIN_NODE_EDIT_WIDTH = 336;
+export const MIN_NODE_EDIT_HEIGHT = 432;
 export const NODE_IMAGE_PREVIEW_HEIGHT = 96;
 const PORT_MARGIN = BOARD_GRID_SIZE;
 const NODE_TEXT_HORIZONTAL_CHROME = 72;
