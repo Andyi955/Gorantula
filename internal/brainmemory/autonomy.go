@@ -324,14 +324,15 @@ func (s *Service) autoResolveSuggestionSourceEvidence(suggestion BrainSuggestion
 		return suggestion, false, err
 	}
 	if len(evidence) == 0 {
-		// The web lookup is expensive: a fruitless attempt is recorded and
-		// not repeated inside the cooldown window.
+		// The web lookup is expensive and slow: it runs OUT OF BAND. The
+		// attempt is recorded (cooldown) and the lookup dispatched; when it
+		// lands the results are applied and the queue re-evaluated.
 		if sourceLookupInCooldown(suggestion.LastSourceLookupAt, timestamp) {
 			return suggestion, false, nil
 		}
-		evidence = s.findSourceEvidenceForSuggestion(suggestion, timestamp)
 		suggestion.LastSourceLookupAt = timestamp
 		lookupAttempted = true
+		s.dispatchSourceLookup(suggestion, timestamp)
 	}
 	if len(evidence) == 0 {
 		if lookupAttempted {
@@ -374,20 +375,79 @@ func suggestionNeedsSourceEvidence(suggestion BrainSuggestion) bool {
 	return containsString(suggestion.MissingEvidence, SuggestionMissingSource)
 }
 
-func (s *Service) findSourceEvidenceForSuggestion(suggestion BrainSuggestion, timestamp string) []BrainSuggestionSourceEvidence {
+// dispatchSourceLookup hands the lookup to the out-of-band goroutine so the
+// recompute pass (which holds the brain mutex) never waits on the network.
+func (s *Service) dispatchSourceLookup(suggestion BrainSuggestion, timestamp string) {
 	if s.sourceEvidence == nil {
-		return nil
+		return
+	}
+	request := SourceEvidenceLookupRequest{
+		Suggestion:      normalizeSuggestionCollections(suggestion),
+		SuggestionID:    suggestion.ID,
+		InvestigationID: suggestion.InvestigationID,
+		SearchPrompt:    sourceEvidenceLookupPrompt(suggestion),
+	}
+	dispatch := s.sourceLookupDispatcher
+	if dispatch == nil {
+		dispatch = func(work func()) { go work() }
+	}
+	dispatch(func() { s.processSourceLookup(request, timestamp) })
+}
+
+// processSourceLookup runs the finder and applies whatever it finds back
+// onto the suggestion, resolving needs-source and re-evaluating autonomy.
+func (s *Service) processSourceLookup(request SourceEvidenceLookupRequest, dispatchedAt string) {
+	if s.sourceEvidence == nil {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	items, err := s.sourceEvidence.FindSourceEvidence(ctx, SourceEvidenceLookupRequest{
-		Suggestion:   normalizeSuggestionCollections(suggestion),
-		SearchPrompt: sourceEvidenceLookupPrompt(suggestion),
-	})
+	items, err := s.sourceEvidence.FindSourceEvidence(ctx, request)
 	if err != nil {
-		return nil
+		return
 	}
-	return normalizeLookupSourceEvidence(suggestion.ID, items, timestamp)
+	evidence := normalizeLookupSourceEvidence(request.SuggestionID, items, dispatchedAt)
+	if len(evidence) == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	suggestions, err := s.loadSuggestions()
+	if err != nil {
+		return
+	}
+	suggestion, ok := suggestions[request.SuggestionID]
+	if !ok || suggestion.Status == SuggestionStatusDismissed {
+		return
+	}
+	// Another path may already have resolved it while the lookup ran.
+	if !suggestionNeedsSourceEvidence(suggestion) {
+		return
+	}
+
+	previousEvidenceCount := len(suggestion.SourceEvidence)
+	suggestion.SourceEvidence = normalizeSuggestionSourceEvidence(append(suggestion.SourceEvidence, evidence...))
+	hadSourceMissing := containsString(suggestion.MissingEvidence, SuggestionMissingSource)
+	suggestion.MissingEvidence = removeString(suggestion.MissingEvidence, SuggestionMissingSource)
+	if suggestion.ReviewOutcome == SuggestionOutcomeNeedsSource {
+		suggestion.Status = SuggestionStatusReviewed
+		suggestion.ReviewOutcome = SuggestionOutcomeResolved
+		suggestion.ReviewSource = SuggestionReviewSourceSourceEvidence
+		if strings.TrimSpace(suggestion.ReviewedAt) == "" {
+			suggestion.ReviewedAt = dispatchedAt
+		}
+		suggestion.ResolvedAt = dispatchedAt
+	}
+	if len(suggestion.SourceEvidence) == previousEvidenceCount && !hadSourceMissing {
+		return
+	}
+	suggestion.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	suggestions[request.SuggestionID] = normalizeSuggestionCollections(suggestion)
+	if err := s.saveSuggestions(suggestions); err != nil {
+		return
+	}
+	s.reevaluateAutonomyFromPersistedSuggestions(request.InvestigationID)
 }
 
 func sourceEvidenceLookupPrompt(suggestion BrainSuggestion) string {
