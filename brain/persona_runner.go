@@ -12,11 +12,12 @@ import (
 )
 
 // personaMaxConcurrency caps how many persona prompts hit the model
-// provider at the same instant. Full-board analysis fires seven large
-// prompts; providers like DeepSeek respond to that burst by returning
-// empty or truncated bodies, so the personas flow through in waves
-// instead of one simultaneous salvo.
-const personaMaxConcurrency = 4
+// provider at the same instant. Seven simultaneous large prompts made
+// providers like DeepSeek return empty or truncated bodies; capping one
+// below the full salvo keeps peak pressure down while the wall time stays
+// at the all-at-once baseline (six run in parallel, the seventh starts as
+// the first finishes).
+const personaMaxConcurrency = 6
 
 type personaAnalysisResult struct {
 	personaName string

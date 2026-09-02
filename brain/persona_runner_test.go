@@ -44,6 +44,9 @@ func TestAnalyzeWithPersonasThrottlesConcurrency(t *testing.T) {
 		t.Fatalf("expected at most %d concurrent personas, got %d", personaMaxConcurrency, maxInFlight)
 	}
 	if maxInFlight < 2 {
-		t.Fatalf("expected personas to still run in parallel waves, got max concurrency %d", maxInFlight)
+		t.Fatalf("expected personas to still run in parallel, got max concurrency %d", maxInFlight)
+	}
+	if maxInFlight == int64(len(GetDefaultPersonas())) {
+		t.Fatalf("expected the cap to keep at least one persona from launching simultaneously, got max %d", maxInFlight)
 	}
 }
