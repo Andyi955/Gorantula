@@ -2548,7 +2548,11 @@ function App() {
           >
             <Brain size={18} />
             Brain
-            {brainUnreadCount > 0 && (
+            {/* Hidden while Brain is open: the badge sums unseen overlaps for
+                every case, and with the synapse engine live across the vault
+                other cases keep re-arming it — a count on the tab you are
+                already reading is noise, not signal. */}
+            {activeTab !== 'brain' && brainUnreadCount > 0 && (
               <span className="ml-1 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-cyber-purple px-1.5 text-[11px] font-bold text-white">
                 {brainUnreadCount > 9 ? '9+' : brainUnreadCount}
               </span>
