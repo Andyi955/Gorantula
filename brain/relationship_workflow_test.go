@@ -861,3 +861,69 @@ func TestSynthesizedRelationshipCandidatesFailsAfterRetriesExhausted(t *testing.
 		t.Fatalf("expected three attempts (primary + two retries), got %d", calls)
 	}
 }
+
+func TestSynthesizedRelationshipPromptIsSlimmed(t *testing.T) {
+	var capturedPrompt string
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			capturedPrompt = prompt
+			target.(*relationshipCandidateJSONResponse).Connections = []models.RelationshipCandidate{}
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"mock": mock},
+	}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	hugeNodeText := strings.Repeat("Iranian supply chain evidence sentence. ", 600) + "TAIL-NODE-TEXT-END"
+	nodes := []models.MemoryNode{
+		{ID: "node-1", Title: "Iran War", Summary: "War summary.", FullText: hugeNodeText},
+		{ID: "node-2", Title: "Regional Impact", Summary: "Regional summary.", FullText: hugeNodeText},
+	}
+
+	insights := make([]PersonaInsight, 0, 7)
+	for index := 0; index < 7; index++ {
+		findings := make([]string, 0, 60)
+		for item := 0; item < 60; item++ {
+			findings = append(findings, fmt.Sprintf("Finding %d: %s FINDING-%d-TAIL", index, strings.Repeat("detailed finding text ", 15), item))
+		}
+		insights = append(insights, PersonaInsight{
+			PersonaName:         fmt.Sprintf("Persona %d", index),
+			Confidence:          0.9,
+			KeyFindings:         findings,
+			Observations:        make([]string, 40),
+			Hypotheses:          make([]string, 30),
+			Connections:         make([]string, 25),
+			FullAnalysis:        strings.Repeat("essay prose ", 700) + "FULL-ANALYSIS-TAIL",
+			ProposedConnections: []PersonaConnectionProposal{{Source: "node-1", Target: "node-2", Tag: "REFERENCES", Reasoning: "Shared evidence.", Confidence: 0.9}},
+		})
+	}
+
+	_, err := brain.generateSynthesizedRelationshipCandidates(context.Background(), nodes, insights)
+	if err != nil {
+		t.Fatalf("generateSynthesizedRelationshipCandidates failed: %v", err)
+	}
+
+	// The prompt must be a fraction of the naive size: the persona essays,
+	// uncapped finding lists, and full node texts are all slimmed.
+	if len(capturedPrompt) > 60000 {
+		t.Fatalf("expected a slimmed synthesis prompt, got %d chars", len(capturedPrompt))
+	}
+	if strings.Contains(capturedPrompt, "TAIL-NODE-TEXT-END") {
+		t.Fatalf("expected full node text to stay excerpted")
+	}
+	if strings.Contains(capturedPrompt, "FULL-ANALYSIS-TAIL") {
+		t.Fatalf("expected persona essays to be truncated")
+	}
+	if strings.Contains(capturedPrompt, "FINDING-59-TAIL") {
+		t.Fatalf("expected key findings to be capped")
+	}
+	if !strings.Contains(capturedPrompt, "Finding 0: detailed") {
+		t.Fatalf("expected the first key findings to survive slimming")
+	}
+	if !strings.Contains(capturedPrompt, "node-1 -> node-2 [REFERENCES") {
+		t.Fatalf("expected persona connection proposals in the prompt")
+	}
+}
