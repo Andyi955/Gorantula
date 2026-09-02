@@ -317,15 +317,27 @@ func (s *Service) autoResolveSuggestionSourceEvidence(suggestion BrainSuggestion
 	if !suggestionNeedsSourceEvidence(suggestion) {
 		return suggestion, false, nil
 	}
+	lookupAttempted := false
 
 	evidence, err := s.savedSourceEvidenceForSuggestion(suggestion, timestamp)
 	if err != nil {
 		return suggestion, false, err
 	}
 	if len(evidence) == 0 {
+		// The web lookup is expensive: a fruitless attempt is recorded and
+		// not repeated inside the cooldown window.
+		if sourceLookupInCooldown(suggestion.LastSourceLookupAt, timestamp) {
+			return suggestion, false, nil
+		}
 		evidence = s.findSourceEvidenceForSuggestion(suggestion, timestamp)
+		suggestion.LastSourceLookupAt = timestamp
+		lookupAttempted = true
 	}
 	if len(evidence) == 0 {
+		if lookupAttempted {
+			suggestion.UpdatedAt = timestamp
+			return normalizeSuggestionCollections(suggestion), true, nil
+		}
 		return suggestion, false, nil
 	}
 
@@ -342,7 +354,7 @@ func (s *Service) autoResolveSuggestionSourceEvidence(suggestion BrainSuggestion
 		}
 		suggestion.ResolvedAt = timestamp
 	}
-	if len(suggestion.SourceEvidence) == previousEvidenceCount && !hadSourceMissing {
+	if len(suggestion.SourceEvidence) == previousEvidenceCount && !hadSourceMissing && !lookupAttempted {
 		return suggestion, false, nil
 	}
 	suggestion.UpdatedAt = timestamp
@@ -352,6 +364,12 @@ func (s *Service) autoResolveSuggestionSourceEvidence(suggestion BrainSuggestion
 func suggestionNeedsSourceEvidence(suggestion BrainSuggestion) bool {
 	if suggestion.ReviewOutcome == SuggestionOutcomeNeedsSource {
 		return true
+	}
+	// A resolved review stays resolved even if the recomputed missing list
+	// still mentions source: otherwise the evidence lookup would re-run on
+	// every evidence event forever (the Leg 0 storm).
+	if suggestionOutcomeIsResolved(suggestion.ReviewOutcome) {
+		return false
 	}
 	return containsString(suggestion.MissingEvidence, SuggestionMissingSource)
 }
@@ -465,6 +483,22 @@ func (s *Service) savedSourceEvidenceForNodes(suggestionID string, investigation
 		}
 	}
 	return normalizeSuggestionSourceEvidence(evidence), nil
+}
+
+// sourceEvidenceLookupCooldown keeps a fruitless web lookup from being
+// re-dispatched on every evidence event (the Leg 0 storm).
+const sourceEvidenceLookupCooldown = 30 * time.Minute
+
+func sourceLookupInCooldown(lastAttempt string, now string) bool {
+	last, err := time.Parse(time.RFC3339, strings.TrimSpace(lastAttempt))
+	if err != nil {
+		return false
+	}
+	current, err := time.Parse(time.RFC3339, strings.TrimSpace(now))
+	if err != nil {
+		return false
+	}
+	return current.Sub(last) < sourceEvidenceLookupCooldown
 }
 
 func normalizeLookupSourceEvidence(suggestionID string, items []BrainSuggestionSourceEvidence, timestamp string) []BrainSuggestionSourceEvidence {

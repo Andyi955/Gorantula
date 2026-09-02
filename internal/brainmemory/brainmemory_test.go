@@ -1454,6 +1454,112 @@ func TestBrainAutonomyPreflightPrioritizesSpecificMissingEvidence(t *testing.T) 
 	}
 }
 
+type recordingSourceEvidenceFinder struct {
+	calls    int
+	evidence []BrainSuggestionSourceEvidence
+}
+
+func (f *recordingSourceEvidenceFinder) FindSourceEvidence(context.Context, SourceEvidenceLookupRequest) ([]BrainSuggestionSourceEvidence, error) {
+	f.calls++
+	return f.evidence, nil
+}
+
+func TestAutoResolveSkipsResolvedSuggestions(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	finder := &recordingSourceEvidenceFinder{evidence: []BrainSuggestionSourceEvidence{{
+		SourceURL: "https://sources.example.com/acme-grid",
+	}}}
+	service.SetSourceEvidenceFinder(finder)
+
+	// A resolved review whose recomputed missing list still mentions source
+	// must NOT re-trigger the evidence lookup (the Leg 0 storm).
+	resolved := BrainSuggestion{
+		ID:                     "brain-suggestion-verify-source",
+		InvestigationID:        "inv-current",
+		Status:                 SuggestionStatusReviewed,
+		ActionMode:             SuggestionActionVerify,
+		Title:                  "Verify conflicting claim",
+		ReviewOutcome:          SuggestionOutcomeResolved,
+		MissingEvidence:        []string{SuggestionMissingSource},
+		ReasonSamples: []SignalReason{{
+			Gateway:        GatewayEntityDate,
+			Value:          "ORG|Acme Grid",
+			Label:          "Acme Grid",
+			CurrentNodeIDs: []string{"current-node"},
+		}},
+		TargetInvestigationIDs: []string{"inv-old-strong"},
+	}
+	_, changed, err := service.autoResolveSuggestionSourceEvidence(resolved, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolveSuggestionSourceEvidence failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected a resolved suggestion to stay untouched")
+	}
+	if finder.calls != 0 {
+		t.Fatalf("expected no lookup for a resolved suggestion, got %d", finder.calls)
+	}
+}
+
+func TestAutoResolveCooldownSkipsRepeatLookups(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	finder := &recordingSourceEvidenceFinder{evidence: []BrainSuggestionSourceEvidence{{
+		SourceURL: "https://sources.example.com/acme-grid",
+	}}}
+	service.SetSourceEvidenceFinder(finder)
+
+	needsSource := func(lastLookup string) BrainSuggestion {
+		return BrainSuggestion{
+			ID:                 "brain-suggestion-verify-source",
+			InvestigationID:    "inv-current",
+			Status:             SuggestionStatusReviewed,
+			ActionMode:         SuggestionActionVerify,
+			Title:              "Verify conflicting claim",
+			ReviewOutcome:      SuggestionOutcomeNeedsSource,
+			LastSourceLookupAt: lastLookup,
+			// ReasonSamples reference nodes that do not exist in the board:
+			// no saved evidence, so the web finder path (and its cooldown)
+			// is what gets exercised.
+			ReasonSamples: []SignalReason{{
+				Gateway:        GatewayEntityDate,
+				Value:          "ORG|Acme Grid",
+				Label:          "Acme Grid",
+				CurrentNodeIDs: []string{"ghost-node"},
+			}},
+			TargetInvestigationIDs: []string{"inv-old-strong"},
+		}
+	}
+
+	// A lookup attempted 5 minutes ago is inside the cooldown: skipped.
+	_, changed, err := service.autoResolveSuggestionSourceEvidence(needsSource("2026-06-17T11:55:00Z"), "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolve inside cooldown failed: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected the cooldown to skip the lookup")
+	}
+	if finder.calls != 0 {
+		t.Fatalf("expected no lookup inside the cooldown, got %d", finder.calls)
+	}
+
+	// After the cooldown the lookup runs once and attaches evidence.
+	after, changed, err := service.autoResolveSuggestionSourceEvidence(needsSource("2026-06-17T10:00:00Z"), "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolve after cooldown failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected the post-cooldown lookup to attach evidence")
+	}
+	if finder.calls != 1 {
+		t.Fatalf("expected exactly one lookup after the cooldown, got %d", finder.calls)
+	}
+	if after.LastSourceLookupAt != "2026-06-17T12:00:00Z" {
+		t.Fatalf("expected the lookup attempt marker to persist, got %q", after.LastSourceLookupAt)
+	}
+}
+
 func TestSavedSourceEvidenceForNodesScansBoardSources(t *testing.T) {
 	root := writeSuggestionFixture(t)
 	service := NewService(root)

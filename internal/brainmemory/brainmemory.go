@@ -255,6 +255,7 @@ type BrainSuggestion struct {
 	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
 	TargetInvestigationIDs []string       `json:"targetInvestigationIds"`
 	SourceEvidence         []BrainSuggestionSourceEvidence `json:"sourceEvidence"`
+	LastSourceLookupAt     string         `json:"lastSourceLookupAt,omitempty"`
 	CreatedAt              string         `json:"createdAt"`
 	UpdatedAt              string         `json:"updatedAt"`
 	DismissedAt            string         `json:"dismissedAt,omitempty"`
@@ -4070,6 +4071,7 @@ func mergeSuggestionState(suggestion BrainSuggestion, existing map[string]BrainS
 	// Attached source evidence is operator/system state, not derived content:
 	// a recompute must carry it forward instead of wiping it.
 	suggestion.SourceEvidence = previous.SourceEvidence
+	suggestion.LastSourceLookupAt = previous.LastSourceLookupAt
 	if suggestion.Status == SuggestionStatusDismissed && suggestion.DismissedAt == "" {
 		suggestion.DismissedAt = timestamp
 	}
