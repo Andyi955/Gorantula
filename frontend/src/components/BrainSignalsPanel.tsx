@@ -4618,19 +4618,28 @@ export default function BrainSignalsPanel({
         className={`forensic-brain-autonomy-card forensic-brain-autonomy-card-reference forensic-brain-autonomy-card-compact forensic-brain-autonomy-${item.status} forensic-brain-relevance-${relevance}`}
       >
         <div data-testid="brain-autonomy-card-main" className="forensic-brain-autonomy-main">
-          <div className="forensic-brain-suggestion-topline forensic-brain-autonomy-topline">
-            <span className={`forensic-brain-autonomy-decision-chip forensic-brain-autonomy-decision-${item.decision}`}>
-              {formatAutonomyDecision(item.decision)}
-            </span>
-            <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
-              {formatRelevance(item)}
-            </span>
-            {item.approvalRequired && (
-              <span className="forensic-brain-autonomy-approval-chip">
-                Approval Required
+          <div className="forensic-brain-autonomy-topline">
+            <div className="forensic-brain-autonomy-topline-chips">
+              <span className={`forensic-brain-autonomy-decision-chip forensic-brain-autonomy-decision-${item.decision}`}>
+                {formatAutonomyDecision(item.decision)}
               </span>
-            )}
-            <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
+              <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
+                {formatRelevance(item)}
+              </span>
+              {item.approvalRequired && (
+                <span className="forensic-brain-autonomy-approval-chip">
+                  Approval Required
+                </span>
+              )}
+              <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
+            </div>
+            <div className="forensic-brain-autonomy-topline-meta">
+              <span data-testid="brain-autonomy-timestamp" className="forensic-brain-autonomy-timestamp">
+                <Clock3 size={15} />
+                {formatTimestamp(item.updatedAt)}
+              </span>
+              <b className="forensic-brain-autonomy-status">{formatAutonomyDecision(item.status)}</b>
+            </div>
           </div>
           <h4>{item.title}</h4>
           <p>{item.summary}</p>
@@ -4704,49 +4713,40 @@ export default function BrainSignalsPanel({
           )}
         </div>
         <aside data-testid="brain-autonomy-card-rail" className="forensic-brain-suggestion-action forensic-brain-autonomy-rail">
-          <div className="forensic-brain-autonomy-rail-meta">
-            <span data-testid="brain-autonomy-timestamp" className="forensic-brain-autonomy-timestamp">
-              <Clock3 size={15} />
-              {formatTimestamp(item.updatedAt)}
-            </span>
-            <b className="forensic-brain-autonomy-status">{formatAutonomyDecision(item.status)}</b>
-          </div>
-          <div className="forensic-brain-autonomy-rail-actions">
-            {action?.status === 'prepared' && (
-              <button
-                type="button"
-                className="forensic-brain-action forensic-brain-action-primary"
-                onClick={() => setPendingFollowUp(action)}
-              >
-                <Rocket size={13} />
-                {reviewLabel}
-              </button>
-            )}
-            {suggestion && (
-              <button
-                type="button"
-                className="forensic-brain-action forensic-brain-action-primary"
-                onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
-              >
-                <Maximize2 size={13} />
-                Compare
-              </button>
-            )}
+          {action?.status === 'prepared' && (
             <button
               type="button"
-              className="forensic-brain-action forensic-brain-action-secondary"
-              disabled={!canOpenTarget}
-              onClick={() => {
-                const targetId = item.targetInvestigationIds[0]
-                if (targetId) {
-                  onOpenInvestigation?.(targetId)
-                }
-              }}
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setPendingFollowUp(action)}
             >
-              <ExternalLink size={13} />
-              Open
+              <Rocket size={13} />
+              {reviewLabel}
             </button>
-          </div>
+          )}
+          {suggestion && (
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-primary"
+              onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
+            >
+              <Maximize2 size={13} />
+              Compare
+            </button>
+          )}
+          <button
+            type="button"
+            className="forensic-brain-action forensic-brain-action-secondary"
+            disabled={!canOpenTarget}
+            onClick={() => {
+              const targetId = item.targetInvestigationIds[0]
+              if (targetId) {
+                onOpenInvestigation?.(targetId)
+              }
+            }}
+          >
+            <ExternalLink size={13} />
+            Open
+          </button>
         </aside>
       </article>
     )
