@@ -15,6 +15,7 @@ import {
   Bot,
   Bell,
   Brain,
+  CheckCheck,
   ChevronDown,
   ChevronUp,
   Clock3,
@@ -140,6 +141,11 @@ interface BrainSignalsPanelProps {
   onLaunchFocusedRabbitHole?: (action: BrainFollowUpAction) => void
   externalFiredToken?: number
   onSignalsLoaded?: (investigationId: string, signals: BrainSignal[]) => void
+  // Total unseen brain notifications across ALL investigations (the Brain tab
+  // badge number). When > 0, the header offers a "mark all seen" action so
+  // badges from other cases do not linger until each one is visited.
+  brainUnreadTotal?: number
+  onMarkAllBrainSeen?: () => void
 }
 
 const PRIORITY_SIGNAL_LIMIT = 10
@@ -472,6 +478,8 @@ export default function BrainSignalsPanel({
   onLaunchFocusedRabbitHole,
   externalFiredToken,
   onSignalsLoaded,
+  brainUnreadTotal,
+  onMarkAllBrainSeen,
 }: BrainSignalsPanelProps) {
   const [signals, setSignals] = useState<BrainSignal[]>([])
   const [links, setLinks] = useState<MemoryLink[]>([])
@@ -5100,6 +5108,18 @@ export default function BrainSignalsPanel({
               : 'Brain focus pending'}
           </span>
           {renderBrainAttentionTrigger()}
+          {typeof brainUnreadTotal === 'number' && brainUnreadTotal > 0 && onMarkAllBrainSeen && (
+            <button
+              type="button"
+              aria-label={`Mark all brain notifications as seen (${brainUnreadTotal})`}
+              data-testid="brain-mark-all-seen"
+              onClick={() => onMarkAllBrainSeen()}
+              className="forensic-brain-refresh"
+            >
+              <CheckCheck size={14} />
+              Mark all seen ({brainUnreadTotal > 9 ? '9+' : brainUnreadTotal})
+            </button>
+          )}
           <button
             type="button"
             aria-label="Refresh brain signals"

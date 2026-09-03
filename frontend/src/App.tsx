@@ -756,6 +756,34 @@ function App() {
       current[investigationId] ? { ...current, [investigationId]: 0 } : current
     ))
   }, [])
+  // "Mark all seen": clear every investigation's brain badge in one action.
+  // Without it, badges from cases the operator never revisits linger forever
+  // (each one only clears when its own Brain panel is loaded). Writes the
+  // persisted seen snapshot per case so the count stays honest after
+  // refreshes; a failed fetch leaves that case's badge untouched.
+  const markAllBrainSeen = useCallback(async () => {
+    const targets = Object.entries(brainUnreadByInvestigation)
+      .filter(([, count]) => count > 0)
+      .map(([investigationId]) => investigationId)
+    if (targets.length === 0) {
+      return
+    }
+    await Promise.all(targets.map(async (investigationId) => {
+      try {
+        const signals = await fetchBrainSignals(investigationId)
+        markBrainSignalsSeen(investigationId, signals)
+      } catch {
+        // Signals unavailable for this case: keep its badge.
+      }
+    }))
+    setBrainUnreadByInvestigation((current) => {
+      const next = { ...current }
+      for (const investigationId of targets) {
+        next[investigationId] = 0
+      }
+      return next
+    })
+  }, [brainUnreadByInvestigation])
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
@@ -3159,6 +3187,8 @@ function App() {
                   onLaunchFocusedRabbitHole={handleLaunchFocusedRabbitHole}
                   externalFiredToken={brainFiredToken}
                   onSignalsLoaded={handleBrainSignalsLoaded}
+                  brainUnreadTotal={brainUnreadCount}
+                  onMarkAllBrainSeen={() => void markAllBrainSeen()}
                 />
               </Suspense>
             )}
