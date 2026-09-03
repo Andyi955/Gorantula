@@ -14,7 +14,10 @@ import (
 	"github.com/google/generative-ai-go/genai"
 )
 
-const defaultOpenAICompatibleTimeout = 120 * time.Second
+// 300s: large JSON generations under provider load can exceed two minutes;
+// a client timeout shorter than the provider's real latency shows up as
+// empty or aborted responses instead of an honest timeout error.
+const defaultOpenAICompatibleTimeout = 300 * time.Second
 
 // MiniMaxClient handles communication with the MiniMax API
 type MiniMaxClient struct {
@@ -439,7 +442,6 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 	}
 
 	httpClient := &http.Client{Timeout: defaultOpenAICompatibleTimeout}
-
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" && providerEnabled("OPENAI_ENABLED") {
 		router["openai"] = &OpenAICompatibleProvider{
 			NameID:     "openai",

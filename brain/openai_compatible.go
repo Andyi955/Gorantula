@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // OpenAIMessage represents a chat message
@@ -186,6 +187,23 @@ func (p *OpenAICompatibleProvider) doRequest(ctx context.Context, request OpenAI
 
 	if len(chatResp.Choices) == 0 {
 		return "", nil, fmt.Errorf("no choices returned from %s: %s", p.NameID, string(body))
+	}
+
+	// Surface the provider's finish reason: DeepSeek (and friends) return
+	// HTTP 200 with EMPTY content and finish_reason "content_filter" when
+	// their safety filter blanks a response. Without this check the caller
+	// only sees a cryptic "unexpected end of JSON input" - and retries on a
+	// prompt the provider will filter again.
+	finishReason := strings.TrimSpace(chatResp.Choices[0].FinishReason)
+	if finishReason != "" && finishReason != "stop" && finishReason != "end_turn" {
+		brainLog("providers").Warn("provider finished abnormally", "provider", p.NameID, "finish_reason", finishReason)
+	}
+	if finishReason == "content_filter" {
+		return "", nil, fmt.Errorf("%s content filter blocked this response (finish_reason=content_filter); the topic or wording likely tripped the provider's safety filter", p.NameID)
+	}
+
+	if strings.TrimSpace(chatResp.Choices[0].Message.Content) == "" {
+		return "", nil, fmt.Errorf("%s returned an empty response (finish_reason=%q); often a provider-side filter or overload", p.NameID, finishReason)
 	}
 
 	return chatResp.Choices[0].Message.Content, extractOpenAICompatibleTokenUsage(chatResp), nil
