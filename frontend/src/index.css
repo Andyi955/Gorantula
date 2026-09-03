@@ -9382,35 +9382,93 @@ body {
   white-space: nowrap;
 }
 
+.forensic-brain-autonomy-header-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.forensic-brain-autonomy-header-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  border: 1px solid rgba(129, 227, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(3, 10, 15, 0.82);
+  padding: 0.4rem 0.72rem;
+  color: rgba(214, 228, 238, 0.92);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.forensic-brain-autonomy-header-chip svg {
+  color: rgba(129, 227, 255, 0.85);
+}
+
+.forensic-brain-autonomy-header-chip.is-on {
+  border-color: rgba(0, 255, 65, 0.42);
+  color: #74ff95;
+}
+
+.forensic-brain-autonomy-header-chip.is-on svg {
+  color: #74ff95;
+}
+
+.forensic-brain-autonomy-header-chip.is-blocked {
+  border-color: rgba(255, 78, 129, 0.42);
+  color: #ff5d91;
+}
+
+.forensic-brain-autonomy-controlsrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.62rem;
+  border: 1px solid rgba(129, 227, 255, 0.2);
+  border-radius: 0.5rem;
+  background: rgba(3, 8, 12, 0.55);
+  padding: 0.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.forensic-brain-autonomy-controlsrow .forensic-brain-autonomy-controls,
+.forensic-brain-autonomy-controlsrow .forensic-brain-autonomy-budgets {
+  flex: 1 1 17rem;
+  border: none;
+  border-bottom: none;
+  background: transparent;
+  padding: 0.2rem 0.2rem 0.35rem;
+}
+
 .forensic-brain-autonomy-tabs {
   display: flex;
-  gap: 0.45rem;
-  border-bottom: 1px solid rgba(129, 227, 255, 0.18);
-  background: rgba(3, 8, 12, 0.78);
-  padding: 0.55rem 0.9rem;
+  gap: 0.4rem;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.2);
+  padding: 0.2rem 0.55rem 0;
 }
 
 .forensic-brain-autonomy-tab {
-  border: 1px solid rgba(129, 227, 255, 0.34);
-  border-radius: 0.24rem;
-  background: rgba(3, 10, 15, 0.82);
-  color: rgba(196, 214, 224, 0.8);
-  padding: 0.42rem 0.78rem;
-  font-size: 0.66rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(196, 214, 224, 0.72);
+  padding: 0.52rem 0.55rem;
+  font-size: 0.68rem;
   font-weight: 800;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 .forensic-brain-autonomy-tab:hover {
-  border-color: rgba(129, 227, 255, 0.55);
   color: rgba(226, 240, 248, 0.95);
 }
 
 .forensic-brain-autonomy-tab.is-active {
-  border-color: rgba(0, 255, 65, 0.5);
-  background: rgba(0, 255, 65, 0.12);
+  border-bottom-color: rgba(0, 255, 65, 0.72);
   color: #74ff95;
 }
 

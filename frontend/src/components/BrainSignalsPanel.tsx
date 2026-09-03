@@ -4763,44 +4763,53 @@ export default function BrainSignalsPanel({
               <span className="forensic-brain-panel-kicker">Guarded preparation</span>
               <h3>Autonomy Queue</h3>
             </div>
-            <div className="forensic-brain-cluster-summary">
-              <span>Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}</span>
-              <span>{autonomyQueue.length} queued</span>
-              <span>{blockedAutonomyCount} blocked</span>
+            <div className="forensic-brain-cluster-summary forensic-brain-autonomy-header-chips">
+              <span className={`forensic-brain-autonomy-header-chip${autonomyAutoPrepareEnabled ? ' is-on' : ''}`}>
+                <ShieldCheck size={12} />
+                Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}
+              </span>
+              <span className="forensic-brain-autonomy-header-chip">
+                {autonomyQueue.length} Queued
+              </span>
+              <span className="forensic-brain-autonomy-header-chip is-blocked">
+                {blockedAutonomyCount} Blocked
+              </span>
             </div>
           </div>
 
-          <div className="forensic-brain-autonomy-controls" aria-label="Brain autonomy mode">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autonomyAutoPrepareEnabled}
-              aria-disabled={busyAction === 'autonomy-toggle'}
-              aria-label="Auto-prepare Rabbit Holes"
-              className="forensic-brain-autonomy-toggle"
-              onClick={() => void handleToggleAutonomyAutoPrepare()}
-            >
-              <ShieldCheck size={13} />
-              <span>Auto-prepare Rabbit Holes</span>
-              <strong className={autonomyStateClass}>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
-            </button>
-          </div>
+          <div className="forensic-brain-autonomy-controlsrow">
+            <div className="forensic-brain-autonomy-controls" aria-label="Brain autonomy mode">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autonomyAutoPrepareEnabled}
+                aria-disabled={busyAction === 'autonomy-toggle'}
+                aria-label="Auto-prepare Rabbit Holes"
+                className="forensic-brain-autonomy-toggle"
+                onClick={() => void handleToggleAutonomyAutoPrepare()}
+              >
+                <ShieldCheck size={13} />
+                <span>Auto-prepare Rabbit Holes</span>
+                <strong className={autonomyStateClass}>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
+              </button>
+            </div>
 
-          <div className="forensic-brain-autonomy-budgets" aria-label="Brain autonomy budgets">
-            <span>
-              Per Case
-              <strong>{autonomySettings.maxAutoPreparedPerInvestigation}</strong>
-            </span>
-            <span>
-              Active Prepared
-              <strong>{autonomySettings.maxActivePrepared}</strong>
-            </span>
-            {latestAudit && (
+            <div className="forensic-brain-autonomy-budgets" aria-label="Brain autonomy budgets">
               <span>
-                Last Decision
-                <strong>{formatAutonomyDecision(latestAudit.decision)}</strong>
+                Per Case
+                <strong>{autonomySettings.maxAutoPreparedPerInvestigation}</strong>
               </span>
-            )}
+              <span>
+                Active Prepared
+                <strong>{autonomySettings.maxActivePrepared}</strong>
+              </span>
+              {latestAudit && (
+                <span>
+                  Last Decision
+                  <strong>{formatAutonomyDecision(latestAudit.decision)}</strong>
+                </span>
+              )}
+            </div>
           </div>
 
           {renderFollowUpLauncher()}
