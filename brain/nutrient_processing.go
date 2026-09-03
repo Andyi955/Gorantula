@@ -332,6 +332,19 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, trimmed)
 }
 
+// ResetAbdomenMemory clears the run-scoped working memory. Gathering flows
+// append to it during a run; without a reset the next run's fact ranking
+// and final report inherit the previous run's facts (observed in the wild
+// as "facts=7" for a scan that only gathered 3 nodes).
+func (b *Brain) ResetAbdomenMemory() {
+	if b.Abdomen == nil {
+		return
+	}
+	b.Abdomen.Mutex.Lock()
+	b.Abdomen.MemoryContext = nil
+	b.Abdomen.Mutex.Unlock()
+}
+
 func (b *Brain) processSingleNutrient(ctx context.Context, index int, nutrient models.NutrientFlow, options nutrientProcessingOptions) processedNutrient {
 	if err := ctx.Err(); err != nil {
 		return processedNutrient{index: index}

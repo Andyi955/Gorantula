@@ -123,6 +123,11 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 		return "", err
 	}
 
+	// Each investigation starts with clean working memory - without this
+	// the previous run's facts leak into this run's fact ranking and
+	// final report.
+	b.ResetAbdomenMemory()
+
 	// --- STEP 1: Break down into 8 queries ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "running", "Operator submitted crawl"))
 	if b.NS.Broadcast != nil {
