@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -125,7 +126,7 @@ func (s *InvestigationStore) LoadMetadata(id string) (InvestigationRecord, error
 		return InvestigationRecord{}, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := readVaultFileWithRetry(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return InvestigationRecord{}, ErrInvestigationNotFound
@@ -157,7 +158,7 @@ func (s *InvestigationStore) LoadJSON(id, filename string) (json.RawMessage, err
 		return nil, err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := readVaultFileWithRetry(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrInvestigationNotFound
@@ -196,6 +197,29 @@ func (s *InvestigationStore) writeJSON(id, filename string, value interface{}) e
 	return s.writeRaw(id, filename, data)
 }
 
+// readVaultFileWithRetry reads a vault file, retrying briefly on sharing
+// violations: on Windows a reader opening the file while an atomic rename
+// swaps it can transiently hit "being used by another process". A missing
+// file is definitive and returns immediately.
+func readVaultFileWithRetry(path string) ([]byte, error) {
+	var data []byte
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Millisecond)
+		}
+		data, err = os.ReadFile(path)
+		if err == nil || os.IsNotExist(err) {
+			return data, err
+		}
+	}
+	return data, err
+}
+
+// vaultWriteMu serializes vault file writes: concurrent renames over the
+// same target can transiently deny each other on Windows even with retries.
+var vaultWriteMu sync.Mutex
+
 func (s *InvestigationStore) writeRaw(id, filename string, data []byte) error {
 	path, err := s.filePath(id, filename)
 	if err != nil {
@@ -210,6 +234,8 @@ func (s *InvestigationStore) writeRaw(id, filename string, data []byte) error {
 	// produced transient "board_state.json contains invalid json" warnings.
 	// Write to a unique temp file in the same directory, then rename over
 	// the target; rename is atomic on the same volume.
+	vaultWriteMu.Lock()
+	defer vaultWriteMu.Unlock()
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
@@ -224,26 +250,22 @@ func (s *InvestigationStore) writeRaw(id, filename string, data []byte) error {
 		os.Remove(tmpName)
 		return err
 	}
-	// Concurrent renames over the same target can transiently deny each
-	// other on Windows; a short retry converges without losing either write.
-	if err := renameWithRetry(tmpName, path); err != nil {
+	// A reader holding the target open can transiently deny the rename;
+	// a short retry converges without losing either write.
+	var renameErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 3 * time.Millisecond)
+		}
+		if renameErr = os.Rename(tmpName, path); renameErr == nil {
+			break
+		}
+	}
+	if renameErr != nil {
 		os.Remove(tmpName)
-		return err
+		return renameErr
 	}
 	return nil
-}
-
-func renameWithRetry(tmpName, path string) error {
-	var err error
-	for attempt := 0; attempt < 6; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Millisecond)
-		}
-		if err = os.Rename(tmpName, path); err == nil {
-			return nil
-		}
-	}
-	return err
 }
 
 func (s *InvestigationStore) filePath(id, filename string) (string, error) {
