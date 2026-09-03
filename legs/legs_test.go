@@ -1,6 +1,7 @@
 package legs
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -149,5 +150,81 @@ func TestIsLikelyEvidenceImageURL(t *testing.T) {
 
 	if !isLikelyEvidenceImageURL("https://example.com/images/evidence-board.jpg") {
 		t.Fatalf("article image should be accepted")
+	}
+}
+
+func TestLegSourceCountDefaultsAndClamps(t *testing.T) {
+	original := os.Getenv("GORANTULA_LEG_SOURCES")
+	defer os.Setenv("GORANTULA_LEG_SOURCES", original)
+
+	os.Unsetenv("GORANTULA_LEG_SOURCES")
+	if got := legSourceCount(); got != 4 {
+		t.Fatalf("expected default leg source count 4, got %d", got)
+	}
+
+	os.Setenv("GORANTULA_LEG_SOURCES", "6")
+	if got := legSourceCount(); got != 6 {
+		t.Fatalf("expected env override 6, got %d", got)
+	}
+
+	os.Setenv("GORANTULA_LEG_SOURCES", "99")
+	if got := legSourceCount(); got != 8 {
+		t.Fatalf("expected clamp to 8, got %d", got)
+	}
+
+	os.Setenv("GORANTULA_LEG_SOURCES", "not-a-number")
+	if got := legSourceCount(); got != 4 {
+		t.Fatalf("expected fallback to 4 for garbage input, got %d", got)
+	}
+}
+
+func TestExtractLegParagraphsPrefersSemanticContainers(t *testing.T) {
+	long := func(text string) string {
+		return text + strings.Repeat(" filler words to pass the quality threshold.", 2)
+	}
+	markup := `<html><body>
+		<nav><p>` + long("Boilerplate navigation paragraph that should never be included.") + `</p></nav>
+		<article>
+			<p>` + long("First real article paragraph about the investigation subject.") + `</p>
+			<p>` + long("Second real article paragraph with more detail.") + `</p>
+			<p>` + long("First real article paragraph about the investigation subject.") + `</p>
+		</article>
+	</body></html>`
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(markup))
+	if err != nil {
+		t.Fatalf("failed to build document: %v", err)
+	}
+
+	texts := extractLegParagraphs(doc)
+	if len(texts) != 2 {
+		t.Fatalf("expected 2 deduplicated container paragraphs, got %d: %v", len(texts), texts)
+	}
+	for _, text := range texts {
+		if strings.Contains(text, "Boilerplate navigation") {
+			t.Fatalf("boilerplate paragraph leaked into container extraction: %q", text)
+		}
+	}
+}
+
+func TestExtractLegParagraphsFallsBackToWholeDocument(t *testing.T) {
+	long := func(text string) string {
+		return text + strings.Repeat(" filler words to pass the quality threshold.", 2)
+	}
+	markup := `<html><body>
+		<div>
+			<p>` + long("Paragraph one without any semantic container present.") + `</p>
+			<p>` + long("Paragraph two also living directly in the body.") + `</p>
+		</div>
+	</body></html>`
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(markup))
+	if err != nil {
+		t.Fatalf("failed to build document: %v", err)
+	}
+
+	texts := extractLegParagraphs(doc)
+	if len(texts) != 2 {
+		t.Fatalf("expected 2 fallback paragraphs, got %d: %v", len(texts), texts)
 	}
 }

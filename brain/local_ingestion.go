@@ -64,6 +64,8 @@ func (b *Brain) processLocalFiles(ctx context.Context, filePaths []string, vault
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err
 	}
+	// Fresh working memory per ingestion run - no facts from previous runs.
+	b.ResetAbdomenMemory()
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "running", "Operator submitted local files"))
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "start", "complete", "Local crawl accepted"))
 

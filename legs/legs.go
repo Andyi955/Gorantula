@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -104,7 +105,7 @@ func ExecuteLegTaskWithContext(ctx context.Context, legID int, query string, bro
 		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("failed to decode json: %w", err)}
 	}
 
-	topURLs := ExtractTopURLs(&searchRes, 2)
+	topURLs := ExtractTopURLs(&searchRes, legSourceCount())
 
 	if len(topURLs) == 0 {
 		return models.NutrientFlow{LegID: legID, Error: fmt.Errorf("no search results found for: %s", query)}
@@ -237,12 +238,74 @@ func scrapeSingleSource(ctx context.Context, scrapeClient *http.Client, index in
 		return result
 	}
 
-	doc.Find("p").Each(func(i int, s *goquery.Selection) {
+	result.texts = extractLegParagraphs(doc)
+	return result
+}
+
+// legSourceCount is how many Brave results each leg scrapes. The old
+// hard-coded 2 starved boards (8 legs x 2 = 16 pages max, fewer after
+// failures); 4 doubles the raw material per scan. Override with
+// GORANTULA_LEG_SOURCES.
+func legSourceCount() int {
+	raw := strings.TrimSpace(os.Getenv("GORANTULA_LEG_SOURCES"))
+	if raw == "" {
+		return 4
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return 4
+	}
+	if parsed > 8 {
+		return 8
+	}
+	return parsed
+}
+
+// extractLegParagraphs pulls article text out of a scraped page. Modern
+// sites keep the real copy inside semantic containers, while bare <p>
+// scraping drags in nav/boilerplate paragraphs and misses
+// container-rendered copy. Prefer the strong containers (deduplicated)
+// and fall back to the whole document only when no container yields
+// usable copy.
+func extractLegParagraphs(doc *goquery.Document) []string {
+	for _, selector := range []string{
+		"article", "main", "[role=main]", "#content",
+		".post-content", ".article-content", ".entry-content", ".article-body",
+	} {
+		var texts []string
+		doc.Find(selector).Each(func(_ int, container *goquery.Selection) {
+			container.Find("p").Each(func(_ int, s *goquery.Selection) {
+				text := strings.TrimSpace(s.Text())
+				if len(text) > 80 {
+					texts = append(texts, text)
+				}
+			})
+		})
+		if len(texts) >= 2 {
+			return dedupeParagraphs(texts)
+		}
+	}
+
+	var texts []string
+	doc.Find("p").Each(func(_ int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
-		if len(text) > 80 { // Increased threshold for quality
-			result.texts = append(result.texts, text)
+		if len(text) > 80 {
+			texts = append(texts, text)
 		}
 	})
+	return dedupeParagraphs(texts)
+}
+
+func dedupeParagraphs(texts []string) []string {
+	seen := make(map[string]struct{}, len(texts))
+	result := make([]string, 0, len(texts))
+	for _, text := range texts {
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		result = append(result, text)
+	}
 	return result
 }
 

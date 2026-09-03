@@ -845,3 +845,18 @@ func TestAnalyzeIncrementalWithPersonasRecordsPendingPersonaDiagnostics(t *testi
 		}
 	}
 }
+
+func TestResetAbdomenMemoryClearsWorkingFacts(t *testing.T) {
+	brain := &Brain{Abdomen: &models.Abdomen{MemoryContext: []string{"stale fact from a previous run"}}}
+	brain.Abdomen.MemoryContext = append(brain.Abdomen.MemoryContext, "another stale fact")
+
+	brain.ResetAbdomenMemory()
+
+	if len(brain.Abdomen.MemoryContext) != 0 {
+		t.Fatalf("expected abdomen memory to be cleared, got %v", brain.Abdomen.MemoryContext)
+	}
+
+	// Must not panic on a brain without an abdomen.
+	emptyBrain := &Brain{}
+	emptyBrain.ResetAbdomenMemory()
+}
