@@ -4503,6 +4503,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 if (isAppendResult) {
                     return;
                 }
+                // Pipeline parallelism: when the backend already dispatched the
+                // persona/relationship/discovery pipeline during the crawl,
+                // dispatching again would only put the board in a fake
+                // analyzing state (the run-scoped claim ignores it and it
+                // would never complete). Connections and discoveries arrive
+                // live, or replay from the persisted result on mount.
+                if (msg.payload?.analysisDispatched === true) {
+                    return;
+                }
                 // Queue auto connect dots for full new-investigation crawls once the board has render-ready nodes.
                 setAutoConnectRequest({
                     vaultId,

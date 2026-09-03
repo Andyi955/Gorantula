@@ -335,11 +335,13 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 	// concurrently with fact ranking + report generation. The run-scoped
 	// claim makes the frontend's later CONNECT_DOTS a no-op. Full scans
 	// only: appended crawls keep the operator-driven incremental flow.
+	parallelAnalysisDispatched := false
 	if !isAppend && strings.TrimSpace(vaultID) != "" {
 		parallelNodes := make([]models.MemoryNode, 0, len(processedNutrients))
 		for _, result := range processedNutrients {
 			parallelNodes = append(parallelNodes, result.node)
 		}
+		parallelAnalysisDispatched = true
 		brainLog("pipeline").Info("dispatching persona pipeline early (parallel with report)", "vault", vaultID, "nodes", len(parallelNodes), "run", pipelineRunID(progress))
 		b.notifyNodesReady(vaultID, parallelNodes, pipelineRunID(progress))
 	}
@@ -434,12 +436,13 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 		b.NS.Broadcast(models.WSMessage{
 			Type: "SYNTHESIS_COMPLETE",
 			Payload: map[string]interface{}{
-				"result":    finalSynthesis,
-				"vaultPath": vaultPath,
-				"vaultId":   vaultID,
-				"append":    isAppend,
-				"prompt":    prompt,
-				"runId":     pipelineRunID(progress),
+				"result":             finalSynthesis,
+				"vaultPath":          vaultPath,
+				"vaultId":            vaultID,
+				"append":             isAppend,
+				"prompt":             prompt,
+				"runId":              pipelineRunID(progress),
+				"analysisDispatched": parallelAnalysisDispatched,
 			},
 		})
 	}

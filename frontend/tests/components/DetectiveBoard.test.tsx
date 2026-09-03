@@ -3950,6 +3950,59 @@ describe('DetectiveBoard relationship legend', () => {
     }
   })
 
+  it('skips auto connect dots when the backend already dispatched the analysis in parallel', async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    const investigationId = 'investigation-parallel'
+
+    try {
+      renderBoard(investigationId, socket as unknown as WebSocket)
+
+      act(() => {
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: investigationId,
+          node: {
+            id: 'node-a',
+            title: 'A',
+            summary: 'A',
+            fullText: 'A',
+            sourceURL: 'https://example.com/a',
+          },
+        })
+        socket.emit('MEMORY_NODE_GATHERED', {
+          append: false,
+          vaultId: investigationId,
+          node: {
+            id: 'node-b',
+            title: 'B',
+            summary: 'B',
+            fullText: 'B',
+            sourceURL: 'https://example.com/b',
+          },
+        })
+        socket.emit('SYNTHESIS_COMPLETE', {
+          result: 'Unified report',
+          vaultPath: `abdomen_vault/${investigationId}/report.md`,
+          vaultId: investigationId,
+          append: false,
+          runId: 'run-parallel-1',
+          analysisDispatched: true,
+        })
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700)
+      })
+
+      // The backend's run-scoped claim would ignore this dispatch anyway -
+      // the board must not enter a fake analyzing state behind it.
+      expect(socket.sentMessages.map((message) => JSON.parse(message).type)).not.toContain('CONNECT_DOTS')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('queues auto reconnect when synthesis completes before gathered nodes are render-ready', async () => {
     vi.useFakeTimers()
     const socket = new MockSocket()
