@@ -100,7 +100,7 @@ func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, s
 	pipeline.RegisterCancellation(meta, cancel)
 
 	go func() {
-		defer pipeline.ForgetCancellation(meta.RunID)
+		defer pipeline.ReleaseCancellation(meta)
 		var err error
 		if appendToVault {
 			_, err = br.ProcessPromptIntoVaultWithProgress(ctx, prompt, vaultID, scrapeImages, tracker)

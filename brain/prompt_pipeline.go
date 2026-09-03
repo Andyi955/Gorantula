@@ -330,6 +330,20 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 		b.broadcastPipelineProgress(progress, progressMessage(progress, "image_review", "complete", "Image review skipped"))
 	}
 
+	// Pipeline parallelism: the persona/relationship/discovery pipeline only
+	// needs the gathered nodes - not the report. Fire it now so it runs
+	// concurrently with fact ranking + report generation. The run-scoped
+	// claim makes the frontend's later CONNECT_DOTS a no-op. Full scans
+	// only: appended crawls keep the operator-driven incremental flow.
+	if !isAppend && strings.TrimSpace(vaultID) != "" {
+		parallelNodes := make([]models.MemoryNode, 0, len(processedNutrients))
+		for _, result := range processedNutrients {
+			parallelNodes = append(parallelNodes, result.node)
+		}
+		brainLog("pipeline").Info("dispatching persona pipeline early (parallel with report)", "vault", vaultID, "nodes", len(parallelNodes), "run", pipelineRunID(progress))
+		b.notifyNodesReady(vaultID, parallelNodes, pipelineRunID(progress))
+	}
+
 	// --- STEP 4: Synthesize Final Response ---
 	b.broadcastPipelineProgress(progress, progressMessage(progress, "final_report", "running", "Synthesizing final intelligence report"))
 	if err := checkPipelineContext(ctx); err != nil {

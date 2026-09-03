@@ -48,6 +48,31 @@ type Brain struct {
 	tokenUsage    *tokenUsageTracker
 	AnalysisCache *AnalysisCache
 	Synthesis     *SynthesisEngine
+	// nodesReadyHook, when set, fires the moment a web crawl's evidence
+	// nodes are summarized - before fact ranking and report generation.
+	// The app layer uses it to start the persona/relationship/discovery
+	// pipeline in parallel with the report (pipeline parallelism).
+	nodesReadyHook func(vaultID string, nodes []models.MemoryNode, runID string)
+	nodesReadyMu   sync.Mutex
+}
+
+// SetNodesReadyHook wires the parallel pipeline trigger. Called at most once
+// per crawl, synchronously during gathering - implementations must return
+// quickly (spawn internally if needed).
+func (b *Brain) SetNodesReadyHook(hook func(vaultID string, nodes []models.MemoryNode, runID string)) {
+	b.nodesReadyMu.Lock()
+	defer b.nodesReadyMu.Unlock()
+	b.nodesReadyHook = hook
+}
+
+func (b *Brain) notifyNodesReady(vaultID string, nodes []models.MemoryNode, runID string) {
+	b.nodesReadyMu.Lock()
+	hook := b.nodesReadyHook
+	b.nodesReadyMu.Unlock()
+	if hook == nil {
+		return
+	}
+	hook(vaultID, nodes, runID)
 }
 
 // GetRouter safely retrieves a model provider from the router

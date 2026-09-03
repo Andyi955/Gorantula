@@ -860,3 +860,20 @@ func TestResetAbdomenMemoryClearsWorkingFacts(t *testing.T) {
 	emptyBrain := &Brain{}
 	emptyBrain.ResetAbdomenMemory()
 }
+
+func TestNodesReadyHookDeliversAndDefaultsNil(t *testing.T) {
+	brain := &Brain{}
+	// No hook wired: must be a safe no-op.
+	brain.notifyNodesReady("inv-x", []models.MemoryNode{{ID: "node-x"}}, "run-x")
+
+	var gotVault, gotRun string
+	var gotNodes []models.MemoryNode
+	brain.SetNodesReadyHook(func(vaultID string, nodes []models.MemoryNode, runID string) {
+		gotVault, gotRun, gotNodes = vaultID, runID, nodes
+	})
+	brain.notifyNodesReady("inv-1", []models.MemoryNode{{ID: "node-1"}}, "run-2")
+
+	if gotVault != "inv-1" || gotRun != "run-2" || len(gotNodes) != 1 || gotNodes[0].ID != "node-1" {
+		t.Fatalf("expected hook delivery, got vault=%q run=%q nodes=%#v", gotVault, gotRun, gotNodes)
+	}
+}

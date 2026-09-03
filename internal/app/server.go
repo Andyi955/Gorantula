@@ -37,6 +37,18 @@ func Run() error {
 	brainMemoryService := brainmemory.NewService("abdomen_vault")
 	brainMemoryService.SetSourceEvidenceFinder(brainSourceEvidenceFinder{runner: ns})
 
+	// Pipeline parallelism: the persona/relationship/discovery pipeline
+	// starts the moment crawl evidence is summarized, running concurrently
+	// with fact ranking + report generation. The run-scoped connect-dots
+	// claim makes the frontend's later CONNECT_DOTS a no-op.
+	br.SetNodesReadyHook(func(vaultID string, nodes []models.MemoryNode, runID string) {
+		triggerConnectDotsAnalysis(br, vaultID, nodes, nil, pipeline.RunMetadata{
+			RunID:   runID,
+			VaultID: vaultID,
+			Mode:    "analysis",
+		})
+	})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleConnections(w, r, br)
