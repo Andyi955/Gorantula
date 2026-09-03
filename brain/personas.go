@@ -1,6 +1,8 @@
 package brain
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -294,12 +296,105 @@ Relationship output policy:
 Respond ONLY with the JSON described above.`, strings.Join(pendingNodeIDs, ", "), pendingFindings, contextFindings, persona.SystemPrompt, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
 }
 
+// PersonaConnectionText tolerates the connection shapes models actually
+// emit: an array of strings, an array of connection objects (the Skeptic
+// repeatedly returned objects here, which previously hard-failed the whole
+// persona on a schema mismatch), a bare string, or null.
+type PersonaConnectionText []string
+
+func (t *PersonaConnectionText) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*t = nil
+		return nil
+	}
+
+	var single string
+	if err := json.Unmarshal(trimmed, &single); err == nil {
+		if strings.TrimSpace(single) == "" {
+			*t = nil
+			return nil
+		}
+		*t = []string{single}
+		return nil
+	}
+
+	var values []json.RawMessage
+	if err := json.Unmarshal(trimmed, &values); err == nil {
+		result := make([]string, 0, len(values))
+		for _, raw := range values {
+			item := strings.TrimSpace(string(raw))
+			if item == "" || item == "null" {
+				continue
+			}
+			var text string
+			if err := json.Unmarshal(raw, &text); err == nil {
+				if strings.TrimSpace(text) != "" {
+					result = append(result, text)
+				}
+				continue
+			}
+			var obj map[string]interface{}
+			if err := json.Unmarshal(raw, &obj); err == nil {
+				if summary := stringifyPersonaConnectionObject(obj); summary != "" {
+					result = append(result, summary)
+				}
+				continue
+			}
+			result = append(result, item)
+		}
+		*t = result
+		return nil
+	}
+
+	var singleObj map[string]interface{}
+	if err := json.Unmarshal(trimmed, &singleObj); err == nil {
+		if summary := stringifyPersonaConnectionObject(singleObj); summary != "" {
+			*t = []string{summary}
+			return nil
+		}
+		*t = nil
+		return nil
+	}
+
+	return fmt.Errorf("connections must be a string, an array of strings, or an array of objects; got: %s", string(trimmed))
+}
+
+// stringifyPersonaConnectionObject flattens a connection object the model
+// emitted into a single human-readable summary line.
+func stringifyPersonaConnectionObject(obj map[string]interface{}) string {
+	source, _ := obj["source"].(string)
+	target, _ := obj["target"].(string)
+	tag, _ := obj["tag"].(string)
+	reasoning, _ := obj["reasoning"].(string)
+	if strings.TrimSpace(source) != "" && strings.TrimSpace(target) != "" {
+		summary := strings.TrimSpace(source) + " -> " + strings.TrimSpace(target)
+		if strings.TrimSpace(tag) != "" {
+			summary += " [" + strings.TrimSpace(tag) + "]"
+		}
+		if strings.TrimSpace(reasoning) != "" {
+			summary += ": " + strings.TrimSpace(reasoning)
+		}
+		return summary
+	}
+	for _, key := range []string{"reasoning", "summary", "description", "text", "connection"} {
+		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	encoded, err := json.Marshal(obj)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
 // PersonaJSONResponse represents the expected JSON structure from persona analysis
 type PersonaJSONResponse struct {
 	KeyFindings         []string                    `json:"keyFindings"`
 	Observations        []string                    `json:"observations"`
 	Hypotheses          []string                    `json:"hypotheses"`
-	Connections         []string                    `json:"connections"`
+	Connections         PersonaConnectionText       `json:"connections"`
 	ProposedConnections []PersonaConnectionProposal `json:"proposedConnections"`
 	Questions           []string                    `json:"questions"`
 	Confidence          float32                     `json:"confidence"`
@@ -334,7 +429,7 @@ func personaRelationshipJSONSchema(persona Persona) (string, string) {
 	if persona.EffectiveConnectionPolicy() == PersonaConnectionPolicySupportOnly {
 		return "[]", "[]"
 	}
-	return `["short text summaries of allowed relationships"]`, `[
+	return `["plain string summary of an allowed relationship - STRINGS ONLY, never objects"]`, `[
     {
       "source": "exact node id",
       "target": "exact node id",
