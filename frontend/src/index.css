@@ -9447,6 +9447,10 @@ body {
   padding: 0.2rem 0.2rem 0.35rem;
 }
 
+.forensic-brain-autonomy-controlsrow .forensic-brain-autonomy-budgets {
+  justify-content: flex-end;
+}
+
 .forensic-brain-autonomy-tabs {
   display: flex;
   gap: 0.4rem;
