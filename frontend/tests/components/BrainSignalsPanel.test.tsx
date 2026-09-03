@@ -3816,4 +3816,70 @@ describe('BrainSignalsPanel', () => {
     })
     expect(screen.queryByTestId('brain-mark-all-seen')).not.toBeInTheDocument()
   })
+
+  it('renders the autonomy decision audit trail with reasons and blockers', async () => {
+    installBrainFetch({
+      signals: [signal],
+      links: [link],
+      autonomy: makeAutonomyState({
+        queue: [
+          makeAutonomyQueueItem({
+            id: 'brain-autonomy-audit-prepared',
+            title: 'Focused follow-up ready',
+            decision: 'prepared',
+            status: 'prepared',
+          }),
+          makeAutonomyQueueItem({
+            id: 'brain-autonomy-audit-blocked',
+            title: 'Cluster comparison withheld',
+            decision: 'blocked',
+            status: 'blocked',
+            blockers: ['unresolved-gap'],
+          }),
+        ],
+        audit: [
+          {
+            id: 'brain-autonomy-audit-entry-1',
+            queueItemId: 'brain-autonomy-audit-prepared',
+            investigationId: 'inv-current',
+            suggestionId: 'brain-suggestion-1',
+            actionId: 'brain-followup-1',
+            decision: 'prepared',
+            mode: 'prepare-only',
+            reason: 'Autonomy prepared one focused follow-up. Review and approve it before launching.',
+            blockers: [],
+            approvalRequired: true,
+            sourceSignalIds: [signal.id],
+            createdAt: '2026-06-05T12:05:00Z',
+          },
+          {
+            id: 'brain-autonomy-audit-entry-2',
+            queueItemId: 'brain-autonomy-audit-blocked',
+            investigationId: 'inv-current',
+            suggestionId: 'brain-suggestion-2',
+            decision: 'blocked',
+            mode: 'prepare-only',
+            reason: 'Autonomy did not prepare this follow-up because safety blockers are still active.',
+            blockers: ['unresolved-gap'],
+            createdAt: '2026-06-05T12:06:00Z',
+          },
+        ],
+      }),
+    })
+    const user = userEvent.setup()
+
+    render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
+    await openBrainView(user, /autonomy queue view/i)
+
+    const audit = await screen.findByTestId('brain-autonomy-audit')
+    expect(audit).toHaveTextContent('Decision audit')
+    expect(audit).toHaveTextContent('Focused follow-up ready')
+    expect(audit).toHaveTextContent('Cluster comparison withheld')
+    expect(audit).toHaveTextContent('Autonomy prepared one focused follow-up. Review and approve it before launching.')
+    expect(audit).toHaveTextContent('Unresolved Gap')
+
+    const decisions = within(audit).getAllByText(/^(Prepared|Blocked)$/)
+    expect(decisions.length).toBeGreaterThanOrEqual(2)
+    expect(within(audit).getAllByTestId('brain-autonomy-audit-entry').length).toBe(2)
+  })
 })

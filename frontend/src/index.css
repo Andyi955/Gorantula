@@ -9288,6 +9288,100 @@ body {
   color: #74ff95;
 }
 
+.forensic-brain-autonomy-audit {
+  display: grid;
+  gap: 0.42rem;
+  border-top: 1px dashed rgba(129, 227, 255, 0.22);
+  padding-top: 0.6rem;
+  margin-top: 0.2rem;
+}
+
+.forensic-brain-autonomy-audit .forensic-brain-panel-kicker {
+  color: rgba(129, 227, 255, 0.78);
+}
+
+.forensic-brain-autonomy-audit-hint {
+  margin: 0;
+  color: rgba(196, 214, 224, 0.62);
+  font-size: 0.62rem;
+}
+
+.forensic-brain-autonomy-audit-list {
+  display: grid;
+  gap: 0.36rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.forensic-brain-autonomy-audit-entry {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 0.55rem;
+  border: 1px solid rgba(129, 227, 255, 0.16);
+  border-radius: 0.22rem;
+  background: rgba(3, 10, 15, 0.72);
+  padding: 0.42rem 0.5rem;
+}
+
+.forensic-brain-autonomy-audit-decision {
+  border: 1px solid rgba(129, 227, 255, 0.4);
+  border-radius: 0.18rem;
+  padding: 0.22rem 0.34rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(196, 214, 224, 0.9);
+  white-space: nowrap;
+}
+
+.forensic-brain-autonomy-audit-decision.is-prepared {
+  border-color: rgba(0, 255, 65, 0.45);
+  background: rgba(0, 255, 65, 0.08);
+  color: #74ff95;
+}
+
+.forensic-brain-autonomy-audit-decision.is-blocked {
+  border-color: rgba(255, 78, 129, 0.45);
+  background: rgba(255, 78, 129, 0.08);
+  color: #ff5d91;
+}
+
+.forensic-brain-autonomy-audit-decision.is-would-prepare {
+  border-color: rgba(255, 205, 78, 0.45);
+  background: rgba(255, 205, 78, 0.08);
+  color: #ffd98a;
+}
+
+.forensic-brain-autonomy-audit-body {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.forensic-brain-autonomy-audit-body strong {
+  color: rgba(226, 240, 248, 0.92);
+  font-size: 0.68rem;
+}
+
+.forensic-brain-autonomy-audit-body p {
+  margin: 0;
+  color: rgba(196, 214, 224, 0.66);
+  font-size: 0.62rem;
+}
+
+.forensic-brain-autonomy-audit-blockers {
+  color: rgba(255, 141, 171, 0.8);
+  font-size: 0.58rem;
+}
+
+.forensic-brain-autonomy-audit-entry time {
+  color: rgba(196, 214, 224, 0.5);
+  font-size: 0.56rem;
+  white-space: nowrap;
+}
+
 .forensic-brain-autonomy-budgets span {
   display: grid;
   gap: 0.24rem;

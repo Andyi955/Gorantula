@@ -366,6 +366,14 @@ const formatAutonomyDecision = (decision?: string) => {
   }
 }
 
+const formatAutonomyAuditTimestamp = (value: string) => {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 const formatAutonomyBlocker = (blocker: string) => {
   switch (blocker) {
     case 'unresolved-gap':
@@ -4809,6 +4817,41 @@ export default function BrainSignalsPanel({
           ) : (
             <div className="forensic-brain-autonomy-list">
               {autonomyQueue.map(renderAutonomyQueueItem)}
+            </div>
+          )}
+
+          {autonomyAudit.length > 0 && (
+            <div className="forensic-brain-autonomy-audit" data-testid="brain-autonomy-audit">
+              <div className="forensic-brain-panel-kicker">Decision audit</div>
+              <p className="forensic-brain-autonomy-audit-hint">
+                Why the brain prepared, blocked, or withheld each follow-up.
+              </p>
+              <ul className="forensic-brain-autonomy-audit-list">
+                {autonomyAudit.slice(0, 12).map((entry) => {
+                  const queueItem = autonomyQueue.find((candidate) => candidate.id === entry.queueItemId)
+                  return (
+                    <li
+                      key={entry.id}
+                      className={`forensic-brain-autonomy-audit-entry is-${entry.decision}`}
+                      data-testid="brain-autonomy-audit-entry"
+                    >
+                      <span className={`forensic-brain-autonomy-audit-decision is-${entry.decision}`}>
+                        {formatAutonomyDecision(entry.decision)}
+                      </span>
+                      <div className="forensic-brain-autonomy-audit-body">
+                        <strong>{queueItem?.title || entry.suggestionId}</strong>
+                        <p>{entry.reason}</p>
+                        {entry.blockers.length > 0 && (
+                          <span className="forensic-brain-autonomy-audit-blockers">
+                            {entry.blockers.map((blocker) => formatAutonomyBlocker(blocker)).join(' · ')}
+                          </span>
+                        )}
+                      </div>
+                      <time>{formatAutonomyAuditTimestamp(entry.createdAt)}</time>
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           )}
         </section>

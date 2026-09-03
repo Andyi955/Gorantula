@@ -3,8 +3,11 @@ package models
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -139,5 +142,69 @@ func TestInvestigationStoreSkipsNonInvestigationDirectories(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].ID != "inv-1" {
 		t.Fatalf("expected only saved investigation, got %#v", records)
+	}
+}
+
+func TestInvestigationStoreSaveJSONIsAtomic(t *testing.T) {
+	root := t.TempDir()
+	store := NewInvestigationStore(root)
+	if err := store.SaveMetadata(InvestigationRecord{ID: "inv-atomic", Topic: "Atomic"}); err != nil {
+		t.Fatalf("SaveMetadata failed: %v", err)
+	}
+
+	payload := json.RawMessage(`{"nodes": [], "edges": []}`)
+	if err := store.SaveJSON("inv-atomic", InvestigationBoardFilename, payload); err != nil {
+		t.Fatalf("SaveJSON failed: %v", err)
+	}
+
+	// Concurrent saves and loads: a reader must never observe a partially
+	// written file (the transient "contains invalid json" failure mode).
+	var waitGroup sync.WaitGroup
+	errCh := make(chan error, 200)
+	for writer := 0; writer < 4; writer++ {
+		waitGroup.Add(1)
+		go func(writer int) {
+			defer waitGroup.Done()
+			for round := 0; round < 25; round++ {
+				payload := json.RawMessage(fmt.Sprintf(`{"writer": %d, "round": %d}`, writer, round))
+				if err := store.SaveJSON("inv-atomic", InvestigationBoardFilename, payload); err != nil {
+					errCh <- fmt.Errorf("save failed: %w", err)
+					return
+				}
+			}
+		}(writer)
+	}
+	for reader := 0; reader < 4; reader++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			for round := 0; round < 100; round++ {
+				data, err := store.LoadJSON("inv-atomic", InvestigationBoardFilename)
+				if err != nil {
+					errCh <- fmt.Errorf("concurrent load observed invalid state: %w", err)
+					return
+				}
+				if !json.Valid(data) {
+					errCh <- fmt.Errorf("concurrent load observed invalid json")
+					return
+				}
+			}
+		}()
+	}
+	waitGroup.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	// No temp files may survive a completed save.
+	entries, err := os.ReadDir(filepath.Join(root, "inv-atomic"))
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tmp-") {
+			t.Fatalf("temp file left behind: %s", entry.Name())
+		}
 	}
 }
