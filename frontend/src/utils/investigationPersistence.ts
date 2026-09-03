@@ -234,6 +234,21 @@ const deleteIndexedBoardShadowStateForInvestigation = async (investigationId: st
   }))
 }
 
+// Drops the in-memory cache and the IndexedDB shadow for one investigation
+// so the next board load fetches the backend board state fresh. Used when
+// the backend has written newer board content (gathered nodes from a
+// parallel scan) that a stale local shadow must not shadow out.
+export const invalidateBoardStateForInvestigation = async (investigationId: string) => {
+  const id = investigationId.trim()
+  if (!id) {
+    return
+  }
+  boardStateCache.delete(id)
+  if (shouldUseBackendPersistence()) {
+    await deleteIndexedBoardShadowStateForInvestigation(id)
+  }
+}
+
 const refreshBackendBoardCacheFromServer = async (
   investigationId: string,
   baselineState: PersistedBoardState,
