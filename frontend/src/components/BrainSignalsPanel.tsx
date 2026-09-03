@@ -4660,6 +4660,45 @@ export default function BrainSignalsPanel({
               <b className="forensic-brain-autonomy-status">{formatAutonomyDecision(item.status)}</b>
             </div>
           </div>
+          <aside
+            data-testid="brain-autonomy-card-rail"
+            className="forensic-brain-suggestion-action forensic-brain-autonomy-rail"
+          >
+            {action?.status === 'prepared' && (
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => setPendingFollowUp(action)}
+              >
+                <Rocket size={13} />
+                {reviewLabel}
+              </button>
+            )}
+            {suggestion && (
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
+              >
+                <Maximize2 size={13} />
+                Compare
+              </button>
+            )}
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={!canOpenTarget}
+              onClick={() => {
+                const targetId = item.targetInvestigationIds[0]
+                if (targetId) {
+                  onOpenInvestigation?.(targetId)
+                }
+              }}
+            >
+              <ExternalLink size={13} />
+              Open
+            </button>
+          </aside>
           <h4>{item.title}</h4>
           <p>{item.summary}</p>
           <div className="forensic-brain-suggestion-reason forensic-brain-autonomy-decision-box">
@@ -4713,42 +4752,6 @@ export default function BrainSignalsPanel({
             </section>
           )}
         </div>
-        <aside data-testid="brain-autonomy-card-rail" className="forensic-brain-suggestion-action forensic-brain-autonomy-rail">
-          {action?.status === 'prepared' && (
-            <button
-              type="button"
-              className="forensic-brain-action forensic-brain-action-primary"
-              onClick={() => setPendingFollowUp(action)}
-            >
-              <Rocket size={13} />
-              {reviewLabel}
-            </button>
-          )}
-          {suggestion && (
-            <button
-              type="button"
-              className="forensic-brain-action forensic-brain-action-primary"
-              onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
-            >
-              <Maximize2 size={13} />
-              Compare
-            </button>
-          )}
-          <button
-            type="button"
-            className="forensic-brain-action forensic-brain-action-secondary"
-            disabled={!canOpenTarget}
-            onClick={() => {
-              const targetId = item.targetInvestigationIds[0]
-              if (targetId) {
-                onOpenInvestigation?.(targetId)
-              }
-            }}
-          >
-            <ExternalLink size={13} />
-            Open
-          </button>
-        </aside>
       </article>
     )
   }

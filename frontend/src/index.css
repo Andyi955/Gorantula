@@ -9033,8 +9033,8 @@ body {
   justify-content: flex-end;
   align-items: center;
   gap: 0.5rem;
-  border-top: 1px solid rgba(129, 227, 255, 0.22);
-  padding-top: 0.62rem;
+  border-bottom: 1px solid rgba(129, 227, 255, 0.22);
+  padding-bottom: 0.62rem;
 }
 
 .forensic-brain-autonomy-timestamp {
