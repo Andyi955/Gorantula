@@ -52,6 +52,7 @@ import {
   loadBoardStateForInvestigation,
   loadDiscoveriesForInvestigations,
   loadInvestigations,
+  loadRelationshipResultForInvestigation,
   loadVaultResultForInvestigation,
   saveBoardStateForInvestigation,
   saveDiscoveriesForInvestigation,
@@ -1192,6 +1193,23 @@ function App() {
     }))
   }, [socketConfig.ready, socketConfig.socket])
 
+  // The backend persists the relationship result BEFORE broadcasting
+  // SYNTHESIS_COMPLETE, and the board replays the saved result on mount.
+  // Re-running the whole pipeline for an offscreen board whose result is
+  // already saved would just double the provider load - and on
+  // graceful-degradation runs (empty connections) it would re-fire in a
+  // loop. Only synthesize when the completed run's result is missing.
+  const ensureOffscreenRelationshipSynthesis = useCallback(async (vaultId: string, runId?: string) => {
+    const completedRunId = typeof runId === 'string' ? runId.trim() : ''
+    if (completedRunId) {
+      const saved = await loadRelationshipResultForInvestigation(vaultId)
+      if (saved && saved.runId === completedRunId) {
+        return
+      }
+    }
+    await requestOffscreenRelationshipSynthesis(vaultId, runId)
+  }, [requestOffscreenRelationshipSynthesis])
+
   useEffect(() => {
     if (!socketConfig.socket) {
       return
@@ -1329,7 +1347,7 @@ function App() {
           }
           if (explicitVaultId && explicitVaultId !== currentInvestigationId && !payload.append) {
             const runId = typeof payload.runId === 'string' ? payload.runId.trim() : ''
-            void requestOffscreenRelationshipSynthesis(vaultId, runId)
+            void ensureOffscreenRelationshipSynthesis(vaultId, runId)
           }
           void saveVaultResultForInvestigation(vaultId, payload).catch((error) => {
             console.warn('[App] Failed to persist vault result; keeping it in memory for this session.', error)
@@ -1391,7 +1409,7 @@ function App() {
 
     socketConfig.socket.addEventListener('message', handleMessage)
     return () => socketConfig.socket?.removeEventListener('message', handleMessage)
-  }, [applyPipelineProgress, currentInvestigationId, refreshPipelineProfiles, requestOffscreenRelationshipSynthesis, socketConfig.socket])
+  }, [applyPipelineProgress, currentInvestigationId, ensureOffscreenRelationshipSynthesis, refreshPipelineProfiles, socketConfig.socket])
 
   const currentBoardTokenUsage = currentInvestigationId ? boardTokenUsageByInvestigation[currentInvestigationId] || null : null
   const sessionTokenSummary = `Session: ${formatCompactTokens(sessionTokenUsage.totalTokens)} total, ${formatCompactTokens(sessionTokenUsage.promptTokens)} in, ${formatCompactTokens(sessionTokenUsage.completionTokens)} out, ${sessionTokenUsage.callCount} calls | ${formatTokenProviderBreakdown(sessionTokenUsage.providerTotals)}`

@@ -1527,6 +1527,99 @@ describe('App', () => {
     expect(visibleBoardId?.textContent || '').not.toBe('inv-running')
   })
 
+  it('skips off-screen relationship synthesis when the completed run result is already saved', async () => {
+    ;(globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__ = true
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/investigations/inv-running/relationships')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            vaultId: 'inv-running',
+            runId: 'run-offscreen-2',
+            createdAt: '2026-09-03T00:00:00Z',
+            incremental: false,
+            connections: [
+              { source: 'node-a', target: 'node-b', tag: 'INTEGRATION', reasoning: 'saved already' },
+            ],
+          }),
+        })
+      }
+      if (url.includes('/api/investigations')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      localStorage.setItem(
+        'gorantula_investigations',
+        JSON.stringify([
+          { id: 'inv-old', topic: 'Old Investigation' },
+          { id: 'inv-running', topic: 'Running Investigation' },
+        ]),
+      )
+      localStorage.setItem(
+        'inv_data_inv-running',
+        JSON.stringify({
+          mode: 'strict-grid',
+          nodes: [
+            {
+              id: 'node-a',
+              data: {
+                id: 'node-a',
+                title: 'A',
+                summary: 'A',
+                fullText: 'A',
+                sourceURL: 'https://example.com/a',
+              },
+            },
+            {
+              id: 'node-b',
+              data: {
+                id: 'node-b',
+                title: 'B',
+                summary: 'B',
+                fullText: 'B',
+                sourceURL: 'https://example.com/b',
+              },
+            },
+          ],
+          edges: [],
+        }),
+      )
+
+      render(<App />)
+      expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+      await act(async () => {
+        WebSocketMock.instances[0]?.onopen?.()
+      })
+
+      act(() => {
+        WebSocketMock.instances[0]?.emit('SYNTHESIS_COMPLETE', {
+          result: 'Off-screen report',
+          vaultId: 'inv-running',
+          append: false,
+          runId: 'run-offscreen-2',
+        })
+      })
+
+      // Give the async guard a chance to (not) fire the synthesis request.
+      await act(async () => {
+        await Promise.resolve()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      const sentMessages = WebSocketMock.instances[0]?.send.mock.calls.map((call) => JSON.parse(call[0] as string)) || []
+      expect(sentMessages.filter((message) => message.type === 'CONNECT_DOTS')).toEqual([])
+    } finally {
+      delete (globalThis as { __GORANTULA_BACKEND_PERSISTENCE_TEST__?: boolean }).__GORANTULA_BACKEND_PERSISTENCE_TEST__
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('renders saved pipeline performance profiles in the monitor drawer with an animated token readout', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
