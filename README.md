@@ -1,6 +1,6 @@
 # Gorantula
 
-Gorantula is a local-first intelligence research workspace. It crawls a topic, gathers evidence, synthesizes it with configurable AI providers, and turns the result into a forensic board, timeline, and searchable vault.
+Gorantula is a local-first intelligence research workspace. It crawls a topic, gathers evidence, synthesizes it with configurable AI providers, and turns the result into a forensic board, timeline, and searchable vault - and it remembers across investigations with an event-driven memory brain that prepares next moves under guarded autonomy.
 
 ## Preview
 
@@ -37,14 +37,32 @@ Rabbit Hole is the deep-investigation crawl mode. It starts from Spider View, cr
 
 ## Brain Signals
 
-Brain Signals is the first durable memory layer for Gorantula. Open the `Brain` tab while an investigation is selected to recompute backend-persisted activation signals against older investigations.
+Brain Signals is Gorantula's durable memory layer. The brain fires by itself whenever evidence lands - no tab-open required - and routes each event through deterministic recall gateways to surface connections between the active investigation and older cases.
 
-- V1 uses deterministic recall gateways only: entity/date overlap, source-domain overlap, and relationship-tag overlap.
-- Active signals are grouped by older case, capped to a top-priority list, and lower-priority matches are collapsed by default.
-- Each signal shows why the older case fired, the strongest suggested action, score strength, gateway counts, and actions to open, dismiss, or promote it.
-- Promoting a signal creates a durable Memory Link under the backend Brain vault state.
-- Strong multi-gateway signals can auto-promote into Memory Links, and repeated future firings reinforce the existing link with activation counts instead of creating duplicate cards.
-- V1 does not mutate board content, start autonomous agents, use personas, call models, or run embeddings.
+- Event-driven: evidence saves trigger a backend recompute, websocket pulses light up the living memory map, and a badge tracks unseen or strengthened signals per case (persisted, so it survives refreshes).
+- Built-in gateways: entity/date overlap, source-domain overlap, and relationship-tag overlap - held in a persisted, addressable registry with usage stats, route trails, and rename/disable from the UI.
+- The pulse feed ranks signals, next moves, and autonomy decisions in one stream; the Memory surface merges the map, durable memory links, and clusters.
+- Promoting a signal creates a durable Memory Link; repeated firings reinforce it with activation counts instead of duplicating cards.
+- Suggestions carry thinking-gateway provenance and can auto-attach source evidence: saved board evidence first, then a bounded web lookup, with a cooldown to prevent lookup storms.
+
+## Guarded Autonomy
+
+The brain prepares next moves by itself but never launches anything without the operator.
+
+- Modes: `off`, `suggest-only`, `limited-background`, and `prepare-only`.
+- In `prepare-only`, qualified suggestions become prepared focused Rabbit Hole follow-ups - each requires explicit operator approval before launching; nothing starts automatically.
+- Multi-candidate evaluation: every launch-ready candidate is evaluated in rank order, each preparation consumes the configured budgets (`MaxAutoPreparedPerInvestigation`, `MaxActivePrepared`), and every non-prepared candidate gets an audited blocked/would-prepare decision with its reasons.
+- Every decision is written to the autonomy audit trail with its stream provenance (source signals + gateway).
+
+## How a Scan Runs
+
+1. The prompt is decomposed into search angles (4-12 queries).
+2. Eight parallel legs search the Brave Search API and scrape the top results per leg (default 4, tunable via `GORANTULA_LEG_SOURCES`).
+3. Pages are extracted with container-first parsing (article/main content first, whole-document paragraphs as fallback).
+4. Each gathered nutrient is summarized into an evidence node; duplicates are merged; facts are ranked against the prompt for the final report.
+5. Seven personas analyze the board in parallel, relationship synthesis proposes and quality-filters connections, and a strict discovery pass only surfaces non-obvious cross-node patterns.
+6. Provider hiccups self-heal: content-filtered prompts are retried with sanitized wording, empty/truncated responses and rate limits retry with backoff, and every model call is recorded to `pipeline-traces/pipeline-trace.jsonl`.
+7. DeepSeek V4 models run with thinking mode disabled by default (the hidden chain-of-thought would otherwise exhaust the output budget); opt back in with `DEEPSEEK_THINKING=low|high|max`.
 
 ## Tech Stack
 
@@ -121,6 +139,18 @@ DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_MODEL=deepseek-v4-flash
 DEFAULT_SEARCH_MODEL=deepseek
 DEFAULT_PERSONA_MODEL=deepseek
+```
+
+Optional tuning knobs:
+
+```env
+# DeepSeek V4: disable or dial back hidden reasoning (enabled high by default;
+# reasoning tokens share the max_tokens budget with the answer)
+DEEPSEEK_THINKING=disabled
+# How many Brave results each crawl leg scrapes (default 4, clamped 1-8)
+GORANTULA_LEG_SOURCES=4
+# Parallel node-summary workers during gathering (default 8, clamped 1-12)
+GORANTULA_NODE_SUMMARY_CONCURRENCY=8
 ```
 
 Optional provider switches:
