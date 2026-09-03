@@ -33,3 +33,6 @@ docs/
 .agents/
 .agents/*
 **/.agents/**
+
+pipeline-traces/
+.scanbench/

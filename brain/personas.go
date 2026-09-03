@@ -1,6 +1,8 @@
 package brain
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -153,9 +155,11 @@ func GetDefaultPersonas() []Persona {
 // BuildPersonaPrompt creates a prompt for a specific persona to analyze the given findings
 func BuildPersonaPrompt(persona Persona, findings string) string {
 	connectionsSchema, proposedConnectionsSchema := personaRelationshipJSONSchema(persona)
-	return fmt.Sprintf(`%s
-
-You are analyzing the following investigation findings:
+	// Shared-first, persona-last: the evidence block and output contract are
+	// identical for every persona, so DeepSeek's automatic prefix cache hits
+	// for every persona after the first. The persona-specific role sits at
+	// the end, where instruction adherence stays strong.
+	return fmt.Sprintf(`You are analyzing the following investigation findings:
 
 ---
 
@@ -166,22 +170,13 @@ You are analyzing the following investigation findings:
 These findings are summary-first. Some nodes may include a bounded "Full Text Excerpt" instead of the complete source body.
 Treat omitted text as unavailable evidence rather than implied support, and work only from the material shown.
 
-Your expertise: %s
-Your perspective: %s
-
-Specifically, consider these questions:
-%s
-
-Relationship output policy:
-%s
-
 Provide your analysis in JSON format with the following structure:
 {
-  "keyFindings": ["list of short strings answering your prompt. IF you are Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
+  "keyFindings": ["list of short strings answering your assigned role's prompt. IF your role is Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
   "observations": ["direct evidence-grounded observations tied to exact node IDs"],
   "hypotheses": ["optional grounded hypotheses or interpretations; omit weak speculation"],
-  "connections": %s,
-  "proposedConnections": %s,
+  "connections": "see your relationship output policy below",
+  "proposedConnections": "see your relationship output policy below",
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
   "fullAnalysis": "Short grounded summary, maximum 5 sentences",
@@ -195,7 +190,7 @@ Provide your analysis in JSON format with the following structure:
   ]
 }
 
-Connection object shape, only when the relationship output policy allows proposals:
+Connection object shape, only when your relationship output policy allows proposals:
 [
     {
       "source": "exact node id",
@@ -210,14 +205,29 @@ Connection object shape, only when the relationship output policy allows proposa
 CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the [NodeID: xxx] markers in the input above. Do NOT use titles, entity names, or make up IDs. Use only IDs like: node-1772294753812066795-0
 CRITICAL: Every proposed connection MUST use exact source/target node IDs and exact evidenceNodeIDs. If you cannot ground a relationship directly in the evidence, omit it.
 CRITICAL: Separate direct observations from hypotheses. Do not frame speculation as fact. Avoid strategic or future-looking claims unless they are explicitly present in the node text.
-Respond ONLY with the JSON.`, persona.SystemPrompt, findings, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
+
+YOUR ROLE AND OUTPUT POLICY:
+%s
+Your expertise: %s
+Your perspective: %s
+
+Specifically, consider these questions:
+%s
+
+Relationship output policy:
+%s
+
+%s
+%s
+Respond ONLY with the JSON described above.`, findings, persona.SystemPrompt, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
 }
 
 func BuildIncrementalPersonaPrompt(persona Persona, pendingFindings string, contextFindings string, pendingNodeIDs []string) string {
 	connectionsSchema, proposedConnectionsSchema := personaRelationshipJSONSchema(persona)
-	return fmt.Sprintf(`%s
-
-You are analyzing new evidence that must be integrated into an existing investigation board.
+	// Shared-first, persona-last (see BuildPersonaPrompt): the pending and
+	// context blocks are identical for every persona, so the prefix cache
+	// hits for all but the first call.
+	return fmt.Sprintf(`You are analyzing new evidence that must be integrated into an existing investigation board.
 
 PENDING NODE IDS:
 %s
@@ -232,22 +242,13 @@ EXISTING BOARD CONTEXT (compact summaries only):
 %s
 ---
 
-Your expertise: %s
-Your perspective: %s
-
-Specifically, consider these questions:
-%s
-
-Relationship output policy:
-%s
-
 Provide your analysis in JSON format with the following structure:
 {
-  "keyFindings": ["list of short strings answering your prompt. IF you are Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
+  "keyFindings": ["list of short strings answering your assigned role's prompt. IF your role is Entity Mapper, these MUST BE EXACT NOUN ENTITIES ONLY (e.g., 'SpaceX') with no descriptions."],
   "observations": ["direct evidence-grounded observations tied to exact node IDs"],
   "hypotheses": ["optional grounded hypotheses or interpretations; omit weak speculation"],
-  "connections": %s,
-  "proposedConnections": %s,
+  "connections": "see your relationship output policy below",
+  "proposedConnections": "see your relationship output policy below",
   "questions": ["follow-up questions this raises"],
   "confidence": 0.0-1.0,
   "fullAnalysis": "Short grounded summary, maximum 5 sentences",
@@ -261,7 +262,7 @@ Provide your analysis in JSON format with the following structure:
   ]
 }
 
-Connection object shape, only when the relationship output policy allows proposals:
+Connection object shape, only when your relationship output policy allows proposals:
 [
     {
       "source": "exact node id",
@@ -278,7 +279,114 @@ CRITICAL: Focus on relationships between pending nodes and the existing board, p
 CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings from the input above. Do NOT use titles, entity names, or make up IDs.
 CRITICAL: Every proposed connection MUST use exact source/target node IDs and exact evidenceNodeIDs. If you cannot ground a relationship directly in the evidence, omit it.
 CRITICAL: Separate direct observations from hypotheses. Do not frame speculation as fact. Avoid strategic or future-looking claims unless they are explicitly present in the node text.
-Respond ONLY with the JSON.`, persona.SystemPrompt, strings.Join(pendingNodeIDs, ", "), pendingFindings, contextFindings, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
+
+YOUR ROLE AND OUTPUT POLICY:
+%s
+Your expertise: %s
+Your perspective: %s
+
+Specifically, consider these questions:
+%s
+
+Relationship output policy:
+%s
+
+%s
+%s
+Respond ONLY with the JSON described above.`, strings.Join(pendingNodeIDs, ", "), pendingFindings, contextFindings, persona.SystemPrompt, persona.Expertise, persona.Perspective, persona.Questions, personaRelationshipPromptPolicy(persona), connectionsSchema, proposedConnectionsSchema)
+}
+
+// PersonaConnectionText tolerates the connection shapes models actually
+// emit: an array of strings, an array of connection objects (the Skeptic
+// repeatedly returned objects here, which previously hard-failed the whole
+// persona on a schema mismatch), a bare string, or null.
+type PersonaConnectionText []string
+
+func (t *PersonaConnectionText) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*t = nil
+		return nil
+	}
+
+	var single string
+	if err := json.Unmarshal(trimmed, &single); err == nil {
+		if strings.TrimSpace(single) == "" {
+			*t = nil
+			return nil
+		}
+		*t = []string{single}
+		return nil
+	}
+
+	var values []json.RawMessage
+	if err := json.Unmarshal(trimmed, &values); err == nil {
+		result := make([]string, 0, len(values))
+		for _, raw := range values {
+			item := strings.TrimSpace(string(raw))
+			if item == "" || item == "null" {
+				continue
+			}
+			var text string
+			if err := json.Unmarshal(raw, &text); err == nil {
+				if strings.TrimSpace(text) != "" {
+					result = append(result, text)
+				}
+				continue
+			}
+			var obj map[string]interface{}
+			if err := json.Unmarshal(raw, &obj); err == nil {
+				if summary := stringifyPersonaConnectionObject(obj); summary != "" {
+					result = append(result, summary)
+				}
+				continue
+			}
+			result = append(result, item)
+		}
+		*t = result
+		return nil
+	}
+
+	var singleObj map[string]interface{}
+	if err := json.Unmarshal(trimmed, &singleObj); err == nil {
+		if summary := stringifyPersonaConnectionObject(singleObj); summary != "" {
+			*t = []string{summary}
+			return nil
+		}
+		*t = nil
+		return nil
+	}
+
+	return fmt.Errorf("connections must be a string, an array of strings, or an array of objects; got: %s", string(trimmed))
+}
+
+// stringifyPersonaConnectionObject flattens a connection object the model
+// emitted into a single human-readable summary line.
+func stringifyPersonaConnectionObject(obj map[string]interface{}) string {
+	source, _ := obj["source"].(string)
+	target, _ := obj["target"].(string)
+	tag, _ := obj["tag"].(string)
+	reasoning, _ := obj["reasoning"].(string)
+	if strings.TrimSpace(source) != "" && strings.TrimSpace(target) != "" {
+		summary := strings.TrimSpace(source) + " -> " + strings.TrimSpace(target)
+		if strings.TrimSpace(tag) != "" {
+			summary += " [" + strings.TrimSpace(tag) + "]"
+		}
+		if strings.TrimSpace(reasoning) != "" {
+			summary += ": " + strings.TrimSpace(reasoning)
+		}
+		return summary
+	}
+	for _, key := range []string{"reasoning", "summary", "description", "text", "connection"} {
+		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	encoded, err := json.Marshal(obj)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // PersonaJSONResponse represents the expected JSON structure from persona analysis
@@ -286,7 +394,7 @@ type PersonaJSONResponse struct {
 	KeyFindings         []string                    `json:"keyFindings"`
 	Observations        []string                    `json:"observations"`
 	Hypotheses          []string                    `json:"hypotheses"`
-	Connections         []string                    `json:"connections"`
+	Connections         PersonaConnectionText       `json:"connections"`
 	ProposedConnections []PersonaConnectionProposal `json:"proposedConnections"`
 	Questions           []string                    `json:"questions"`
 	Confidence          float32                     `json:"confidence"`
@@ -321,7 +429,7 @@ func personaRelationshipJSONSchema(persona Persona) (string, string) {
 	if persona.EffectiveConnectionPolicy() == PersonaConnectionPolicySupportOnly {
 		return "[]", "[]"
 	}
-	return `["short text summaries of allowed relationships"]`, `[
+	return `["plain string summary of an allowed relationship - STRINGS ONLY, never objects"]`, `[
     {
       "source": "exact node id",
       "target": "exact node id",

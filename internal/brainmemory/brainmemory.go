@@ -283,8 +283,10 @@ type SuggestionSourceEvidenceRequest struct {
 // SourceEvidenceLookupRequest drives an evidence finder lookup for one
 // suggestion: the suggestion itself plus the preferred search prompt.
 type SourceEvidenceLookupRequest struct {
-	Suggestion   BrainSuggestion `json:"suggestion"`
-	SearchPrompt string          `json:"searchPrompt"`
+	Suggestion      BrainSuggestion `json:"suggestion"`
+	SuggestionID    string          `json:"suggestionId"`
+	InvestigationID string          `json:"investigationId"`
+	SearchPrompt    string          `json:"searchPrompt"`
 }
 
 // SourceEvidenceFinder executes a source lookup for a suggestion. The app
@@ -522,6 +524,11 @@ type Service struct {
 	// sourceEvidence is the optional finder used to auto-attach source
 	// evidence to needs-source suggestions (wired by the app layer).
 	sourceEvidence SourceEvidenceFinder
+
+	// sourceLookupDispatcher runs the out-of-band evidence lookup. Nil means
+	// "plain go routine"; tests install a synchronous dispatcher so lookups
+	// complete deterministically inside the test.
+	sourceLookupDispatcher func(func())
 
 	// mu serialises signal recompute/notify cycles so concurrent evidence
 	// events and panel refreshes cannot interleave load/save of signals.json.

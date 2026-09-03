@@ -248,12 +248,20 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 				pipeline.ForgetTracker(meta.RunID)
 				return
 			}
-			appLog("relationships").Error("relationship workflow failed", "vault", vaultID, "run", meta.RunID, "incremental", isIncremental, "err", err)
-			broadcast(tracker.Error("relationship_synthesis", err.Error()))
-			saveAndBroadcastPipelineProfile(tracker)
-			pipeline.ForgetTracker(meta.RunID)
-			broadcast(models.WSMessage{Type: "ERROR", Payload: "Synthesis failed: " + err.Error()})
-			return
+			// A provider failure in the synthesis step (empty or truncated
+			// LLM bodies under load) must not destroy an otherwise-complete
+			// scan: degrade to zero synthesized relationships and finish the
+			// run instead of surfacing a System Error.
+			appLog("relationships").Warn(
+				"relationship workflow failed; completing the run without synthesized connections",
+				"vault", vaultID,
+				"run", meta.RunID,
+				"incremental", isIncremental,
+				"err", models.SanitizePipelineDiagnosticText(err.Error()),
+			)
+			broadcast(tracker.Complete("relationship_synthesis", "Synthesis unavailable - no relationship suggestions this run"))
+			connections = nil
+			debugRun = models.RelationshipDebugRun{}
 		}
 		connections = annotateConnectionsForVault(connections, vaultID, meta.RunID)
 

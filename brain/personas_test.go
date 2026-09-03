@@ -90,7 +90,7 @@ func TestBuildPersonaPrompt(t *testing.T) {
 		{"Contains Perspective", "Testing things"},
 		{"Contains Questions", "Does it work?"},
 		{"Contains Summary First Guidance", "Treat omitted text as unavailable evidence rather than implied support"},
-		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your prompt."},
+		{"Contains JSON Structure hint", "\"keyFindings\": [\"list of short strings answering your assigned role's prompt."},
 		{"Contains Exact Node ID Rule", "CRITICAL: The nodeIDs field MUST contain the EXACT node ID strings"},
 	}
 
@@ -136,5 +136,102 @@ func TestBuildIncrementalPersonaPrompt(t *testing.T) {
 				t.Errorf("BuildIncrementalPersonaPrompt() prompt does not contain %q", tt.contains)
 			}
 		})
+	}
+}
+
+func TestPersonaConnectionsToleratesObjectArray(t *testing.T) {
+	// The exact shape the Skeptic kept returning: connection objects where
+	// the schema asks for plain strings. Previously this hard-failed the
+	// whole persona ("cannot unmarshal object into ... of type string").
+	payload := `{
+		"keyFindings": ["cost claims conflict"],
+		"connections": [
+			{"source": "node-1", "target": "node-2", "tag": "COST_CLAIM_CONFLICT", "reasoning": "claims disagree on cost."},
+			{"reasoning": "second note without ids"},
+			"a plain string",
+			""
+		]
+	}`
+
+	var response PersonaJSONResponse
+	if err := parseJSONResponse(payload, &response); err != nil {
+		t.Fatalf("expected object-shaped connections to parse, got error: %v", err)
+	}
+
+	want := []string{
+		"node-1 -> node-2 [COST_CLAIM_CONFLICT]: claims disagree on cost.",
+		"second note without ids",
+		"a plain string",
+	}
+	if len(response.Connections) != len(want) {
+		t.Fatalf("expected %d flattened connections, got %d: %v", len(want), len(response.Connections), response.Connections)
+	}
+	for i, expected := range want {
+		if response.Connections[i] != expected {
+			t.Fatalf("connection %d: expected %q, got %q", i, expected, response.Connections[i])
+		}
+	}
+	if response.KeyFindings == nil || response.KeyFindings[0] != "cost claims conflict" {
+		t.Fatalf("expected sibling fields to parse normally, got %v", response.KeyFindings)
+	}
+}
+
+func TestPersonaConnectionsToleratesStringAndNull(t *testing.T) {
+	var fromString PersonaJSONResponse
+	if err := parseJSONResponse(`{"connections": "one summary"}`, &fromString); err != nil {
+		t.Fatalf("expected bare string connections to parse, got error: %v", err)
+	}
+	if len(fromString.Connections) != 1 || fromString.Connections[0] != "one summary" {
+		t.Fatalf("expected [one summary], got %v", fromString.Connections)
+	}
+
+	var fromNull PersonaJSONResponse
+	if err := parseJSONResponse(`{"connections": null}`, &fromNull); err != nil {
+		t.Fatalf("expected null connections to parse, got error: %v", err)
+	}
+	if len(fromNull.Connections) != 0 {
+		t.Fatalf("expected no connections from null, got %v", fromNull.Connections)
+	}
+
+	var fromObject PersonaJSONResponse
+	if err := parseJSONResponse(`{"connections": {"source": "a", "target": "b", "reasoning": "same event"}}`, &fromObject); err != nil {
+		t.Fatalf("expected single object connections to parse, got error: %v", err)
+	}
+	if len(fromObject.Connections) != 1 || fromObject.Connections[0] != "a -> b: same event" {
+		t.Fatalf("expected flattened single object, got %v", fromObject.Connections)
+	}
+}
+
+func TestPersonaJSONResponseSkepticSchemaDriftEndToEnd(t *testing.T) {
+	// Full payload in the drifted shape, through the same parse path the
+	// provider uses, to prove the Skeptic recovers instead of failing.
+	payload := `{
+		"keyFindings": ["duplicate funding figures"],
+		"observations": ["two sources cite different rounds"],
+		"hypotheses": [],
+		"connections": [
+			{"source": "node-9", "target": "node-4", "tag": "COST_CLAIM_CONFLICT", "reasoning": "figures conflict", "confidence": 0.7}
+		],
+		"proposedConnections": [
+			{"source": "node-9", "target": "node-4", "tag": "COST_CLAIM_CONFLICT", "reasoning": "figures conflict", "confidence": 0.7}
+		],
+		"questions": ["which figure is verified?"],
+		"confidence": 0.8,
+		"fullAnalysis": "Found a discrepancy.",
+		"nodeIDs": ["node-9", "node-4"]
+	}`
+
+	var response PersonaJSONResponse
+	if err := parseJSONResponse(payload, &response); err != nil {
+		t.Fatalf("expected drifted schema to parse, got error: %v", err)
+	}
+	if response.Confidence != 0.8 {
+		t.Fatalf("expected confidence 0.8, got %v", response.Confidence)
+	}
+	if len(response.ProposedConnections) != 1 || response.ProposedConnections[0].Tag != "COST_CLAIM_CONFLICT" {
+		t.Fatalf("expected proposedConnections to parse, got %v", response.ProposedConnections)
+	}
+	if len(response.Connections) != 1 || response.Connections[0] != "node-9 -> node-4 [COST_CLAIM_CONFLICT]: figures conflict" {
+		t.Fatalf("expected flattened connections, got %v", response.Connections)
 	}
 }

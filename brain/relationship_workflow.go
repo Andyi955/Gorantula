@@ -19,9 +19,13 @@ const (
 	relationshipSpecificTagInstruction   = "Use content-specific uppercase tags up to 32 characters that name the actual subject or tension, such as SAMSUNG_MEMORY_SHORTAGE, COST_CLAIM_CONFLICT, GBT_MILESTONE_DUPLICATE, or CONTRACT_PRECEDES_LAUNCH. Do not use category-only final labels: RELATED, SAME_ENTITY, COMMON_ENTITY, SAME_TOPIC, SAME_EVENT, SAME_EVENT_WINDOW, SAME_PROGRAM, PRECEDES, FOLLOWS, CORROBORATES, CONTRADICTS, INCONSISTENCY, DUPLICATE_CONTENT, DUPLICATES, EXEMPLIFIES."
 )
 
-// Appended on the one-shot JSON retry: DeepSeek occasionally returns an
-// empty or truncated body under concurrent load, and a stricter restatement
-// of the output contract recovers most of those.
+// Backoff between relationship-synthesis JSON retries. Provider overload
+// windows last minutes, so the delays grow instead of retrying immediately.
+var relationshipJSONRetryDelays = []time.Duration{8 * time.Second, 16 * time.Second}
+
+// Appended on each JSON retry: DeepSeek occasionally returns an empty or
+// truncated body under concurrent load, and a stricter restatement of the
+// output contract recovers most of those.
 const relationshipJSONRetryInstructions = `
 
 RETRY INSTRUCTIONS:
@@ -29,6 +33,98 @@ Your previous response could not be parsed as JSON. Try again once.
 Return exactly one JSON object with a "connections" array matching the requested schema.
 Do not include markdown, comments, prose, trailing commas, or duplicate object keys.
 Use an empty "connections" array when the evidence supports no connection.`
+
+const (
+	// Caps for the persona block inside the synthesis prompt. The seven
+	// personas largely read the same evidence, so their essays repeat each
+	// other; the synthesis needs their distilled findings and structured
+	// connection proposals, not seven full essays.
+	synthesisMaxPersonaFindings    = 6
+	synthesisMaxPersonaListItems   = 5
+	synthesisMaxFindingChars       = 200
+	synthesisMaxListItemChars      = 160
+	synthesisMaxPersonaAnalysis    = 240
+	synthesisMaxProposalsPerPersona = 5
+)
+
+func slimSynthesisText(value string, limit int) string {
+	trimmed := normalizePersonaPromptWhitespace(value)
+	runes := []rune(trimmed)
+	if len(runes) <= limit {
+		return trimmed
+	}
+	runes = runes[:limit]
+	if cut := strings.LastIndexAny(string(runes), " .,;:-"); cut > limit/2 {
+		runes = runes[:cut]
+	}
+	return strings.TrimSpace(string(runes)) + "…"
+}
+
+func slimSynthesisList(items []string, maxItems int, itemLimit int) string {
+	slimmed := make([]string, 0, min(maxItems, len(items)))
+	for _, item := range items {
+		item = slimSynthesisText(item, itemLimit)
+		if item == "" {
+			continue
+		}
+		slimmed = append(slimmed, item)
+		if len(slimmed) == maxItems {
+			break
+		}
+	}
+	return strings.Join(slimmed, " | ")
+}
+
+func slimSynthesisProposals(proposals []PersonaConnectionProposal, maxItems int, reasoningLimit int) string {
+	slimmed := make([]string, 0, min(maxItems, len(proposals)))
+	for _, proposal := range proposals {
+		reasoning := slimSynthesisText(proposal.Reasoning, reasoningLimit)
+		if reasoning == "" {
+			reasoning = "proposed by persona"
+		}
+		slimmed = append(slimmed, fmt.Sprintf(
+			"%s -> %s [%s, %.2f]: %s",
+			proposal.Source, proposal.Target, proposal.Tag, proposal.Confidence, reasoning,
+		))
+		if len(slimmed) == maxItems {
+			break
+		}
+	}
+	return strings.Join(slimmed, " | ")
+}
+
+// buildSlimSynthesisInsight serializes one persona for the synthesis prompt:
+// distilled findings, structured connection proposals, and capped lists
+// instead of the full essays - seven personas reading the same evidence
+// produce mostly overlapping prose, and the giant prompt was the slowest
+// step of every scan.
+func buildSlimSynthesisInsight(insight PersonaInsight) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("[%s] Confidence: %.2f\n", insight.PersonaName, insight.Confidence))
+	if findings := slimSynthesisList(insight.KeyFindings, synthesisMaxPersonaFindings, synthesisMaxFindingChars); findings != "" {
+		builder.WriteString("Key Findings: " + findings + "\n")
+	}
+	if proposals := slimSynthesisProposals(insight.ProposedConnections, synthesisMaxProposalsPerPersona, synthesisMaxListItemChars); proposals != "" {
+		builder.WriteString("Proposed Connections: " + proposals + "\n")
+	}
+	if connections := slimSynthesisList(insight.Connections, synthesisMaxPersonaListItems, synthesisMaxListItemChars); connections != "" {
+		builder.WriteString("Connections: " + connections + "\n")
+	}
+	if observations := slimSynthesisList(insight.Observations, synthesisMaxPersonaListItems, synthesisMaxListItemChars); observations != "" {
+		builder.WriteString("Observations: " + observations + "\n")
+	}
+	if hypotheses := slimSynthesisList(insight.Hypotheses, 3, synthesisMaxListItemChars); hypotheses != "" {
+		builder.WriteString("Hypotheses: " + hypotheses + "\n")
+	}
+	if analysis := slimSynthesisText(insight.FullAnalysis, synthesisMaxPersonaAnalysis); analysis != "" {
+		builder.WriteString("Analysis: " + analysis + "\n")
+	}
+	if nodeIDs := strings.Join(insight.NodeIDs, ", "); nodeIDs != "" {
+		builder.WriteString("NodeIDs: " + nodeIDs + "\n")
+	}
+	builder.WriteString("\n")
+	return builder.String()
+}
 
 var (
 	relationshipNumberPattern = regexp.MustCompile(`\b\d[\d,]*(?:\.\d+)?(?:%|x|tb|gb|mb|kb|m|b|k)?\b`)
@@ -359,15 +455,7 @@ func (b *Brain) generateSynthesizedRelationshipCandidates(ctx context.Context, n
 
 	var insightBuilder strings.Builder
 	for _, insight := range insights {
-		insightBuilder.WriteString(fmt.Sprintf("[%s]\nConfidence: %.2f\nObservations: %s\nHypotheses: %s\nConnections: %s\nAnalysis: %s\nNodeIDs: %s\n\n",
-			insight.PersonaName,
-			insight.Confidence,
-			strings.Join(insight.Observations, " | "),
-			strings.Join(insight.Hypotheses, " | "),
-			strings.Join(insight.Connections, " | "),
-			insight.FullAnalysis,
-			strings.Join(insight.NodeIDs, ", "),
-		))
+		insightBuilder.WriteString(buildSlimSynthesisInsight(insight))
 	}
 
 	prompt := fmt.Sprintf(`You are a relationship synthesis engine for an investigation board.
@@ -409,26 +497,63 @@ Evidence:
 Persona outputs:
 %s`, relationshipSpecificTagInstruction, buildNodeMapping(nodes), nodeBuilder.String(), insightBuilder.String())
 
+	// DeepSeek intermittently returns empty or truncated bodies under
+	// concurrent load. Retry with backoff (the overload windows last
+	// minutes, so an immediate retry just hits the same wall) and stricter
+	// output instructions on each retry.
 	var response relationshipCandidateJSONResponse
-	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
-		if !shouldRetryPersonaJSON(err) {
-			return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+	var lastErr error
+	for attempt := 1; attempt <= 1+len(relationshipJSONRetryDelays); attempt++ {
+		if attempt > 1 {
+			brainLog("relationships").Warn(
+				"relationship candidate json retry",
+				"provider", provider.Name(),
+				"attempt", attempt,
+				"err", models.SanitizePipelineDiagnosticText(lastErr.Error()),
+			)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", ctx.Err())
+			case <-time.After(relationshipJSONRetryDelays[attempt-2]):
+			}
 		}
-		// DeepSeek intermittently returns empty or truncated bodies under
-		// concurrent load; retry once with stricter output instructions
-		// instead of failing the whole relationship workflow.
-		brainLog("relationships").Warn(
-			"relationship candidate json retry",
-			"provider", provider.Name(),
-			"err", models.SanitizePipelineDiagnosticText(err.Error()),
-		)
-		retryErr := provider.GenerateJSON(ctx, prompt+relationshipJSONRetryInstructions, &response)
-		if retryErr != nil {
-			return nil, fmt.Errorf("failed to synthesize relationship candidates: primary error: %v; retry error: %w", err, retryErr)
+		retryPrompt := prompt
+		if attempt > 1 {
+			retryPrompt = prompt + relationshipJSONRetryInstructions
 		}
+		attemptStartedAt := time.Now()
+		attemptErr := provider.GenerateJSON(ctx, retryPrompt, &response)
+		tracePipelineSpan(pipelineTraceRecord{
+			Span:        "relationships/synthesis",
+			Provider:    provider.Name(),
+			PromptChars: len(retryPrompt),
+			DurationMs:  time.Since(attemptStartedAt).Milliseconds(),
+			Attempt:     attempt,
+			Error:       errorSummaryOrNil(attemptErr),
+		})
+		if attemptErr != nil {
+			lastErr = attemptErr
+			response = relationshipCandidateJSONResponse{}
+			if !shouldRetryPersonaCall(attemptErr) {
+				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", attemptErr)
+			}
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", lastErr)
 	}
 
 	return response.Connections, nil
+}
+
+func errorSummaryOrNil(err error) string {
+	if err == nil {
+		return ""
+	}
+	return models.SanitizePipelineDiagnosticText(err.Error())
 }
 
 func (b *Brain) generateIncrementalSynthesizedRelationshipCandidates(ctx context.Context, nodes []models.MemoryNode, pendingNodeIDs []string, insights []PersonaInsight) ([]models.RelationshipCandidate, error) {
@@ -455,15 +580,7 @@ func (b *Brain) generateIncrementalSynthesizedRelationshipCandidates(ctx context
 
 	var insightBuilder strings.Builder
 	for _, insight := range insights {
-		insightBuilder.WriteString(fmt.Sprintf("[%s]\nConfidence: %.2f\nObservations: %s\nHypotheses: %s\nConnections: %s\nAnalysis: %s\nNodeIDs: %s\n\n",
-			insight.PersonaName,
-			insight.Confidence,
-			strings.Join(insight.Observations, " | "),
-			strings.Join(insight.Hypotheses, " | "),
-			strings.Join(insight.Connections, " | "),
-			insight.FullAnalysis,
-			strings.Join(insight.NodeIDs, ", "),
-		))
+		insightBuilder.WriteString(buildSlimSynthesisInsight(insight))
 	}
 
 	prompt := fmt.Sprintf(`You are a relationship synthesis engine for an investigation board.
@@ -511,8 +628,17 @@ Persona outputs:
 %s`, relationshipSpecificTagInstruction, strings.Join(pendingNodeIDs, ", "), buildNodeMapping(nodes), pendingBuilder.String(), contextBuilder.String(), insightBuilder.String())
 
 	var response relationshipCandidateJSONResponse
-	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
-		return nil, fmt.Errorf("failed to synthesize incremental relationship candidates: %w", err)
+	incrementalStartedAt := time.Now()
+	incrementalErr := provider.GenerateJSON(ctx, prompt, &response)
+	tracePipelineSpan(pipelineTraceRecord{
+		Span:        "relationships/synthesis-incremental",
+		Provider:    provider.Name(),
+		PromptChars: len(prompt),
+		DurationMs:  time.Since(incrementalStartedAt).Milliseconds(),
+		Error:       errorSummaryOrNil(incrementalErr),
+	})
+	if incrementalErr != nil {
+		return nil, fmt.Errorf("failed to synthesize incremental relationship candidates: %w", incrementalErr)
 	}
 
 	return response.Connections, nil

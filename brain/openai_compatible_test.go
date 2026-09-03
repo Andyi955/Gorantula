@@ -56,6 +56,174 @@ func TestOpenAICompatibleProvider_GenerateContent(t *testing.T) {
 	}
 }
 
+func TestDeepSeekThinkingDisabledByDefault(t *testing.T) {
+	var gotBody map[string]interface{}
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{"content": `{"key": "value"}`},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := &OpenAICompatibleProvider{
+		NameID:       "deepseek",
+		APIKey:       "test-api-key",
+		BaseURL:      mockServer.URL,
+		Model:        "deepseek-v4-flash",
+		HTTPClient:   mockServer.Client(),
+		ThinkingMode: "disabled",
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := provider.GenerateJSON(context.Background(), "prompt", &result); err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	thinking, ok := gotBody["thinking"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected thinking object in deepseek request body, got: %v", gotBody["thinking"])
+	}
+	if thinking["type"] != "disabled" {
+		t.Fatalf("expected thinking type disabled, got %v", thinking["type"])
+	}
+	if _, hasEffort := gotBody["reasoning_effort"]; hasEffort {
+		t.Fatalf("expected no reasoning_effort when thinking is disabled, got %v", gotBody["reasoning_effort"])
+	}
+}
+
+func TestDeepSeekThinkingEffortOverride(t *testing.T) {
+	var gotBody map[string]interface{}
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{"content": `{"key": "value"}`},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := &OpenAICompatibleProvider{
+		NameID:       "deepseek",
+		APIKey:       "test-api-key",
+		BaseURL:      mockServer.URL,
+		Model:        "deepseek-v4-flash",
+		HTTPClient:   mockServer.Client(),
+		ThinkingMode: "low",
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := provider.GenerateJSON(context.Background(), "prompt", &result); err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	thinking, ok := gotBody["thinking"].(map[string]interface{})
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("expected thinking enabled with effort override, got: %v", gotBody["thinking"])
+	}
+	if gotBody["reasoning_effort"] != "low" {
+		t.Fatalf("expected reasoning_effort low, got %v", gotBody["reasoning_effort"])
+	}
+}
+
+func TestNonDeepSeekProviderSendsNoThinkingField(t *testing.T) {
+	var gotBody map[string]interface{}
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{"content": `{"key": "value"}`},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := &OpenAICompatibleProvider{
+		NameID:       "custom",
+		APIKey:       "test-api-key",
+		BaseURL:      mockServer.URL,
+		Model:        "some-model",
+		HTTPClient:   mockServer.Client(),
+		ThinkingMode: "disabled",
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := provider.GenerateJSON(context.Background(), "prompt", &result); err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if _, has := gotBody["thinking"]; has {
+		t.Fatalf("expected no thinking field for non-deepseek providers, got: %v", gotBody["thinking"])
+	}
+}
+
+func TestEmptyContentErrorReportsReasoningBurn(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content":          "",
+						"reasoning_content": "long hidden chain of thought...",
+					},
+					"finish_reason": "length",
+				},
+			},
+			"usage": map[string]interface{}{
+				"prompt_tokens":     3200,
+				"completion_tokens": 8192,
+				"total_tokens":      11392,
+				"completion_tokens_details": map[string]interface{}{
+					"reasoning_tokens": 8190,
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := &OpenAICompatibleProvider{
+		NameID:       "deepseek",
+		APIKey:       "test-api-key",
+		BaseURL:      mockServer.URL,
+		Model:        "deepseek-v4-flash",
+		HTTPClient:   mockServer.Client(),
+		ThinkingMode: "disabled",
+	}
+
+	err := provider.GenerateJSON(context.Background(), "prompt", &struct{}{})
+	if err == nil {
+		t.Fatal("expected an error for empty content, got none")
+	}
+	if !strings.Contains(err.Error(), "8190 reasoning tokens") {
+		t.Fatalf("expected the error to surface reasoning-token burn, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `finish_reason="length"`) {
+		t.Fatalf("expected the error to include finish_reason, got: %v", err)
+	}
+}
+
 func TestOpenAICompatibleProvider_GenerateJSON(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{

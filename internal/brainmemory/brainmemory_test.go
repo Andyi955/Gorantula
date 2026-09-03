@@ -1509,6 +1509,9 @@ func TestAutoResolveCooldownSkipsRepeatLookups(t *testing.T) {
 		SourceURL: "https://sources.example.com/acme-grid",
 	}}}
 	service.SetSourceEvidenceFinder(finder)
+	// Synchronous dispatch so the out-of-band lookup completes inside the
+	// test and its effects are assertable.
+	service.sourceLookupDispatcher = func(work func()) { work() }
 
 	needsSource := func(lastLookup string) BrainSuggestion {
 		return BrainSuggestion{
@@ -1544,19 +1547,99 @@ func TestAutoResolveCooldownSkipsRepeatLookups(t *testing.T) {
 		t.Fatalf("expected no lookup inside the cooldown, got %d", finder.calls)
 	}
 
-	// After the cooldown the lookup runs once and attaches evidence.
-	after, changed, err := service.autoResolveSuggestionSourceEvidence(needsSource("2026-06-17T10:00:00Z"), "2026-06-17T12:00:00Z")
+	// After the cooldown the lookup is dispatched out-of-band.
+	persisted := needsSource("2026-06-17T10:00:00Z")
+	if err := service.saveSuggestions(map[string]BrainSuggestion{persisted.ID: persisted}); err != nil {
+		t.Fatalf("saveSuggestions failed: %v", err)
+	}
+	after, changed, err := service.autoResolveSuggestionSourceEvidence(persisted, "2026-06-17T12:00:00Z")
 	if err != nil {
 		t.Fatalf("autoResolve after cooldown failed: %v", err)
 	}
 	if !changed {
-		t.Fatalf("expected the post-cooldown lookup to attach evidence")
+		t.Fatalf("expected the post-cooldown lookup to be dispatched")
 	}
 	if finder.calls != 1 {
 		t.Fatalf("expected exactly one lookup after the cooldown, got %d", finder.calls)
 	}
 	if after.LastSourceLookupAt != "2026-06-17T12:00:00Z" {
 		t.Fatalf("expected the lookup attempt marker to persist, got %q", after.LastSourceLookupAt)
+	}
+
+	// The out-of-band result applied: the suggestion resolved with the
+	// found source attached.
+	resolvedSuggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	resolved := findSuggestionByID(t, resolvedSuggestions, "brain-suggestion-verify-source")
+	if resolved.ReviewOutcome != SuggestionOutcomeResolved || resolved.ReviewSource != SuggestionReviewSourceSourceEvidence {
+		t.Fatalf("expected the async lookup to resolve the suggestion, got %#v", resolved)
+	}
+	if len(resolved.SourceEvidence) != 1 || resolved.SourceEvidence[0].SourceURL != "https://sources.example.com/acme-grid" {
+		t.Fatalf("expected the found source attached, got %#v", resolved.SourceEvidence)
+	}
+}
+
+func TestAutoResolveDispatchesLookupOutOfBand(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	finder := &recordingSourceEvidenceFinder{evidence: []BrainSuggestionSourceEvidence{{
+		SourceURL: "https://sources.example.com/verification",
+	}}}
+	service.SetSourceEvidenceFinder(finder)
+	var inlineRuns int
+	service.sourceLookupDispatcher = func(work func()) {
+		inlineRuns++
+		work()
+	}
+
+	needsSource := BrainSuggestion{
+		ID:              "brain-suggestion-verify-source",
+		InvestigationID: "inv-current",
+		Status:          SuggestionStatusReviewed,
+		ActionMode:      SuggestionActionVerify,
+		Title:           "Verify conflicting claim",
+		ReviewOutcome:   SuggestionOutcomeNeedsSource,
+		// ReasonSamples reference nodes that do not exist in the board, so
+		// no saved evidence exists and the out-of-band finder runs.
+		ReasonSamples: []SignalReason{{
+			Gateway:        GatewayEntityDate,
+			Value:          "ORG|Acme Grid",
+			Label:          "Acme Grid",
+			CurrentNodeIDs: []string{"ghost-node"},
+		}},
+		TargetInvestigationIDs: []string{"inv-old-strong"},
+	}
+	// The suggestion must be persisted: the out-of-band lookup applies its
+	// result against the saved suggestions, exactly like production.
+	if err := service.saveSuggestions(map[string]BrainSuggestion{needsSource.ID: needsSource}); err != nil {
+		t.Fatalf("saveSuggestions failed: %v", err)
+	}
+
+	_, changed, err := service.autoResolveSuggestionSourceEvidence(needsSource, "2026-06-17T12:00:00Z")
+	if err != nil {
+		t.Fatalf("autoResolveSuggestionSourceEvidence failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected the dispatch to record the attempt marker")
+	}
+	if inlineRuns != 1 || finder.calls != 1 {
+		t.Fatalf("expected exactly one dispatched lookup, got runs=%d calls=%d", inlineRuns, finder.calls)
+	}
+
+	// The dispatched lookup applied its result: the suggestion resolved with
+	// the found source attached.
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	resolved := findSuggestionByID(t, suggestions, "brain-suggestion-verify-source")
+	if resolved.ReviewOutcome != SuggestionOutcomeResolved || len(resolved.SourceEvidence) != 1 {
+		t.Fatalf("expected the async lookup to resolve the suggestion, got %#v", resolved)
+	}
+	if resolved.SourceEvidence[0].SourceURL != "https://sources.example.com/verification" {
+		t.Fatalf("expected the found source URL attached, got %#v", resolved.SourceEvidence)
 	}
 }
 
