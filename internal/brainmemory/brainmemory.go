@@ -228,39 +228,39 @@ type MemoryCluster struct {
 }
 
 type BrainSuggestion struct {
-	ID                     string         `json:"id"`
-	InvestigationID        string         `json:"investigationId"`
-	Kind                   string         `json:"kind"`
-	Status                 string         `json:"status"`
-	Title                  string         `json:"title"`
-	Summary                string         `json:"summary"`
-	SuggestedAction        string         `json:"suggestedAction"`
-	Score                  float64        `json:"score"`
-	Relevance              string         `json:"relevance,omitempty"`
-	RelevanceLabel         string         `json:"relevanceLabel,omitempty"`
-	RelevanceReason        string         `json:"relevanceReason,omitempty"`
-	ThinkingGateway        string         `json:"thinkingGateway,omitempty"`
-	ThinkingLabel          string         `json:"thinkingLabel,omitempty"`
-	ThinkingReason         string         `json:"thinkingReason,omitempty"`
-	ActionMode             string         `json:"actionMode,omitempty"`
-	Priority               string         `json:"priority"`
-	Reason                 string         `json:"reason"`
-	ReasonSamples          []SignalReason `json:"reasonSamples"`
-	MissingEvidence        []string       `json:"missingEvidence"`
-	SearchPrompt           string         `json:"searchPrompt,omitempty"`
-	ReviewOutcome          string         `json:"reviewOutcome,omitempty"`
-	ReviewSource           string         `json:"reviewSource,omitempty"`
-	RelatedSignalIDs       []string       `json:"relatedSignalIds"`
-	RelatedMemoryLinkIDs   []string       `json:"relatedMemoryLinkIds"`
-	RelatedClusterIDs      []string       `json:"relatedClusterIds"`
-	TargetInvestigationIDs []string       `json:"targetInvestigationIds"`
+	ID                     string                          `json:"id"`
+	InvestigationID        string                          `json:"investigationId"`
+	Kind                   string                          `json:"kind"`
+	Status                 string                          `json:"status"`
+	Title                  string                          `json:"title"`
+	Summary                string                          `json:"summary"`
+	SuggestedAction        string                          `json:"suggestedAction"`
+	Score                  float64                         `json:"score"`
+	Relevance              string                          `json:"relevance,omitempty"`
+	RelevanceLabel         string                          `json:"relevanceLabel,omitempty"`
+	RelevanceReason        string                          `json:"relevanceReason,omitempty"`
+	ThinkingGateway        string                          `json:"thinkingGateway,omitempty"`
+	ThinkingLabel          string                          `json:"thinkingLabel,omitempty"`
+	ThinkingReason         string                          `json:"thinkingReason,omitempty"`
+	ActionMode             string                          `json:"actionMode,omitempty"`
+	Priority               string                          `json:"priority"`
+	Reason                 string                          `json:"reason"`
+	ReasonSamples          []SignalReason                  `json:"reasonSamples"`
+	MissingEvidence        []string                        `json:"missingEvidence"`
+	SearchPrompt           string                          `json:"searchPrompt,omitempty"`
+	ReviewOutcome          string                          `json:"reviewOutcome,omitempty"`
+	ReviewSource           string                          `json:"reviewSource,omitempty"`
+	RelatedSignalIDs       []string                        `json:"relatedSignalIds"`
+	RelatedMemoryLinkIDs   []string                        `json:"relatedMemoryLinkIds"`
+	RelatedClusterIDs      []string                        `json:"relatedClusterIds"`
+	TargetInvestigationIDs []string                        `json:"targetInvestigationIds"`
 	SourceEvidence         []BrainSuggestionSourceEvidence `json:"sourceEvidence"`
-	LastSourceLookupAt     string         `json:"lastSourceLookupAt,omitempty"`
-	CreatedAt              string         `json:"createdAt"`
-	UpdatedAt              string         `json:"updatedAt"`
-	DismissedAt            string         `json:"dismissedAt,omitempty"`
-	ReviewedAt             string         `json:"reviewedAt,omitempty"`
-	ResolvedAt             string         `json:"resolvedAt,omitempty"`
+	LastSourceLookupAt     string                          `json:"lastSourceLookupAt,omitempty"`
+	CreatedAt              string                          `json:"createdAt"`
+	UpdatedAt              string                          `json:"updatedAt"`
+	DismissedAt            string                          `json:"dismissedAt,omitempty"`
+	ReviewedAt             string                          `json:"reviewedAt,omitempty"`
+	ResolvedAt             string                          `json:"resolvedAt,omitempty"`
 }
 
 // BrainSuggestionSourceEvidence is one source attached to a suggestion so a
@@ -5715,12 +5715,45 @@ func (s *Service) loadBrainJSON(filename string, target interface{}) error {
 }
 
 func (s *Service) saveBrainJSON(filename string, payload interface{}) error {
-	if err := os.MkdirAll(s.brainDir(), 0755); err != nil {
+	dir := s.brainDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.brainDir(), filename), data, 0644)
+	// Atomic write: API reads and the recompute pass run concurrently, so a
+	// partially written state file must never be observable. Write to a
+	// unique temp file in the same directory, then rename over the target.
+	tmpFile, err := os.CreateTemp(dir, filename+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	// Concurrent renames over the same target can transiently deny each
+	// other on Windows; a short retry converges without losing either write.
+	var renameErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Millisecond)
+		}
+		if renameErr = os.Rename(tmpName, filepath.Join(dir, filename)); renameErr == nil {
+			break
+		}
+	}
+	if renameErr != nil {
+		os.Remove(tmpName)
+		return renameErr
+	}
+	return nil
 }

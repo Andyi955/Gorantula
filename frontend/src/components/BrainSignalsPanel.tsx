@@ -366,6 +366,14 @@ const formatAutonomyDecision = (decision?: string) => {
   }
 }
 
+const formatAutonomyAuditTimestamp = (value: string) => {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 const formatAutonomyBlocker = (blocker: string) => {
   switch (blocker) {
     case 'unresolved-gap':
@@ -501,6 +509,9 @@ export default function BrainSignalsPanel({
     items: [],
   })
   const [isAutonomyPulseActive, setIsAutonomyPulseActive] = useState(false)
+  // Autonomy panel sub-section: queue and audit are separate tabs so the
+  // growing audit history never squishes the queue cards.
+  const [autonomySection, setAutonomySection] = useState<'queue' | 'audit'>('queue')
   const [labMode, setLabMode] = useState(() => loadBrainLabEnabled())
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
@@ -4607,43 +4618,92 @@ export default function BrainSignalsPanel({
         className={`forensic-brain-autonomy-card forensic-brain-autonomy-card-reference forensic-brain-autonomy-card-compact forensic-brain-autonomy-${item.status} forensic-brain-relevance-${relevance}`}
       >
         <div data-testid="brain-autonomy-card-main" className="forensic-brain-autonomy-main">
-          <div className="forensic-brain-suggestion-topline forensic-brain-autonomy-topline">
-            <span className={`forensic-brain-autonomy-decision-chip forensic-brain-autonomy-decision-${item.decision}`}>
-              {formatAutonomyDecision(item.decision)}
-            </span>
-            <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
-              {formatRelevance(item)}
-            </span>
-            {item.approvalRequired && (
-              <span className="forensic-brain-autonomy-approval-chip">
-                Approval Required
+          <div className="forensic-brain-autonomy-topline">
+            <div className="forensic-brain-autonomy-topline-chips">
+              <span className={`forensic-brain-autonomy-decision-chip forensic-brain-autonomy-decision-${item.decision}`}>
+                {formatAutonomyDecision(item.decision)}
               </span>
-            )}
-            <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
+              {item.blockers.length > 0 ? (
+                item.blockers.map((blocker) => (
+                  <span
+                    key={blocker}
+                    className="forensic-brain-chip forensic-brain-chip-relationship forensic-brain-autonomy-blocker-chip"
+                  >
+                    {formatAutonomyBlocker(blocker)}
+                  </span>
+                ))
+              ) : (
+                <span className="forensic-brain-chip forensic-brain-chip-source forensic-brain-autonomy-clear-chip">
+                  Clear
+                </span>
+              )}
+              <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
+                {formatRelevance(item)}
+              </span>
+              {item.approvalRequired && (
+                <span className="forensic-brain-autonomy-approval-chip">
+                  Approval Required
+                </span>
+              )}
+              {item.actionId && (
+                <span className="forensic-brain-chip forensic-brain-chip-entity">
+                  Action Ready
+                </span>
+              )}
+              <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
+            </div>
+            <div className="forensic-brain-autonomy-topline-meta">
+              <span data-testid="brain-autonomy-timestamp" className="forensic-brain-autonomy-timestamp">
+                <Clock3 size={15} />
+                {formatTimestamp(item.updatedAt)}
+              </span>
+              <b className="forensic-brain-autonomy-status">{formatAutonomyDecision(item.status)}</b>
+            </div>
           </div>
+          <aside
+            data-testid="brain-autonomy-card-rail"
+            className="forensic-brain-suggestion-action forensic-brain-autonomy-rail"
+          >
+            {action?.status === 'prepared' && (
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => setPendingFollowUp(action)}
+              >
+                <Rocket size={13} />
+                {reviewLabel}
+              </button>
+            )}
+            {suggestion && (
+              <button
+                type="button"
+                className="forensic-brain-action forensic-brain-action-primary"
+                onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
+              >
+                <Maximize2 size={13} />
+                Compare
+              </button>
+            )}
+            <button
+              type="button"
+              className="forensic-brain-action forensic-brain-action-secondary"
+              disabled={!canOpenTarget}
+              onClick={() => {
+                const targetId = item.targetInvestigationIds[0]
+                if (targetId) {
+                  onOpenInvestigation?.(targetId)
+                }
+              }}
+            >
+              <ExternalLink size={13} />
+              Open
+            </button>
+          </aside>
           <h4>{item.title}</h4>
           <p>{item.summary}</p>
           <div className="forensic-brain-suggestion-reason forensic-brain-autonomy-decision-box">
             <span>Decision</span>
             <strong>{item.reason}</strong>
-          </div>
-          <div className="forensic-brain-chip-row forensic-brain-autonomy-blocker-row" aria-label="Autonomy blockers">
-            {item.blockers.length > 0 ? (
-              item.blockers.map((blocker) => (
-                <span key={blocker} className="forensic-brain-chip forensic-brain-chip-relationship forensic-brain-autonomy-blocker-chip">
-                  {formatAutonomyBlocker(blocker)}
-                </span>
-              ))
-            ) : (
-              <span className="forensic-brain-chip forensic-brain-chip-source forensic-brain-autonomy-clear-chip">
-                Clear
-              </span>
-            )}
-            {item.actionId && (
-              <span className="forensic-brain-chip forensic-brain-chip-entity">
-                Action Ready
-              </span>
-            )}
           </div>
           {(item.gatewayLabel || item.sourceSignalIds.length > 0) && (
             <div
@@ -4692,51 +4752,6 @@ export default function BrainSignalsPanel({
             </section>
           )}
         </div>
-        <aside data-testid="brain-autonomy-card-rail" className="forensic-brain-suggestion-action forensic-brain-autonomy-rail">
-          <div className="forensic-brain-autonomy-rail-meta">
-            <span data-testid="brain-autonomy-timestamp" className="forensic-brain-autonomy-timestamp">
-              <Clock3 size={15} />
-              {formatTimestamp(item.updatedAt)}
-            </span>
-            <b className="forensic-brain-autonomy-status">{formatAutonomyDecision(item.status)}</b>
-          </div>
-          <div className="forensic-brain-autonomy-rail-actions">
-            {action?.status === 'prepared' && (
-              <button
-                type="button"
-                className="forensic-brain-action forensic-brain-action-primary"
-                onClick={() => setPendingFollowUp(action)}
-              >
-                <Rocket size={13} />
-                {reviewLabel}
-              </button>
-            )}
-            {suggestion && (
-              <button
-                type="button"
-                className="forensic-brain-action forensic-brain-action-primary"
-                onClick={() => setCompareSelection({ kind: 'suggestion', id: suggestion.id })}
-              >
-                <Maximize2 size={13} />
-                Compare
-              </button>
-            )}
-            <button
-              type="button"
-              className="forensic-brain-action forensic-brain-action-secondary"
-              disabled={!canOpenTarget}
-              onClick={() => {
-                const targetId = item.targetInvestigationIds[0]
-                if (targetId) {
-                  onOpenInvestigation?.(targetId)
-                }
-              }}
-            >
-              <ExternalLink size={13} />
-              Open
-            </button>
-          </div>
-        </aside>
       </article>
     )
   }
@@ -4752,63 +4767,136 @@ export default function BrainSignalsPanel({
               <span className="forensic-brain-panel-kicker">Guarded preparation</span>
               <h3>Autonomy Queue</h3>
             </div>
-            <div className="forensic-brain-cluster-summary">
-              <span>Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}</span>
-              <span>{autonomyQueue.length} queued</span>
-              <span>{blockedAutonomyCount} blocked</span>
+            <div className="forensic-brain-cluster-summary forensic-brain-autonomy-header-chips">
+              <span className={`forensic-brain-autonomy-header-chip${autonomyAutoPrepareEnabled ? ' is-on' : ''}`}>
+                <ShieldCheck size={12} />
+                Auto-prepare {autonomyAutoPrepareEnabled ? 'On' : 'Off'}
+              </span>
+              <span className="forensic-brain-autonomy-header-chip">
+                {autonomyQueue.length} Queued
+              </span>
+              <span className="forensic-brain-autonomy-header-chip is-blocked">
+                {blockedAutonomyCount} Blocked
+              </span>
             </div>
           </div>
 
-          <div className="forensic-brain-autonomy-controls" aria-label="Brain autonomy mode">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autonomyAutoPrepareEnabled}
-              aria-disabled={busyAction === 'autonomy-toggle'}
-              aria-label="Auto-prepare Rabbit Holes"
-              className="forensic-brain-autonomy-toggle"
-              onClick={() => void handleToggleAutonomyAutoPrepare()}
-            >
-              <ShieldCheck size={13} />
-              <span>Auto-prepare Rabbit Holes</span>
-              <strong className={autonomyStateClass}>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
-            </button>
-          </div>
+          <div className="forensic-brain-autonomy-controlsrow">
+            <div className="forensic-brain-autonomy-controls" aria-label="Brain autonomy mode">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autonomyAutoPrepareEnabled}
+                aria-disabled={busyAction === 'autonomy-toggle'}
+                aria-label="Auto-prepare Rabbit Holes"
+                className="forensic-brain-autonomy-toggle"
+                onClick={() => void handleToggleAutonomyAutoPrepare()}
+              >
+                <ShieldCheck size={13} />
+                <span>Auto-prepare Rabbit Holes</span>
+                <strong className={autonomyStateClass}>{autonomyAutoPrepareEnabled ? 'On' : 'Off'}</strong>
+              </button>
+            </div>
 
-          <div className="forensic-brain-autonomy-budgets" aria-label="Brain autonomy budgets">
-            <span>
-              Per Case
-              <strong>{autonomySettings.maxAutoPreparedPerInvestigation}</strong>
-            </span>
-            <span>
-              Active Prepared
-              <strong>{autonomySettings.maxActivePrepared}</strong>
-            </span>
-            {latestAudit && (
+            <div className="forensic-brain-autonomy-budgets" aria-label="Brain autonomy budgets">
               <span>
-                Last Decision
-                <strong>{formatAutonomyDecision(latestAudit.decision)}</strong>
+                Per Case
+                <strong>{autonomySettings.maxAutoPreparedPerInvestigation}</strong>
               </span>
-            )}
+              <span>
+                Active Prepared
+                <strong>{autonomySettings.maxActivePrepared}</strong>
+              </span>
+              {latestAudit && (
+                <span>
+                  Last Decision
+                  <strong>{formatAutonomyDecision(latestAudit.decision)}</strong>
+                </span>
+              )}
+            </div>
           </div>
 
           {renderFollowUpLauncher()}
 
-          {!currentInvestigationId ? (
-            <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
-              Select an investigation to inspect autonomy.
-            </div>
-          ) : isLoading ? (
-            <div data-testid="brain-loading-state" className="forensic-brain-empty">
-              Checking autonomy queue...
-            </div>
-          ) : autonomyQueue.length === 0 ? (
-            <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
-              No queued autonomy decisions yet.
+          <div className="forensic-brain-autonomy-tabs" role="tablist" aria-label="Autonomy sections">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={autonomySection === 'queue'}
+              className={`forensic-brain-autonomy-tab${autonomySection === 'queue' ? ' is-active' : ''}`}
+              onClick={() => setAutonomySection('queue')}
+            >
+              Queue ({autonomyQueue.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={autonomySection === 'audit'}
+              className={`forensic-brain-autonomy-tab${autonomySection === 'audit' ? ' is-active' : ''}`}
+              onClick={() => setAutonomySection('audit')}
+            >
+              Audit ({autonomyAudit.length})
+            </button>
+          </div>
+
+          {autonomySection === 'queue' ? (
+            <div className="forensic-brain-autonomy-scroll">
+              {!currentInvestigationId ? (
+                <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
+                  Select an investigation to inspect autonomy.
+                </div>
+              ) : isLoading ? (
+                <div data-testid="brain-loading-state" className="forensic-brain-empty">
+                  Checking autonomy queue...
+                </div>
+              ) : autonomyQueue.length === 0 ? (
+                <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
+                  No queued autonomy decisions yet.
+                </div>
+              ) : (
+                <div className="forensic-brain-autonomy-list">
+                  {autonomyQueue.map(renderAutonomyQueueItem)}
+                </div>
+              )}
             </div>
           ) : (
-            <div className="forensic-brain-autonomy-list">
-              {autonomyQueue.map(renderAutonomyQueueItem)}
+            <div className="forensic-brain-autonomy-scroll" data-testid="brain-autonomy-audit">
+              {autonomyAudit.length === 0 ? (
+                <div className="forensic-brain-empty">No autonomy decisions recorded yet.</div>
+              ) : (
+                <>
+                  <div className="forensic-brain-panel-kicker">Decision audit</div>
+                  <p className="forensic-brain-autonomy-audit-hint">
+                    Why the brain prepared, blocked, or withheld each follow-up.
+                  </p>
+                  <ul className="forensic-brain-autonomy-audit-list">
+                    {autonomyAudit.slice(0, 20).map((entry) => {
+                      const queueItem = autonomyQueue.find((candidate) => candidate.id === entry.queueItemId)
+                      return (
+                        <li
+                          key={entry.id}
+                          className={`forensic-brain-autonomy-audit-entry is-${entry.decision}`}
+                          data-testid="brain-autonomy-audit-entry"
+                        >
+                          <span className={`forensic-brain-autonomy-audit-decision is-${entry.decision}`}>
+                            {formatAutonomyDecision(entry.decision)}
+                          </span>
+                          <div className="forensic-brain-autonomy-audit-body">
+                            <strong>{queueItem?.title || entry.suggestionId}</strong>
+                            <p>{entry.reason}</p>
+                            {entry.blockers.length > 0 && (
+                              <span className="forensic-brain-autonomy-audit-blockers">
+                                {entry.blockers.map((blocker) => formatAutonomyBlocker(blocker)).join(' · ')}
+                              </span>
+                            )}
+                          </div>
+                          <time>{formatAutonomyAuditTimestamp(entry.createdAt)}</time>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </>
+              )}
             </div>
           )}
         </section>
@@ -5091,16 +5179,12 @@ export default function BrainSignalsPanel({
   return (
     <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals" aria-busy={isLoading}>
       <div className="forensic-brain-grid-bg" aria-hidden="true" />
-      <header className="forensic-brain-command">
-        <div className="forensic-brain-title-block">
-          <span className="forensic-brain-kicker">Memory activation</span>
-          <h2>
-            <Brain size={20} />
-            Brain Signals
-          </h2>
-          <div className="forensic-brain-title-rule" />
-          <p>{activeTitle}</p>
-        </div>
+      <header className="forensic-brain-command forensic-brain-command-compact">
+        <span className="forensic-brain-command-title">
+          <Brain size={15} />
+          Brain Signals
+          {activeTitle && <span className="forensic-brain-command-case">{activeTitle}</span>}
+        </span>
         <div className="forensic-brain-command-actions">
           <span className="forensic-brain-status">
             {attentionSummary?.focus

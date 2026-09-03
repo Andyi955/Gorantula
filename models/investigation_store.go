@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -200,10 +201,49 @@ func (s *InvestigationStore) writeRaw(id, filename string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	// Atomic write: concurrent readers (brain evidence recompute, UI polls)
+	// must never observe a partially written vault file - that is what
+	// produced transient "board_state.json contains invalid json" warnings.
+	// Write to a unique temp file in the same directory, then rename over
+	// the target; rename is atomic on the same volume.
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	// Concurrent renames over the same target can transiently deny each
+	// other on Windows; a short retry converges without losing either write.
+	if err := renameWithRetry(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+func renameWithRetry(tmpName, path string) error {
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Millisecond)
+		}
+		if err = os.Rename(tmpName, path); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func (s *InvestigationStore) filePath(id, filename string) (string, error) {
