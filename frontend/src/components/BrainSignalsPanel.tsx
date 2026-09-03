@@ -5179,16 +5179,12 @@ export default function BrainSignalsPanel({
   return (
     <section data-testid="brain-signals-panel" className="forensic-brain-root" aria-label="Brain memory signals" aria-busy={isLoading}>
       <div className="forensic-brain-grid-bg" aria-hidden="true" />
-      <header className="forensic-brain-command">
-        <div className="forensic-brain-title-block">
-          <span className="forensic-brain-kicker">Memory activation</span>
-          <h2>
-            <Brain size={20} />
-            Brain Signals
-          </h2>
-          <div className="forensic-brain-title-rule" />
-          <p>{activeTitle}</p>
-        </div>
+      <header className="forensic-brain-command forensic-brain-command-compact">
+        <span className="forensic-brain-command-title">
+          <Brain size={15} />
+          Brain Signals
+          {activeTitle && <span className="forensic-brain-command-case">{activeTitle}</span>}
+        </span>
         <div className="forensic-brain-command-actions">
           <span className="forensic-brain-status">
             {attentionSummary?.focus
