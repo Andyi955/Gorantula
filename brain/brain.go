@@ -189,7 +189,15 @@ func (b *Brain) generateContentWithFallback(ctx context.Context, operation strin
 	if provider == nil {
 		return "", fmt.Errorf("no model providers available")
 	}
+	generationStartedAt := time.Now()
 	content, err := provider.GenerateContent(ctx, prompt)
+	tracePipelineSpan(pipelineTraceRecord{
+		Span:        "report/" + operation,
+		Provider:    provider.Name(),
+		PromptChars: len(prompt),
+		DurationMs:  time.Since(generationStartedAt).Milliseconds(),
+		Error:       errorSummaryOrNil(err),
+	})
 	if err == nil {
 		return content, nil
 	}

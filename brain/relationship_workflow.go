@@ -521,11 +521,21 @@ Persona outputs:
 		if attempt > 1 {
 			retryPrompt = prompt + relationshipJSONRetryInstructions
 		}
-		if err := provider.GenerateJSON(ctx, retryPrompt, &response); err != nil {
-			lastErr = err
+		attemptStartedAt := time.Now()
+		attemptErr := provider.GenerateJSON(ctx, retryPrompt, &response)
+		tracePipelineSpan(pipelineTraceRecord{
+			Span:        "relationships/synthesis",
+			Provider:    provider.Name(),
+			PromptChars: len(retryPrompt),
+			DurationMs:  time.Since(attemptStartedAt).Milliseconds(),
+			Attempt:     attempt,
+			Error:       errorSummaryOrNil(attemptErr),
+		})
+		if attemptErr != nil {
+			lastErr = attemptErr
 			response = relationshipCandidateJSONResponse{}
-			if !shouldRetryPersonaJSON(err) {
-				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", err)
+			if !shouldRetryPersonaJSON(attemptErr) {
+				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", attemptErr)
 			}
 			continue
 		}
@@ -537,6 +547,13 @@ Persona outputs:
 	}
 
 	return response.Connections, nil
+}
+
+func errorSummaryOrNil(err error) string {
+	if err == nil {
+		return ""
+	}
+	return models.SanitizePipelineDiagnosticText(err.Error())
 }
 
 func (b *Brain) generateIncrementalSynthesizedRelationshipCandidates(ctx context.Context, nodes []models.MemoryNode, pendingNodeIDs []string, insights []PersonaInsight) ([]models.RelationshipCandidate, error) {
@@ -611,8 +628,17 @@ Persona outputs:
 %s`, relationshipSpecificTagInstruction, strings.Join(pendingNodeIDs, ", "), buildNodeMapping(nodes), pendingBuilder.String(), contextBuilder.String(), insightBuilder.String())
 
 	var response relationshipCandidateJSONResponse
-	if err := provider.GenerateJSON(ctx, prompt, &response); err != nil {
-		return nil, fmt.Errorf("failed to synthesize incremental relationship candidates: %w", err)
+	incrementalStartedAt := time.Now()
+	incrementalErr := provider.GenerateJSON(ctx, prompt, &response)
+	tracePipelineSpan(pipelineTraceRecord{
+		Span:        "relationships/synthesis-incremental",
+		Provider:    provider.Name(),
+		PromptChars: len(prompt),
+		DurationMs:  time.Since(incrementalStartedAt).Milliseconds(),
+		Error:       errorSummaryOrNil(incrementalErr),
+	})
+	if incrementalErr != nil {
+		return nil, fmt.Errorf("failed to synthesize incremental relationship candidates: %w", incrementalErr)
 	}
 
 	return response.Connections, nil

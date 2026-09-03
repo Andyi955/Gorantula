@@ -509,8 +509,17 @@ Rules:
 - Set flagsUnsupportedClaims to true only when the claim cannot be salvaged from the cited evidence.`, reviewer.SystemPrompt, candidate.Title, candidate.Claim, candidate.Impact, candidate.Confidence, candidate.Topic, strings.Join(candidate.SourceNodeIDs, ", "), sourceCorpus, reviewer.Name)
 
 	var review models.DiscoveryReview
-	if err := provider.GenerateJSON(ctx, prompt, &review); err != nil {
-		return models.DiscoveryReview{}, err
+	reviewStartedAt := time.Now()
+	reviewErr := provider.GenerateJSON(ctx, prompt, &review)
+	tracePipelineSpan(pipelineTraceRecord{
+		Span:        "discovery-review/" + reviewer.Name,
+		Provider:    provider.Name(),
+		PromptChars: len(prompt),
+		DurationMs:  time.Since(reviewStartedAt).Milliseconds(),
+		Error:       errorSummaryOrNil(reviewErr),
+	})
+	if reviewErr != nil {
+		return models.DiscoveryReview{}, reviewErr
 	}
 	if review.Reviewer == "" {
 		review.Reviewer = reviewer.Name

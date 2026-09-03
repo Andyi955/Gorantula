@@ -274,6 +274,19 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 		}
 		return execution
 	}
+	// Every persona call lands in the pipeline trace with its real duration,
+	// provider, and outcome - the accurate per-call record the phase tracker
+	// only summarizes.
+	defer func() {
+		tracePipelineSpan(pipelineTraceRecord{
+			Span:        "persona/" + persona.Name,
+			Provider:    execution.provider,
+			PromptChars: execution.promptChars,
+			DurationMs:  execution.durationMs,
+			Attempt:     execution.attemptCount,
+			Error:       execution.errorSummary,
+		})
+	}()
 
 	// Get the appropriate model provider
 	provider, ok := b.GetRouter(persona.ModelPref)
