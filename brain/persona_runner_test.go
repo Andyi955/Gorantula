@@ -134,3 +134,40 @@ func TestPersonaContentFilterTriggersSanitizedRetry(t *testing.T) {
 		}
 	}
 }
+
+func TestPersonaEmptyResponseRetriesJSON(t *testing.T) {
+	if got := categorizePersonaError(fmt.Errorf("deepseek returned an empty response (finish_reason=\"length\"); often a provider-side filter or overload")); got != "empty_response" {
+		t.Fatalf("expected empty-response errors to categorize as empty_response, got %q", got)
+	}
+	if !shouldRetryPersonaJSON(fmt.Errorf("deepseek returned an empty response (finish_reason=\"length\"); often a provider-side filter or overload")) {
+		t.Fatal("expected empty-response errors to be retryable")
+	}
+
+	var calls int64
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			if atomic.AddInt64(&calls, 1) == 1 {
+				return fmt.Errorf("deepseek returned an empty response (finish_reason=\"length\"); often a provider-side filter or overload")
+			}
+			target.(*PersonaJSONResponse).Confidence = 0.9
+			target.(*PersonaJSONResponse).FullAnalysis = "Recovered after empty-response retry."
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"mock": mock},
+	}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	insights, err := brain.AnalyzeWithPersonasWithProgress(context.Background(), "inv-empty", []models.MemoryNode{}, nil)
+	if err != nil {
+		t.Fatalf("expected the empty-response retry to recover all personas, got error: %v", err)
+	}
+	if len(insights) != 7 {
+		t.Fatalf("expected all seven persona insights after empty-response retry, got %d", len(insights))
+	}
+	if got := atomic.LoadInt64(&calls); got != 8 {
+		t.Fatalf("expected 8 provider calls (1 empty response + 7 successes), got %d", got)
+	}
+}

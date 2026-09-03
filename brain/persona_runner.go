@@ -471,7 +471,8 @@ func logPersonaFailure(mode, runID, vaultID string, diagnostic models.PipelinePe
 }
 
 func shouldRetryPersonaJSON(err error) bool {
-	return categorizePersonaError(err) == "json_parse"
+	category := categorizePersonaError(err)
+	return category == "json_parse" || category == "empty_response"
 }
 
 func buildPersonaJSONRetryPrompt(prompt string) string {
@@ -505,6 +506,10 @@ func categorizePersonaError(err error) string {
 		strings.Contains(message, "invalid character") ||
 		strings.Contains(message, "json response"):
 		return "json_parse"
+	case strings.Contains(message, "empty response") || strings.Contains(message, "finish_reason=\"length\""):
+		// Empty bodies with finish_reason=length are the same transient
+		// provider truncation as a cut-off JSON payload - retry them too.
+		return "empty_response"
 	case strings.Contains(message, "no model providers") || strings.Contains(message, "unavailable"):
 		return "provider_unavailable"
 	case strings.Contains(message, "api returned status") || strings.Contains(message, "failed to send request") || strings.Contains(message, "no choices returned"):
