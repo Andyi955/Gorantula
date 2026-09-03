@@ -966,6 +966,7 @@ func (s *SynthesisEngine) dispatchSynthesis(ctx context.Context, overlaps map[st
 			Span:       "synthesis/overlap-eval",
 			Provider:   provider.Name(),
 			DurationMs: time.Since(batchStartedAt).Milliseconds(),
+			Thinking:   traceThinking(ctx),
 		})
 		if batchDecisions != nil {
 			log.Printf("[SynthesisEngine] Batched overlap verification evaluated %d candidates for %s in %s", len(selectedCandidates), currentVaultID, time.Since(batchStartedAt))

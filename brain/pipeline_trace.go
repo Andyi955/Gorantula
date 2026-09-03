@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -20,7 +21,18 @@ type pipelineTraceRecord struct {
 	PromptChars int    `json:"promptChars,omitempty"`
 	DurationMs  int64  `json:"durationMs"`
 	Attempt     int    `json:"attempt,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`
 	Error       string `json:"error,omitempty"`
+}
+
+// traceThinking resolves the run's thinking mode for a trace record:
+// "low"/"high" when a run override is active, "default" otherwise (which
+// means the provider's own default applies - disabled for DeepSeek).
+func traceThinking(ctx context.Context) string {
+	if mode := normalizeThinkingMode(thinkingOverrideFromContext(ctx)); mode != "" {
+		return mode
+	}
+	return "default"
 }
 
 var (

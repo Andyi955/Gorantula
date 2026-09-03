@@ -196,6 +196,7 @@ func (b *Brain) generateContentWithFallback(ctx context.Context, operation strin
 		Provider:    provider.Name(),
 		PromptChars: len(prompt),
 		DurationMs:  time.Since(generationStartedAt).Milliseconds(),
+		Thinking:    traceThinking(ctx),
 		Error:       errorSummaryOrNil(err),
 	})
 	if err == nil {
