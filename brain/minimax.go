@@ -466,12 +466,17 @@ func NewModelRouter(brain *Brain) (map[string]ModelProvider, error) {
 
 	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" && providerEnabled("DEEPSEEK_ENABLED") {
 		router["deepseek"] = &OpenAICompatibleProvider{
-			NameID:     "deepseek",
-			APIKey:     key,
-			BaseURL:    "https://api.deepseek.com/v1",
-			Model:      envOrDefault("DEEPSEEK_MODEL", DefaultDeepSeekModel),
-			HTTPClient: httpClient,
-			brain:      brain,
+			NameID:       "deepseek",
+			APIKey:       key,
+			BaseURL:      "https://api.deepseek.com/v1",
+			Model:        envOrDefault("DEEPSEEK_MODEL", DefaultDeepSeekModel),
+			HTTPClient:   httpClient,
+			brain:        brain,
+			// DeepSeek V4 thinks by default at high effort and the hidden
+			// reasoning burns the answer's token budget (empty responses
+			// with finish_reason=length). Default: thinking off. Opt back
+			// in with DEEPSEEK_THINKING=low|high|max.
+			ThinkingMode: envOrDefault("DEEPSEEK_THINKING", "disabled"),
 		}
 	}
 
