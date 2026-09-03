@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,8 +140,17 @@ func TestPersonaEmptyResponseRetriesJSON(t *testing.T) {
 	if got := categorizePersonaError(fmt.Errorf("deepseek returned an empty response (finish_reason=\"length\"); often a provider-side filter or overload")); got != "empty_response" {
 		t.Fatalf("expected empty-response errors to categorize as empty_response, got %q", got)
 	}
-	if !shouldRetryPersonaJSON(fmt.Errorf("deepseek returned an empty response (finish_reason=\"length\"); often a provider-side filter or overload")) {
+	if !shouldRetryPersonaCall(fmt.Errorf("deepseek returned an empty response (finish_reason=\"length\"); often a provider-side filter or overload")) {
 		t.Fatal("expected empty-response errors to be retryable")
+	}
+	if !shouldRetryPersonaCall(fmt.Errorf("deepseek api returned status 429: rate limit exceeded")) {
+		t.Fatal("expected rate-limit errors to be retryable")
+	}
+	if !shouldRetryPersonaCall(context.DeadlineExceeded) {
+		t.Fatal("expected timeout errors to be retryable")
+	}
+	if shouldRetryPersonaCall(fmt.Errorf("deepseek content filter blocked this response (finish_reason=content_filter)")) {
+		t.Fatal("content-filter errors must NOT use the plain retry path (they get the sanitized retry)")
 	}
 
 	var calls int64
@@ -169,5 +179,41 @@ func TestPersonaEmptyResponseRetriesJSON(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(&calls); got != 8 {
 		t.Fatalf("expected 8 provider calls (1 empty response + 7 successes), got %d", got)
+	}
+}
+
+func TestPersonaRateLimitRetriesAfterBackoff(t *testing.T) {
+	originalDelay := personaRateLimitRetryDelay
+	personaRateLimitRetryDelay = 1 * time.Millisecond
+	t.Cleanup(func() { personaRateLimitRetryDelay = originalDelay })
+
+	var calls int64
+	var seen sync.Map // prompt -> first 429 already returned
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(ctx context.Context, prompt string, target interface{}) error {
+			atomic.AddInt64(&calls, 1)
+			if _, retried := seen.LoadOrStore(prompt, struct{}{}); !retried {
+				return fmt.Errorf("deepseek api returned status 429: rate limit exceeded, please retry after 10s")
+			}
+			target.(*PersonaJSONResponse).Confidence = 0.6
+			target.(*PersonaJSONResponse).FullAnalysis = "Recovered after rate-limit backoff."
+			return nil
+		},
+	}
+	brain := &Brain{
+		ModelRouter: map[string]ModelProvider{"mock": mock},
+	}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	insights, err := brain.AnalyzeWithPersonasWithProgress(context.Background(), "inv-429", []models.MemoryNode{}, nil)
+	if err != nil {
+		t.Fatalf("expected the rate-limit retry to recover all personas, got error: %v", err)
+	}
+	if len(insights) != 7 {
+		t.Fatalf("expected all seven persona insights after rate-limit retry, got %d", len(insights))
+	}
+	if got := atomic.LoadInt64(&calls); got != 14 {
+		t.Fatalf("expected 14 provider calls (7 rate-limited + 7 retries), got %d", got)
 	}
 }

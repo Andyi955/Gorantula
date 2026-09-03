@@ -534,7 +534,7 @@ Persona outputs:
 		if attemptErr != nil {
 			lastErr = attemptErr
 			response = relationshipCandidateJSONResponse{}
-			if !shouldRetryPersonaJSON(attemptErr) {
+			if !shouldRetryPersonaCall(attemptErr) {
 				return nil, fmt.Errorf("failed to synthesize relationship candidates: %w", attemptErr)
 			}
 			continue

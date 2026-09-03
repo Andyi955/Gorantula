@@ -306,23 +306,47 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 
 	var response PersonaJSONResponse
 	err := provider.GenerateJSON(ctx, prompt, &response)
-	if err != nil && shouldRetryPersonaJSON(err) {
+	if err != nil && shouldRetryPersonaCall(err) {
 		initialErr := err
+		category := categorizePersonaError(initialErr)
 		execution.attemptCount = 2
+		// Rate limits and timeouts need a cooldown before retrying -
+		// hammering the provider again immediately just fails again.
+		if delay := personaRetryDelay(category); delay > 0 {
+			brainLog("persona").Warn(
+				"persona retry backoff",
+				"persona", persona.Name,
+				"provider", provider.Name(),
+				"category", category,
+				"delay", delay.String(),
+			)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				wrapped := fmt.Errorf("failed to generate persona analysis: %w", ctx.Err())
+				return PersonaInsight{}, completeExecution("failed", wrapped), wrapped
+			}
+		}
 		brainLog("persona").Warn(
-			"persona json retry",
+			"persona retry",
 			"persona", persona.Name,
 			"provider", provider.Name(),
 			"prompt_chars", execution.promptChars,
-			"category", categorizePersonaError(initialErr),
+			"category", category,
 			"err", models.SanitizePipelineDiagnosticText(initialErr.Error()),
 		)
 		response = PersonaJSONResponse{}
-		retryErr := provider.GenerateJSON(ctx, buildPersonaJSONRetryPrompt(prompt), &response)
+		// Rate limits and timeouts had nothing wrong with the prompt -
+		// retry it verbatim instead of adding parse instructions.
+		retryPrompt := buildPersonaJSONRetryPrompt(prompt)
+		if category == "rate_limit" || category == "timeout" {
+			retryPrompt = prompt
+		}
+		retryErr := provider.GenerateJSON(ctx, retryPrompt, &response)
 		if retryErr == nil {
-			execution.recoveredErrorCategory = categorizePersonaError(initialErr)
+			execution.recoveredErrorCategory = category
 			brainLog("persona").Info(
-				"persona recovered after json retry",
+				"persona recovered after retry",
 				"persona", persona.Name,
 				"provider", provider.Name(),
 				"prompt_chars", execution.promptChars,
@@ -330,7 +354,7 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 			err = nil
 		} else {
 			execution.errorSummary = models.SanitizePipelineDiagnosticText(fmt.Sprintf("primary error: %v; retry error: %v", initialErr, retryErr))
-			err = fmt.Errorf("persona JSON retry failed after primary error: primary: %v; retry: %w", initialErr, retryErr)
+			err = fmt.Errorf("persona retry failed after primary error: primary: %v; retry: %w", initialErr, retryErr)
 		}
 	}
 	// A provider content filter blanked the response. Rewording the prompt
@@ -470,9 +494,28 @@ func logPersonaFailure(mode, runID, vaultID string, diagnostic models.PipelinePe
 	)
 }
 
-func shouldRetryPersonaJSON(err error) bool {
+// personaRateLimitRetryDelay and personaTimeoutRetryDelay are the cooldowns
+// before retrying a rate-limited or timed-out persona call. Vars so tests
+// can shorten them.
+var (
+	personaRateLimitRetryDelay = 10 * time.Second
+	personaTimeoutRetryDelay   = 5 * time.Second
+)
+
+func personaRetryDelay(category string) time.Duration {
+	switch category {
+	case "rate_limit":
+		return personaRateLimitRetryDelay
+	case "timeout":
+		return personaTimeoutRetryDelay
+	default:
+		return 0
+	}
+}
+
+func shouldRetryPersonaCall(err error) bool {
 	category := categorizePersonaError(err)
-	return category == "json_parse" || category == "empty_response"
+	return category == "json_parse" || category == "empty_response" || category == "rate_limit" || category == "timeout"
 }
 
 func buildPersonaJSONRetryPrompt(prompt string) string {
