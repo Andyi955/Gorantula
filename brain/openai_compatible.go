@@ -43,6 +43,7 @@ type OpenAIChatRequest struct {
 	MaxTokens       int             `json:"max_tokens,omitempty"`
 	Thinking        *OpenAIThinking `json:"thinking,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	EnableThinking  *bool           `json:"enable_thinking,omitempty"`
 }
 
 // OpenAIChatResponse represents the response structure
@@ -57,9 +58,9 @@ type OpenAIChatResponse struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens            int `json:"prompt_tokens"`
+		CompletionTokens        int `json:"completion_tokens"`
+		TotalTokens             int `json:"total_tokens"`
 		CompletionTokensDetails struct {
 			ReasoningTokens int `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
@@ -81,40 +82,101 @@ type OpenAICompatibleProvider struct {
 	ThinkingMode string
 }
 
-// deepseekThinkingMode resolves the thinking-mode setting for a request.
-// DeepSeek V4 enables thinking BY DEFAULT at high effort; the hidden
-// chain-of-thought returns via reasoning_content and burns the same
-// max_tokens budget as the answer, so long structured prompts can
-// exhaust the budget and come back EMPTY with finish_reason=length.
-// Default to disabled; opt in via DEEPSEEK_THINKING=low|high|max.
-// Keyed on the provider identity (not the host) so proxied DeepSeek
-// endpoints are covered too; other providers never get the field.
-func (p *OpenAICompatibleProvider) deepseekThinkingMode() (*OpenAIThinking, string) {
-	if p == nil {
-		return nil, ""
+// Provider identity checks: thinking fields are only sent to providers with
+// a documented control - unknown fields can hard-fail strict APIs.
+func (p *OpenAICompatibleProvider) isDeepSeekHost() bool {
+	return p != nil && (strings.EqualFold(p.NameID, "deepseek") || strings.Contains(strings.ToLower(p.BaseURL), "deepseek"))
+}
+
+func (p *OpenAICompatibleProvider) isZhipuHost() bool {
+	return p != nil && (strings.EqualFold(p.NameID, "zhipuai") || strings.Contains(strings.ToLower(p.BaseURL), "bigmodel"))
+}
+
+func (p *OpenAICompatibleProvider) isQwenHost() bool {
+	return p != nil && (strings.EqualFold(p.NameID, "qwen") || strings.Contains(strings.ToLower(p.BaseURL), "dashscope"))
+}
+
+func (p *OpenAICompatibleProvider) isOpenAIHost() bool {
+	return p != nil && (strings.EqualFold(p.NameID, "openai") || strings.Contains(strings.ToLower(p.BaseURL), "api.openai.com"))
+}
+
+func (p *OpenAICompatibleProvider) isAnthropicHost() bool {
+	return p != nil && (strings.EqualFold(p.NameID, "anthropic") || strings.Contains(strings.ToLower(p.BaseURL), "anthropic"))
+}
+
+// applyThinkingControl translates a thinking mode into the requesting
+// provider's documented wire format. The mode comes from the run context
+// (Spider View's per-scan reasoning toggle) or the provider default
+// (DEEPSEEK_THINKING).
+//
+// When reasoning is enabled, max_tokens doubles: reasoning tokens share
+// the output budget with the answer, and a starved budget is exactly what
+// produced empty finish_reason=length responses on DeepSeek V4.
+func (p *OpenAICompatibleProvider) applyThinkingControl(ctx context.Context, request *OpenAIChatRequest) {
+	if p == nil || request == nil {
+		return
 	}
-	isDeepSeek := strings.EqualFold(p.NameID, "deepseek") ||
-		strings.Contains(strings.ToLower(p.BaseURL), "deepseek")
-	if !isDeepSeek {
-		return nil, ""
+	mode := normalizeThinkingMode(thinkingOverrideFromContext(ctx))
+	if mode == "" {
+		mode = normalizeThinkingMode(p.ThinkingMode)
 	}
-	switch strings.ToLower(strings.TrimSpace(p.ThinkingMode)) {
-	case "low", "high", "max":
-		return &OpenAIThinking{Type: "enabled"}, strings.ToLower(strings.TrimSpace(p.ThinkingMode))
-	case "enabled":
-		return &OpenAIThinking{Type: "enabled"}, "high"
+
+	if mode == "" {
+		// Provider default: only DeepSeek needs an explicit off - it thinks
+		// at high effort by default, which burns the answer's token budget.
+		// Everyone else keeps their native default.
+		if p.isDeepSeekHost() {
+			request.Thinking = &OpenAIThinking{Type: "disabled"}
+		}
+		return
+	}
+
+	if mode == "off" {
+		switch {
+		case p.isDeepSeekHost() || p.isZhipuHost():
+			request.Thinking = &OpenAIThinking{Type: "disabled"}
+		case p.isQwenHost():
+			off := false
+			request.EnableThinking = &off
+		case p.isOpenAIHost() || p.isAnthropicHost():
+			// Reasoning models cannot fully stop; omitting the field is the
+			// only safe "off" (non-reasoning models never think anyway).
+		}
+		return
+	}
+
+	// mode is low|high: enable reasoning where documented.
+	switch {
+	case p.isDeepSeekHost():
+		request.Thinking = &OpenAIThinking{Type: "enabled"}
+		request.ReasoningEffort = effortForProvider(mode)
+	case p.isZhipuHost():
+		request.Thinking = &OpenAIThinking{Type: "enabled"}
+	case p.isQwenHost():
+		on := true
+		request.EnableThinking = &on
+	case p.isOpenAIHost():
+		request.ReasoningEffort = effortForProvider(mode)
+	case p.isAnthropicHost():
+		request.ReasoningEffort = effortForProvider(mode)
+		// Anthropic's thinking mode rejects temperature values other than 1.
+		request.Temperature = 1
 	default:
-		return &OpenAIThinking{Type: "disabled"}, ""
+		return
+	}
+	if request.MaxTokens > 0 && request.MaxTokens < 16384 {
+		request.MaxTokens = 16384
 	}
 }
 
-func (p *OpenAICompatibleProvider) applyThinkingMode(request *OpenAIChatRequest) {
-	thinking, effort := p.deepseekThinkingMode()
-	if thinking == nil {
-		return
+// effortForProvider maps the two exposed levels; providers without a
+// medium get low for the gentle setting and their documented strong level
+// for high.
+func effortForProvider(mode string) string {
+	if mode == "high" {
+		return "high"
 	}
-	request.Thinking = thinking
-	request.ReasoningEffort = effort
+	return "low"
 }
 
 func (p *OpenAICompatibleProvider) Name() string {
@@ -140,7 +202,7 @@ func (p *OpenAICompatibleProvider) GenerateContent(ctx context.Context, prompt s
 		Temperature: 0.7,
 		MaxTokens:   8192,
 	}
-	p.applyThinkingMode(&request)
+	p.applyThinkingControl(ctx, &request)
 
 	content, usage, err := p.doRequest(ctx, request)
 	if err != nil {
@@ -161,7 +223,7 @@ func (p *OpenAICompatibleProvider) GenerateJSON(ctx context.Context, prompt stri
 		Temperature: 0.1,
 		MaxTokens:   8192,
 	}
-	p.applyThinkingMode(&request)
+	p.applyThinkingControl(ctx, &request)
 
 	content, usage, err := p.doRequest(ctx, request)
 	if err != nil {
@@ -192,7 +254,7 @@ func (p *OpenAICompatibleProvider) ReviewImageJSON(ctx context.Context, prompt, 
 		Temperature: 0.1,
 		MaxTokens:   2048,
 	}
-	p.applyThinkingMode(&request)
+	p.applyThinkingControl(ctx, &request)
 
 	content, usage, err := p.doRequest(ctx, request)
 	if err != nil {

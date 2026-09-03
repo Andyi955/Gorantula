@@ -35,7 +35,7 @@ import {
   type BrowserQaSynthesisDemoDetail,
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
-import { IMAGE_SCRAPING_PREFERENCE_KEY, readImageScrapingPreference } from './utils/searchPreferences'
+import { DEEP_REASONING_PREFERENCE_KEY, IMAGE_SCRAPING_PREFERENCE_KEY, readDeepReasoningPreference, readImageScrapingPreference } from './utils/searchPreferences'
 import { coerceBrainFiredEvent, fetchBrainSignals, type BrainFollowUpAction, type BrainSignal } from './utils/brainMemory'
 import { countUnseenBrainSignals, markBrainSignalsSeen } from './utils/brainSeen'
 import {
@@ -718,6 +718,7 @@ function App() {
   const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
   const [focusedFollowUpLaunchNotice, setFocusedFollowUpLaunchNotice] = useState<FocusedFollowUpLaunchNotice | null>(null)
   const [imageScrapingEnabled, setImageScrapingEnabled] = useState(() => readImageScrapingPreference())
+  const [deepReasoningEnabled, setDeepReasoningEnabled] = useState(() => readDeepReasoningPreference())
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState('')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
@@ -1669,6 +1670,10 @@ function App() {
   }, [imageScrapingEnabled])
 
   useEffect(() => {
+    localStorage.setItem(DEEP_REASONING_PREFERENCE_KEY, deepReasoningEnabled ? 'true' : 'false')
+  }, [deepReasoningEnabled])
+
+  useEffect(() => {
     const handleBrowserQaSeeded = (event: Event) => {
       const detail = (event as CustomEvent<BrowserQaSeedResult>).detail
       const nextInvestigations = getCachedInvestigations()
@@ -2184,7 +2189,7 @@ function App() {
         ? { type: 'CRAWL_LOCAL', payload: textToRun, vaultId: id, runId }
         : modeToUse === 'rabbit-hole'
           ? { type: 'CRAWL_RABBIT_HOLE', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, descentMode: overrideRabbitHoleDescentMode || rabbitHoleDescentMode }
-          : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages }
+          : { type: 'CRAWL', payload: textToRun, vaultId: id, runId, scrapeImages: shouldScrapeImages, deepReasoning: deepReasoningEnabled }
       socketConfig.socket.send(JSON.stringify(crawlMessage))
       if (modeToUse === 'local') {
         setActiveLocalIngestionFilePaths(localPaths)
@@ -2197,7 +2202,7 @@ function App() {
       alert("System not ready. Please check backend connection.");
       return null;
     }
-  }, [crawlMode, imageScrapingEnabled, investigations, persistInvestigations, prompt, rabbitHoleDescentMode, socketConfig.ready, socketConfig.socket])
+  }, [crawlMode, deepReasoningEnabled, imageScrapingEnabled, investigations, persistInvestigations, prompt, rabbitHoleDescentMode, socketConfig.ready, socketConfig.socket])
 
   const continueRabbitHoleDescent = useCallback(() => {
     if (!rabbitHoleGatekeeper || !socketConfig.socket || !socketConfig.ready) {
@@ -2938,6 +2943,23 @@ function App() {
                           aria-label="Scrape images"
                           onClick={() => setImageScrapingEnabled((current) => !current)}
                           className={`forensic-spider-switch ${imageScrapingEnabled ? 'forensic-spider-switch-on' : ''}`}
+                        >
+                          <span />
+                        </button>
+                      ) : (
+                        <span className="forensic-spider-console-chip">Local</span>
+                      )}
+                    </div>
+                    <div className="forensic-spider-console-control-row">
+                      <div className="forensic-spider-console-label">Deep Reasoning</div>
+                      {crawlMode !== 'local' ? (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={deepReasoningEnabled}
+                          aria-label="Deep reasoning"
+                          onClick={() => setDeepReasoningEnabled((current) => !current)}
+                          className={`forensic-spider-switch ${deepReasoningEnabled ? 'forensic-spider-switch-on' : ''}`}
                         >
                           <span />
                         </button>

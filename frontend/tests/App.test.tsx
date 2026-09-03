@@ -15,6 +15,7 @@ import {
 } from '../src/utils/browserQaSeed'
 import { BOARD_PERSIST_FAILED_EVENT } from '../src/utils/hierarchicalCanvas'
 import { BOARD_RESTORE_COMPLETE_EVENT, BOARD_TOGGLE_DISCOVERY_PANEL_EVENT } from '../src/utils/boardWorkspaceEvents'
+import { DEEP_REASONING_PREFERENCE_KEY } from '../src/utils/searchPreferences'
 
 vi.mock('../src/components/SpiderVisualizer', () => ({
   default: ({
@@ -990,6 +991,48 @@ describe('App', () => {
     expect(crawlMessage.type).toBe('CRAWL')
     expect(crawlMessage.runId).toMatch(/^run-/)
     expect(crawlMessage.scrapeImages).toBe(true)
+  })
+
+  it('sends the deep reasoning preference with web crawls when enabled', async () => {
+    localStorage.setItem(DEEP_REASONING_PREFERENCE_KEY, 'true')
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const reasoningToggle = screen.getByRole('switch', { name: /deep reasoning/i })
+    expect(reasoningToggle).toHaveAttribute('aria-checked', 'true')
+
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'AI frontier systems')
+    await user.click(screen.getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage.type).toBe('CRAWL')
+    expect(crawlMessage.deepReasoning).toBe(true)
+  })
+
+  it('defaults deep reasoning to off for web crawls', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByText('SpiderVisualizer')).toBeInTheDocument()
+
+    await act(async () => {
+      WebSocketMock.instances[0]?.onopen?.()
+    })
+
+    const reasoningToggle = screen.getByRole('switch', { name: /deep reasoning/i })
+    expect(reasoningToggle).toHaveAttribute('aria-checked', 'false')
+
+    await user.type(screen.getByPlaceholderText(/enter a topic or url to crawl the web/i), 'AI frontier systems')
+    await user.click(screen.getByRole('button', { name: /execute/i }))
+
+    const crawlMessage = JSON.parse(WebSocketMock.instances[0]?.send.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(crawlMessage.deepReasoning).toBe(false)
   })
 
   it('submits the latest crawl input value when the controlled prompt state has not flushed yet', async () => {

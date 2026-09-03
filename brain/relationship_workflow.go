@@ -529,6 +529,7 @@ Persona outputs:
 			PromptChars: len(retryPrompt),
 			DurationMs:  time.Since(attemptStartedAt).Milliseconds(),
 			Attempt:     attempt,
+			Thinking:    traceThinking(ctx),
 			Error:       errorSummaryOrNil(attemptErr),
 		})
 		if attemptErr != nil {
@@ -635,6 +636,7 @@ Persona outputs:
 		Provider:    provider.Name(),
 		PromptChars: len(prompt),
 		DurationMs:  time.Since(incrementalStartedAt).Milliseconds(),
+		Thinking:    traceThinking(ctx),
 		Error:       errorSummaryOrNil(incrementalErr),
 	})
 	if incrementalErr != nil {

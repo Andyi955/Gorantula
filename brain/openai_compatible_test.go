@@ -63,7 +63,7 @@ func TestDeepSeekThinkingDisabledByDefault(t *testing.T) {
 		resp := map[string]interface{}{
 			"choices": []map[string]interface{}{
 				{
-					"message": map[string]interface{}{"content": `{"key": "value"}`},
+					"message":       map[string]interface{}{"content": `{"key": "value"}`},
 					"finish_reason": "stop",
 				},
 			},
@@ -107,7 +107,7 @@ func TestDeepSeekThinkingEffortOverride(t *testing.T) {
 		resp := map[string]interface{}{
 			"choices": []map[string]interface{}{
 				{
-					"message": map[string]interface{}{"content": `{"key": "value"}`},
+					"message":       map[string]interface{}{"content": `{"key": "value"}`},
 					"finish_reason": "stop",
 				},
 			},
@@ -148,7 +148,7 @@ func TestNonDeepSeekProviderSendsNoThinkingField(t *testing.T) {
 		resp := map[string]interface{}{
 			"choices": []map[string]interface{}{
 				{
-					"message": map[string]interface{}{"content": `{"key": "value"}`},
+					"message":       map[string]interface{}{"content": `{"key": "value"}`},
 					"finish_reason": "stop",
 				},
 			},
@@ -184,7 +184,7 @@ func TestEmptyContentErrorReportsReasoningBurn(t *testing.T) {
 			"choices": []map[string]interface{}{
 				{
 					"message": map[string]interface{}{
-						"content":          "",
+						"content":           "",
 						"reasoning_content": "long hidden chain of thought...",
 					},
 					"finish_reason": "length",
@@ -468,4 +468,84 @@ func TestOpenAICompatibleProvider_GenerateContent_TracksUsage(t *testing.T) {
 	if summary.ProviderTotals["test"] != 43 {
 		t.Fatalf("expected provider total of 43, got %d", summary.ProviderTotals["test"])
 	}
+}
+
+func TestThinkingTranslationPerProvider(t *testing.T) {
+	scenarios := []struct {
+		name          string
+		nameID        string
+		baseURL       string
+		ctxMode       string
+		providerMode  string
+		wantThinking  string
+		wantEffort    string
+		wantEnable    *bool
+		wantTemp      float32
+		wantMaxTokens int
+	}{
+		{name: "deepseek ctx low enables with low effort and bumps budget", nameID: "deepseek", baseURL: "https://api.deepseek.com/v1", ctxMode: "low", wantThinking: "enabled", wantEffort: "low", wantMaxTokens: 16384, wantTemp: 0.1},
+		{name: "deepseek ctx high enables with high effort", nameID: "deepseek", baseURL: "https://api.deepseek.com/v1", ctxMode: "high", wantThinking: "enabled", wantEffort: "high", wantMaxTokens: 16384, wantTemp: 0.1},
+		{name: "deepseek provider default stays disabled", nameID: "deepseek", baseURL: "https://api.deepseek.com/v1", providerMode: "disabled", wantThinking: "disabled", wantMaxTokens: 8192, wantTemp: 0.1},
+		{name: "zhipu low enables without effort", nameID: "zhipuai", baseURL: "https://open.bigmodel.cn/api/paas/v4", ctxMode: "low", wantThinking: "enabled", wantMaxTokens: 16384, wantTemp: 0.1},
+		{name: "zhipu off disables", nameID: "zhipuai", baseURL: "https://open.bigmodel.cn/api/paas/v4", ctxMode: "off", wantThinking: "disabled", wantMaxTokens: 8192, wantTemp: 0.1},
+		{name: "qwen low enables", nameID: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", ctxMode: "low", wantEnable: boolPtr(true), wantMaxTokens: 16384, wantTemp: 0.1},
+		{name: "qwen off disables", nameID: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", ctxMode: "off", wantEnable: boolPtr(false), wantMaxTokens: 8192, wantTemp: 0.1},
+		{name: "openai low passes effort", nameID: "openai", baseURL: "https://api.openai.com/v1", ctxMode: "low", wantEffort: "low", wantMaxTokens: 16384, wantTemp: 0.1},
+		{name: "openai off omits fields", nameID: "openai", baseURL: "https://api.openai.com/v1", ctxMode: "off", wantMaxTokens: 8192, wantTemp: 0.1},
+		{name: "anthropic low sets effort and temperature 1", nameID: "anthropic", baseURL: "https://api.anthropic.com/v1", ctxMode: "low", wantEffort: "low", wantTemp: 1, wantMaxTokens: 16384},
+		{name: "unknown provider never receives fields", nameID: "custom", baseURL: "https://example.com/v1", ctxMode: "high", wantMaxTokens: 8192, wantTemp: 0.1},
+		{name: "no override and no provider default sends nothing", nameID: "custom", baseURL: "https://example.com/v1", wantMaxTokens: 8192, wantTemp: 0.1},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			provider := &OpenAICompatibleProvider{
+				NameID:       scenario.nameID,
+				APIKey:       "test-key",
+				BaseURL:      scenario.baseURL,
+				Model:        "test-model",
+				HTTPClient:   http.DefaultClient,
+				ThinkingMode: scenario.providerMode,
+			}
+			request := OpenAIChatRequest{
+				Model:       "test-model",
+				Temperature: 0.1,
+				MaxTokens:   8192,
+			}
+			ctx := context.Background()
+			if scenario.ctxMode != "" {
+				ctx = WithThinkingOverride(ctx, scenario.ctxMode)
+			}
+
+			provider.applyThinkingControl(ctx, &request)
+
+			if scenario.wantThinking == "" {
+				if request.Thinking != nil {
+					t.Fatalf("expected no thinking field, got %#v", request.Thinking)
+				}
+			} else if request.Thinking == nil || request.Thinking.Type != scenario.wantThinking {
+				t.Fatalf("expected thinking type %q, got %#v", scenario.wantThinking, request.Thinking)
+			}
+			if request.ReasoningEffort != scenario.wantEffort {
+				t.Fatalf("expected reasoning_effort %q, got %q", scenario.wantEffort, request.ReasoningEffort)
+			}
+			if scenario.wantEnable == nil {
+				if request.EnableThinking != nil {
+					t.Fatalf("expected no enable_thinking field, got %#v", request.EnableThinking)
+				}
+			} else if request.EnableThinking == nil || *request.EnableThinking != *scenario.wantEnable {
+				t.Fatalf("expected enable_thinking %v, got %#v", *scenario.wantEnable, request.EnableThinking)
+			}
+			if request.Temperature != scenario.wantTemp {
+				t.Fatalf("expected temperature %v, got %v", scenario.wantTemp, request.Temperature)
+			}
+			if request.MaxTokens != scenario.wantMaxTokens {
+				t.Fatalf("expected max_tokens %d, got %d", scenario.wantMaxTokens, request.MaxTokens)
+			}
+		})
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

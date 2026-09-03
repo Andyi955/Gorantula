@@ -159,7 +159,19 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 	if progress != nil {
 		progress.StartSpan("plan_queries_llm", "plan_queries", "Search query planning", "LLM query decomposition")
 	}
-	if err := b.generateJSONWithFallback(planCtx, "query planning", provider, fullPrompt, &subQ); err != nil {
+	planStartedAt := time.Now()
+	planErr := b.generateJSONWithFallback(planCtx, "query planning", provider, fullPrompt, &subQ)
+	// Query planning is one of the two stages that receive deep reasoning -
+	// trace it so the thinking toggle is visible in the pipeline trace.
+	tracePipelineSpan(pipelineTraceRecord{
+		Span:        "plan/queries",
+		Provider:    provider.Name(),
+		PromptChars: len(fullPrompt),
+		DurationMs:  time.Since(planStartedAt).Milliseconds(),
+		Thinking:    traceThinking(planCtx),
+		Error:       errorSummaryOrNil(planErr),
+	})
+	if planErr != nil {
 		if b.NS.Broadcast != nil {
 			b.NS.Broadcast(models.WSMessage{
 				Type:    "BRAIN_STATE",
@@ -170,7 +182,7 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 			progress.CompleteSpan("plan_queries_llm", "query planning failed")
 			b.RecordPipelineTokenUsage(progress, planScopeID)
 		}
-		return "", fmt.Errorf("failed to generate sub-queries format: %w", err)
+		return "", fmt.Errorf("failed to generate sub-queries format: %w", planErr)
 	}
 	if err := checkPipelineContext(ctx); err != nil {
 		return "", err

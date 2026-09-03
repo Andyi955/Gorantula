@@ -71,7 +71,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 
 		// Support both legacy {"prompt": "..."} and new {"type": "CRAWL", "payload": "..."}
 		if prompt, ok := msg["prompt"].(string); ok {
-			triggerCrawl(br, prompt, "", false, false, pipeline.ExtractRunMetadata(msg, "", "web"))
+			triggerCrawl(br, prompt, "", false, false, "", pipeline.ExtractRunMetadata(msg, "", "web"))
 		} else if msgType, ok := msg["type"].(string); ok {
 			switch msgType {
 			case "CRAWL":
@@ -80,7 +80,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 					if rawVaultID, ok := msg["vaultId"].(string); ok {
 						vaultID = strings.TrimSpace(rawVaultID)
 					}
-					triggerCrawl(br, prompt, vaultID, false, extractScrapeImagesPreference(msg), pipeline.ExtractRunMetadata(msg, vaultID, "web"))
+					triggerCrawl(br, prompt, vaultID, false, extractScrapeImagesPreference(msg), extractThinkingPreference(msg), pipeline.ExtractRunMetadata(msg, vaultID, "web"))
 				}
 			case "CRAWL_RABBIT_HOLE":
 				if prompt, ok := msg["payload"].(string); ok {
@@ -140,7 +140,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request, br *brain.Brain) 
 						broadcast(models.WSMessage{Type: "ERROR", Payload: "Append crawl requires a target investigation."})
 						continue
 					}
-					triggerCrawl(br, prompt, vaultID, true, extractScrapeImagesPreference(msg), pipeline.ExtractRunMetadata(msg, vaultID, "web"))
+					triggerCrawl(br, prompt, vaultID, true, extractScrapeImagesPreference(msg), extractThinkingPreference(msg), pipeline.ExtractRunMetadata(msg, vaultID, "web"))
 				}
 			case "CRAWL_LOCAL":
 				if payload, ok := msg["payload"].(string); ok {

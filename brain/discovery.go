@@ -516,6 +516,7 @@ Rules:
 		Provider:    provider.Name(),
 		PromptChars: len(prompt),
 		DurationMs:  time.Since(reviewStartedAt).Milliseconds(),
+		Thinking:    traceThinking(ctx),
 		Error:       errorSummaryOrNil(reviewErr),
 	})
 	if reviewErr != nil {

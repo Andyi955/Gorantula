@@ -19,6 +19,22 @@ func extractScrapeImagesPreference(msg map[string]interface{}) bool {
 	return ok && preference
 }
 
+// extractThinkingPreference reads the Spider View "deep reasoning" toggle.
+// When enabled, targeted pipeline stages (query planning + final report)
+// run with provider thinking at the gentle effort level; personas and
+// relationship synthesis are never affected.
+func extractThinkingPreference(msg map[string]interface{}) string {
+	rawPreference, ok := msg["deepReasoning"]
+	if !ok {
+		return ""
+	}
+	preference, ok := rawPreference.(bool)
+	if !ok || !preference {
+		return ""
+	}
+	return "low"
+}
+
 func extractRabbitHoleDescentMode(msg map[string]interface{}) string {
 	rawMode, ok := msg["descentMode"].(string)
 	if !ok {
@@ -75,9 +91,12 @@ func extractRabbitHoleRunOptions(msg map[string]interface{}) brain.RabbitHoleRun
 	}
 }
 
-func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, scrapeImages bool, meta pipeline.RunMetadata) {
+func triggerCrawl(br *brain.Brain, prompt, vaultID string, appendToVault bool, scrapeImages bool, thinkingMode string, meta pipeline.RunMetadata) {
 	tracker := pipeline.NewTracker(meta, models.DefaultPipelineProgressSteps())
 	ctx, cancel := context.WithCancel(context.Background())
+	if thinkingMode != "" {
+		ctx = brain.WithThinkingOverride(ctx, thinkingMode)
+	}
 	pipeline.RegisterCancellation(meta, cancel)
 
 	go func() {

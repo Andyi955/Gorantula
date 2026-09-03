@@ -285,6 +285,7 @@ func (b *Brain) runPersonaAnalysisWithPromptDiagnostic(ctx context.Context, pers
 			PromptChars: execution.promptChars,
 			DurationMs:  execution.durationMs,
 			Attempt:     execution.attemptCount,
+			Thinking:    traceThinking(ctx),
 			Error:       execution.errorSummary,
 		})
 	}()
