@@ -1118,8 +1118,15 @@ func TestBrainAutonomyPrepareOnlyCreatesQueuedFollowUp(t *testing.T) {
 	if payload["approvalRequired"] != true {
 		t.Fatalf("expected autonomy queue payload to require approval, got %#v", payload)
 	}
-	if len(state.Audit) == 0 || state.Audit[0].Decision != AutonomyDecisionPrepared {
-		t.Fatalf("expected prepared audit entry, got %#v", state.Audit)
+	preparedAuditFound := false
+	for _, entry := range state.Audit {
+		if entry.SuggestionID == preparedSuggestion.ID && entry.Decision == AutonomyDecisionPrepared {
+			preparedAuditFound = true
+			break
+		}
+	}
+	if !preparedAuditFound {
+		t.Fatalf("expected prepared audit entry for %s, got %#v", preparedSuggestion.ID, state.Audit)
 	}
 	// Stream provenance: the queue item and the audit entry must record which
 	// live signals and gateway drove the decision.
@@ -1149,25 +1156,25 @@ func TestBrainAutonomyRequiresHighConfidencePossibleBridge(t *testing.T) {
 		ActionMode:             SuggestionActionLaunchFollowUp,
 		TargetInvestigationIDs: []string{"inv-older"},
 	}
-	if candidate, ok := firstLaunchReadyAutonomySuggestion([]BrainSuggestion{lowConfidenceBridge}); ok {
-		t.Fatalf("expected low-confidence possible bridge to be withheld, got %#v", candidate)
+	if candidates := launchReadyAutonomySuggestions([]BrainSuggestion{lowConfidenceBridge}); len(candidates) != 0 {
+		t.Fatalf("expected low-confidence possible bridge to be withheld, got %#v", candidates)
 	}
 
 	highConfidenceBridge := lowConfidenceBridge
 	highConfidenceBridge.ID = "brain-suggestion-bridge-high"
 	highConfidenceBridge.Score = 0.88
-	candidate, ok := firstLaunchReadyAutonomySuggestion([]BrainSuggestion{highConfidenceBridge})
-	if !ok || candidate.ID != highConfidenceBridge.ID {
-		t.Fatalf("expected high-confidence possible bridge to pass, got ok=%v candidate=%#v", ok, candidate)
+	candidates := launchReadyAutonomySuggestions([]BrainSuggestion{highConfidenceBridge})
+	if len(candidates) != 1 || candidates[0].ID != highConfidenceBridge.ID {
+		t.Fatalf("expected high-confidence possible bridge to pass, got %#v", candidates)
 	}
 
 	strongMemory := lowConfidenceBridge
 	strongMemory.ID = "brain-suggestion-strong"
 	strongMemory.Score = 0.80
 	strongMemory.Relevance = RelevanceStrongMemory
-	candidate, ok = firstLaunchReadyAutonomySuggestion([]BrainSuggestion{strongMemory})
-	if !ok || candidate.ID != strongMemory.ID {
-		t.Fatalf("expected strong memory at controlled threshold to pass, got ok=%v candidate=%#v", ok, candidate)
+	candidates = launchReadyAutonomySuggestions([]BrainSuggestion{strongMemory})
+	if len(candidates) != 1 || candidates[0].ID != strongMemory.ID {
+		t.Fatalf("expected strong memory at controlled threshold to pass, got %#v", candidates)
 	}
 }
 
@@ -1218,8 +1225,13 @@ func TestBrainAutonomyLimitedBackgroundQueuesWithoutPreparing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AutonomyForInvestigation failed: %v", err)
 	}
-	if len(state.Queue) != 1 || state.Queue[0].Decision != AutonomyDecisionWouldPrepare {
-		t.Fatalf("expected limited-background to queue a would-prepare decision, got %#v", state.Queue)
+	if len(state.Queue) == 0 {
+		t.Fatalf("expected limited-background to queue would-prepare decisions, got none")
+	}
+	for _, item := range state.Queue {
+		if item.Decision != AutonomyDecisionWouldPrepare || item.Status != AutonomyQueueStatusWaiting {
+			t.Fatalf("expected every launch-ready candidate to queue a would-prepare decision, got %#v", item)
+		}
 	}
 }
 
@@ -1262,16 +1274,17 @@ func TestBrainAutonomyBlocksUnresolvedGapSuggestions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AutonomyForInvestigation failed: %v", err)
 	}
-	if len(state.Queue) != 1 {
-		t.Fatalf("expected one blocked autonomy queue item, got %#v", state.Queue)
+	if len(state.Queue) == 0 {
+		t.Fatalf("expected blocked autonomy queue items for every launch-ready candidate, got none")
 	}
-	queuedSuggestion := findSuggestionByID(t, suggestions, state.Queue[0].SuggestionID)
-	if queuedSuggestion.ActionMode != SuggestionActionLaunchFollowUp {
-		t.Fatalf("expected blocked queue item to point at a launch-ready suggestion, got %#v", queuedSuggestion)
-	}
-	item := findAutonomyQueueItem(t, state.Queue, queuedSuggestion.ID)
-	if item.Decision != AutonomyDecisionBlocked || !containsString(item.Blockers, AutonomyBlockerUnresolvedGap) {
-		t.Fatalf("expected unresolved-gap blocker, got %#v", item)
+	for _, item := range state.Queue {
+		if item.Decision != AutonomyDecisionBlocked || !containsString(item.Blockers, AutonomyBlockerUnresolvedGap) {
+			t.Fatalf("expected every candidate to be blocked by unresolved-gap under multi-candidate evaluation, got %#v", item)
+		}
+		queuedSuggestion := findSuggestionByID(t, suggestions, item.SuggestionID)
+		if queuedSuggestion.ActionMode != SuggestionActionLaunchFollowUp {
+			t.Fatalf("expected blocked queue item to point at a launch-ready suggestion, got %#v", queuedSuggestion)
+		}
 	}
 }
 
@@ -1320,11 +1333,13 @@ func TestBrainAutonomyStillBlocksReviewedGapWithoutOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AutonomyForInvestigation failed: %v", err)
 	}
-	if len(state.Queue) != 1 {
-		t.Fatalf("expected one blocked autonomy queue item, got %#v", state.Queue)
+	if len(state.Queue) == 0 {
+		t.Fatalf("expected blocked autonomy queue items after reviewed gap, got none")
 	}
-	if state.Queue[0].Decision != AutonomyDecisionBlocked || !containsString(state.Queue[0].Blockers, AutonomyBlockerUnresolvedGap) {
-		t.Fatalf("expected unresolved-gap blocker after reviewed gap, got %#v", state.Queue[0])
+	for _, item := range state.Queue {
+		if item.Decision != AutonomyDecisionBlocked || !containsString(item.Blockers, AutonomyBlockerUnresolvedGap) {
+			t.Fatalf("expected unresolved-gap blocker after reviewed gap, got %#v", item)
+		}
 	}
 }
 
@@ -1475,13 +1490,13 @@ func TestAutoResolveSkipsResolvedSuggestions(t *testing.T) {
 	// A resolved review whose recomputed missing list still mentions source
 	// must NOT re-trigger the evidence lookup (the Leg 0 storm).
 	resolved := BrainSuggestion{
-		ID:                     "brain-suggestion-verify-source",
-		InvestigationID:        "inv-current",
-		Status:                 SuggestionStatusReviewed,
-		ActionMode:             SuggestionActionVerify,
-		Title:                  "Verify conflicting claim",
-		ReviewOutcome:          SuggestionOutcomeResolved,
-		MissingEvidence:        []string{SuggestionMissingSource},
+		ID:              "brain-suggestion-verify-source",
+		InvestigationID: "inv-current",
+		Status:          SuggestionStatusReviewed,
+		ActionMode:      SuggestionActionVerify,
+		Title:           "Verify conflicting claim",
+		ReviewOutcome:   SuggestionOutcomeResolved,
+		MissingEvidence: []string{SuggestionMissingSource},
 		ReasonSamples: []SignalReason{{
 			Gateway:        GatewayEntityDate,
 			Value:          "ORG|Acme Grid",
@@ -3519,4 +3534,143 @@ func strPtr(value string) *string {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func TestBrainAutonomyMultiCandidatePreparesEveryQualifiedCandidate(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	initial, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	gap := findSuggestion(t, initial, SuggestionKindGapReview)
+	if _, err := service.MarkSuggestionOutcome(gap.ID, SuggestionOutcomeResolved); err != nil {
+		t.Fatalf("MarkSuggestionOutcome gap resolved failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 5,
+		MaxActivePrepared:               5,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	suggestions, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation with autonomy failed: %v", err)
+	}
+	candidates := launchReadyAutonomySuggestions(suggestions)
+	if len(candidates) < 2 {
+		t.Fatalf("fixture must surface multiple launch-ready candidates for the multi-candidate test, got %d", len(candidates))
+	}
+
+	if _, err := service.AutonomyForInvestigation("inv-current"); err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != len(candidates) {
+		t.Fatalf("expected every qualified candidate to be prepared (multi-candidate), got %d actions for %d candidates: %#v", len(actions), len(candidates), actions)
+	}
+	preparedSources := map[string]bool{}
+	for _, action := range actions {
+		if action.Status != FollowUpStatusPrepared {
+			t.Fatalf("expected prepared follow-up, got %#v", action)
+		}
+		preparedSources[action.SourceID] = true
+	}
+	for _, candidate := range candidates {
+		if !preparedSources[candidate.ID] {
+			t.Fatalf("expected candidate %s to be prepared, got sources %#v", candidate.ID, preparedSources)
+		}
+	}
+
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation read failed: %v", err)
+	}
+	for _, candidate := range candidates {
+		item := findAutonomyQueueItem(t, state.Queue, candidate.ID)
+		if item.Decision != AutonomyDecisionPrepared || item.ActionID == "" {
+			t.Fatalf("expected prepared queue item with action for candidate %s, got %#v", candidate.ID, item)
+		}
+	}
+}
+
+func TestBrainAutonomyMultiCandidateRespectsBudgetAndKeepsPrepared(t *testing.T) {
+	root := writeSuggestionFixture(t)
+	service := NewService(root)
+	for index := 0; index < 3; index++ {
+		if _, err := service.GenerateSignals("inv-current"); err != nil {
+			t.Fatalf("GenerateSignals pass %d failed: %v", index+1, err)
+		}
+	}
+	if _, err := service.ClustersForInvestigation("inv-current"); err != nil {
+		t.Fatalf("ClustersForInvestigation failed: %v", err)
+	}
+	initial, err := service.SuggestionsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("SuggestionsForInvestigation failed: %v", err)
+	}
+	gap := findSuggestion(t, initial, SuggestionKindGapReview)
+	if _, err := service.MarkSuggestionOutcome(gap.ID, SuggestionOutcomeResolved); err != nil {
+		t.Fatalf("MarkSuggestionOutcome gap resolved failed: %v", err)
+	}
+	if _, err := service.UpdateAutonomySettings(BrainAutonomySettings{
+		Mode:                            AutonomyModePrepareOnly,
+		MaxAutoPreparedPerInvestigation: 1,
+		MaxActivePrepared:               5,
+	}); err != nil {
+		t.Fatalf("UpdateAutonomySettings failed: %v", err)
+	}
+
+	state, err := service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("AutonomyForInvestigation failed: %v", err)
+	}
+	preparedCount := 0
+	var preparedItem BrainAutonomyQueueItem
+	for _, item := range state.Queue {
+		if item.Decision == AutonomyDecisionPrepared {
+			preparedCount++
+			preparedItem = item
+		}
+	}
+	if preparedCount != 1 {
+		t.Fatalf("expected investigation budget to cap preparation at one, got %d prepared items: %#v", preparedCount, state.Queue)
+	}
+
+	// A second evaluation pass (next evidence event) must not flip the
+	// prepared item to blocked on its own now-existing follow-up.
+	state, err = service.AutonomyForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("second AutonomyForInvestigation failed: %v", err)
+	}
+	var stillPrepared BrainAutonomyQueueItem
+	for _, item := range state.Queue {
+		if item.SuggestionID == preparedItem.SuggestionID {
+			stillPrepared = item
+		}
+	}
+	if stillPrepared.Decision != AutonomyDecisionPrepared || stillPrepared.Status != AutonomyQueueStatusPrepared || stillPrepared.ActionID != preparedItem.ActionID {
+		t.Fatalf("expected prepared item to survive re-evaluation, got %#v (was %#v)", stillPrepared, preparedItem)
+	}
+	actions, err := service.FollowUpsForInvestigation("inv-current")
+	if err != nil {
+		t.Fatalf("FollowUpsForInvestigation failed: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected budget to keep exactly one prepared follow-up across passes, got %#v", actions)
+	}
 }

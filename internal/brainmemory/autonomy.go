@@ -178,8 +178,8 @@ func (s *Service) evaluateAutonomyForInvestigation(investigationID string, sugge
 		return nil
 	}
 
-	candidate, ok := firstLaunchReadyAutonomySuggestion(suggestions)
-	if !ok {
+	candidates := launchReadyAutonomySuggestions(suggestions)
+	if len(candidates) == 0 {
 		return nil
 	}
 
@@ -201,38 +201,71 @@ func (s *Service) evaluateAutonomyForInvestigation(investigationID string, sugge
 		return err
 	}
 
-	blockers := autonomyBlockers(candidate, suggestions, followUps, queue, settings, investigationID)
-	item := buildAutonomyQueueItem(candidate, settings, timestamp)
-	item.Blockers = blockers
+	// Evaluate every launch-ready candidate in rank order, not just the
+	// first. Budgets re-check per candidate because each preparation
+	// consumes them: a scan whose stream surfaces several qualified
+	// suggestions prepares up to MaxAutoPreparedPerInvestigation /
+	// MaxActivePrepared and records an audited decision for the rest.
+	for _, candidate := range candidates {
+		item := buildAutonomyQueueItem(candidate, settings, timestamp)
+		if previous, exists := queue[item.ID]; exists {
+			// A prepared follow-up stays prepared: the operator owns
+			// approval, and re-evaluating would flip the item to blocked
+			// on its own now-existing follow-up.
+			if previous.Decision == AutonomyDecisionPrepared && previous.Status == AutonomyQueueStatusPrepared {
+				continue
+			}
+		}
 
-	if len(blockers) > 0 {
-		item.Decision = AutonomyDecisionBlocked
-		item.Status = AutonomyQueueStatusBlocked
-		item.Reason = "Autonomy did not prepare this follow-up because safety blockers are still active."
-		return s.saveAutonomyDecision(queue, audit, item)
-	}
+		blockers := autonomyBlockers(candidate, suggestions, followUps, queue, settings, investigationID)
+		item.Blockers = blockers
 
-	if settings.Mode == AutonomyModeSuggestOnly || settings.Mode == AutonomyModeLimitedBackground {
-		item.Decision = AutonomyDecisionWouldPrepare
-		item.Status = AutonomyQueueStatusWaiting
-		item.Reason = "Autonomy would prepare this focused follow-up, but the current mode does not permit V16 preparation."
-		return s.saveAutonomyDecision(queue, audit, item)
-	}
+		switch {
+		case len(blockers) > 0:
+			item.Decision = AutonomyDecisionBlocked
+			item.Status = AutonomyQueueStatusBlocked
+			item.Reason = "Autonomy did not prepare this follow-up because safety blockers are still active."
+		case settings.Mode == AutonomyModeSuggestOnly || settings.Mode == AutonomyModeLimitedBackground:
+			item.Decision = AutonomyDecisionWouldPrepare
+			item.Status = AutonomyQueueStatusWaiting
+			item.Reason = "Autonomy would prepare this focused follow-up, but the current mode does not permit V16 preparation."
+		default:
+			action, err := s.PrepareFollowUp(PrepareFollowUpRequest{
+				InvestigationID: investigationID,
+				SourceKind:      FollowUpSourceSuggestion,
+				SourceID:        candidate.ID,
+			})
+			if err != nil {
+				return err
+			}
+			item.ActionID = action.ID
+			item.Decision = AutonomyDecisionPrepared
+			item.Status = AutonomyQueueStatusPrepared
+			item.ApprovalRequired = true
+			item.Reason = "Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically."
+			// Reload so the next candidate's duplicate and budget checks
+			// see this preparation.
+			followUps, err = s.loadFollowUps()
+			if err != nil {
+				return err
+			}
+		}
 
-	action, err := s.PrepareFollowUp(PrepareFollowUpRequest{
-		InvestigationID: investigationID,
-		SourceKind:      FollowUpSourceSuggestion,
-		SourceID:        candidate.ID,
-	})
-	if err != nil {
-		return err
+		// Unchanged decisions are not re-saved - recomputes run on every
+		// evidence event and the queue/audit only needs a new entry when
+		// the decision actually changed.
+		if previous, exists := queue[item.ID]; exists &&
+			previous.Decision == item.Decision &&
+			previous.Status == item.Status &&
+			previous.ActionID == item.ActionID &&
+			strings.Join(previous.Blockers, ",") == strings.Join(item.Blockers, ",") {
+			continue
+		}
+		if err := s.saveAutonomyDecision(queue, audit, item); err != nil {
+			return err
+		}
 	}
-	item.ActionID = action.ID
-	item.Decision = AutonomyDecisionPrepared
-	item.Status = AutonomyQueueStatusPrepared
-	item.ApprovalRequired = true
-	item.Reason = "Autonomy prepared one focused follow-up. Review and approve it before launching; no Rabbit Hole starts automatically."
-	return s.saveAutonomyDecision(queue, audit, item)
+	return nil
 }
 
 func (s *Service) saveAutonomyDecision(
@@ -700,7 +733,12 @@ func reasonSamplesHaveMatchedEvidence(reasons []SignalReason) bool {
 	return false
 }
 
-func firstLaunchReadyAutonomySuggestion(suggestions []BrainSuggestion) (BrainSuggestion, bool) {
+// launchReadyAutonomySuggestions returns every active, launch-follow-up
+// suggestion with controlled confidence and concrete targets, in the order
+// the suggestions are ranked. Multi-candidate autonomy evaluates all of
+// them under the configured budgets instead of only the first.
+func launchReadyAutonomySuggestions(suggestions []BrainSuggestion) []BrainSuggestion {
+	candidates := make([]BrainSuggestion, 0, len(suggestions))
 	for _, suggestion := range suggestions {
 		suggestion = normalizeSuggestionCollections(suggestion)
 		if suggestion.Status != SuggestionStatusActive {
@@ -715,9 +753,9 @@ func firstLaunchReadyAutonomySuggestion(suggestions []BrainSuggestion) (BrainSug
 		if len(suggestion.TargetInvestigationIDs) == 0 {
 			continue
 		}
-		return suggestion, true
+		candidates = append(candidates, suggestion)
 	}
-	return BrainSuggestion{}, false
+	return candidates
 }
 
 func autonomyBlockers(
