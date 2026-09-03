@@ -9382,6 +9382,42 @@ body {
   white-space: nowrap;
 }
 
+.forensic-brain-autonomy-tabs {
+  display: flex;
+  gap: 0.32rem;
+}
+
+.forensic-brain-autonomy-tab {
+  border: 1px solid rgba(129, 227, 255, 0.22);
+  border-radius: 0.22rem;
+  background: transparent;
+  color: rgba(196, 214, 224, 0.75);
+  padding: 0.34rem 0.62rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.forensic-brain-autonomy-tab:hover {
+  border-color: rgba(129, 227, 255, 0.45);
+  color: rgba(226, 240, 248, 0.95);
+}
+
+.forensic-brain-autonomy-tab.is-active {
+  border-color: rgba(0, 255, 65, 0.45);
+  background: rgba(0, 255, 65, 0.1);
+  color: #74ff95;
+}
+
+.forensic-brain-autonomy-scroll {
+  max-height: 30rem;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.36rem;
+  padding-right: 0.2rem;
+}
+
 .forensic-brain-autonomy-budgets span {
   display: grid;
   gap: 0.24rem;

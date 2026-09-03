@@ -3871,6 +3871,14 @@ describe('BrainSignalsPanel', () => {
     render(<BrainSignalsPanel currentInvestigationId="inv-current" currentInvestigationTitle="Current Grid Case" />)
     await openBrainView(user, /autonomy queue view/i)
 
+    // Queue is the default sub-tab; audit entries live behind the Audit tab
+    // so the two lists never squish each other.
+    const queueTab = screen.getByRole('tab', { name: /^queue \(2\)$/i })
+    expect(queueTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('brain-autonomy-audit')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: /^audit \(2\)$/i }))
+
     const audit = await screen.findByTestId('brain-autonomy-audit')
     expect(audit).toHaveTextContent('Decision audit')
     expect(audit).toHaveTextContent('Focused follow-up ready')
@@ -3881,5 +3889,6 @@ describe('BrainSignalsPanel', () => {
     const decisions = within(audit).getAllByText(/^(Prepared|Blocked)$/)
     expect(decisions.length).toBeGreaterThanOrEqual(2)
     expect(within(audit).getAllByTestId('brain-autonomy-audit-entry').length).toBe(2)
+    expect(screen.queryByTestId('brain-autonomy-card')).not.toBeInTheDocument()
   })
 })

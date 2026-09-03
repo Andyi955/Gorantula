@@ -509,6 +509,9 @@ export default function BrainSignalsPanel({
     items: [],
   })
   const [isAutonomyPulseActive, setIsAutonomyPulseActive] = useState(false)
+  // Autonomy panel sub-section: queue and audit are separate tabs so the
+  // growing audit history never squishes the queue cards.
+  const [autonomySection, setAutonomySection] = useState<'queue' | 'audit'>('queue')
   const [labMode, setLabMode] = useState(() => loadBrainLabEnabled())
   const [suggestions, setSuggestions] = useState<BrainSuggestion[]>([])
   const [followUps, setFollowUps] = useState<BrainFollowUpAction[]>([])
@@ -4802,56 +4805,85 @@ export default function BrainSignalsPanel({
 
           {renderFollowUpLauncher()}
 
-          {!currentInvestigationId ? (
-            <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
-              Select an investigation to inspect autonomy.
-            </div>
-          ) : isLoading ? (
-            <div data-testid="brain-loading-state" className="forensic-brain-empty">
-              Checking autonomy queue...
-            </div>
-          ) : autonomyQueue.length === 0 ? (
-            <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
-              No queued autonomy decisions yet.
+          <div className="forensic-brain-autonomy-tabs" role="tablist" aria-label="Autonomy sections">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={autonomySection === 'queue'}
+              className={`forensic-brain-autonomy-tab${autonomySection === 'queue' ? ' is-active' : ''}`}
+              onClick={() => setAutonomySection('queue')}
+            >
+              Queue ({autonomyQueue.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={autonomySection === 'audit'}
+              className={`forensic-brain-autonomy-tab${autonomySection === 'audit' ? ' is-active' : ''}`}
+              onClick={() => setAutonomySection('audit')}
+            >
+              Audit ({autonomyAudit.length})
+            </button>
+          </div>
+
+          {autonomySection === 'queue' ? (
+            <div className="forensic-brain-autonomy-scroll">
+              {!currentInvestigationId ? (
+                <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
+                  Select an investigation to inspect autonomy.
+                </div>
+              ) : isLoading ? (
+                <div data-testid="brain-loading-state" className="forensic-brain-empty">
+                  Checking autonomy queue...
+                </div>
+              ) : autonomyQueue.length === 0 ? (
+                <div data-testid="brain-autonomy-empty-state" className="forensic-brain-empty">
+                  No queued autonomy decisions yet.
+                </div>
+              ) : (
+                <div className="forensic-brain-autonomy-list">
+                  {autonomyQueue.map(renderAutonomyQueueItem)}
+                </div>
+              )}
             </div>
           ) : (
-            <div className="forensic-brain-autonomy-list">
-              {autonomyQueue.map(renderAutonomyQueueItem)}
-            </div>
-          )}
-
-          {autonomyAudit.length > 0 && (
-            <div className="forensic-brain-autonomy-audit" data-testid="brain-autonomy-audit">
-              <div className="forensic-brain-panel-kicker">Decision audit</div>
-              <p className="forensic-brain-autonomy-audit-hint">
-                Why the brain prepared, blocked, or withheld each follow-up.
-              </p>
-              <ul className="forensic-brain-autonomy-audit-list">
-                {autonomyAudit.slice(0, 12).map((entry) => {
-                  const queueItem = autonomyQueue.find((candidate) => candidate.id === entry.queueItemId)
-                  return (
-                    <li
-                      key={entry.id}
-                      className={`forensic-brain-autonomy-audit-entry is-${entry.decision}`}
-                      data-testid="brain-autonomy-audit-entry"
-                    >
-                      <span className={`forensic-brain-autonomy-audit-decision is-${entry.decision}`}>
-                        {formatAutonomyDecision(entry.decision)}
-                      </span>
-                      <div className="forensic-brain-autonomy-audit-body">
-                        <strong>{queueItem?.title || entry.suggestionId}</strong>
-                        <p>{entry.reason}</p>
-                        {entry.blockers.length > 0 && (
-                          <span className="forensic-brain-autonomy-audit-blockers">
-                            {entry.blockers.map((blocker) => formatAutonomyBlocker(blocker)).join(' · ')}
+            <div className="forensic-brain-autonomy-scroll" data-testid="brain-autonomy-audit">
+              {autonomyAudit.length === 0 ? (
+                <div className="forensic-brain-empty">No autonomy decisions recorded yet.</div>
+              ) : (
+                <>
+                  <div className="forensic-brain-panel-kicker">Decision audit</div>
+                  <p className="forensic-brain-autonomy-audit-hint">
+                    Why the brain prepared, blocked, or withheld each follow-up.
+                  </p>
+                  <ul className="forensic-brain-autonomy-audit-list">
+                    {autonomyAudit.slice(0, 20).map((entry) => {
+                      const queueItem = autonomyQueue.find((candidate) => candidate.id === entry.queueItemId)
+                      return (
+                        <li
+                          key={entry.id}
+                          className={`forensic-brain-autonomy-audit-entry is-${entry.decision}`}
+                          data-testid="brain-autonomy-audit-entry"
+                        >
+                          <span className={`forensic-brain-autonomy-audit-decision is-${entry.decision}`}>
+                            {formatAutonomyDecision(entry.decision)}
                           </span>
-                        )}
-                      </div>
-                      <time>{formatAutonomyAuditTimestamp(entry.createdAt)}</time>
-                    </li>
-                  )
-                })}
-              </ul>
+                          <div className="forensic-brain-autonomy-audit-body">
+                            <strong>{queueItem?.title || entry.suggestionId}</strong>
+                            <p>{entry.reason}</p>
+                            {entry.blockers.length > 0 && (
+                              <span className="forensic-brain-autonomy-audit-blockers">
+                                {entry.blockers.map((blocker) => formatAutonomyBlocker(blocker)).join(' · ')}
+                              </span>
+                            )}
+                          </div>
+                          <time>{formatAutonomyAuditTimestamp(entry.createdAt)}</time>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </>
+              )}
             </div>
           )}
         </section>
