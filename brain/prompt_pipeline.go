@@ -342,6 +342,13 @@ func (b *Brain) processPromptWithRunOptions(ctx context.Context, prompt, vaultID
 			parallelNodes = append(parallelNodes, result.node)
 		}
 		parallelAnalysisDispatched = true
+		// Persist the nodes into the vault's board state BEFORE the parallel
+		// analysis runs: the board is not mounted during the crawl, so its
+		// own autosave cannot capture them - without this the latest
+		// investigation loads empty on refresh.
+		if err := MergeNodesIntoBoardState(vaultRootDir, vaultID, parallelNodes); err != nil {
+			brainLog("pipeline").Warn("failed to persist gathered nodes to board state", "vault", vaultID, "err", err)
+		}
 		brainLog("pipeline").Info("dispatching persona pipeline early (parallel with report)", "vault", vaultID, "nodes", len(parallelNodes), "run", pipelineRunID(progress))
 		b.notifyNodesReady(vaultID, parallelNodes, pipelineRunID(progress))
 	}
