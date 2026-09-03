@@ -9429,6 +9429,7 @@ body {
 .forensic-brain-autonomy-controlsrow {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: 0.62rem;
   border: 1px solid rgba(129, 227, 255, 0.2);
   border-radius: 0.5rem;

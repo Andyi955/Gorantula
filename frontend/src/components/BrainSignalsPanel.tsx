@@ -4623,12 +4623,31 @@ export default function BrainSignalsPanel({
               <span className={`forensic-brain-autonomy-decision-chip forensic-brain-autonomy-decision-${item.decision}`}>
                 {formatAutonomyDecision(item.decision)}
               </span>
+              {item.blockers.length > 0 ? (
+                item.blockers.map((blocker) => (
+                  <span
+                    key={blocker}
+                    className="forensic-brain-chip forensic-brain-chip-relationship forensic-brain-autonomy-blocker-chip"
+                  >
+                    {formatAutonomyBlocker(blocker)}
+                  </span>
+                ))
+              ) : (
+                <span className="forensic-brain-chip forensic-brain-chip-source forensic-brain-autonomy-clear-chip">
+                  Clear
+                </span>
+              )}
               <span className={`forensic-brain-relevance-chip forensic-brain-relevance-chip-${relevance}`}>
                 {formatRelevance(item)}
               </span>
               {item.approvalRequired && (
                 <span className="forensic-brain-autonomy-approval-chip">
                   Approval Required
+                </span>
+              )}
+              {item.actionId && (
+                <span className="forensic-brain-chip forensic-brain-chip-entity">
+                  Action Ready
                 </span>
               )}
               <strong className="forensic-brain-autonomy-score-chip">{formatScore(item.score)}</strong>
@@ -4646,24 +4665,6 @@ export default function BrainSignalsPanel({
           <div className="forensic-brain-suggestion-reason forensic-brain-autonomy-decision-box">
             <span>Decision</span>
             <strong>{item.reason}</strong>
-          </div>
-          <div className="forensic-brain-chip-row forensic-brain-autonomy-blocker-row" aria-label="Autonomy blockers">
-            {item.blockers.length > 0 ? (
-              item.blockers.map((blocker) => (
-                <span key={blocker} className="forensic-brain-chip forensic-brain-chip-relationship forensic-brain-autonomy-blocker-chip">
-                  {formatAutonomyBlocker(blocker)}
-                </span>
-              ))
-            ) : (
-              <span className="forensic-brain-chip forensic-brain-chip-source forensic-brain-autonomy-clear-chip">
-                Clear
-              </span>
-            )}
-            {item.actionId && (
-              <span className="forensic-brain-chip forensic-brain-chip-entity">
-                Action Ready
-              </span>
-            )}
           </div>
           {(item.gatewayLabel || item.sourceSignalIds.length > 0) && (
             <div
