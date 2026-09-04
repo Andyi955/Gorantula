@@ -388,5 +388,10 @@ func matchingSemanticReasons(current memoryProfile, target memoryProfile) []Sign
 		Value:   "overlap|" + normalizeKey(label),
 		Label:   label,
 		Detail:  fmt.Sprintf("Topical language overlap (%.0f%% similarity) around %q.", similarity*100, label),
+		// Whole-board matchers have no single evidence node; empty slices
+		// (not nil) so the persisted JSON never carries nulls the UI would
+		// have to defend against.
+		CurrentNodeIDs: cleanStringSet(nil),
+		TargetNodeIDs:  cleanStringSet(nil),
 	}}
 }

@@ -206,6 +206,9 @@ func TestSemanticGatewayFiresOnTopicalOverlapOnly(t *testing.T) {
 	if len(signals[0].Reasons) != 1 || signals[0].Reasons[0].Gateway != GatewaySemantic {
 		t.Fatalf("expected a single semantic reason, got %#v", signals[0].Reasons)
 	}
+	if signals[0].Reasons[0].CurrentNodeIDs == nil || signals[0].Reasons[0].TargetNodeIDs == nil {
+		t.Fatalf("semantic reasons must carry empty (not nil) node id lists so the UI never sees null: %#v", signals[0].Reasons[0])
+	}
 	if strings.TrimSpace(signals[0].Reasons[0].Label) == "" {
 		t.Fatalf("expected shared salient tokens as the route label, got %#v", signals[0].Reasons[0])
 	}

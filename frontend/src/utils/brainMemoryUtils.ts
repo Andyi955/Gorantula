@@ -113,8 +113,10 @@ export const formatTimestamp = (timestamp?: string) => {
   return timestamp
 }
 
-export const formatNodeIds = (ids: string[]) => {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
+export const formatNodeIds = (ids: string[] | null | undefined) => {
+  // Persisted reasons can carry null node id lists (e.g. whole-board matchers
+  // like the semantic gateway); render defensively instead of crashing.
+  const uniqueIds = Array.from(new Set((ids ?? []).filter(Boolean)))
   return uniqueIds.length > 0 ? uniqueIds.join(', ') : 'No matched nodes recorded'
 }
 
