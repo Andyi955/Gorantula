@@ -339,7 +339,7 @@ func (b *Brain) summarizeNode(ctx context.Context, content string) (string, stri
 	systemInstruction := fmt.Sprintf("You are a Senior Strategic Intelligence Officer. Today's current date is %s. Provide a professional 'INTEL_DOSSIER' style summary. "+
 		"1. Title: Short, punchy, high-impact (max 5 words). "+
 		"2. Summary: Exactly 2 sentences. Contextualize 'recent' or 'upcoming' based on today's current date. "+
-		"3. REQUIRED TAGGING: Wrap critical entities like this: [PERSON:Elon Musk], [ORG:OpenAI], [LOC:London], [DATE:2026-02-24]. "+
+		"3. REQUIRED TAGGING: Wrap EVERY important entity with the matching tag. Person [PERSON:Elon Musk], Organization [ORG:OpenAI], Place/Location [LOC:London], Region/Country [GPE:Germany], Date [DATE:2026-02-24], Time [TIME:09:30], Event [EVENT:launch], Product [PRODUCT:GPT-5], Money [MONEY:$2.4B], Percent [PERCENT:38%%], Law/Regulation [LAW:DSA]. Under-tagging an important entity is a failure; when in doubt, tag it. "+
 		"4. IMPORTANT: Return ONLY a valid JSON object with 'title' and 'summary' keys. No text. No markdown. "+
 		"CRITICAL: If the text is a security block or indicates bot detection, return ONLY {}.", currentDate)
 
@@ -578,18 +578,24 @@ func (b *Brain) ProcessManualNodeText(ctx context.Context, rawText string) (stri
 	currentDate := time.Now().Format("Monday, January 2, 2006")
 	systemInstruction := fmt.Sprintf(`You are an expert intelligence analyst. 
 Today's date is %s.
-Your task is to take the provided text and identify People, Organizations, Locations, and Dates/Times.
+Your task is to take the provided text and identify EVERY important entity: People, Organizations, Places/Locations, Regions/Countries, Dates/Times, Events, Products, Money amounts, Percentages, and Laws/Regulations.
 Wrap each identified entity EXACTLY in the corresponding tag:
 - People: [PERSON:Entity Name]
 - Organizations: [ORG:Entity Name]
-- Locations: [LOC:Entity Name]
+- Places/Locations: [LOC:Entity Name]
+- Regions/Countries: [GPE:Entity Name]
 - Dates/Times: [DATE:Entity Name]
+- Events: [EVENT:Entity Name]
+- Products: [PRODUCT:Entity Name]
+- Money: [MONEY:Entity Name]
+- Percentages: [PERCENT:Entity Name]
+- Laws/Regulations: [LAW:Entity Name]
 
 RULES:
 1. Do not change any other part of the text.
 2. If the text already has tags, preserve them if they are correct, or fix them if not.
 3. Return ONLY the processed text, no explanations or additional formatting.
-4. Be precise. If you are not sure, do not tag it.`, currentDate)
+4. Tag EVERY important entity. Under-tagging an important entity is a failure; when in doubt, tag it.`, currentDate)
 
 	provider := b.GetSearchProvider()
 	if provider == nil {

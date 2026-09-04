@@ -73,6 +73,7 @@ import {
     SUPPORTED_RELATIONSHIP_SHAPES,
 } from '../utils/relationshipStyles';
 import type { RelationshipPattern, RelationshipShape, TagStyle } from '../utils/relationshipStyles';
+import { ENTITY_TAG_PATTERN } from '../utils/entityTags';
 import {
     BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
     BOARD_TOGGLE_SYNTHESIS_PANEL_EVENT,
@@ -4555,13 +4556,13 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 console.debug(` - Input snippet: "... [see board]"`);
                 console.debug(` - Output snippet: "${processedText.slice(0, 80)}..."`);
 
-                const entities = processedText.match(/\[(?:PERSON|ORG|LOC|DATE|TIME):.*?\]/gi) || [];
+                const entities = processedText.match(ENTITY_TAG_PATTERN) || [];
                 console.debug(` - Highlights determined: ${entities.length > 0 ? entities.join(', ') : 'NONE FOUND'}`);
 
                 setNodes(nds => nds.map(n => {
                     if (n.id === nodeId) {
                         // Strip tags for a clean title
-                        const cleanTitle = processedText.replace(/\[(?:PERSON|ORG|LOC|DATE|TIME):(.*?)\]/gi, '$1');
+                        const cleanTitle = processedText.replace(ENTITY_TAG_PATTERN, '$2');
                         const preserveFullText = shouldPreserveExistingFullText(
                             typeof n.data.summary === 'string' ? n.data.summary : '',
                             typeof n.data.fullText === 'string' ? n.data.fullText : '',

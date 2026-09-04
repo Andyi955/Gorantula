@@ -51,7 +51,7 @@ export type DossierBodyBlock =
     };
 
 const DOSSIER_INLINE_URL_PATTERN = /(https?:\/\/[^\s,)\]]+|vault:\/\/[^\s,)\]]+|timeline:\/\/[^\s,)\]]+|rabbit:\/\/[^\s,)\]]+)/i;
-const DOSSIER_ENTITY_PATTERN = /\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)]/i;
+const DOSSIER_ENTITY_PATTERN = /\[([A-Z]+):([^\]]+)]/i;
 const DOSSIER_MARKDOWN_BOLD_PATTERN = /\*\*([^*]+)\*\*/i;
 const DOSSIER_HEADING_PATTERN = /^(#{1,4}\s*)?[A-Z0-9][A-Z0-9\s:/&().,'"-]{8,}$/;
 const DOSSIER_SEPARATOR_PATTERN = /^[-_*]{3,}$/;
@@ -428,6 +428,18 @@ const getDossierEntityClassName = (type: string) => {
             return 'forensic-dossier-entity-chip forensic-dossier-entity-date';
         case 'TIME':
             return 'forensic-dossier-entity-chip forensic-dossier-entity-time';
+        case 'GPE':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-gpe';
+        case 'EVENT':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-event';
+        case 'PRODUCT':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-product';
+        case 'MONEY':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-money';
+        case 'PERCENT':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-percent';
+        case 'LAW':
+            return 'forensic-dossier-entity-chip forensic-dossier-entity-law';
         default:
             return 'forensic-dossier-entity-chip';
     }

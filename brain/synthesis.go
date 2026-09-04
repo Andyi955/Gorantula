@@ -328,7 +328,19 @@ func scoreOverlapCandidate(entity string, idfScore float64, nodesList []NodeCont
 		score += 2.5
 	case "ORG":
 		score += 2
+	case "EVENT":
+		score += 1.5
+	case "PRODUCT":
+		score += 1.25
+	case "MONEY":
+		score += 1
+	case "LAW":
+		score += 1
+	case "PERCENT":
+		score += 0.5
 	case "LOC":
+		score += 0.25
+	case "GPE":
 		score += 0.25
 	case "DATE":
 		score -= 1
@@ -401,13 +413,19 @@ func mustJSON(value interface{}) string {
 	return string(data)
 }
 
-var taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)\]`)
+var taggedEntityPattern = regexp.MustCompile(`\[(PERSON|ORG|LOC|GPE|DATE|TIME|EVENT|PRODUCT|MONEY|PERCENT|LAW):([^\]]+)\]`)
 var overlapTokenPattern = regexp.MustCompile(`[a-z0-9]{3,}`)
 var overlapEntityTypes = map[string]bool{
-	"PERSON": true,
-	"ORG":    true,
-	"LOC":    true,
-	"DATE":   true,
+	"PERSON":  true,
+	"ORG":     true,
+	"LOC":     true,
+	"GPE":     true,
+	"DATE":    true,
+	"EVENT":   true,
+	"PRODUCT": true,
+	"MONEY":   true,
+	"PERCENT": true,
+	"LAW":     true,
 }
 var overlapStopwords = map[string]struct{}{
 	"about": {}, "after": {}, "also": {}, "been": {}, "being": {}, "between": {}, "case": {}, "cases": {},

@@ -1,4 +1,5 @@
 import type { Edge, Node } from 'reactflow';
+import { ENTITY_TAG_PATTERN } from '../utils/entityTags';
 
 export type BoardMode = 'legacy' | 'strict-grid';
 export type PortSide = 'top' | 'right' | 'bottom' | 'left';
@@ -61,7 +62,7 @@ const NODE_TEXT_AVERAGE_CHAR_WIDTH = 6.8;
 const NODE_COLLAPSED_TARGET_LINES = 5.6;
 const NODE_COLLAPSED_FIT_MAX_WIDTH = 480;
 export const NODE_AUTO_MAX_WIDTH = 576;
-const HIGHLIGHT_TOKEN_PATTERN = /\[(?:PERSON|ORG|LOC|DATE|TIME):(.*?)\]/gi;
+const HIGHLIGHT_TOKEN_PATTERN = ENTITY_TAG_PATTERN;
 const ROUTE_OBSTACLE_PADDING = BOARD_GRID_SIZE;
 const ROUTE_SEARCH_MARGIN = BOARD_GRID_SIZE * 6;
 const ROUTE_TURN_PENALTY = BOARD_GRID_SIZE * 2;
@@ -98,7 +99,7 @@ export const normalizeNodeFrame = (width: number, height: number) => ({
 });
 
 const estimateNodeTextUnits = (content: string, highlightTokenCount: number) => {
-    const readableContent = content.replace(HIGHLIGHT_TOKEN_PATTERN, '$1');
+    const readableContent = content.replace(HIGHLIGHT_TOKEN_PATTERN, '$2');
     const longestWordLength = readableContent
         .split(/\s+/)
         .reduce((longest, word) => Math.max(longest, word.length), 0);
@@ -111,7 +112,7 @@ export const calculateNodeFrame = (summary: string, fullText: string, isExpanded
     const content = isExpanded ? (fullText || summary) : summary;
     const charCount = content.length;
     const estimatedLineHeight = 20;
-    const highlightTokenCount = (content.match(/\[(?:PERSON|ORG|LOC|DATE|TIME):.*?\]/g) || []).length;
+    const highlightTokenCount = (content.match(HIGHLIGHT_TOKEN_PATTERN) || []).length;
     const estimatedTextUnits = estimateNodeTextUnits(content, highlightTokenCount);
 
     let width = 320;
