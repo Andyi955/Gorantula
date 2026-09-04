@@ -2782,6 +2782,8 @@ function App() {
 
         {/* Main Content Area */}
         <main className="forensic-app-main-content flex-1 relative">
+          {!showLandingExperience && (
+            <>
           <Suspense fallback={null}>
             <DiscoveryPanel
               currentInvestigationId={currentInvestigationId}
@@ -3195,6 +3197,8 @@ function App() {
                 </div>
               </div>
             </div>
+          )}
+            </>
           )}
         </main>
       </div>

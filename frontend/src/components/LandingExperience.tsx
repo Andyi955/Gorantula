@@ -120,11 +120,28 @@ const WebCanvas = () => {
     let particles: WebParticle[] = []
     let width = 0
     let height = 0
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    // The web is a faint decorative backdrop, so a capped backing scale keeps the
+    // per-frame clear + redraw cheap on high-DPI displays without a visible cost.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
     const pointer = { x: 0, y: 0, active: false }
 
+    // Precompute a small set of connection stroke styles and batch every in-range
+    // edge into one of a few stroked paths per frame. Avoiding one rgba() string
+    // plus one beginPath()/stroke() per edge (thousands per frame) is what turns
+    // this background from a main-thread hog into a cheap overlay.
+    const edgeAlphaBuckets = 8
+    const connectionStyles: string[] = []
+    const maxEdgeAlpha = 0.34
+    const minEdgeAlpha = 0.1
+    for (let bucket = 0; bucket < edgeAlphaBuckets; bucket += 1) {
+      const t = bucket / (edgeAlphaBuckets - 1)
+      const alpha = maxEdgeAlpha - t * (maxEdgeAlpha - minEdgeAlpha)
+      connectionStyles.push(`rgba(129, 227, 255, ${alpha.toFixed(3)})`)
+    }
+    const edgeBuckets: number[][] = Array.from({ length: edgeAlphaBuckets }, () => [])
+
     const seedParticles = () => {
-      const target = Math.max(36, Math.min(120, Math.floor((width * height) / 16000)))
+      const target = Math.max(30, Math.min(70, Math.floor((width * height) / 22000)))
       particles = Array.from({ length: target }, (_, index) => ({
         x: Math.random() * Math.max(width, 1),
         y: Math.random() * Math.max(height, 1),
@@ -172,6 +189,9 @@ const WebCanvas = () => {
         if (particle.y > height + 20) particle.y = -20
       }
 
+      for (let bucket = 0; bucket < edgeBuckets.length; bucket += 1) {
+        edgeBuckets[bucket].length = 0
+      }
       for (let i = 0; i < particles.length; i += 1) {
         const a = particles[i]
         for (let j = i + 1; j < particles.length; j += 1) {
@@ -183,13 +203,27 @@ const WebCanvas = () => {
             continue
           }
           const alpha = (1 - Math.sqrt(distSq) / CONNECTION_DISTANCE) * (a.hub || b.hub ? 0.34 : 0.2)
-          context.strokeStyle = `rgba(129, 227, 255, ${alpha.toFixed(3)})`
-          context.lineWidth = 1
-          context.beginPath()
-          context.moveTo(a.x, a.y)
-          context.lineTo(b.x, b.y)
-          context.stroke()
+          const clampedAlpha = alpha < minEdgeAlpha ? minEdgeAlpha : alpha > maxEdgeAlpha ? maxEdgeAlpha : alpha
+          const bucketIndex = Math.round(
+            ((maxEdgeAlpha - clampedAlpha) / (maxEdgeAlpha - minEdgeAlpha)) * (edgeAlphaBuckets - 1),
+          )
+          edgeBuckets[bucketIndex].push(a.x, a.y, b.x, b.y)
         }
+      }
+
+      for (let bucket = 0; bucket < edgeBuckets.length; bucket += 1) {
+        const edgePath = edgeBuckets[bucket]
+        if (edgePath.length === 0) {
+          continue
+        }
+        context.strokeStyle = connectionStyles[bucket]
+        context.lineWidth = 1
+        context.beginPath()
+        for (let edgeIndex = 0; edgeIndex < edgePath.length; edgeIndex += 4) {
+          context.moveTo(edgePath[edgeIndex], edgePath[edgeIndex + 1])
+          context.lineTo(edgePath[edgeIndex + 2], edgePath[edgeIndex + 3])
+        }
+        context.stroke()
       }
 
       for (const particle of particles) {
@@ -280,11 +314,10 @@ const LandingExperience = ({ onEnter, stats }: LandingExperienceProps) => {
   }), [reduceMotion])
 
   const itemVariants: Variants = useMemo(() => ({
-    hidden: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 30, filter: 'blur(6px)' },
+    hidden: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 30 },
     visible: {
       opacity: 1,
       y: 0,
-      filter: 'blur(0px)',
       transition: { duration: reduceMotion ? 0.2 : 0.7, ease: [0.16, 0.84, 0.28, 1] },
     },
   }), [reduceMotion])
@@ -295,12 +328,11 @@ const LandingExperience = ({ onEnter, stats }: LandingExperienceProps) => {
   }), [reduceMotion])
 
   const letterVariants: Variants = useMemo(() => ({
-    hidden: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 52, rotateX: -75, filter: 'blur(10px)' },
+    hidden: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 52, rotateX: -75 },
     visible: {
       opacity: 1,
       y: 0,
       rotateX: 0,
-      filter: 'blur(0px)',
       transition: reduceMotion
         ? { duration: 0.2 }
         : { type: 'spring', stiffness: 210, damping: 22 },
@@ -328,7 +360,7 @@ const LandingExperience = ({ onEnter, stats }: LandingExperienceProps) => {
       animate={{ opacity: 1 }}
       exit={reduceMotion
         ? { opacity: 0, transition: { duration: 0.15 } }
-        : { opacity: 0, scale: 1.05, filter: 'blur(10px)', transition: { duration: 0.45, ease: [0.4, 0, 0.2, 1] } }}
+        : { opacity: 0, scale: 1.05, transition: { duration: 0.45, ease: [0.4, 0, 0.2, 1] } }}
       transition={{ duration: 0.5 }}
     >
       <WebCanvas />
