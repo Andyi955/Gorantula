@@ -261,3 +261,69 @@ func buildProfileForTest(t *testing.T, id string, summary string) memoryProfile 
 	}
 	return profile
 }
+
+func TestBuildProfileCacheInvalidation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "abdomen_vault")
+	record := rootRecord("inv-cache", "Cache Case")
+	writeTestInvestigation(t, root, record, `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"n1","data":{"summary":"[ORG:Acme Grid] scales capacity."}}],
+		"edges":[]
+	}`, "")
+
+	service := NewService(root)
+	first, err := service.buildProfile(record)
+	if err != nil {
+		t.Fatalf("buildProfile failed: %v", err)
+	}
+	if _, ok := first.Entities["ORG|acme grid"]; !ok {
+		t.Fatalf("expected extracted entity, got %#v", first.Entities)
+	}
+
+	// An unchanged board is served from the cache.
+	second, err := service.buildProfile(record)
+	if err != nil {
+		t.Fatalf("cached buildProfile failed: %v", err)
+	}
+	if _, ok := second.Entities["ORG|acme grid"]; !ok {
+		t.Fatalf("cached profile lost its entity, got %#v", second.Entities)
+	}
+
+	// A board edit must invalidate the cached profile.
+	writeTestInvestigation(t, root, record, `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"n1","data":{"summary":"[ORG:Blue Harbor] scales capacity."}}],
+		"edges":[]
+	}`, "")
+	third, err := service.buildProfile(record)
+	if err != nil {
+		t.Fatalf("buildProfile after board change failed: %v", err)
+	}
+	if _, ok := third.Entities["ORG|acme grid"]; ok {
+		t.Fatalf("stale cached entity survived a board change, got %#v", third.Entities)
+	}
+	if _, ok := third.Entities["ORG|blue harbor"]; !ok {
+		t.Fatalf("expected the new entity after a board change, got %#v", third.Entities)
+	}
+
+	// A relationships.json change must invalidate too, even with an unchanged
+	// board (connection tags fold into the profile).
+	third, err = service.buildProfile(record)
+	if err != nil {
+		t.Fatalf("warm buildProfile failed: %v", err)
+	}
+	writeTestInvestigation(t, root, record, `{
+		"mode":"strict-grid",
+		"nodes":[{"id":"n1","data":{"summary":"[ORG:Blue Harbor] scales capacity."}}],
+		"edges":[]
+	}`, `{
+		"connections":[{"source":"n1","target":"n1","tag":"SUPPLY_RISK"}]
+	}`)
+	fifth, err := service.buildProfile(record)
+	if err != nil {
+		t.Fatalf("buildProfile after relationships change failed: %v", err)
+	}
+	if _, ok := fifth.RelationshipTags["SUPPLY_RISK"]; !ok {
+		t.Fatalf("cached profile missed the new relationship tag, got %#v", fifth.RelationshipTags)
+	}
+}

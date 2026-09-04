@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/url"
 	"os"
@@ -528,6 +529,14 @@ type Service struct {
 	vaultRoot string
 	store     *models.InvestigationStore
 
+	// profileCache memoises parsed investigation profiles by board content
+	// hash. A board save only invalidates ITS investigation; every other
+	// profile in the vault is reused, which keeps the full-vault recompute
+	// (run on every evidence event) proportional to what actually changed.
+	// Guarded by mu; cached profiles are shared between callers and must be
+	// treated as immutable.
+	profileCache map[string]profileCacheEntry
+
 	// sourceEvidence is the optional finder used to auto-attach source
 	// evidence to needs-source suggestions (wired by the app layer).
 	sourceEvidence SourceEvidenceFinder
@@ -542,14 +551,20 @@ type Service struct {
 	mu sync.Mutex
 }
 
+type profileCacheEntry struct {
+	boardHash uint64
+	profile   memoryProfile
+}
+
 func NewService(vaultRoot string) *Service {
 	root := strings.TrimSpace(vaultRoot)
 	if root == "" {
 		root = "abdomen_vault"
 	}
 	return &Service{
-		vaultRoot: root,
-		store:     models.NewInvestigationStore(root),
+		vaultRoot:    root,
+		store:        models.NewInvestigationStore(root),
+		profileCache: make(map[string]profileCacheEntry),
 	}
 }
 
@@ -4744,7 +4759,41 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 	}
 }
 
+// buildProfile parses an investigation's board into the match dimensions the
+// signal engine pairs against. Callers must hold s.mu. The returned profile
+// may come from the cache and is shared between callers: treat it as
+// immutable.
 func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile, error) {
+	rawBoard, err := s.store.LoadJSON(record.ID, models.InvestigationBoardFilename)
+	if err != nil {
+		if errors.Is(err, models.ErrInvestigationNotFound) {
+			delete(s.profileCache, record.ID)
+			return memoryProfile{
+				ID:                record.ID,
+				Title:             displayTitle(record),
+				Entities:          make(map[string]signalEvidence),
+				SourceDomains:     make(map[string]signalEvidence),
+				RelationshipTags:  make(map[string]signalEvidence),
+				ContradictionCues: make(map[string]signalEvidence),
+				Patterns:          make(map[string]signalEvidence),
+				Claims:            make(map[string]signalEvidence),
+			}, nil
+		}
+		return memoryProfile{}, err
+	}
+
+	boardHash := fnv64a(rawBoard)
+	// The profile also folds in relationships.json (connection tags), so both
+	// file contents take part in the cache key: a connect-dots run must
+	// invalidate the cached profile even when the board itself did not change.
+	rawRelationships, relationshipsErr := s.store.LoadJSON(record.ID, models.InvestigationRelationshipsFilename)
+	if relationshipsErr == nil {
+		boardHash ^= fnv64a(rawRelationships)
+	}
+	if cached, ok := s.profileCache[record.ID]; ok && cached.boardHash == boardHash {
+		return cached.profile, nil
+	}
+
 	profile := memoryProfile{
 		ID:                record.ID,
 		Title:             displayTitle(record),
@@ -4754,14 +4803,6 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		ContradictionCues: make(map[string]signalEvidence),
 		Patterns:          make(map[string]signalEvidence),
 		Claims:            make(map[string]signalEvidence),
-	}
-
-	rawBoard, err := s.store.LoadJSON(record.ID, models.InvestigationBoardFilename)
-	if err != nil {
-		if errors.Is(err, models.ErrInvestigationNotFound) {
-			return profile, nil
-		}
-		return profile, err
 	}
 
 	var board persistedBoard
@@ -4832,8 +4873,7 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		})
 	}
 
-	rawRelationships, err := s.store.LoadJSON(record.ID, models.InvestigationRelationshipsFilename)
-	if err == nil {
+	if relationshipsErr == nil {
 		var relationships models.RelationshipResult
 		if json.Unmarshal(rawRelationships, &relationships) == nil {
 			for _, connection := range relationships.Connections {
@@ -4851,7 +4891,19 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		}
 	}
 
+	if s.profileCache == nil {
+		s.profileCache = make(map[string]profileCacheEntry)
+	}
+	s.profileCache[record.ID] = profileCacheEntry{boardHash: boardHash, profile: profile}
 	return profile, nil
+}
+
+// fnv64a hashes file bytes into the profile cache key. A missing file hashes
+// to the FNV offset basis, so "no relationships yet" is still a stable key.
+func fnv64a(data []byte) uint64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write(data)
+	return hasher.Sum64()
 }
 
 type extractedEvidence struct {
