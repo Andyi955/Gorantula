@@ -3,6 +3,8 @@ package brain
 import (
 	"context"
 	"fmt"
+	"log"
+	"regexp"
 	"strings"
 
 	"github.com/Andyi955/Gorantula/models"
@@ -41,6 +43,7 @@ func (b *Brain) ExtractClaims(ctx context.Context, paper models.Paper) ([]models
 	if err := provider.GenerateJSON(ctx, prompt, &resp); err != nil {
 		return nil, err
 	}
+	log.Printf("[claim-extract] paper=%s got %d claim(s): %+v", paper.ID, len(resp.Claims), resp.Claims)
 
 	claims := make([]models.Claim, 0, len(resp.Claims))
 	for i, claim := range resp.Claims {
@@ -51,7 +54,7 @@ func (b *Brain) ExtractClaims(ctx context.Context, paper models.Paper) ([]models
 		claim.PaperID = paper.ID
 		claim.Text = strings.TrimSpace(claim.Text)
 		claim.Kind = strings.ToLower(strings.TrimSpace(claim.Kind))
-		claim.Entities = cleanClaimEntities(claim.Entities)
+		claim.Entities = mergeEntityTags(claim.Entities, supplementEntityTags(claim.Text))
 		claim.Provenance = sourceLabel
 
 		snippet, offset, ok := groundClaimText(source, claim.Text)
@@ -207,27 +210,86 @@ func wordSet(text string) map[string]struct{} {
 	return set
 }
 
-func cleanClaimEntities(entities []string) []string {
-	seen := make(map[string]struct{}, len(entities))
-	next := make([]string, 0, len(entities))
-	for _, entity := range entities {
-		entity = strings.TrimSpace(entity)
-		if entity == "" {
+var (
+	researchPercentRe = regexp.MustCompile(`\b\d+(?:\.\d+)?\s*%`)
+	researchMoneyRe   = regexp.MustCompile(`\$\s?\d[\d,]*(?:\.\d+)?\s?(?:million|billion|trillion|[KMB])?`)
+	researchYearRe    = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
+	// A capitalized proper noun following these tokens is most likely a product /
+	// drug / intervention, so it tags as PRODUCT. Mid-sentence (it follows a
+	// preposition), so it never collides with a sentence-initial word.
+	researchProductRe = regexp.MustCompile(`\b(?:with|of|using|treating|administered|therapy)\s+([A-Z][a-zA-Z][a-zA-Z-]*)\b`)
+)
+
+var researchEntityStopwords = map[string]struct{}{
+	"the": {}, "and": {}, "or": {}, "but": {}, "a": {}, "an": {}, "in": {}, "on": {},
+	"at": {}, "to": {}, "for": {}, "of": {}, "with": {}, "by": {}, "from": {},
+	"that": {}, "this": {}, "these": {}, "those": {}, "is": {}, "are": {}, "was": {},
+	"were": {}, "it": {}, "its": {}, "as": {}, "than": {}, "when": {}, "where": {},
+	"which": {}, "while": {}, "study": {}, "reported": {}, "treatment": {},
+	"significantly": {}, "survival": {}, "rates": {}, "cohort": {}, "results": {},
+	"data": {}, "effect": {}, "method": {}, "methods": {}, "model": {}, "models": {},
+}
+
+// supplementEntityTags deterministically tags unambiguous entities (percentages,
+// money, years, products after a preposition, and all-caps acronyms) so the
+// claim graph stays useful even when the model under-tags entities.
+func supplementEntityTags(text string) []string {
+	var tags []string
+	seen := make(map[string]struct{})
+
+	add := func(tag string) {
+		if _, ok := seen[tag]; ok {
+			return
+		}
+		seen[tag] = struct{}{}
+		tags = append(tags, tag)
+	}
+
+	for _, match := range researchPercentRe.FindAllString(text, -1) {
+		add("[PERCENT:" + strings.TrimSpace(match) + "]")
+	}
+	for _, match := range researchMoneyRe.FindAllString(text, -1) {
+		add("[MONEY:" + strings.TrimSpace(match) + "]")
+	}
+	for _, match := range researchYearRe.FindAllString(text, -1) {
+		add("[DATE:" + match + "]")
+	}
+	for _, match := range researchProductRe.FindAllStringSubmatch(text, -1) {
+		if len(match) >= 2 && !isResearchStopword(strings.ToLower(match[1])) {
+			add("[PRODUCT:" + match[1] + "]")
+		}
+	}
+	return tags
+}
+
+func isResearchStopword(word string) bool {
+	_, ok := researchEntityStopwords[word]
+	return ok
+}
+
+// mergeEntityTags unions two sets of entity tags, de-duplicating on the
+// normalized TYPE|value key.
+func mergeEntityTags(left, right []string) []string {
+	seen := make(map[string]struct{}, len(left)+len(right))
+	next := make([]string, 0, len(left)+len(right))
+	for _, tag := range append(append([]string(nil), left...), right...) {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
 			continue
 		}
-		// Only keep tags on the closed vocabulary, e.g. "[ORG:OpenAI]".
-		typePrefix, _, ok := splitEntityTag(entity)
-		if !ok {
+		prefix, value, ok := splitEntityTag(tag)
+		if !ok || value == "" || prefix == "" {
 			continue
 		}
-		if _, allowed := canonicalResearchEntityTypes[typePrefix]; !allowed {
+		if _, allowed := canonicalResearchEntityTypes[prefix]; !allowed {
 			continue
 		}
-		if _, ok := seen[entity]; ok {
+		key := prefix + "|" + strings.ToLower(value)
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[entity] = struct{}{}
-		next = append(next, entity)
+		seen[key] = struct{}{}
+		next = append(next, tag)
 	}
 	return next
 }

@@ -98,3 +98,28 @@ func TestGroundClaimTextEmpty(t *testing.T) {
 		t.Fatalf("empty claim should not ground")
 	}
 }
+
+func TestSupplementEntityTags(t *testing.T) {
+	text := "Treatment with Metformin improved survival by 42% in 2026, costing $2.4B."
+	tags := supplementEntityTags(text)
+	joined := strings.Join(tags, " ")
+	for _, want := range []string{"[PRODUCT:Metformin]", "[PERCENT:42%]", "[DATE:2026]", "[MONEY:$2.4B]"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %s in %v", want, tags)
+		}
+	}
+}
+
+func TestMergeEntityTagsDedupesAndFilters(t *testing.T) {
+	merged := mergeEntityTags(
+		[]string{"[ORG:OpenAI]", "[PRODUCT:GPT-5]", "[ORG:OpenAI]", "[SAMPLE:junk]"},
+		[]string{"[PRODUCT:gpt-5]"},
+	)
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 merged entity tags after dedupe/filter, got %+v", merged)
+	}
+	joined := strings.Join(merged, " ")
+	if !strings.Contains(joined, "[ORG:OpenAI]") || !strings.Contains(joined, "[PRODUCT:GPT-5]") {
+		t.Errorf("unexpected merge result: %+v", merged)
+	}
+}

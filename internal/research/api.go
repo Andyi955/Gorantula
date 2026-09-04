@@ -47,6 +47,22 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		}
 		_ = json.NewEncoder(w).Encode(claims)
 
+	case len(parts) == 3 && parts[2] == "relations" && r.Method == http.MethodGet:
+		relations, err := service.ListRelations()
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(relations)
+
+	case len(parts) == 3 && parts[2] == "signals" && r.Method == http.MethodGet:
+		signals, err := service.ListSignals()
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(signals)
+
 	case len(parts) == 3 && parts[2] == "ingest" && r.Method == http.MethodPost:
 		handleIngest(w, r, service)
 
