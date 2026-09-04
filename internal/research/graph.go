@@ -217,12 +217,13 @@ func relationPhrase(rel models.ClaimRelation, claimByID map[string]models.Claim)
 	return fmt.Sprintf("%s (%s) vs %s (%s)", shortClaim(a), a.PaperID, shortClaim(b), b.PaperID)
 }
 
-// shortClaim keeps the signal headline human-sized.
+// shortClaim keeps the signal headline human-sized but not chopped: it only
+// truncates very long claims, and the frontend can expand to the full text.
 func shortClaim(claim models.Claim) string {
 	text := strings.TrimSpace(claim.Text)
 	runes := []rune(text)
-	if len(runes) > 64 {
-		return string(runes[:64]) + "…"
+	if len(runes) > 180 {
+		return string(runes[:180]) + "…"
 	}
 	return text
 }

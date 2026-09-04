@@ -80,6 +80,9 @@ const ScientificResearchLab = () => {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
   const [abstract, setAbstract] = useState('');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const toggleExpanded = (id: string) => setExpanded((cur) => ({ ...cur, [id]: !cur[id] }));
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -191,12 +194,44 @@ const ScientificResearchLab = () => {
                 </span>
                 <span className="text-[11px] text-[var(--forensic-text-faint)]">strength {signal.strength ?? '—'}</span>
               </div>
-              <p className="mt-2 text-sm font-semibold text-[var(--forensic-text)]">{signal.title}</p>
+              <p className={`mt-2 text-sm font-semibold text-[var(--forensic-text)] ${expanded[signal.id] ? '' : 'line-clamp-3'}`}>{signal.title}</p>
               {signal.reasoning && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{signal.reasoning}</p>}
-              <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
-                {signal.paperIDs.map((id) => (
-                  <span key={id} className="rounded border border-[var(--forensic-border-soft)] bg-[var(--forensic-glow)] px-1.5 py-0.5 text-[var(--forensic-accent)]">{id}</span>
-                ))}
+              {expanded[signal.id] && (
+                <div className="mt-2 flex flex-col gap-3 border-t border-[var(--forensic-border-soft)] pt-2">
+                  {signal.claimIDs.map((cid) => {
+                    const claim = claimById[cid];
+                    if (!claim) {
+                      return null;
+                    }
+                    return (
+                      <div key={cid} className="text-xs">
+                        <p className="text-[var(--forensic-text)]">{claim.text}</p>
+                        {claim.entities && claim.entities.length > 0 && (
+                          <p className="mt-0.5 text-[var(--forensic-accent)]">{claim.entities.join('  ')}</p>
+                        )}
+                        {claim.sourceSnippet && (
+                          <p className="mt-0.5 italic leading-relaxed text-[var(--forensic-text-faint)]">“{claim.sourceSnippet}”</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  {signal.paperIDs.map((id) => (
+                    <span key={id} className="rounded border border-[var(--forensic-border-soft)] bg-[var(--forensic-glow)] px-1.5 py-0.5 text-[var(--forensic-accent)]">{id}</span>
+                  ))}
+                </div>
+                {signal.title.length > 120 && (
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(signal.id)}
+                    className="text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-accent)] hover:underline"
+                  >
+                    {expanded[signal.id] ? 'Show less' : 'Show more'}
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -269,12 +304,38 @@ const ScientificResearchLab = () => {
           const basis = relation.basis?.map((key) => key.split('|').pop()).filter(Boolean).join(', ') || '';
           return (
             <div key={relation.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
-              <p className="text-sm text-[var(--forensic-text)]">
-                <span className="font-semibold">{source ? truncate(source.text) : relation.sourceClaimID}</span>{' '}
+              <p className={`text-sm text-[var(--forensic-text)] ${expanded[relation.id] ? '' : 'line-clamp-3'}`}>
+                <span className="font-semibold">{source ? source.text : relation.sourceClaimID}</span>{' '}
                 <span className="text-[var(--forensic-accent)]">{relationLabel(relation.relationKind)}</span>{' '}
-                <span className="font-semibold">{target ? truncate(target.text) : relation.targetClaimID}</span>
+                <span className="font-semibold">{target ? target.text : relation.targetClaimID}</span>
               </p>
               {basis && <p className="mt-1 text-[11px] text-[var(--forensic-text-faint)]">shared: {basis}</p>}
+              {expanded[relation.id] && (
+                <div className="mt-2 flex flex-col gap-3 border-t border-[var(--forensic-border-soft)] pt-2">
+                  {[source, target].filter((claim): claim is Claim => Boolean(claim)).map((claim) => (
+                    <div key={claim.id} className="text-xs">
+                      <p className="text-[var(--forensic-text)]">{claim.text}</p>
+                      {claim.entities && claim.entities.length > 0 && (
+                        <p className="mt-0.5 text-[var(--forensic-accent)]">{claim.entities.join('  ')}</p>
+                      )}
+                      {claim.sourceSnippet && (
+                        <p className="mt-0.5 italic leading-relaxed text-[var(--forensic-text-faint)]">“{claim.sourceSnippet}”</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {((source?.text.length || 0) + (target?.text.length || 0)) > 180 && (
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(relation.id)}
+                    className="text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-accent)] hover:underline"
+                  >
+                    {expanded[relation.id] ? 'Show less' : 'Show more'}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -313,11 +374,6 @@ const ScientificResearchLab = () => {
       </div>
     </div>
   );
-};
-
-const truncate = (text: string) => {
-  const clean = String(text).replace(/\[[^\]]*\]/g, '').trim();
-  return clean.length > 90 ? `${clean.slice(0, 90)}…` : clean || text;
 };
 
 export default ScientificResearchLab;
