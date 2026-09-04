@@ -5824,6 +5824,7 @@ body {
   align-items: center;
   min-height: 2.25rem;
   border: 1px solid rgba(129, 227, 255, 0.18);
+  border-radius: 0.45rem;
   background: rgba(2, 5, 8, 0.72);
   padding: 0 0.72rem;
   color: var(--forensic-text-muted);
@@ -5840,6 +5841,7 @@ body {
   gap: 0.48rem;
   min-height: 2.25rem;
   border: 1px solid rgba(255, 78, 129, 0.22);
+  border-radius: 0.45rem;
   background:
     linear-gradient(90deg, rgba(255, 78, 129, 0.11), transparent 58%),
     rgba(2, 5, 8, 0.78);
@@ -5891,6 +5893,7 @@ body {
 
 .forensic-brain-attention-trigger b {
   border: 1px solid rgba(0, 255, 65, 0.28);
+  border-radius: 0.22rem;
   background: rgba(0, 255, 65, 0.08);
   padding: 0.24rem 0.34rem;
   color: #8dffa9;
@@ -7364,6 +7367,7 @@ body {
   gap: 0.45rem;
   min-height: 2.25rem;
   border: 1px solid rgba(129, 227, 255, 0.22);
+  border-radius: 0.45rem;
   background: rgba(2, 5, 8, 0.82);
   padding: 0 0.72rem;
   color: var(--forensic-text);
@@ -7393,6 +7397,7 @@ body {
   justify-content: center;
   min-height: 2.25rem;
   border: 1px solid rgba(246, 200, 121, 0.22);
+  border-radius: 0.45rem;
   background: rgba(246, 200, 121, 0.055);
   padding: 0 0.72rem;
   color: #ffe0a6;

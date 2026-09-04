@@ -789,6 +789,10 @@ export default function BrainSignalsPanel({
     }
 
     try {
+      // The gateway registry is auxiliary: its handler queues behind signal
+      // recomputes on a busy backend, so it rides alongside the core fetches
+      // and lands after them instead of gating the whole restore on it.
+      const gatewaysPromise = fetchBrainGateways(currentInvestigationId).catch(() => [] as BrainGatewayUsage[])
       const nextSignals = await fetchBrainSignals(currentInvestigationId)
       const nextLinks = await fetchBrainLinks(currentInvestigationId)
       let nextBrainMap: BrainMapView | null = null
@@ -798,13 +802,6 @@ export default function BrainSignalsPanel({
         nextBrainMap = null
       }
       const nextClusters = await fetchBrainClusters(currentInvestigationId)
-      let nextGateways: BrainGatewayUsage[] = []
-      try {
-        nextGateways = await fetchBrainGateways(currentInvestigationId)
-      } catch {
-        // The gateway registry is auxiliary; never fail the whole load for it.
-        nextGateways = []
-      }
       const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
       const nextFollowUps = await fetchBrainFollowUps(currentInvestigationId)
       let nextAutonomyState: BrainAutonomyState | null = null
@@ -850,7 +847,6 @@ export default function BrainSignalsPanel({
 
       setLinks(sortByScore(nextLinks))
       setClusters(sortClusters(nextClusters))
-      setGatewayUsages(nextGateways)
       setSuggestions(sortSuggestionsForView(nextSuggestions))
       setFollowUps(nextFollowUps)
       setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
@@ -872,7 +868,15 @@ export default function BrainSignalsPanel({
         current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
       )
       setPendingFollowUp((current) => current ? nextFollowUps.find((action) => action.id === current.id) || null : null)
-    } catch {
+
+      // The auxiliary gateway registry lands AFTER the core restore: a busy
+      // backend must never blank the panel while the operator waits on it.
+      const nextGateways = await gatewaysPromise
+      if (requestIdRef.current === requestId) {
+        setGatewayUsages(nextGateways)
+      }
+    } catch (error) {
+      console.warn('[BrainPanel] load failed', error)
       if (requestIdRef.current === requestId) {
         setError('Brain signals unavailable')
       }
