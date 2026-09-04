@@ -123,3 +123,34 @@ func TestMergeEntityTagsDedupesAndFilters(t *testing.T) {
 		t.Errorf("unexpected merge result: %+v", merged)
 	}
 }
+
+func TestReviewCandidateChecklist(t *testing.T) {
+	mock := &MockProvider{
+		NameFunc: func() string { return "mock" },
+		GenerateJSONFunc: func(_ context.Context, _ string, target interface{}) error {
+			resp := target.(*models.ChecklistReviewResponse)
+			resp.Items = []models.ChecklistReviewItem{
+				{ID: "precision", Answer: "yes", Reason: "effect size reported", Confidence: 0.9},
+				{ID: "novelty", Answer: "unknown", Reason: "not enough evidence in the paper text", Confidence: 0.4},
+			}
+			return nil
+		},
+	}
+	b := &Brain{ModelRouter: map[string]ModelProvider{"mock": mock}}
+	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
+
+	items, err := b.ReviewCandidateChecklist(context.Background(), "Metformin improves survival", []models.Claim{
+		{ID: "c1", Text: "Metformin improves survival.", Entities: []string{"[PRODUCT:Metformin]"}, SourceSnippet: "Metformin improves survival."},
+	}, []models.Paper{
+		{ID: "p1", Title: "Metformin study", Abstract: "A clinical study reported that treatment with Metformin increased survival."},
+	})
+	if err != nil {
+		t.Fatalf("ReviewCandidateChecklist: %v", err)
+	}
+	if len(items) != 2 || items[0].ID != "precision" || items[0].Answer != "yes" {
+		t.Fatalf("unexpected review items: %+v", items)
+	}
+	if items[1].Answer != "unknown" {
+		t.Errorf("expected unknown for under-evidenced criterion, got %q", items[1].Answer)
+	}
+}

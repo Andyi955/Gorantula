@@ -49,7 +49,50 @@ interface ResearchSignal {
   createdAt?: string;
 }
 
-type View = 'signals' | 'corpus' | 'relations';
+interface ChecklistItem {
+  id: string;
+  question: string;
+  answer: string;
+  grade: string;
+  reason?: string;
+  confidence?: number;
+}
+
+interface Candidate {
+  id: string;
+  signalID: string;
+  hypothesis: string;
+  supporting?: string[];
+  contradicting?: string[];
+  claimIDs?: string[];
+  paperIDs?: string[];
+  noveltyScore?: number;
+  nearestWork?: string;
+  checklist?: ChecklistItem[];
+  verdict?: string;
+  evidenceGrade?: string;
+  state: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+type View = 'signals' | 'corpus' | 'relations' | 'candidates';
+
+const VERDICT_META: Record<string, { label: string; tone: string }> = {
+  agreed: { label: 'Agreed', tone: 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' },
+  disputed: { label: 'Disputed', tone: 'text-[#f6c879] border-[#f6c879]/45 bg-[#f6c879]/10' },
+  refuted: { label: 'Refuted', tone: 'text-[#ff8c86] border-[#ff8c86]/45 bg-[#ff8c86]/10' },
+};
+
+const STATE_LABEL: Record<string, string> = {
+  proposed: 'Proposed',
+  reviewed: 'Reviewed',
+  tested: 'Tested',
+  supported: 'Supported',
+  refuted: 'Refuted',
+  approved: 'Approved',
+  rejected: 'Rejected',
+};
 
 const SIGNAL_META: Record<string, { label: string; icon: typeof AlertTriangle; tone: string }> = {
   contradiction: { label: 'Contradiction', icon: AlertTriangle, tone: 'text-[#ff8c86] border-[#ff8c86]/40 bg-[#ff8c86]/10' },
@@ -74,6 +117,7 @@ const ScientificResearchLab = () => {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [relations, setRelations] = useState<ClaimRelation[]>([]);
   const [signals, setSignals] = useState<ResearchSignal[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,16 +132,18 @@ const ScientificResearchLab = () => {
     setLoading(true);
     setError(null);
     try {
-      const [p, c, r, s] = await Promise.all([
+      const [p, c, r, s, cands] = await Promise.all([
         fetch(`${RESEARCH_API}/papers`).then((res) => res.json()),
         fetch(`${RESEARCH_API}/claims`).then((res) => res.json()),
         fetch(`${RESEARCH_API}/relations`).then((res) => res.json()),
         fetch(`${RESEARCH_API}/signals`).then((res) => res.json()),
+        fetch(`${RESEARCH_API}/candidates`).then((res) => res.json()),
       ]);
       setPapers(Array.isArray(p) ? p : []);
       setClaims(Array.isArray(c) ? c : []);
       setRelations(Array.isArray(r) ? r : []);
       setSignals(Array.isArray(s) ? s : []);
+      setCandidates(Array.isArray(cands) ? cands : []);
     } catch {
       setError('Could not reach the research engine. Is the backend running at :8080?');
     } finally {
@@ -147,6 +193,15 @@ const ScientificResearchLab = () => {
       setError('Ingest failed. Check the backend + provider config.');
     } finally {
       setAdding(false);
+    }
+  };
+
+  const transitionCandidate = async (id: string, action: 'approve' | 'reject') => {
+    try {
+      await fetch(`${RESEARCH_API}/candidates/${id}/${action}?by=operator`, { method: 'POST' });
+      await reload();
+    } catch {
+      setError('Could not update the candidate.');
     }
   };
 
@@ -343,9 +398,93 @@ const ScientificResearchLab = () => {
     );
   };
 
+  const renderCandidates = () => {
+    if (candidates.length === 0) {
+      return emptyState('No candidates yet. Ingest papers that share entities to surface reviewable hypotheses.');
+    }
+    return (
+      <div className="mt-4 flex flex-col gap-3">
+        {candidates.map((candidate) => {
+          const verdict = VERDICT_META[candidate.verdict || 'disputed'] || VERDICT_META.disputed;
+          const checklist = candidate.checklist || [];
+          const confirmed = checklist.filter((item) => item.answer === 'yes').length;
+          const title = candidate.hypothesis;
+          return (
+            <div key={candidate.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${verdict.tone}`}>{verdict.label}</span>
+                <span className="rounded-md border border-[var(--forensic-border-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)]">{STATE_LABEL[candidate.state] || candidate.state}</span>
+                {candidate.noveltyScore !== undefined && (
+                  <span className="text-[11px] text-[var(--forensic-text-faint)]">novelty {Math.round(candidate.noveltyScore * 100)}%</span>
+                )}
+              </div>
+
+              {candidate.state === 'approved' && (
+                <p className="mt-1 text-[11px] text-[#90f3da]">
+                  Approved{candidate.approvedBy ? ` by ${candidate.approvedBy}` : ''}
+                  {candidate.verdict !== 'agreed'
+                    ? ` (operator override — ${checklist.filter((item) => item.answer !== 'yes').length} checklist item(s) unresolved)`
+                    : ''}
+                </p>
+              )}
+
+              <p className={`mt-2 text-sm font-semibold text-[var(--forensic-text)] ${expanded[candidate.id] ? '' : 'line-clamp-3'}`}>{title}</p>
+              {candidate.evidenceGrade && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{candidate.evidenceGrade} evidence</p>}
+
+              {expanded[candidate.id] && (
+                <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 border-t border-[var(--forensic-border-soft)] pt-3 lg:grid-cols-2">
+                  {checklist.map((item) => (
+                    <div key={item.id} className="flex items-start gap-2 text-xs">
+                      <span className={`mt-0.5 w-16 shrink-0 rounded border px-1.5 py-0.5 text-center text-[10px] font-bold uppercase ${
+                        item.answer === 'yes'
+                          ? 'border-[#90f3da]/45 bg-[#90f3da]/10 text-[#90f3da]'
+                          : item.answer === 'no'
+                            ? 'border-[#ff8c86]/45 bg-[#ff8c86]/10 text-[#ff8c86]'
+                            : 'border-[#f6c879]/45 bg-[#f6c879]/10 text-[#f6c879]'
+                      }`}>{item.answer}</span>
+                      <span className="leading-relaxed text-[var(--forensic-text-muted)]">
+                        {item.question}
+                        {item.reason && <span className="mt-0.5 block text-[11px] text-[var(--forensic-text-faint)]">— {item.reason}</span>}
+                      </span>
+                    </div>
+                  ))}
+                  {candidate.nearestWork && (
+                    <p className="text-[11px] italic text-[var(--forensic-text-faint)]">nearest existing work: {candidate.nearestWork}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[11px] text-[var(--forensic-text-faint)]">
+                  <span>checklist {confirmed}/{checklist.length}</span>
+                  {(candidate.paperIDs || []).map((id) => (
+                    <span key={id} className="rounded border border-[var(--forensic-border-soft)] bg-[var(--forensic-glow)] px-1.5 py-0.5 text-[var(--forensic-accent)]">{id}</span>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  {checklist.length > 0 && (
+                    <button type="button" onClick={() => toggleExpanded(candidate.id)} className="text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-accent)] hover:underline">
+                      {expanded[candidate.id] ? 'Hide checklist' : 'Show checklist'}
+                    </button>
+                  )}
+                  {candidate.state !== 'approved' && (
+                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'approve')} className="rounded-lg border border-[#90f3da]/50 bg-[#90f3da]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#90f3da] hover:bg-[#90f3da]/20">Approve</button>
+                  )}
+                  {candidate.state !== 'rejected' && (
+                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'reject')} className="rounded-lg border border-[#ff8c86]/45 bg-[#ff8c86]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#ff8c86] hover:bg-[#ff8c86]/20">Reject</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="h-full overflow-y-auto bg-[var(--forensic-bg-root)] p-6 text-[var(--forensic-text)]">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-6xl">
         <div className="flex items-center gap-2">
           <Microscope size={18} className="text-[var(--forensic-accent)]" aria-hidden />
           <h1 className="text-lg font-black tracking-tight text-[var(--forensic-text)]">Scientific Research</h1>
@@ -355,6 +494,7 @@ const ScientificResearchLab = () => {
         <div className="mt-3 flex flex-wrap gap-2">
           {nav([
             { id: 'signals', label: 'Findings', count: `${signals.length}` },
+            { id: 'candidates', label: 'Candidates', count: `${candidates.length}` },
             { id: 'corpus', label: 'Corpus', count: `${papers.length}` },
             { id: 'relations', label: 'Claim graph', count: `${relations.length}` },
           ])}
@@ -367,6 +507,7 @@ const ScientificResearchLab = () => {
         ) : (
           <>
             {view === 'signals' && renderSignals()}
+            {view === 'candidates' && renderCandidates()}
             {view === 'corpus' && renderCorpus()}
             {view === 'relations' && renderRelations()}
           </>
