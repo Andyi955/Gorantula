@@ -5190,11 +5190,13 @@ export default function BrainSignalsPanel({
           {activeTitle && <span className="forensic-brain-command-case">{activeTitle}</span>}
         </span>
         <div className="forensic-brain-command-actions">
-          <span className="forensic-brain-status">
-            {attentionSummary?.focus
-              ? `Focus: ${formatAttentionState(attentionSummary.dominantState)} / ${formatScore(attentionSummary.overallScore)}`
-              : 'Brain focus pending'}
-          </span>
+          {!attentionSummary?.items.length && (
+            <span className="forensic-brain-status">
+              {attentionSummary?.focus
+                ? `Focus: ${formatAttentionState(attentionSummary.dominantState)} / ${formatScore(attentionSummary.overallScore)}`
+                : 'Brain focus pending'}
+            </span>
+          )}
           {renderBrainAttentionTrigger()}
           {typeof brainUnreadTotal === 'number' && brainUnreadTotal > 0 && onMarkAllBrainSeen && (
             <button

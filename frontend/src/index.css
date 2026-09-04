@@ -5820,9 +5820,12 @@ body {
 }
 
 .forensic-brain-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
   border: 1px solid rgba(129, 227, 255, 0.18);
   background: rgba(2, 5, 8, 0.72);
-  padding: 0.55rem 0.7rem;
+  padding: 0 0.72rem;
   color: var(--forensic-text-muted);
   font-size: 0.62rem;
   font-weight: 900;
@@ -5832,15 +5835,15 @@ body {
 
 .forensic-brain-attention-trigger {
   display: inline-grid;
-  grid-template-columns: auto minmax(5.8rem, 12rem) auto;
+  grid-template-columns: auto minmax(0, 11rem) auto;
   align-items: center;
   gap: 0.48rem;
-  min-height: 2.2rem;
+  min-height: 2.25rem;
   border: 1px solid rgba(255, 78, 129, 0.22);
   background:
     linear-gradient(90deg, rgba(255, 78, 129, 0.11), transparent 58%),
     rgba(2, 5, 8, 0.78);
-  padding: 0.36rem 0.48rem;
+  padding: 0 0.6rem;
   color: var(--forensic-text-muted);
   text-align: left;
   transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
