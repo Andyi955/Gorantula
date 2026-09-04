@@ -365,15 +365,34 @@ const upsertAlertBucket = (alerts: SynthesisAlert[], incomingAlert: SynthesisAle
     return [incomingAlert, ...deduped].slice(0, MAX_ALERTS_PER_INVESTIGATION);
 };
 
+// Last persisted alert signature per investigation. Writing the same alerts
+// twice is not free: every board save triggers a backend recompute and a
+// BRAIN_FIRED broadcast, and the broadcast re-fires this persistence path -
+// without the signature guard the panel saves boards in a loop forever.
+const persistedAlertSignatures = new Map<string, string>();
+
 const persistInvestigationAlerts = (investigationId: string, alerts: SynthesisAlert[]) => {
+    const signature = JSON.stringify(alerts);
+    if (persistedAlertSignatures.get(investigationId) === signature) {
+        return;
+    }
+    persistedAlertSignatures.set(investigationId, signature);
+
     const savedState = getCachedBoardStateForInvestigation(investigationId);
     if (!savedState) {
+        persistedAlertSignatures.delete(investigationId);
         return;
     }
 
     void saveBoardStateForInvestigation(investigationId, {
         ...savedState,
         synthesisAlerts: alerts as PersistedSynthesisAlert[],
+    }).then((persisted) => {
+        if (!persisted) {
+            persistedAlertSignatures.delete(investigationId);
+        }
+    }).catch(() => {
+        persistedAlertSignatures.delete(investigationId);
     });
 };
 
@@ -700,6 +719,10 @@ export default function SynthesisPanel({
                 };
                 const nextBuckets = pruneBucketsForState(nextBucketsDraft, currentInvestigationId);
                 persistAlertBuckets(nextBuckets);
+                // These alerts just came OFF the board: record their signature
+                // so the persistence effect does not write the identical board
+                // straight back (which would recompute, broadcast, and loop).
+                persistedAlertSignatures.set(currentInvestigationId, JSON.stringify(persistedAlerts));
                 return nextBuckets;
             });
         })();
