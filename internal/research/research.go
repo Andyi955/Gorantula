@@ -17,16 +17,26 @@ import (
 )
 
 // Service is the research engine: a persistent corpus store, the claim
-// extractor backed by the brain's provider, and a deterministic claim-relation
-// graph + signal surfacing layer. Every phase emits a followable trace line so
-// a run can be debugged by reading the log.
+// extractor backed by the brain's provider, a deterministic claim-relation
+// graph + signal surfacing layer, and a candidate hypotheses + bounded review
+// pipeline. Every phase emits a followable trace line so a run can be debugged.
 type Service struct {
-	store *Store
-	brain *brain.Brain
+	store   *Store
+	brain   *brain.Brain
+	novelty NoveltyChecker
 }
 
 func NewService(root string, br *brain.Brain) *Service {
-	return &Service{store: NewStore(root), brain: br}
+	return &Service{
+		store:   NewStore(root),
+		brain:   br,
+		novelty: NewOpenAlexNoveltyChecker(),
+	}
+}
+
+// SetNoveltyChecker overrides the novelty checker (used by tests).
+func (s *Service) SetNoveltyChecker(checker NoveltyChecker) {
+	s.novelty = checker
 }
 
 // ListPapers returns all ingested papers.
@@ -47,6 +57,49 @@ func (s *Service) ListRelations() ([]models.ClaimRelation, error) {
 // ListSignals returns the surfaced research signals.
 func (s *Service) ListSignals() ([]models.ResearchSignal, error) {
 	return s.store.LoadSignals()
+}
+
+// ListCandidates returns the current candidate hypotheses.
+func (s *Service) ListCandidates() ([]models.CandidateHypothesis, error) {
+	return s.store.LoadCandidates()
+}
+
+// ApproveCandidate moves a candidate to the `approved` state (operator
+// agreement) and records who/when.
+func (s *Service) ApproveCandidate(id, by string) (models.CandidateHypothesis, bool, error) {
+	return s.transitionCandidate(id, func(c *models.CandidateHypothesis) {
+		c.State = models.CandidateStateApproved
+		c.ApprovedBy = by
+		c.ApprovedAt = time.Now().UTC().Format(time.RFC3339)
+	})
+}
+
+// RejectCandidate moves a candidate to the `rejected` state (operator decision).
+func (s *Service) RejectCandidate(id, by string) (models.CandidateHypothesis, bool, error) {
+	return s.transitionCandidate(id, func(c *models.CandidateHypothesis) {
+		c.State = models.CandidateStateRejected
+		c.ApprovedBy = by
+		c.ApprovedAt = time.Now().UTC().Format(time.RFC3339)
+	})
+}
+
+func (s *Service) transitionCandidate(id string, mutate func(*models.CandidateHypothesis)) (models.CandidateHypothesis, bool, error) {
+	candidates, err := s.store.LoadCandidates()
+	if err != nil {
+		return models.CandidateHypothesis{}, false, err
+	}
+	for i := range candidates {
+		if candidates[i].ID != id {
+			continue
+		}
+		mutate(&candidates[i])
+		if err := s.store.SaveCandidates(candidates); err != nil {
+			return models.CandidateHypothesis{}, false, err
+		}
+		trace("candidate", fmt.Sprintf("candidate %s -> %s", id, candidates[i].State))
+		return candidates[i], true, nil
+	}
+	return models.CandidateHypothesis{}, false, nil
 }
 
 // IngestPapers persists the given papers (deduplicated by ID), extracts claims
@@ -129,6 +182,9 @@ func (s *Service) IngestPapers(ctx context.Context, papers []models.Paper) ([]mo
 	if _, err := s.rebuildGraph(); err != nil {
 		return nil, err
 	}
+	if _, err := s.rebuildCandidates(ctx); err != nil {
+		return nil, err
+	}
 	trace("ingest", fmt.Sprintf("completed in %s", time.Since(startedAt).Round(time.Millisecond)))
 	return extracted, nil
 }
@@ -151,6 +207,51 @@ func (s *Service) rebuildGraph() ([]models.ResearchSignal, error) {
 	trace("graph", fmt.Sprintf("built %d relation(s) and surfaced %d signal(s) from %d claim(s)",
 		len(relations), len(signals), len(claims)))
 	return signals, nil
+}
+
+// rebuildCandidates promotes signals into candidate hypotheses, applies the
+// bounded review checklist, runs the (best-effort) novelty gate, and persists
+// the candidates. Deterministic and idempotent.
+func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypothesis, error) {
+	signals, err := s.store.LoadSignals()
+	if err != nil {
+		return nil, err
+	}
+	claims, err := s.store.LoadClaims()
+	if err != nil {
+		return nil, err
+	}
+	candidates := buildCandidates(signals, claims)
+	for i := range candidates {
+		evaluateChecklist(&candidates[i], claims)
+		if s.novelty != nil {
+			score, nearest, nErr := s.novelty.CheckNovelty(ctx, candidates[i].Hypothesis, claimEntities(claims, candidates[i]))
+			if nErr != nil {
+				trace("novelty", fmt.Sprintf("candidate %s novelty check unavailable: %v", candidates[i].ID, nErr))
+			} else {
+				candidates[i].NoveltyScore = score
+				candidates[i].NearestWork = nearest
+				evaluateChecklist(&candidates[i], claims) // re-run now that novelty is known
+			}
+		}
+	}
+	if err := s.store.SaveCandidates(candidates); err != nil {
+		return nil, err
+	}
+	trace("candidates", fmt.Sprintf("reviewed %d candidate(s): %d refuted, %d disputed, %d agreed",
+		len(candidates), countVerdict(candidates, models.CandidateVerdictRefuted),
+		countVerdict(candidates, models.CandidateVerdictDisputed), countVerdict(candidates, models.CandidateVerdictAgreed)))
+	return candidates, nil
+}
+
+func countVerdict(candidates []models.CandidateHypothesis, verdict string) int {
+	count := 0
+	for _, candidate := range candidates {
+		if candidate.Verdict == verdict {
+			count++
+		}
+	}
+	return count
 }
 
 // trace emits a timestamped, followable debug line for this Service.
@@ -226,6 +327,21 @@ func (s *Store) LoadSignals() ([]models.ResearchSignal, error) {
 
 func (s *Store) SaveSignals(signals []models.ResearchSignal) error {
 	return s.saveSlice(models.ResearchSignalsFile, signals)
+}
+
+func (s *Store) LoadCandidates() ([]models.CandidateHypothesis, error) {
+	var candidates []models.CandidateHypothesis
+	if err := s.readJSON(models.ResearchCandidatesFile, &candidates); err != nil {
+		return nil, err
+	}
+	if candidates == nil {
+		candidates = []models.CandidateHypothesis{}
+	}
+	return candidates, nil
+}
+
+func (s *Store) SaveCandidates(candidates []models.CandidateHypothesis) error {
+	return s.saveSlice(models.ResearchCandidatesFile, candidates)
 }
 
 func (s *Store) readJSON(filename string, target interface{}) error {

@@ -63,12 +63,59 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		}
 		_ = json.NewEncoder(w).Encode(signals)
 
+	case len(parts) == 3 && parts[2] == "candidates" && r.Method == http.MethodGet:
+		candidates, err := service.ListCandidates()
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(candidates)
+
+	case len(parts) == 5 && parts[2] == "candidates" && r.Method == http.MethodPost:
+		handleCandidateTransition(w, r, service, parts[3], parts[4])
+
 	case len(parts) == 3 && parts[2] == "ingest" && r.Method == http.MethodPost:
 		handleIngest(w, r, service)
 
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func handleCandidateTransition(w http.ResponseWriter, r *http.Request, service *Service, id, action string) {
+	candidateID := strings.TrimSpace(id)
+	if candidateID == "" {
+		http.Error(w, "missing candidate id", http.StatusBadRequest)
+		return
+	}
+	operator := strings.TrimSpace(r.URL.Query().Get("by"))
+	if operator == "" {
+		operator = "operator"
+	}
+
+	var (
+		candidate models.CandidateHypothesis
+		found     bool
+		err       error
+	)
+	switch action {
+	case "approve":
+		candidate, found, err = service.ApproveCandidate(candidateID, operator)
+	case "reject":
+		candidate, found, err = service.RejectCandidate(candidateID, operator)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	if !found {
+		http.Error(w, "candidate not found", http.StatusNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(candidate)
 }
 
 func handleIngest(w http.ResponseWriter, r *http.Request, service *Service) {

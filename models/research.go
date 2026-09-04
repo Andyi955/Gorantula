@@ -2,10 +2,11 @@ package models
 
 // Research corpus persistence filenames (kept in the research store root).
 const (
-	ResearchPapersFile    = "papers.json"
-	ResearchClaimsFile    = "claims.json"
-	ResearchRelationsFile = "relations.json"
-	ResearchSignalsFile   = "signals.json"
+	ResearchPapersFile     = "papers.json"
+	ResearchClaimsFile     = "claims.json"
+	ResearchRelationsFile  = "relations.json"
+	ResearchSignalsFile    = "signals.json"
+	ResearchCandidatesFile = "candidates.json"
 )
 
 // Claim relation kinds.
@@ -79,4 +80,51 @@ type ResearchSignal struct {
 	Reasoning string   `json:"reasoning,omitempty"`
 	Strength  float32  `json:"strength,omitempty"`
 	CreatedAt string   `json:"createdAt,omitempty"`
+}
+
+// CandidateHypothesis states (claim state machine).
+const (
+	CandidateStateProposed  = "proposed"
+	CandidateStateReviewed  = "reviewed"
+	CandidateStateTested    = "tested"
+	CandidateStateSupported = "supported"
+	CandidateStateRefuted   = "refuted"
+	CandidateStateApproved  = "approved"
+	CandidateStateRejected  = "rejected"
+)
+
+// Candidate verdicts from the bounded review checklist.
+const (
+	CandidateVerdictAgreed   = "agreed"
+	CandidateVerdictDisputed = "disputed"
+	CandidateVerdictRefuted  = "refuted"
+)
+
+// ChecklistItem is a single criterion in the bounded claim review.
+type ChecklistItem struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
+	Answer   string `json:"answer"` // yes | no | unknown
+	Grade    string `json:"grade"`  // evidence grade for this item
+}
+
+// CandidateHypothesis is a surfaced cross-paper finding promoted to a
+// reviewable hypothesis with a novelty score, a checklist, and a state.
+type CandidateHypothesis struct {
+	ID            string          `json:"id"`
+	SignalID      string          `json:"signalID"`
+	Hypothesis    string          `json:"hypothesis"`
+	Supporting    []string        `json:"supporting,omitempty"`
+	Contradicting []string        `json:"contradicting,omitempty"`
+	ClaimIDs      []string        `json:"claimIDs,omitempty"`
+	PaperIDs      []string        `json:"paperIDs,omitempty"`
+	NoveltyScore  float32         `json:"noveltyScore,omitempty"`
+	NearestWork   string          `json:"nearestWork,omitempty"`
+	Checklist     []ChecklistItem `json:"checklist,omitempty"`
+	Verdict       string          `json:"verdict,omitempty"`
+	EvidenceGrade string          `json:"evidenceGrade,omitempty"`
+	State         string          `json:"state"`
+	ApprovedBy    string          `json:"approvedBy,omitempty"`
+	ApprovedAt    string          `json:"approvedAt,omitempty"`
+	CreatedAt     string          `json:"createdAt,omitempty"`
 }
