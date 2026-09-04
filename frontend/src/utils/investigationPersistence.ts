@@ -234,30 +234,18 @@ const deleteIndexedBoardShadowStateForInvestigation = async (investigationId: st
   }))
 }
 
-const refreshBackendBoardCacheFromServer = async (
-  investigationId: string,
-  baselineState: PersistedBoardState,
-) => {
-  try {
-    const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`)
-    const parsed = parsePersistedBoardState(JSON.stringify(payload))
-    if (!parsed) {
-      return
-    }
-
-    const { state: hydrated } = reconcileLoadedBoardState(investigationId, parsed)
-    const currentCachedState = boardStateCache.get(investigationId)
-    if (currentCachedState && !arePersistedBoardStatesEquivalent(currentCachedState, baselineState)) {
-      return
-    }
-
-    const stateToCache = arePersistedBoardStatesEquivalent(baselineState, hydrated)
-      ? baselineState
-      : hydrated
-    boardStateCache.set(investigationId, stateToCache)
-    void writeIndexedBoardShadowStateForInvestigation(investigationId, stateToCache)
-  } catch {
-    // The foreground board has a usable cache; backend refresh is opportunistic.
+// Drops the in-memory cache and the IndexedDB shadow for one investigation
+// so the next board load fetches the backend board state fresh. Used when
+// the backend has written newer board content (gathered nodes from a
+// parallel scan) that a stale local shadow must not shadow out.
+export const invalidateBoardStateForInvestigation = async (investigationId: string) => {
+  const id = investigationId.trim()
+  if (!id) {
+    return
+  }
+  boardStateCache.delete(id)
+  if (shouldUseBackendPersistence()) {
+    await deleteIndexedBoardShadowStateForInvestigation(id)
   }
 }
 
@@ -483,30 +471,32 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
   if (shouldUseBackendPersistence()) {
     const memoryState = boardStateCache.get(investigationId)
     const indexedShadowState = memoryState ? null : await getIndexedBoardShadowStateForInvestigation(investigationId)
-    if (indexedShadowState) {
-      boardStateCache.set(investigationId, indexedShadowState)
-      void refreshBackendBoardCacheFromServer(investigationId, indexedShadowState)
-      return indexedShadowState
-    }
 
     try {
+      // ALWAYS consult the backend board file: with pipeline parallelism the
+      // crawl merges gathered nodes into it while the board is unmounted, so
+      // a stale shadow can hold fewer nodes than the server. The richer
+      // state wins; the shadow only wins an exact tie (nothing new to load).
       const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`)
       const parsed = parsePersistedBoardState(JSON.stringify(payload))
       if (parsed) {
         const { state: hydrated, shouldBackfillBackend } = reconcileLoadedBoardState(investigationId, parsed)
+        const localCandidate = memoryState || indexedShadowState
+        const chosenState = richerBoardState(localCandidate, hydrated)
+
         const cachedState = boardStateCache.get(investigationId)
-        if (cachedState && arePersistedBoardStatesEquivalent(cachedState, hydrated)) {
+        if (cachedState && arePersistedBoardStatesEquivalent(cachedState, chosenState)) {
           boardStateCache.set(investigationId, cachedState)
           void writeIndexedBoardShadowStateForInvestigation(investigationId, cachedState)
           return cachedState
         }
 
-        boardStateCache.set(investigationId, hydrated)
-        void writeIndexedBoardShadowStateForInvestigation(investigationId, hydrated)
+        boardStateCache.set(investigationId, chosenState)
+        void writeIndexedBoardShadowStateForInvestigation(investigationId, chosenState)
         if (shouldBackfillBackend) {
-          void saveBoardStateForInvestigation(investigationId, hydrated, { skipFallback: true })
+          void saveBoardStateForInvestigation(investigationId, chosenState, { skipFallback: true })
         }
-        return hydrated
+        return chosenState
       }
     } catch (error) {
       if (isBackendUnavailableError(error)) {
@@ -516,8 +506,20 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
       } else {
         console.warn('[InvestigationPersistence] Backend board load unavailable; using in-memory cache only.', error)
       }
-      return boardStateCache.get(investigationId) || null
+      return memoryState || indexedShadowState || boardStateCache.get(investigationId) || null
     }
+
+    // Backend answered but had no parseable board: the shadow (if any) is
+    // the best available state.
+    if (indexedShadowState) {
+      boardStateCache.set(investigationId, indexedShadowState)
+      return indexedShadowState
+    }
+    if (memoryState) {
+      boardStateCache.set(investigationId, memoryState)
+      return memoryState
+    }
+    return null
   }
 
   const fallback = getLocalBoardStateForInvestigation(investigationId)
@@ -530,6 +532,22 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
     boardStateCache.delete(investigationId)
   }
   return null
+}
+
+// Picks the board state holding more nodes: with pipeline parallelism the
+// backend board file gains gathered nodes while the board is unmounted, so
+// a stale local shadow must not shadow it out. Exact node-count ties prefer
+// the local state (it may carry unsaved operator edits).
+const richerBoardState = (
+  localState: PersistedBoardState | null | undefined,
+  backendState: PersistedBoardState,
+): PersistedBoardState => {
+  if (!localState) {
+    return backendState
+  }
+  const localCount = Array.isArray(localState.nodes) ? localState.nodes.length : 0
+  const backendCount = Array.isArray(backendState.nodes) ? backendState.nodes.length : 0
+  return backendCount >= localCount ? backendState : localState
 }
 
 export const saveBoardStateForInvestigation = async (

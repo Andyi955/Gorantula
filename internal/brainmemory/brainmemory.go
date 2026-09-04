@@ -112,6 +112,10 @@ const (
 	RelevanceBackgroundNoise = "background-noise"
 )
 
+// brainStateWriteMu serializes brain state file writes: concurrent renames
+// over the same target can transiently deny each other on Windows.
+var brainStateWriteMu sync.Mutex
+
 var (
 	ErrSignalNotFound           = errors.New("brain signal not found")
 	ErrLinkNotFound             = errors.New("brain memory link not found")
@@ -5701,7 +5705,20 @@ func (s *Service) saveFollowUps(actions map[string]BrainFollowUpAction) error {
 
 func (s *Service) loadBrainJSON(filename string, target interface{}) error {
 	path := filepath.Join(s.brainDir(), filename)
-	data, err := os.ReadFile(path)
+	var data []byte
+	var err error
+	// Atomic writes swap the file via rename; a reader opening during the
+	// swap can transiently hit a sharing violation on Windows. Retry briefly
+	// (a missing file is definitive and returns immediately).
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Millisecond)
+		}
+		data, err = os.ReadFile(path)
+		if err == nil || os.IsNotExist(err) {
+			break
+		}
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -5726,6 +5743,10 @@ func (s *Service) saveBrainJSON(filename string, payload interface{}) error {
 	// Atomic write: API reads and the recompute pass run concurrently, so a
 	// partially written state file must never be observable. Write to a
 	// unique temp file in the same directory, then rename over the target.
+	// Writes are serialized: concurrent renames over the same target can
+	// transiently deny each other on Windows.
+	brainStateWriteMu.Lock()
+	defer brainStateWriteMu.Unlock()
 	tmpFile, err := os.CreateTemp(dir, filename+".tmp-*")
 	if err != nil {
 		return err
@@ -5740,12 +5761,10 @@ func (s *Service) saveBrainJSON(filename string, payload interface{}) error {
 		os.Remove(tmpName)
 		return err
 	}
-	// Concurrent renames over the same target can transiently deny each
-	// other on Windows; a short retry converges without losing either write.
 	var renameErr error
-	for attempt := 0; attempt < 6; attempt++ {
+	for attempt := 0; attempt < 10; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Millisecond)
+			time.Sleep(time.Duration(attempt) * 3 * time.Millisecond)
 		}
 		if renameErr = os.Rename(tmpName, filepath.Join(dir, filename)); renameErr == nil {
 			break

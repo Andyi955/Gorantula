@@ -49,6 +49,7 @@ import {
   getCachedBoardStateForInvestigation,
   getCachedInvestigations,
   getCachedVaultResultForInvestigation,
+  invalidateBoardStateForInvestigation,
   loadBoardStateForInvestigation,
   loadDiscoveriesForInvestigations,
   loadInvestigations,
@@ -1358,6 +1359,15 @@ function App() {
           const vaultId = explicitVaultId || currentInvestigationId
           if (!vaultId) {
             return
+          }
+
+          // Pipeline parallelism: the crawl dispatched the analysis in
+          // parallel and merged the gathered nodes into the backend board
+          // state. Any cached board state or IndexedDB shadow written before
+          // that merge is stale - drop it so the board load fetches the
+          // backend file (nodes + relationships) fresh.
+          if (payload.analysisDispatched === true && explicitVaultId) {
+            void invalidateBoardStateForInvestigation(explicitVaultId)
           }
 
           delete qaSynthesisDemoByInvestigationRef.current[vaultId]

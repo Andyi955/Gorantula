@@ -2815,9 +2815,22 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         }));
     }, [tagStyles]);
 
+    // Investigation whose restore has actually completed (an apply ran to the
+    // end, not cancelled). loadedInvestigationIdRef alone is marked
+    // synchronously BEFORE the async backend fetch resolves, so a StrictMode
+    // remount (or any effect re-run from handler identity churn) cancelled the
+    // one in-flight load with no retry - after a refresh the memory cache was
+    // still cold while the app preloaded boards, so the auto-selected latest
+    // board stayed empty with no restore animation.
+    const completedBoardRestoreRef = useRef<string | null>(null);
+
     // Persist per investigation
     useEffect(() => {
-        if (!investigationId || loadedInvestigationIdRef.current === investigationId) return;
+        if (!investigationId) return;
+        // Skip only when this investigation's restore fully completed; if a
+        // previous pass was cancelled mid-load, re-drive the load instead of
+        // leaving the board empty.
+        if (loadedInvestigationIdRef.current === investigationId && completedBoardRestoreRef.current === investigationId) return;
 
         console.debug('[DetectiveBoard] Loading investigation:', investigationId);
         let cancelled = false;
@@ -2915,6 +2928,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }
                 setPendingIntegrationNodeIds(restoredPendingIntegrationNodeIds);
                 setHasConnectedDots(savedEdges.some((e: Edge) => e.data?.generatedBy === 'connectTheDots'));
+                // A real state was applied: this investigation's restore is
+                // complete. The synchronous null placeholder (cold cache) must
+                // NOT mark completion - the async backend fetch still has to
+                // land, and a StrictMode remount must be able to re-drive it.
+                completedBoardRestoreRef.current = investigationId;
             } else {
                 if (pendingInitialRestoreViewportFitRef.current === investigationId) {
                     pendingInitialRestoreViewportFitRef.current = null;
@@ -2944,6 +2962,11 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 return;
             }
             if (!immediateState) {
+                // Backend has no board for this investigation (e.g. a brand
+                // new vault before its first scan): the empty restore is the
+                // completed outcome - live node events update the board from
+                // here on.
+                completedBoardRestoreRef.current = investigationId;
                 finishBoardRestoreLoad(investigationId, loadStartedAt, backendState ? 'async-restore' : 'empty', 0, 0);
             }
         });
@@ -4501,6 +4524,15 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
                 }
 
                 if (isAppendResult) {
+                    return;
+                }
+                // Pipeline parallelism: when the backend already dispatched the
+                // persona/relationship/discovery pipeline during the crawl,
+                // dispatching again would only put the board in a fake
+                // analyzing state (the run-scoped claim ignores it and it
+                // would never complete). Connections and discoveries arrive
+                // live, or replay from the persisted result on mount.
+                if (msg.payload?.analysisDispatched === true) {
                     return;
                 }
                 // Queue auto connect dots for full new-investigation crawls once the board has render-ready nodes.

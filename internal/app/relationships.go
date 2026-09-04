@@ -145,7 +145,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		shouldForgetCancellation := true
 		defer func() {
 			if shouldForgetCancellation {
-				pipeline.ForgetCancellation(meta.RunID)
+				pipeline.ReleaseCancellation(meta)
 				releaseConnectDotsClaim()
 			}
 		}()
@@ -295,7 +295,7 @@ func triggerConnectDotsAnalysis(br *brain.Brain, vaultID string, nodes []models.
 		insightsSnapshot := append([]brain.PersonaInsight(nil), insights...)
 		shouldForgetCancellation = false
 		go func(vaultID string, nodes []models.MemoryNode, insights []brain.PersonaInsight) {
-			defer pipeline.ForgetCancellation(meta.RunID)
+			defer pipeline.ReleaseCancellation(meta)
 			defer releaseConnectDotsClaim()
 			broadcast(tracker.Start("discovery_review", "Reviewing breakthrough candidates"))
 			discoveryCtx, discoveryScopeID := br.StartPipelineTokenScope(ctx, "pipeline-discovery", "discovery_synthesis")

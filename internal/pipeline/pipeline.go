@@ -20,6 +20,10 @@ const pipelineProfileRetention = 100
 var (
 	pipelineTrackers      sync.Map
 	pipelineCancellations sync.Map
+	// Guards read-modify-write cycles on pipelineCancellations entries:
+	// parallel pipeline stages (report + persona analysis) register under
+	// the same run ID, and each stage releases its own registration.
+	pipelineCancellationMu sync.Mutex
 )
 
 type RunMetadata struct {
@@ -30,7 +34,8 @@ type RunMetadata struct {
 
 type cancellation struct {
 	vaultID string
-	cancel  context.CancelFunc
+	owners  int
+	cancels []context.CancelFunc
 }
 
 func ExtractRunMetadata(msg map[string]interface{}, fallbackVaultID, mode string) RunMetadata {
@@ -89,15 +94,56 @@ func ForgetTracker(runID string) {
 	}
 }
 
+// RegisterCancellation adds a cancellation under the run ID. Multiple
+// pipeline stages may run in parallel under one run ID (report + persona
+// analysis), so registrations stack: each stage releases its own with
+// ReleaseCancellation, and the run becomes cancellable until every stage
+// has released.
 func RegisterCancellation(meta RunMetadata, cancel context.CancelFunc) {
 	runID := strings.TrimSpace(meta.RunID)
 	if runID == "" || cancel == nil {
 		return
 	}
-	pipelineCancellations.Store(runID, cancellation{
+	pipelineCancellationMu.Lock()
+	defer pipelineCancellationMu.Unlock()
+	registration := cancellation{
 		vaultID: strings.TrimSpace(meta.VaultID),
-		cancel:  cancel,
-	})
+		cancels: []context.CancelFunc{cancel},
+		owners:  1,
+	}
+	if value, ok := pipelineCancellations.Load(runID); ok {
+		if existing, ok := value.(cancellation); ok {
+			registration.cancels = append(existing.cancels, cancel)
+			registration.owners = existing.owners + 1
+		}
+	}
+	pipelineCancellations.Store(runID, registration)
+}
+
+// ReleaseCancellation drops one stage's registration. The run stays
+// cancellable while any other stage is still registered, and the registry
+// entry is removed once the last stage releases.
+func ReleaseCancellation(meta RunMetadata) {
+	runID := strings.TrimSpace(meta.RunID)
+	if runID == "" {
+		return
+	}
+	pipelineCancellationMu.Lock()
+	defer pipelineCancellationMu.Unlock()
+	value, ok := pipelineCancellations.Load(runID)
+	if !ok {
+		return
+	}
+	registration, ok := value.(cancellation)
+	if !ok {
+		return
+	}
+	registration.owners--
+	if registration.owners <= 0 {
+		pipelineCancellations.Delete(runID)
+		return
+	}
+	pipelineCancellations.Store(runID, registration)
 }
 
 func CancelRun(runID, vaultID string) bool {
@@ -105,21 +151,28 @@ func CancelRun(runID, vaultID string) bool {
 	if runID == "" {
 		return false
 	}
+	pipelineCancellationMu.Lock()
 	value, ok := pipelineCancellations.Load(runID)
 	if !ok {
+		pipelineCancellationMu.Unlock()
 		return false
 	}
 	registration, ok := value.(cancellation)
 	if !ok {
 		pipelineCancellations.Delete(runID)
+		pipelineCancellationMu.Unlock()
 		return false
 	}
 	vaultID = strings.TrimSpace(vaultID)
 	if vaultID != "" && registration.vaultID != "" && vaultID != registration.vaultID {
+		pipelineCancellationMu.Unlock()
 		return false
 	}
-	registration.cancel()
+	for _, cancel := range registration.cancels {
+		cancel()
+	}
 	pipelineCancellations.Delete(runID)
+	pipelineCancellationMu.Unlock()
 	return true
 }
 
