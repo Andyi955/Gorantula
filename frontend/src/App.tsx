@@ -36,8 +36,8 @@ import {
   type BrowserQaTimelineDemoDetail,
 } from './utils/browserQaSeed'
 import { DEEP_REASONING_PREFERENCE_KEY, IMAGE_SCRAPING_PREFERENCE_KEY, readDeepReasoningPreference, readImageScrapingPreference } from './utils/searchPreferences'
-import { coerceBrainFiredEvent, fetchBrainSignals, type BrainFollowUpAction, type BrainSignal } from './utils/brainMemory'
-import { countUnseenBrainSignals, markBrainSignalsSeen } from './utils/brainSeen'
+import { coerceBrainFiredEvent, type BrainFollowUpAction, type BrainSignal } from './utils/brainMemory'
+import { markBrainSignalsSeen } from './utils/brainSeen'
 import {
   BOARD_RESTORE_COMPLETE_EVENT,
   BOARD_TOGGLE_DISCOVERY_PANEL_EVENT,
@@ -709,11 +709,8 @@ function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('spider')
   // Brain synapse engine: bumped whenever the backend broadcasts BRAIN_FIRED so
-  // the open Brain panel refreshes. The badge counts unseen signals per
-  // investigation (persisted seen-state in utils/brainSeen.ts), so the number
-  // is stable across page refreshes instead of counting raw events.
+  // the open Brain panel refreshes.
   const [brainFiredToken, setBrainFiredToken] = useState(0)
-  const [brainUnreadByInvestigation, setBrainUnreadByInvestigation] = useState<Record<string, number>>({})
   const [prompt, setPrompt] = useState('')
   const [crawlMode, setCrawlMode] = useState<SpiderOperationMode>('web')
   const [rabbitHoleDescentMode, setRabbitHoleDescentMode] = useState<'guided' | 'max'>('guided')
@@ -731,61 +728,11 @@ function App() {
 
   const [investigations, setInvestigations] = useState<InvestigationRecord[]>(() => initialInvestigationsRef.current || [])
   const [currentInvestigationId, setCurrentInvestigationId] = useState<string | null>(() => getMostRecentInvestigationId(initialInvestigationsRef.current || []))
-  // Mirrors the current view for the websocket handler, which is registered
-  // once per socket and must not read stale state from its closure.
-  const brainViewStateRef = useRef<{ tab: ActiveTab; investigationId: string | null }>({ tab: activeTab, investigationId: currentInvestigationId })
-  useEffect(() => {
-    brainViewStateRef.current = { tab: activeTab, investigationId: currentInvestigationId }
-  }, [activeTab, currentInvestigationId])
-  const brainUnreadCount = useMemo(
-    () => Object.values(brainUnreadByInvestigation).reduce((total, count) => total + count, 0),
-    [brainUnreadByInvestigation],
-  )
-  const recountBrainUnread = useCallback(async (investigationId: string) => {
-    try {
-      const signals = await fetchBrainSignals(investigationId)
-      const unseen = countUnseenBrainSignals(investigationId, signals)
-      setBrainUnreadByInvestigation((current) => ({ ...current, [investigationId]: unseen }))
-    } catch {
-      // Backend unavailable: leave the previous badge untouched.
-    }
-  }, [])
-  // The Brain panel calls this after every load while it is open, which is
-  // exactly what "the operator has looked at it" means.
+  // The Brain panel calls this after every load while it is open. Feeds the
+  // seen snapshot the panel's own strengthen-glow baselines read from.
   const handleBrainSignalsLoaded = useCallback((investigationId: string, signals: BrainSignal[]) => {
     markBrainSignalsSeen(investigationId, signals)
-    setBrainUnreadByInvestigation((current) => (
-      current[investigationId] ? { ...current, [investigationId]: 0 } : current
-    ))
   }, [])
-  // "Mark all seen": clear every investigation's brain badge in one action.
-  // Without it, badges from cases the operator never revisits linger forever
-  // (each one only clears when its own Brain panel is loaded). Writes the
-  // persisted seen snapshot per case so the count stays honest after
-  // refreshes; a failed fetch leaves that case's badge untouched.
-  const markAllBrainSeen = useCallback(async () => {
-    const targets = Object.entries(brainUnreadByInvestigation)
-      .filter(([, count]) => count > 0)
-      .map(([investigationId]) => investigationId)
-    if (targets.length === 0) {
-      return
-    }
-    await Promise.all(targets.map(async (investigationId) => {
-      try {
-        const signals = await fetchBrainSignals(investigationId)
-        markBrainSignalsSeen(investigationId, signals)
-      } catch {
-        // Signals unavailable for this case: keep its badge.
-      }
-    }))
-    setBrainUnreadByInvestigation((current) => {
-      const next = { ...current }
-      for (const investigationId of targets) {
-        next[investigationId] = 0
-      }
-      return next
-    })
-  }, [brainUnreadByInvestigation])
   const [returnVaultId, setReturnVaultId] = useState<string | null>(null)
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
   const [discoveriesByInvestigation, setDiscoveriesByInvestigation] = useState<Record<string, DiscoveryRecord[]>>({})
@@ -1274,11 +1221,6 @@ function App() {
           const firing = coerceBrainFiredEvent(msg.payload)
           if (!firing) {
             return
-          }
-          const view = brainViewStateRef.current
-          const isViewingThisInvestigation = view.tab === 'brain' && view.investigationId === firing.investigationId
-          if (!isViewingThisInvestigation) {
-            void recountBrainUnread(firing.investigationId)
           }
           setBrainFiredToken((current) => current + 1)
           return
@@ -2609,15 +2551,6 @@ function App() {
           >
             <Brain size={18} />
             Brain
-            {/* Hidden while Brain is open: the badge sums unseen overlaps for
-                every case, and with the synapse engine live across the vault
-                other cases keep re-arming it — a count on the tab you are
-                already reading is noise, not signal. */}
-            {activeTab !== 'brain' && brainUnreadCount > 0 && (
-              <span className="ml-1 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-cyber-purple px-1.5 text-[11px] font-bold text-white">
-                {brainUnreadCount > 9 ? '9+' : brainUnreadCount}
-              </span>
-            )}
           </button>
           <button
             onClick={() => setActiveTab('chat')}
@@ -3219,8 +3152,6 @@ function App() {
                   onLaunchFocusedRabbitHole={handleLaunchFocusedRabbitHole}
                   externalFiredToken={brainFiredToken}
                   onSignalsLoaded={handleBrainSignalsLoaded}
-                  brainUnreadTotal={brainUnreadCount}
-                  onMarkAllBrainSeen={() => void markAllBrainSeen()}
                 />
               </Suspense>
             )}

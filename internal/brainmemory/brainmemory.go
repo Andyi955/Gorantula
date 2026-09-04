@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +27,9 @@ const (
 	GatewaySourceDomain    = "source-domain"
 	GatewayRelationshipTag = "relationship-tag"
 	GatewayContradiction   = "contradiction"
+	GatewayPattern         = "pattern"
+	GatewayClaims          = "claims"
+	GatewaySemantic        = "semantic"
 
 	brainDirectoryName  = "brain"
 	signalsFilename     = "signals.json"
@@ -525,6 +529,14 @@ type Service struct {
 	vaultRoot string
 	store     *models.InvestigationStore
 
+	// profileCache memoises parsed investigation profiles by board content
+	// hash. A board save only invalidates ITS investigation; every other
+	// profile in the vault is reused, which keeps the full-vault recompute
+	// (run on every evidence event) proportional to what actually changed.
+	// Guarded by mu; cached profiles are shared between callers and must be
+	// treated as immutable.
+	profileCache map[string]profileCacheEntry
+
 	// sourceEvidence is the optional finder used to auto-attach source
 	// evidence to needs-source suggestions (wired by the app layer).
 	sourceEvidence SourceEvidenceFinder
@@ -539,14 +551,20 @@ type Service struct {
 	mu sync.Mutex
 }
 
+type profileCacheEntry struct {
+	boardHash uint64
+	profile   memoryProfile
+}
+
 func NewService(vaultRoot string) *Service {
 	root := strings.TrimSpace(vaultRoot)
 	if root == "" {
 		root = "abdomen_vault"
 	}
 	return &Service{
-		vaultRoot: root,
-		store:     models.NewInvestigationStore(root),
+		vaultRoot:    root,
+		store:        models.NewInvestigationStore(root),
+		profileCache: make(map[string]profileCacheEntry),
 	}
 }
 
@@ -563,6 +581,9 @@ type memoryProfile struct {
 	SourceDomains     map[string]signalEvidence
 	RelationshipTags  map[string]signalEvidence
 	ContradictionCues map[string]signalEvidence
+	Patterns          map[string]signalEvidence
+	Claims            map[string]signalEvidence
+	Semantic          semanticFingerprint
 }
 
 type persistedBoard struct {
@@ -627,6 +648,10 @@ type reasonRelevanceStats struct {
 	SourceCount           int
 	RelationshipCount     int
 	ContradictionCount    int
+	NamedPatternCount     int
+	BroadPatternCount     int
+	ClaimCount            int
+	SemanticCount         int
 	ReasonCount           int
 }
 
@@ -4734,7 +4759,41 @@ func writeAPIResult(w http.ResponseWriter, payload interface{}, err error) {
 	}
 }
 
+// buildProfile parses an investigation's board into the match dimensions the
+// signal engine pairs against. Callers must hold s.mu. The returned profile
+// may come from the cache and is shared between callers: treat it as
+// immutable.
 func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile, error) {
+	rawBoard, err := s.store.LoadJSON(record.ID, models.InvestigationBoardFilename)
+	if err != nil {
+		if errors.Is(err, models.ErrInvestigationNotFound) {
+			delete(s.profileCache, record.ID)
+			return memoryProfile{
+				ID:                record.ID,
+				Title:             displayTitle(record),
+				Entities:          make(map[string]signalEvidence),
+				SourceDomains:     make(map[string]signalEvidence),
+				RelationshipTags:  make(map[string]signalEvidence),
+				ContradictionCues: make(map[string]signalEvidence),
+				Patterns:          make(map[string]signalEvidence),
+				Claims:            make(map[string]signalEvidence),
+			}, nil
+		}
+		return memoryProfile{}, err
+	}
+
+	boardHash := fnv64a(rawBoard)
+	// The profile also folds in relationships.json (connection tags), so both
+	// file contents take part in the cache key: a connect-dots run must
+	// invalidate the cached profile even when the board itself did not change.
+	rawRelationships, relationshipsErr := s.store.LoadJSON(record.ID, models.InvestigationRelationshipsFilename)
+	if relationshipsErr == nil {
+		boardHash ^= fnv64a(rawRelationships)
+	}
+	if cached, ok := s.profileCache[record.ID]; ok && cached.boardHash == boardHash {
+		return cached.profile, nil
+	}
+
 	profile := memoryProfile{
 		ID:                record.ID,
 		Title:             displayTitle(record),
@@ -4742,14 +4801,8 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		SourceDomains:     make(map[string]signalEvidence),
 		RelationshipTags:  make(map[string]signalEvidence),
 		ContradictionCues: make(map[string]signalEvidence),
-	}
-
-	rawBoard, err := s.store.LoadJSON(record.ID, models.InvestigationBoardFilename)
-	if err != nil {
-		if errors.Is(err, models.ErrInvestigationNotFound) {
-			return profile, nil
-		}
-		return profile, err
+		Patterns:          make(map[string]signalEvidence),
+		Claims:            make(map[string]signalEvidence),
 	}
 
 	var board persistedBoard
@@ -4757,6 +4810,7 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		return profile, err
 	}
 
+	nodeTexts := make([]string, 0, len(board.Nodes))
 	for _, node := range board.Nodes {
 		nodeID := strings.TrimSpace(node.ID)
 		if nodeID == "" {
@@ -4770,8 +4824,16 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 			node.Data.Summary,
 			node.Data.FullText,
 		}, "\n")
-		for _, entity := range extractTaggedEntityEvidence(searchableText, nodeID) {
+		nodeTexts = append(nodeTexts, searchableText)
+		nodeEntities := extractTaggedEntityEvidence(searchableText, nodeID)
+		for _, entity := range nodeEntities {
 			profile.Entities[entity.Value] = mergeEvidence(profile.Entities[entity.Value], entity.Evidence)
+		}
+		for _, pattern := range extractPatternEvidence(nodeEntities, nodeID) {
+			profile.Patterns[pattern.Value] = mergeEvidence(profile.Patterns[pattern.Value], pattern.Evidence)
+		}
+		for _, claim := range extractClaimMatches(searchableText, nodeID) {
+			profile.Claims[claim.Value] = mergeEvidence(profile.Claims[claim.Value], claim.Evidence)
 		}
 		for _, cue := range extractTaggedContradictionEvidence(searchableText, nodeID) {
 			profile.ContradictionCues[cue.Value] = mergeEvidence(profile.ContradictionCues[cue.Value], cue.Evidence)
@@ -4786,6 +4848,8 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 			}
 		}
 	}
+
+	profile.Semantic = buildSemanticFingerprint(nodeTexts)
 
 	for _, edge := range board.Edges {
 		tag := relationshipTag(edge.Data.Tag)
@@ -4809,8 +4873,7 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		})
 	}
 
-	rawRelationships, err := s.store.LoadJSON(record.ID, models.InvestigationRelationshipsFilename)
-	if err == nil {
+	if relationshipsErr == nil {
 		var relationships models.RelationshipResult
 		if json.Unmarshal(rawRelationships, &relationships) == nil {
 			for _, connection := range relationships.Connections {
@@ -4828,7 +4891,19 @@ func (s *Service) buildProfile(record models.InvestigationRecord) (memoryProfile
 		}
 	}
 
+	if s.profileCache == nil {
+		s.profileCache = make(map[string]profileCacheEntry)
+	}
+	s.profileCache[record.ID] = profileCacheEntry{boardHash: boardHash, profile: profile}
 	return profile, nil
+}
+
+// fnv64a hashes file bytes into the profile cache key. A missing file hashes
+// to the FNV offset basis, so "no relationships yet" is still a stable key.
+func fnv64a(data []byte) uint64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write(data)
+	return hasher.Sum64()
 }
 
 type extractedEvidence struct {
@@ -4902,6 +4977,9 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string, 
 	reasons = append(reasons, matchingSourceReasons(current, target)...)
 	reasons = append(reasons, matchingRelationshipReasons(current, target)...)
 	reasons = append(reasons, matchingContradictionReasons(current, target)...)
+	reasons = append(reasons, matchingPatternReasons(current, target)...)
+	reasons = append(reasons, matchingClaimReasons(current, target)...)
+	reasons = append(reasons, matchingSemanticReasons(current, target)...)
 	// A nil set means the whole registry is enabled; otherwise only reasons
 	// from enabled gateways survive, so a pair matching solely through a
 	// disabled gateway produces no signal at all.
@@ -4944,7 +5022,13 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string, 
 		CreatedAt:             timestamp,
 		UpdatedAt:             timestamp,
 	}
-	signal.ID = deterministicID("brain-signal", signal.InvestigationID, signal.TargetInvestigationID, reasonSignature(reasons))
+	// A match's identity is the PAIR it connects, not the reasons that fired
+	// it. Reason-based IDs churned whenever a recompute shifted a reason set
+	// (a claim appearing, a similarity crossing a threshold), which resurrect
+	// dismissed matches and re-inflate the unseen badge after every
+	// recompute. Reason changes still surface: they move the score, and a
+	// climb of 0.05+ re-marks the pair as strengthened.
+	signal.ID = deterministicID("brain-signal", signal.InvestigationID, signal.TargetInvestigationID)
 	return signal, true
 }
 
@@ -4961,17 +5045,41 @@ func shouldAutoPromoteSignal(signal BrainSignal) bool {
 	if !hasMeaningfulAutoPromotionEvidence(signal) {
 		return false
 	}
-	if signal.Score >= autoPromotionScoreThreshold {
+	// Promotion decisions key on the four core gateways the thresholds were
+	// calibrated against: the extended gateways (pattern, claims, semantic)
+	// enrich ranking, relevance and route trails, but their score bonus must
+	// not lower the bar for turning a firing into durable memory - capped
+	// scores would otherwise make the 0.75 repeat threshold meaningless.
+	coreScore := coreGatewayScore(signal.Reasons)
+	if coreScore >= autoPromotionScoreThreshold {
 		return true
 	}
-	return signal.ActivationCount >= repeatedPromotionActivationCount && signal.Score >= repeatedPromotionScoreThreshold
+	return signal.ActivationCount >= repeatedPromotionActivationCount && coreScore >= repeatedPromotionScoreThreshold
+}
+
+// coreGatewayScore scores only the core recall gateways (entity/date, source
+// domain, relationship tag, contradiction). Extended gateways keep their
+// ranking weight in signal.Score but cannot carry one-shot auto-promotion.
+func coreGatewayScore(reasons []SignalReason) float64 {
+	core := make([]SignalReason, 0, len(reasons))
+	for _, reason := range reasons {
+		switch reason.Gateway {
+		case GatewayEntityDate, GatewaySourceDomain, GatewayRelationshipTag, GatewayContradiction:
+			core = append(core, reason)
+		}
+	}
+	return scoreReasons(core)
 }
 
 func hasMeaningfulAutoPromotionEvidence(signal BrainSignal) bool {
 	for _, reason := range signal.Reasons {
 		switch reason.Gateway {
-		case GatewayRelationshipTag:
+		case GatewayRelationshipTag, GatewayClaims:
 			return true
+		case GatewayPattern:
+			if patternReasonHasNamedClue(reason) {
+				return true
+			}
 		case GatewayEntityDate:
 			if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(reason.Value)), "DATE|") {
 				return true
@@ -5221,6 +5329,12 @@ func scoreReasons(reasons []SignalReason) float64 {
 				score += 0.30
 			case GatewayContradiction:
 				score += 0.36
+			case GatewayPattern:
+				score += 0.34
+			case GatewayClaims:
+				score += 0.38
+			case GatewaySemantic:
+				score += 0.28
 			}
 			seen[reason.Gateway] = true
 		} else {
@@ -5250,13 +5364,19 @@ func calibrateSignalRelevance(reasons []SignalReason, score float64) relevanceCa
 	case stats.ContradictionCount > 0 && (stats.MeaningfulEntityCount > 0 || stats.SourceCount > 0 || stats.RelationshipCount > 0):
 		class = RelevanceStrongMemory
 		reason = "A contradiction cue is backed by another gateway and needs verification."
+	case stats.NamedPatternCount > 0 && (stats.MeaningfulEntityCount > 0 || stats.SourceCount > 0 || stats.RelationshipCount > 0):
+		class = RelevanceStrongMemory
+		reason = "A recurring entity pattern is backed by another gateway."
+	case stats.ClaimCount > 0 && (stats.MeaningfulEntityCount > 0 || stats.SourceCount > 0 || stats.RelationshipCount > 0):
+		class = RelevanceStrongMemory
+		reason = "The same quantified claim is backed by another gateway."
 	case stats.MeaningfulEntityCount > 0 && stats.SourceCount > 0:
 		class = RelevanceStrongMemory
 		reason = "A named clue and a shared source domain both connect these investigations."
 	case stats.MeaningfulEntityCount >= 2 && score >= 0.55:
 		class = RelevanceStrongMemory
 		reason = "Multiple specific named clues connect these investigations."
-	case stats.RelationshipCount > 0 || stats.SourceCount > 0 || stats.MeaningfulEntityCount > 0 || stats.ContradictionCount > 0:
+	case stats.RelationshipCount > 0 || stats.SourceCount > 0 || stats.MeaningfulEntityCount > 0 || stats.ContradictionCount > 0 || stats.NamedPatternCount > 0 || stats.ClaimCount > 0 || stats.SemanticCount > 0:
 		class = RelevancePossibleBridge
 		reason = "A usable bridge exists, but it needs comparison before it should steer the investigation."
 	default:
@@ -5306,9 +5426,32 @@ func analyzeReasonRelevance(reasons []SignalReason) reasonRelevanceStats {
 			stats.RelationshipCount++
 		case GatewayContradiction:
 			stats.ContradictionCount++
+		case GatewayPattern:
+			// A co-occurrence pattern is a structural clue only when it
+			// carries a named entity; date-pair calendars repeat constantly.
+			if patternReasonHasNamedClue(reason) {
+				stats.NamedPatternCount++
+			} else {
+				stats.BroadPatternCount++
+			}
+		case GatewayClaims:
+			stats.ClaimCount++
+		case GatewaySemantic:
+			stats.SemanticCount++
 		}
 	}
 	return stats
+}
+
+// patternReasonHasNamedClue reports whether a pattern's entity pair includes
+// at least one non-date clue (organisation, person, location).
+func patternReasonHasNamedClue(reason SignalReason) bool {
+	for _, part := range strings.Split(reason.Value, "~") {
+		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(part)), "DATE|") {
+			return true
+		}
+	}
+	return false
 }
 
 func broadContextOnlyReasons(reasons []SignalReason) bool {
@@ -5394,10 +5537,16 @@ func suggestedAction(gateways []string) string {
 		switch gateway {
 		case GatewayContradiction:
 			return "Verify conflicting claim"
+		case GatewayClaims:
+			return "Cross-check shared claim"
+		case GatewayPattern:
+			return "Compare recurring pattern"
 		case GatewayRelationshipTag:
 			return "Inspect repeated relationship pattern"
 		case GatewaySourceDomain:
 			return "Compare source domain"
+		case GatewaySemantic:
+			return "Compare topical overlap"
 		case GatewayEntityDate:
 			return "Review older case"
 		}
@@ -5431,6 +5580,12 @@ func gatewayRank(gateway string) int {
 		return 2
 	case GatewayContradiction:
 		return 3
+	case GatewayPattern:
+		return 4
+	case GatewayClaims:
+		return 5
+	case GatewaySemantic:
+		return 6
 	default:
 		return 9
 	}
@@ -5444,20 +5599,6 @@ func limitReasons(reasons []SignalReason, limit int) []SignalReason {
 		return reasons
 	}
 	return reasons[:limit]
-}
-
-func reasonSignature(reasons []SignalReason) string {
-	parts := make([]string, 0, len(reasons))
-	for _, reason := range reasons {
-		parts = append(parts, strings.Join([]string{
-			reason.Gateway,
-			reason.Value,
-			strings.Join(cleanStringSet(reason.CurrentNodeIDs), ","),
-			strings.Join(cleanStringSet(reason.TargetNodeIDs), ","),
-		}, ":"))
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, "|")
 }
 
 func sortSignals(signals []BrainSignal) {

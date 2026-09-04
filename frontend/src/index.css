@@ -5820,9 +5820,13 @@ body {
 }
 
 .forensic-brain-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
   border: 1px solid rgba(129, 227, 255, 0.18);
+  border-radius: 0.45rem;
   background: rgba(2, 5, 8, 0.72);
-  padding: 0.55rem 0.7rem;
+  padding: 0 0.72rem;
   color: var(--forensic-text-muted);
   font-size: 0.62rem;
   font-weight: 900;
@@ -5832,15 +5836,16 @@ body {
 
 .forensic-brain-attention-trigger {
   display: inline-grid;
-  grid-template-columns: auto minmax(5.8rem, 12rem) auto;
+  grid-template-columns: auto minmax(0, 11rem) auto;
   align-items: center;
   gap: 0.48rem;
-  min-height: 2.2rem;
+  min-height: 2.25rem;
   border: 1px solid rgba(255, 78, 129, 0.22);
+  border-radius: 0.45rem;
   background:
     linear-gradient(90deg, rgba(255, 78, 129, 0.11), transparent 58%),
     rgba(2, 5, 8, 0.78);
-  padding: 0.36rem 0.48rem;
+  padding: 0 0.6rem;
   color: var(--forensic-text-muted);
   text-align: left;
   transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
@@ -5888,6 +5893,7 @@ body {
 
 .forensic-brain-attention-trigger b {
   border: 1px solid rgba(0, 255, 65, 0.28);
+  border-radius: 0.22rem;
   background: rgba(0, 255, 65, 0.08);
   padding: 0.24rem 0.34rem;
   color: #8dffa9;
@@ -7361,6 +7367,7 @@ body {
   gap: 0.45rem;
   min-height: 2.25rem;
   border: 1px solid rgba(129, 227, 255, 0.22);
+  border-radius: 0.45rem;
   background: rgba(2, 5, 8, 0.82);
   padding: 0 0.72rem;
   color: var(--forensic-text);
@@ -7390,6 +7397,7 @@ body {
   justify-content: center;
   min-height: 2.25rem;
   border: 1px solid rgba(246, 200, 121, 0.22);
+  border-radius: 0.45rem;
   background: rgba(246, 200, 121, 0.055);
   padding: 0 0.72rem;
   color: #ffe0a6;
@@ -7869,6 +7877,26 @@ body {
 .forensic-brain-chip-relationship {
   border-color: rgba(246, 200, 121, 0.3);
   color: #ffe0a6;
+}
+
+.forensic-brain-chip-contradiction {
+  border-color: rgba(255, 122, 122, 0.3);
+  color: #ffc2c2;
+}
+
+.forensic-brain-chip-pattern {
+  border-color: rgba(196, 148, 255, 0.3);
+  color: #e2ccff;
+}
+
+.forensic-brain-chip-claims {
+  border-color: rgba(126, 255, 213, 0.28);
+  color: #b8ffe4;
+}
+
+.forensic-brain-chip-semantic {
+  border-color: rgba(155, 176, 255, 0.3);
+  color: #ccd6ff;
 }
 
 .forensic-brain-relevance-chip {
