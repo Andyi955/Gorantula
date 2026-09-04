@@ -28,6 +28,7 @@ frontend/test-results/
 abdomen_vault/
 local-test-docs/
 docs/
+research_corpus/
 
 # Agent Configuration (Private)
 .agents/

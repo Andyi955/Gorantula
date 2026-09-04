@@ -3,7 +3,7 @@ import { AnimatePresence } from 'framer-motion'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { MergeCandidateNode } from './components/SynthesisPanel'
 import type { LandingTargetTab } from './components/LandingExperience'
-import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle, Activity, Brain } from 'lucide-react'
+import { Terminal, Database, Folder, Plus, Trash2, Settings, Clock, MessageSquare, Search, FileText, X, ListFilter, ChevronLeft, ChevronRight, GripVertical, AlertTriangle, Activity, Brain, Microscope } from 'lucide-react'
 import {
   buildSidebarInvestigationRows,
   createRootInvestigation,
@@ -96,9 +96,10 @@ const VaultChatbot = lazy(() => import('./components/VaultChatbot'))
 const SynthesisPanel = lazy(() => import('./components/SynthesisPanel'))
 const DiscoveryPanel = lazy(() => import('./components/DiscoveryPanel'))
 const BrainSignalsPanel = lazy(() => import('./components/BrainSignalsPanel'))
+const ScientificResearchLab = lazy(() => import('./components/ScientificResearchLab'))
 const LandingExperience = lazy(() => import('./components/LandingExperience'))
 
-type ActiveTab = 'spider' | 'board' | 'timeline' | 'brain' | 'chat' | 'settings'
+type ActiveTab = 'spider' | 'board' | 'timeline' | 'brain' | 'chat' | 'settings' | 'research'
 
 export interface DiscoveryRecord {
   id: string
@@ -803,12 +804,12 @@ function App() {
   })
   const sidebarRows = buildSidebarInvestigationRows(investigations);
   const isBoardWorkspaceActive = activeTab === 'board'
-  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'brain' || activeTab === 'chat' || activeTab === 'settings'
+  const isForensicWorkspaceActive = isBoardWorkspaceActive || activeTab === 'spider' || activeTab === 'timeline' || activeTab === 'brain' || activeTab === 'chat' || activeTab === 'settings' || activeTab === 'research'
   const expandedSidebarWidth = hasCustomSidebarWidth
     ? sidebarWidth
     : (isBoardWorkspaceActive ? SIDEBAR_BOARD_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH)
   const renderedSidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth
-  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && activeTab !== 'brain' && activeTab !== 'chat' && !isBoardWorkspaceActive
+  const showFloatingPanelHandles = activeTab !== 'spider' && activeTab !== 'settings' && activeTab !== 'timeline' && activeTab !== 'brain' && activeTab !== 'chat' && activeTab !== 'research' && !isBoardWorkspaceActive
   const visibleSystemNotice = activeTab === 'spider' && systemNotice && dismissedSystemNotice !== systemNotice ? systemNotice : null
   const systemNoticeText = visibleSystemNotice ? formatSystemNotice(visibleSystemNotice) : null
 
@@ -2560,6 +2561,13 @@ function App() {
             Vault Chat
           </button>
           <button
+            onClick={() => setActiveTab('research')}
+            className={getTabClassName('research', 'bg-cyber-green text-black shadow-[0_0_15px_rgba(16,185,129,0.5)]')}
+          >
+            <Microscope size={18} />
+            Research
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={getTabClassName('settings', 'bg-cyber-purple text-white shadow-[0_0_15px_rgba(188,19,254,0.5)]')}
           >
@@ -3177,6 +3185,14 @@ function App() {
               </Suspense>
             )}
           </div>
+          <div className={`absolute inset-0 transition-opacity duration-500 ${activeTab === 'research' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+            {activeTab === 'research' && (
+              <Suspense fallback={tabFallback('Scientific Research')}>
+                <ScientificResearchLab />
+              </Suspense>
+            )}
+          </div>
+
           {investigationSwitchOverlay && (
             <div
               data-testid="investigation-switch-loading"
