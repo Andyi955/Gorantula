@@ -341,7 +341,7 @@ const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> =>
       'Content-Type': 'application/json',
       ...(options?.headers || {}),
     },
-  })
+  } as RequestInit)
   if (!response.ok) {
     throw new Error(`Request failed with ${response.status}`)
   }
@@ -477,7 +477,7 @@ export const loadBoardStateForInvestigation = async (investigationId: string) =>
       // crawl merges gathered nodes into it while the board is unmounted, so
       // a stale shadow can hold fewer nodes than the server. The richer
       // state wins; the shadow only wins an exact tie (nothing new to load).
-      const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`)
+      const payload = await requestJSON<unknown>(`${API_BASE}/${encodeURIComponent(investigationId)}/board`, { priority: 'low' } as RequestInit)
       const parsed = parsePersistedBoardState(JSON.stringify(payload))
       if (parsed) {
         const { state: hydrated, shouldBackfillBackend } = reconcileLoadedBoardState(investigationId, parsed)
@@ -605,7 +605,7 @@ export const getCachedVaultResultForInvestigation = (investigationId: string) =>
 export const loadVaultResultForInvestigation = async (investigationId: string) => {
   if (shouldUseBackendPersistence()) {
     try {
-      const payload = await requestJSON<VaultResultPayload>(`${API_BASE}/${encodeURIComponent(investigationId)}/result`)
+      const payload = await requestJSON<VaultResultPayload>(`${API_BASE}/${encodeURIComponent(investigationId)}/result`, { priority: 'low' } as RequestInit)
       if (payload && Object.keys(payload).length > 0) {
         vaultResultCache.set(investigationId, payload)
         return payload
@@ -658,7 +658,7 @@ export const getCachedDiscoveriesForInvestigation = (investigationId: string) =>
 export const loadDiscoveriesForInvestigation = async (investigationId: string) => {
   if (shouldUseBackendPersistence()) {
     try {
-      const payload = await requestJSON<DiscoveryPayload>(`${API_BASE}/${encodeURIComponent(investigationId)}/discoveries`)
+      const payload = await requestJSON<DiscoveryPayload>(`${API_BASE}/${encodeURIComponent(investigationId)}/discoveries`, { priority: 'low' } as RequestInit)
       const discoveries = Array.isArray(payload) ? payload : []
       discoveriesCache.set(investigationId, discoveries)
       return discoveries
