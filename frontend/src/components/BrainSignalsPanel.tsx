@@ -142,6 +142,30 @@ interface BrainSignalsPanelProps {
   onSignalsLoaded?: (investigationId: string, signals: BrainSignal[]) => void
 }
 
+// Stale-while-revalidate cache of the last loaded brain bundle per
+// investigation (module-level: it survives tab switches so revisiting an
+// investigation renders instantly instead of replaying the fetch chain).
+// Every load still refreshes from the backend and overwrites the entry.
+type BrainMemoryBundle = {
+  signals: BrainSignal[]
+  links: MemoryLink[]
+  brainMap: BrainMapView | null
+  clusters: MemoryCluster[]
+  suggestions: BrainSuggestion[]
+  followUps: BrainFollowUpAction[]
+  autonomy: BrainAutonomyState | null
+  attention: BrainAttentionSummary | null
+}
+
+const BRAIN_BUNDLE_CACHE_LIMIT = 12
+const brainBundleCache = new Map<string, BrainMemoryBundle>()
+
+// Test hook: the cache intentionally survives panel unmounts and switches,
+// so tests reset it in beforeEach to stay hermetic.
+export const resetBrainBundleCacheForTests = () => {
+  brainBundleCache.clear()
+}
+
 const PRIORITY_SIGNAL_LIMIT = 10
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
 const NEXT_MOVES_PRIORITY_LIMIT = 7
@@ -774,46 +798,21 @@ export default function BrainSignalsPanel({
     requestIdRef.current = requestId
     latestRequestIsBackgroundRef.current = isBackgroundRefresh
     setError(null)
+    // Stale-while-revalidate: a previously loaded bundle renders instantly so
+    // switching between investigations never replays the fetch chain; the
+    // fresh fetch lands right behind it and corrects anything that changed.
+    const cachedBundle = brainBundleCache.get(currentInvestigationId)
     if (isManualRefresh) {
       setIsRefreshing(true)
-    } else if (!isBackgroundRefresh) {
+    } else if (!isBackgroundRefresh && !cachedBundle) {
       setIsLoading(true)
     }
 
-    try {
-      // The gateway registry is auxiliary: its handler queues behind signal
-      // recomputes on a busy backend, so it rides alongside the core fetches
-      // and lands after them instead of gating the whole restore on it.
-      const gatewaysPromise = fetchBrainGateways(currentInvestigationId).catch(() => [] as BrainGatewayUsage[])
-      const nextSignals = await fetchBrainSignals(currentInvestigationId)
-      const nextLinks = await fetchBrainLinks(currentInvestigationId)
-      let nextBrainMap: BrainMapView | null = null
-      try {
-        nextBrainMap = await fetchBrainMap(currentInvestigationId)
-      } catch {
-        nextBrainMap = null
-      }
-      const nextClusters = await fetchBrainClusters(currentInvestigationId)
-      const nextSuggestions = await fetchBrainSuggestions(currentInvestigationId)
-      const nextFollowUps = await fetchBrainFollowUps(currentInvestigationId)
-      let nextAutonomyState: BrainAutonomyState | null = null
-      try {
-        nextAutonomyState = await fetchBrainAutonomy(currentInvestigationId)
-      } catch {
-        nextAutonomyState = null
-      }
-      let nextAttention: BrainAttentionSummary | null = null
-      try {
-        nextAttention = await fetchBrainAttention(currentInvestigationId)
-      } catch {
-        nextAttention = null
-      }
-
+    const applyBundle = (bundle: BrainMemoryBundle, pulseDiff: boolean) => {
       if (requestIdRef.current !== requestId) {
         return
       }
-
-      const visibleSignals = sortByScore(nextSignals.filter((signal) => !signal.dismissed && !signal.linked))
+      const visibleSignals = sortByScore(bundle.signals.filter((signal) => !signal.dismissed && !signal.linked))
       setSignals(visibleSignals)
       onSignalsLoadedRef.current?.(currentInvestigationId ?? '', visibleSignals)
 
@@ -824,7 +823,7 @@ export default function BrainSignalsPanel({
       visibleSignals.forEach((signal) => {
         nextMapScores[signal.id] = signal.score
       })
-      if (isBackgroundRefresh && mapPrevScoresRef.current.investigationId === (currentInvestigationId ?? null)) {
+      if (pulseDiff && isBackgroundRefresh && mapPrevScoresRef.current.investigationId === (currentInvestigationId ?? null)) {
         const firedSignalIds = visibleSignals
           .filter((signal) => {
             const previous = mapPrevScoresRef.current.scores[signal.id]
@@ -837,29 +836,66 @@ export default function BrainSignalsPanel({
       }
       mapPrevScoresRef.current = { investigationId: currentInvestigationId ?? null, scores: nextMapScores }
 
-      setLinks(sortByScore(nextLinks))
-      setClusters(sortClusters(nextClusters))
-      setSuggestions(sortSuggestionsForView(nextSuggestions))
-      setFollowUps(nextFollowUps)
-      setBrainMapView(nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null)
-      setAutonomyState(nextAutonomyState)
-      setAttentionSummary(nextAttention)
+      setLinks(sortByScore(bundle.links))
+      setClusters(sortClusters(bundle.clusters))
+      setSuggestions(sortSuggestionsForView(bundle.suggestions))
+      setFollowUps(bundle.followUps)
+      setBrainMapView(bundle.brainMap && Array.isArray(bundle.brainMap.nodes) ? bundle.brainMap : null)
+      setAutonomyState(bundle.autonomy)
+      setAttentionSummary(bundle.attention)
       setShowLowerPrioritySignals(false)
       setShowLowerPrioritySuggestions(false)
       setShowOlderMemoryLinks(false)
       setSelectedMemoryLinkId((current) =>
-        current && nextLinks.some((link) => link.id === current) ? current : null,
+        current && bundle.links.some((link) => link.id === current) ? current : null,
       )
       setSelectedClusterId((current) =>
-        current && nextClusters.some((cluster) => cluster.id === current) ? current : null,
+        current && bundle.clusters.some((cluster) => cluster.id === current) ? current : null,
       )
       setExpandedPromptSuggestionId((current) =>
-        current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
+        current && bundle.suggestions.some((suggestion) => suggestion.id === current) ? current : null,
       )
       setFocusedReviewSuggestionId((current) =>
-        current && nextSuggestions.some((suggestion) => suggestion.id === current) ? current : null,
+        current && bundle.suggestions.some((suggestion) => suggestion.id === current) ? current : null,
       )
-      setPendingFollowUp((current) => current ? nextFollowUps.find((action) => action.id === current.id) || null : null)
+      setPendingFollowUp((current) => current ? bundle.followUps.find((action) => action.id === current.id) || null : null)
+    }
+
+    if (cachedBundle) {
+      applyBundle(cachedBundle, false)
+    }
+
+    try {
+      const gatewaysPromise = fetchBrainGateways(currentInvestigationId).catch(() => [] as BrainGatewayUsage[])
+      const [nextSignals, nextLinks, nextBrainMap, nextClusters, nextSuggestions, nextFollowUps, nextAutonomyState, nextAttention] = await Promise.all([
+        fetchBrainSignals(currentInvestigationId),
+        fetchBrainLinks(currentInvestigationId),
+        fetchBrainMap(currentInvestigationId).catch(() => null),
+        fetchBrainClusters(currentInvestigationId),
+        fetchBrainSuggestions(currentInvestigationId),
+        fetchBrainFollowUps(currentInvestigationId),
+        fetchBrainAutonomy(currentInvestigationId).catch(() => null),
+        fetchBrainAttention(currentInvestigationId).catch(() => null),
+      ])
+
+      const bundle: BrainMemoryBundle = {
+        signals: nextSignals,
+        links: nextLinks,
+        brainMap: nextBrainMap && Array.isArray(nextBrainMap.nodes) ? nextBrainMap : null,
+        clusters: nextClusters,
+        suggestions: nextSuggestions,
+        followUps: nextFollowUps,
+        autonomy: nextAutonomyState,
+        attention: nextAttention,
+      }
+      if (brainBundleCache.size >= BRAIN_BUNDLE_CACHE_LIMIT) {
+        const oldest = brainBundleCache.keys().next().value
+        if (oldest !== undefined) {
+          brainBundleCache.delete(oldest)
+        }
+      }
+      brainBundleCache.set(currentInvestigationId, bundle)
+      applyBundle(bundle, isBackgroundRefresh)
 
       // The auxiliary gateway registry lands AFTER the core restore: a busy
       // backend must never blank the panel while the operator waits on it.

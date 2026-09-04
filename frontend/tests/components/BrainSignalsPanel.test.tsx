@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
+import BrainSignalsPanel, { resetBrainBundleCacheForTests } from '../../src/components/BrainSignalsPanel'
 import type {
   BrainAttentionSummary,
   BrainAutonomyQueueItem,
@@ -16,6 +16,12 @@ import type {
 import { BOARD_WORKSPACE_STATE_UPDATED_EVENT } from '../../src/utils/boardWorkspaceEvents'
 import { markBrainSignalsSeen } from '../../src/utils/brainSeen'
 import { loadBrainLabEnabled, saveBrainLabEnabled } from '../../src/utils/brainLab'
+
+// The panel caches loaded bundles at module level (stale-while-revalidate);
+// clear it between tests so cases stay hermetic.
+beforeEach(() => {
+  resetBrainBundleCacheForTests()
+})
 
 const signal: BrainSignal = {
   id: 'brain-signal-alpha',
@@ -1802,9 +1808,8 @@ describe('BrainSignalsPanel', () => {
     expect(selectedNode).toHaveTextContent('Backend Cluster Region')
   })
 
-  it('loads links after signal generation so auto-promoted links appear on the first scan', async () => {
+  it('shows auto-promoted links on the first scan', async () => {
     const user = userEvent.setup()
-    let signalGenerationComplete = false
     const autoLink = {
       ...makeLink({ id: 'brain-link-auto-first-scan', toTitle: 'Auto Linked Case', score: 0.9 }),
       promotionType: 'auto',
@@ -1814,12 +1819,13 @@ describe('BrainSignalsPanel', () => {
 
       if (url.includes('/api/brain/signals?')) {
         await Promise.resolve()
-        signalGenerationComplete = true
         return jsonResponse([]) as Response
       }
 
       if (url.includes('/api/brain/links?')) {
-        return jsonResponse(signalGenerationComplete ? [autoLink] : []) as Response
+        // Links land a tick behind signals, the way the backend writes them.
+        await Promise.resolve()
+        return jsonResponse([autoLink]) as Response
       }
       if (url.includes('/api/brain/clusters?')) {
         return jsonResponse([]) as Response
