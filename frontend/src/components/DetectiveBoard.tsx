@@ -1093,6 +1093,10 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
     const [boardViewportSize, setBoardViewportSize] = useState<BoardNavigatorSize>(BOARD_NAVIGATOR_DEFAULT_VIEWPORT_SIZE);
     const nodesRef = useRef<Node[]>([]);
     const edgesRef = useRef<Edge[]>([]);
+    // Connections that arrived before their source/target nodes were on the
+    // board. Held here and re-applied once the missing nodes stream in, so a
+    // run's CONNECTIONS_FOUND is never lost to a stale node snapshot.
+    const pendingRelationshipsRef = useRef<RelationshipConnection[]>([]);
     const pendingIntegrationNodeIdsRef = useRef<string[]>([]);
     const analysisModeRef = useRef<AnalysisMode>(null);
     const latestPipelineRunIdRef = useRef<string | null>(null);
@@ -3435,26 +3439,52 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
         const activePendingNodeIds = pendingIntegrationNodeIdsRef.current;
         console.debug('[Board] Current nodes:', currentNodes.map(n => ({ id: n.id, title: n.data.title })));
 
-        // Filter connections to only include those where source and target exist
+        // Filter connections to only include those where source and target exist.
+        // Connections whose nodes are not on the board yet are deferred (not
+        // dropped) so a run's CONNECTIONS_FOUND still rearranges once the nodes
+        // stream in.
         const nodeIds = new Set(currentNodes.map(n => n.id));
-        const validConnections = scopedConnections.filter(c => {
+        const validConnections: RelationshipConnection[] = [];
+        let deferredCount = 0;
+        for (const c of scopedConnections) {
             const sourceExists = nodeIds.has(c.source);
             const targetExists = nodeIds.has(c.target);
-            if (!sourceExists || !targetExists) {
-                console.warn('[Board] Skipping relationship with missing local node:', {
-                    source: c.source,
-                    target: c.target,
-                    tag: c.tag,
-                    sourceExists,
-                    targetExists,
-                    investigationId,
-                    availableNodeIds: Array.from(nodeIds),
-                });
+            if (sourceExists && targetExists) {
+                validConnections.push(c);
+                continue;
             }
-            return sourceExists && targetExists;
-        });
+            deferredCount += 1;
+            console.debug('[Board] Deferring relationship until its nodes arrive:', {
+                source: c.source,
+                target: c.target,
+                tag: c.tag,
+                sourceExists,
+                targetExists,
+            });
+        }
 
-        console.debug('[Board] Valid connections:', validConnections.length, 'of', scopedConnections.length);
+        if (deferredCount > 0) {
+            const pending = pendingRelationshipsRef.current;
+            const seen = new Set(pending.map(c => `${c.source}|${c.target}|${c.tag || ''}`));
+            for (const c of scopedConnections) {
+                const sourceExists = nodeIds.has(c.source);
+                const targetExists = nodeIds.has(c.target);
+                if (sourceExists && targetExists) {
+                    continue;
+                }
+                const key = `${c.source}|${c.target}|${c.tag || ''}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    pending.push(c);
+                }
+            }
+            // Guard against unbounded growth if a node never arrives.
+            if (pending.length > 60) {
+                pendingRelationshipsRef.current = pending.slice(-60);
+            }
+        }
+
+        console.debug('[Board] Valid connections:', validConnections.length, 'of', scopedConnections.length, '(deferred:', deferredCount, ')');
 
         const nextStyles = { ...tagStyles };
         let stylesUpdated = false;
@@ -3560,6 +3590,32 @@ const DetectiveBoardContent: React.FC<DetectiveBoardProps> = ({
             clearPendingIntegrationNodeIds();
         }
     }, [boardMode, buildConnectLayoutState, buildEdgeVisuals, buildFixedLayoutEdgeState, clearPendingIntegrationNodeIds, finishConnectLayoutChoreography, handleConnectionHover, investigationId, persistTagStyles, scheduleConnectionRevealCleanup, snapConnectionLabels, stripLayoutChoreographyFromNodes, tagStyles]);
+
+    // Flush any connections that arrived before their nodes were on the board,
+    // once those nodes stream in (MEMORY_NODE_GATHERED) or reload from
+    // persistence. This keeps a run's CONNECTIONS_FOUND from being lost to a
+    // stale node snapshot and re-runs the rearrange as soon as it can.
+    useEffect(() => {
+        if (pendingRelationshipsRef.current.length === 0) {
+            return;
+        }
+        const availableNodeIds = new Set(nodesRef.current.map((node) => node.id));
+        const ready: RelationshipConnection[] = [];
+        const stillWaiting: RelationshipConnection[] = [];
+        for (const connection of pendingRelationshipsRef.current) {
+            if (availableNodeIds.has(connection.source) && availableNodeIds.has(connection.target)) {
+                ready.push(connection);
+            } else {
+                stillWaiting.push(connection);
+            }
+        }
+        if (ready.length === 0) {
+            return;
+        }
+        pendingRelationshipsRef.current = stillWaiting;
+        console.debug('[Board] Flushing deferred relationships now that nodes are ready:', ready.length);
+        handleNewConnections({ connections: ready, vaultId: investigationId });
+    }, [nodes, handleNewConnections, investigationId]);
 
     const playBrowserQaAnimationDemo = useCallback((includeConnections = true) => {
         qaAnimationTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
