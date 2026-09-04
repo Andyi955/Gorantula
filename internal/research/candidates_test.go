@@ -170,6 +170,38 @@ func TestRebuildCandidatesAppliesNovelty(t *testing.T) {
 	}
 }
 
+func TestApplyChecklistReviews(t *testing.T) {
+	candidate := models.CandidateHypothesis{
+		ID:         "cand-r",
+		SignalID:   "sig-1",
+		Hypothesis: "Contradiction: increase vs decrease",
+		State:      models.CandidateStateProposed,
+	}
+	// A reviewer committee answers; a couple are left out entirely.
+	reviews := []models.ChecklistReviewItem{
+		{ID: "precision", Answer: "yes", Reason: "effect sizes are quoted", Confidence: 0.9},
+		{ID: "consistency", Answer: "unknown", Reason: "the two sources disagree; cannot judge"},
+		{ID: "novelty", Answer: "unknown", Reason: "not enough evidence in paper text"},
+	}
+
+	applyChecklistReviews(&candidate, reviews)
+
+	if len(candidate.Checklist) != len(candidateChecklist) {
+		t.Fatalf("checklist length = %d, want %d", len(candidate.Checklist), len(candidateChecklist))
+	}
+	precision := findChecklistItem(candidate, "precision")
+	if precision == nil || precision.Answer != "yes" || precision.Reason != "effect sizes are quoted" {
+		t.Errorf("precision review not applied: %+v", precision)
+	}
+	// A criterion with no review falls back to unknown.
+	if item := findChecklistItem(candidate, "temporality"); item == nil || item.Answer != "unknown" {
+		t.Errorf("unanswered criterion should be unknown: %+v", item)
+	}
+	if candidate.Verdict != models.CandidateVerdictDisputed {
+		t.Errorf("verdict should be disputed (unknown present), got %q", candidate.Verdict)
+	}
+}
+
 func TestNoveltyScoreFromCount(t *testing.T) {
 	cases := map[int]float32{0: 0.9, 1: 0.7, 3: 0.55, 8: 0.4, 20: 0.25}
 	for count, want := range cases {

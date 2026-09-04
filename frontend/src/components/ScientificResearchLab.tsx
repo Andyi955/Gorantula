@@ -54,6 +54,8 @@ interface ChecklistItem {
   question: string;
   answer: string;
   grade: string;
+  reason?: string;
+  confidence?: number;
 }
 
 interface Candidate {
@@ -430,7 +432,7 @@ const ScientificResearchLab = () => {
               {candidate.evidenceGrade && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{candidate.evidenceGrade} evidence</p>}
 
               {expanded[candidate.id] && (
-                <div className="mt-3 flex flex-col gap-2 border-t border-[var(--forensic-border-soft)] pt-3">
+                <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 border-t border-[var(--forensic-border-soft)] pt-3 lg:grid-cols-2">
                   {checklist.map((item) => (
                     <div key={item.id} className="flex items-start gap-2 text-xs">
                       <span className={`mt-0.5 w-16 shrink-0 rounded border px-1.5 py-0.5 text-center text-[10px] font-bold uppercase ${
@@ -440,7 +442,10 @@ const ScientificResearchLab = () => {
                             ? 'border-[#ff8c86]/45 bg-[#ff8c86]/10 text-[#ff8c86]'
                             : 'border-[#f6c879]/45 bg-[#f6c879]/10 text-[#f6c879]'
                       }`}>{item.answer}</span>
-                      <span className="leading-relaxed text-[var(--forensic-text-muted)]">{item.question}</span>
+                      <span className="leading-relaxed text-[var(--forensic-text-muted)]">
+                        {item.question}
+                        {item.reason && <span className="mt-0.5 block text-[11px] text-[var(--forensic-text-faint)]">— {item.reason}</span>}
+                      </span>
                     </div>
                   ))}
                   {candidate.nearestWork && (
@@ -479,7 +484,7 @@ const ScientificResearchLab = () => {
 
   return (
     <div className="h-full overflow-y-auto bg-[var(--forensic-bg-root)] p-6 text-[var(--forensic-text)]">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-6xl">
         <div className="flex items-center gap-2">
           <Microscope size={18} className="text-[var(--forensic-accent)]" aria-hidden />
           <h1 className="text-lg font-black tracking-tight text-[var(--forensic-text)]">Scientific Research</h1>

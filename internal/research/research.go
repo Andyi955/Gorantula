@@ -222,8 +222,40 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 		return nil, err
 	}
 	candidates := buildCandidates(signals, claims)
+	existingCandidates, err := s.store.LoadCandidates()
+	if err != nil {
+		return nil, err
+	}
+	existingByID := make(map[string]models.CandidateHypothesis, len(existingCandidates))
+	for _, candidate := range existingCandidates {
+		existingByID[candidate.ID] = candidate
+	}
+
 	for i := range candidates {
-		evaluateChecklist(&candidates[i], claims)
+		// Preserve terminal (approved/rejected) candidates so an operator's
+		// decision survives a corpus re-ingest; refresh everything else.
+		if preserved, ok := existingByID[candidates[i].ID]; ok &&
+			(preserved.State == models.CandidateStateApproved || preserved.State == models.CandidateStateRejected) {
+			candidates[i] = preserved
+			continue
+		}
+
+		// Bounded review: use the LLM reviewer committee when a provider is
+		// available, otherwise fall back to the deterministic heuristic.
+		if s.brain != nil {
+			reviews, rErr := s.brain.ReviewCandidateChecklist(ctx, candidates[i].Hypothesis, claimsForCandidate(claims, candidates[i]))
+			if rErr != nil {
+				trace("review", fmt.Sprintf("candidate %s checklist review unavailable: %v", candidates[i].ID, rErr))
+				evaluateChecklist(&candidates[i], claims)
+			} else {
+				applyChecklistReviews(&candidates[i], reviews)
+			}
+		} else {
+			evaluateChecklist(&candidates[i], claims)
+		}
+		// A contradiction is a review-worthy disagreement, not a failed hypothesis.
+		neutralizeContradictionCriticalItems(&candidates[i])
+
 		if s.novelty != nil {
 			score, nearest, nErr := s.novelty.CheckNovelty(ctx, candidates[i].Hypothesis, claimEntities(claims, candidates[i]))
 			if nErr != nil {
@@ -231,7 +263,7 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 			} else {
 				candidates[i].NoveltyScore = score
 				candidates[i].NearestWork = nearest
-				evaluateChecklist(&candidates[i], claims) // re-run now that novelty is known
+				updateNoveltyAnswer(&candidates[i])
 			}
 		}
 	}

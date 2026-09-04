@@ -135,30 +135,69 @@ func candidateFromSignal(signal models.ResearchSignal) models.CandidateHypothesi
 	}
 }
 
-// evaluateChecklist applies the bounded checklist to a candidate and sets its
-// Checklist, Verdict, and EvidenceGrade.
+// evaluateChecklist applies the bounded checklist to a candidate via the
+// deterministic heuristic (used when no LLM reviewer is available) and sets its
+// Checklist, Verdict, State, and EvidenceGrade.
 func evaluateChecklist(candidate *models.CandidateHypothesis, claims []models.Claim) {
 	candidate.Checklist = make([]models.ChecklistItem, 0, len(candidateChecklist))
-	yes, unknown, criticalNo := 0, 0, 0
 	for _, criterion := range candidateChecklist {
 		answer := criterion.Evaluate(*candidate, claims)
 		if answer == "" {
 			answer = "unknown"
 		}
-		grade := checklistGrade(answer)
-		if answer == "yes" {
-			yes++
-		} else if answer == "unknown" {
-			unknown++
-		} else if criterion.Critical {
-			criticalNo++
-		}
 		candidate.Checklist = append(candidate.Checklist, models.ChecklistItem{
 			ID:       criterion.ID,
 			Question: criterion.Question,
 			Answer:   answer,
-			Grade:    grade,
+			Grade:    checklistGrade(answer),
 		})
+	}
+	finalizeCandidate(candidate)
+}
+
+// applyChecklistReviews builds the candidate's checklist from the reviewer
+// persona's answers (the bounded-review debate roster) and finalizes the
+// verdict. Any criterion the reviewer did not answer is left unknown.
+func applyChecklistReviews(candidate *models.CandidateHypothesis, reviews []models.ChecklistReviewItem) {
+	reviewsByID := make(map[string]models.ChecklistReviewItem, len(reviews))
+	for _, review := range reviews {
+		reviewsByID[review.ID] = review
+	}
+
+	candidate.Checklist = make([]models.ChecklistItem, 0, len(candidateChecklist))
+	for _, criterion := range candidateChecklist {
+		review, ok := reviewsByID[criterion.ID]
+		answer := "unknown"
+		if ok && review.Answer != "" {
+			answer = review.Answer
+		}
+		candidate.Checklist = append(candidate.Checklist, models.ChecklistItem{
+			ID:         criterion.ID,
+			Question:   criterion.Question,
+			Answer:     answer,
+			Grade:      checklistGrade(answer),
+			Reason:     review.Reason,
+			Confidence: review.Confidence,
+		})
+	}
+	finalizeCandidate(candidate)
+}
+
+// finalizeCandidate computes the verdict, evidence grade, and state transition
+// from the populated checklist.
+func finalizeCandidate(candidate *models.CandidateHypothesis) {
+	yes, unknown, criticalNo := 0, 0, 0
+	for _, item := range candidate.Checklist {
+		switch item.Answer {
+		case "yes":
+			yes++
+		case "unknown":
+			unknown++
+		case "no":
+			if isCriticalChecklistItem(item.ID) {
+				criticalNo++
+			}
+		}
 	}
 
 	switch {
@@ -171,16 +210,81 @@ func evaluateChecklist(candidate *models.CandidateHypothesis, claims []models.Cl
 	}
 	candidate.EvidenceGrade = evidenceGradeFromCounts(yes, unknown)
 
+	// Terminal (already-decided) candidates are never re-finalized by the
+	// review pipeline; only proposed/reviewed candidates transition here.
+	if candidate.State == models.CandidateStateApproved || candidate.State == models.CandidateStateRejected {
+		return
+	}
+
 	switch candidate.Verdict {
 	case models.CandidateVerdictRefuted:
-		if candidate.State == models.CandidateStateProposed {
-			candidate.State = models.CandidateStateRefuted
-		}
+		candidate.State = models.CandidateStateRefuted
 	default:
-		if candidate.State == models.CandidateStateProposed {
-			candidate.State = models.CandidateStateReviewed
+		candidate.State = models.CandidateStateReviewed
+	}
+}
+
+func isCriticalChecklistItem(id string) bool {
+	for _, criterion := range candidateChecklist {
+		if criterion.ID == id {
+			return criterion.Critical
 		}
 	}
+	return false
+}
+
+// claimsForCandidate returns only the claims referenced by the candidate's
+// claim IDs, so a reviewer judges the candidate against its own evidence.
+func claimsForCandidate(claims []models.Claim, candidate models.CandidateHypothesis) []models.Claim {
+	if len(candidate.ClaimIDs) == 0 {
+		return claims
+	}
+	byID := make(map[string]models.Claim, len(claims))
+	for _, claim := range claims {
+		byID[claim.ID] = claim
+	}
+	next := make([]models.Claim, 0, len(candidate.ClaimIDs))
+	for _, id := range candidate.ClaimIDs {
+		if claim, ok := byID[id]; ok {
+			next = append(next, claim)
+		}
+	}
+	return next
+}
+
+// updateNoveltyAnswer sets the novelty checklist item from the novelty score
+// (novel >= 0.6 -> yes, else unknown) and re-finalizes the verdict. Novelty is
+// deterministic after the gate runs, so it needs no extra LLM call.
+func updateNoveltyAnswer(candidate *models.CandidateHypothesis) {
+	for i := range candidate.Checklist {
+		if candidate.Checklist[i].ID != "novelty" {
+			continue
+		}
+		if candidate.NoveltyScore >= 0.6 {
+			candidate.Checklist[i].Answer = "yes"
+		} else {
+			candidate.Checklist[i].Answer = "unknown"
+		}
+		candidate.Checklist[i].Grade = checklistGrade(candidate.Checklist[i].Answer)
+	}
+	finalizeCandidate(candidate)
+}
+
+// neutralizeContradictionCriticalItems treats a contradiction as a review-worthy
+// disagreement rather than a failed hypothesis: consistency and coherence are
+// not meaningful for an intentionally-conflicting pair, so they go unknown and
+// the candidate is routed to the human (disputed) instead of refuted.
+func neutralizeContradictionCriticalItems(candidate *models.CandidateHypothesis) {
+	if !candidateIsContradiction(*candidate) {
+		return
+	}
+	for i := range candidate.Checklist {
+		if candidate.Checklist[i].ID == "consistency" || candidate.Checklist[i].ID == "coherence" {
+			candidate.Checklist[i].Answer = "unknown"
+			candidate.Checklist[i].Grade = "unresolved"
+		}
+	}
+	finalizeCandidate(candidate)
 }
 
 func checklistGrade(answer string) string {

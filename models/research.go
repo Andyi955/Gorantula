@@ -102,10 +102,26 @@ const (
 
 // ChecklistItem is a single criterion in the bounded claim review.
 type ChecklistItem struct {
-	ID       string `json:"id"`
-	Question string `json:"question"`
-	Answer   string `json:"answer"` // yes | no | unknown
-	Grade    string `json:"grade"`  // evidence grade for this item
+	ID         string  `json:"id"`
+	Question   string  `json:"question"`
+	Answer     string  `json:"answer"` // yes | no | unknown
+	Grade      string  `json:"grade"`  // evidence grade for this item
+	Reason     string  `json:"reason,omitempty"`
+	Confidence float32 `json:"confidence,omitempty"`
+}
+
+// ChecklistReviewItem is a single criterion answer returned by a reviewer
+// persona (the bounded-review debate roster).
+type ChecklistReviewItem struct {
+	ID         string  `json:"id"`
+	Answer     string  `json:"answer"` // yes | no | unknown
+	Reason     string  `json:"reason,omitempty"`
+	Confidence float32 `json:"confidence,omitempty"`
+}
+
+// ChecklistReviewResponse is the JSON shape a reviewer persona returns.
+type ChecklistReviewResponse struct {
+	Items []ChecklistReviewItem `json:"items"`
 }
 
 // CandidateHypothesis is a surfaced cross-paper finding promoted to a
