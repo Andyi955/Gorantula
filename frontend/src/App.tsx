@@ -762,7 +762,9 @@ function App() {
   // Without it, badges from cases the operator never revisits linger forever
   // (each one only clears when its own Brain panel is loaded). Writes the
   // persisted seen snapshot per case so the count stays honest after
-  // refreshes; a failed fetch leaves that case's badge untouched.
+  // refreshes. A case whose fetch fails keeps its badge: clearing it without
+  // a written snapshot would resurrect on the next reload, which reads like
+  // the button is broken.
   const markAllBrainSeen = useCallback(async () => {
     const targets = Object.entries(brainUnreadByInvestigation)
       .filter(([, count]) => count > 0)
@@ -770,18 +772,21 @@ function App() {
     if (targets.length === 0) {
       return
     }
+    const failed = new Set<string>()
     await Promise.all(targets.map(async (investigationId) => {
       try {
         const signals = await fetchBrainSignals(investigationId)
         markBrainSignalsSeen(investigationId, signals)
       } catch {
-        // Signals unavailable for this case: keep its badge.
+        failed.add(investigationId)
       }
     }))
     setBrainUnreadByInvestigation((current) => {
       const next = { ...current }
       for (const investigationId of targets) {
-        next[investigationId] = 0
+        if (!failed.has(investigationId)) {
+          next[investigationId] = 0
+        }
       }
       return next
     })
