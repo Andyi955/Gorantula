@@ -141,6 +141,8 @@ func TestReviewCandidateChecklist(t *testing.T) {
 
 	items, err := b.ReviewCandidateChecklist(context.Background(), "Metformin improves survival", []models.Claim{
 		{ID: "c1", Text: "Metformin improves survival.", Entities: []string{"[PRODUCT:Metformin]"}, SourceSnippet: "Metformin improves survival."},
+	}, []models.Paper{
+		{ID: "p1", Title: "Metformin study", Abstract: "A clinical study reported that treatment with Metformin increased survival."},
 	})
 	if err != nil {
 		t.Fatalf("ReviewCandidateChecklist: %v", err)

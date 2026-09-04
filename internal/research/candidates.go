@@ -252,6 +252,25 @@ func claimsForCandidate(claims []models.Claim, candidate models.CandidateHypothe
 	return next
 }
 
+// papersForCandidate returns only the papers referenced by the candidate's
+// paper IDs, so a reviewer can read the underlying paper text.
+func papersForCandidate(candidate models.CandidateHypothesis, papers []models.Paper) []models.Paper {
+	if len(candidate.PaperIDs) == 0 {
+		return papers
+	}
+	byID := make(map[string]models.Paper, len(papers))
+	for _, paper := range papers {
+		byID[paper.ID] = paper
+	}
+	next := make([]models.Paper, 0, len(candidate.PaperIDs))
+	for _, id := range candidate.PaperIDs {
+		if paper, ok := byID[id]; ok {
+			next = append(next, paper)
+		}
+	}
+	return next
+}
+
 // updateNoveltyAnswer sets the novelty checklist item from the novelty score
 // (novel >= 0.6 -> yes, else unknown) and re-finalizes the verdict. Novelty is
 // deterministic after the gate runs, so it needs no extra LLM call.

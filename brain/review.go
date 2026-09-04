@@ -14,15 +14,17 @@ const researchReviewSourceLimit = 6000
 
 // ReviewCandidateChecklist runs the bounded-review committee (a reviewer
 // persona) over a candidate hypothesis, answering each checklist criterion as
-// yes / no / unknown against the grounded evidence. Unknown means the evidence
-// does not contain enough to judge - the reviewer never guesses.
-func (b *Brain) ReviewCandidateChecklist(ctx context.Context, hypothesis string, claims []models.Claim) ([]models.ChecklistReviewItem, error) {
+// yes / no / unknown against the grounded evidence. The reviewer reads the
+// referenced claims AND the underlying papers' abstracts so it can judge
+// statistical rigor, reproducibility, plausibility, etc. Unknown means the
+// evidence does not contain enough to judge - the reviewer never guesses.
+func (b *Brain) ReviewCandidateChecklist(ctx context.Context, hypothesis string, claims []models.Claim, papers []models.Paper) ([]models.ChecklistReviewItem, error) {
 	provider := b.GetSearchProvider()
 	if provider == nil {
 		return nil, fmt.Errorf("no model providers available for checklist review")
 	}
 
-	evidence := formatReviewEvidence(claims)
+	evidence := formatReviewEvidence(claims, papers)
 	if strings.TrimSpace(evidence) == "" {
 		evidence = "(no grounded evidence provided)"
 	}
@@ -62,7 +64,7 @@ func normalizeReviewAnswer(answer string) string {
 	}
 }
 
-func formatReviewEvidence(claims []models.Claim) string {
+func formatReviewEvidence(claims []models.Claim, papers []models.Paper) string {
 	var builder strings.Builder
 	for _, claim := range claims {
 		fmt.Fprintf(&builder, "[%s] %s\n", claim.ID, strings.TrimSpace(claim.Text))
@@ -72,6 +74,19 @@ func formatReviewEvidence(claims []models.Claim) string {
 		if snippet := strings.TrimSpace(claim.SourceSnippet); snippet != "" {
 			fmt.Fprintf(&builder, "  source: %s\n", snippet)
 		}
+	}
+
+	seen := make(map[string]struct{}, len(papers))
+	for _, paper := range papers {
+		if _, ok := seen[paper.ID]; ok {
+			continue
+		}
+		seen[paper.ID] = struct{}{}
+		abstract := strings.TrimSpace(paper.Abstract)
+		if abstract == "" {
+			continue
+		}
+		fmt.Fprintf(&builder, "\n[PAPER %s] %s\n%s\n", paper.ID, strings.TrimSpace(paper.Title), abstract)
 	}
 	return builder.String()
 }
