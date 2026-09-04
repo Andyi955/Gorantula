@@ -158,6 +158,7 @@ type BrainMemoryBundle = {
 }
 
 const BRAIN_BUNDLE_CACHE_LIMIT = 12
+const BRAIN_FIRED_REFRESH_DEBOUNCE_MS = 1500
 const brainBundleCache = new Map<string, BrainMemoryBundle>()
 
 // Test hook: the cache intentionally survives panel unmounts and switches,
@@ -587,6 +588,8 @@ export default function BrainSignalsPanel({
     return knownScore === undefined || candidate.score - knownScore >= BRAIN_STRENGTHEN_DELTA
   }
 
+  const backgroundRefreshTimerRef = useRef<number | null>(null)
+
   // With the Lab collapsed, deep diagnostic views are unreachable: snap back to
   // the pulse feed rather than stranding the operator on a hidden view.
   useEffect(() => {
@@ -952,13 +955,27 @@ export default function BrainSignalsPanel({
 
   // The backend broadcasts BRAIN_FIRED when evidence landing fired synapses;
   // refresh quietly in the background so the panel stays current without a
-  // manual refresh.
+  // manual refresh. Echoes arrive in storms (a save storm broadcasts per
+  // save), so they coalesce onto one debounced refresh instead of a full
+  // 9-endpoint load - and full panel re-render - per broadcast.
   useEffect(() => {
     if (externalFiredToken === undefined || externalFiredToken === lastFiredTokenRef.current) {
       return
     }
     lastFiredTokenRef.current = externalFiredToken
-    void loadBrainMemory(false, true)
+    if (backgroundRefreshTimerRef.current !== null) {
+      window.clearTimeout(backgroundRefreshTimerRef.current)
+    }
+    backgroundRefreshTimerRef.current = window.setTimeout(() => {
+      backgroundRefreshTimerRef.current = null
+      void loadBrainMemory(false, true)
+    }, BRAIN_FIRED_REFRESH_DEBOUNCE_MS)
+    return () => {
+      if (backgroundRefreshTimerRef.current !== null) {
+        window.clearTimeout(backgroundRefreshTimerRef.current)
+        backgroundRefreshTimerRef.current = null
+      }
+    }
   }, [externalFiredToken, loadBrainMemory])
 
   useEffect(() => {

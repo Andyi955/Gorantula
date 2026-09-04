@@ -2454,7 +2454,7 @@ describe('BrainSignalsPanel', () => {
     await waitFor(() => {
       expect(firedNode()).toHaveClass('is-pulsing')
       expect(firedNode()).toHaveAttribute('data-pulsing', 'true')
-    })
+    }, { timeout: 3000 })
   })
 
   it('supports drag panning and wheel zoom in the expanded brain map', async () => {
@@ -3097,7 +3097,7 @@ describe('BrainSignalsPanel', () => {
     )
     await waitFor(() => {
       expect(gateNextSignalsGet).toBe(false)
-    })
+    }, { timeout: 3000 })
 
     // The operator promotes while that load is still pending.
     await user.click(
@@ -3159,7 +3159,7 @@ describe('BrainSignalsPanel', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length)
         .toBeGreaterThan(callsAfterMount)
-    })
+    }, { timeout: 3000 })
 
     // Re-rendering with the same token must not trigger another refresh.
     const callsAfterFiring = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/brain/signals?')).length
@@ -3455,7 +3455,7 @@ describe('BrainSignalsPanel', () => {
       />,
     )
 
-    const fresh = await screen.findByTestId('brain-autonomy-strip-fresh')
+    const fresh = await screen.findByTestId('brain-autonomy-strip-fresh', {}, { timeout: 3000 })
     expect(fresh).toHaveTextContent('Prepared: Focused follow-up for the new signal')
     expect(strip).toHaveClass('is-pulsing')
   })
@@ -3771,7 +3771,7 @@ describe('BrainSignalsPanel', () => {
     )
     await waitFor(() => {
       expect(signalsCalls).toBeGreaterThanOrEqual(2)
-    })
+    }, { timeout: 3000 })
     await act(async () => {})
     expect(screen.getByText(/Reading Brain focus/i)).toBeInTheDocument()
 

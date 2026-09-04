@@ -412,12 +412,15 @@ export interface BrainMapView {
 const requestJSON = async <T>(url: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
     cache: 'no-store',
+    // Brain reads are on-demand (the operator is looking at the tab) - keep
+    // them ahead of the low-priority startup preload storm.
+    priority: 'high',
     ...options,
     headers: {
       'Content-Type': 'application/json',
       ...(options?.headers || {}),
     },
-  })
+  } as RequestInit)
 
   if (!response.ok) {
     throw new Error(`Brain memory request failed with ${response.status}`)
