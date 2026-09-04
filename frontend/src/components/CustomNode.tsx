@@ -9,6 +9,7 @@ import { BOARD_GRID_SIZE, MIN_NODE_HEIGHT, MIN_NODE_WIDTH, MIN_NODE_EDIT_HEIGHT,
 import type { BoardMode } from './boardGeometry';
 import type { NodeImageAsset } from './nodeImages';
 import { nodeHasImages } from './nodeImages';
+import { ENTITY_TAG_PATTERN, getEntityTagChipClass } from '../utils/entityTags';
 
 // Persona insight type
 export interface PersonaInsight {
@@ -116,14 +117,14 @@ const parseHighlightedText = (text: string) => {
     const safeText = escapeHTML(text);
     // Favor crisp emphasis over heavy glow so highlights stay readable at board zoom levels.
     let parsed = safeText.replace(/\*\*(.*?)\*\*/g, '<span class="text-cyber-green font-bold">$1</span>');
-    
-    // Keep entity chips high-contrast and edge-defined instead of bloom-heavy.
-    parsed = parsed.replace(/\[PERSON:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-purple/22 px-1.5 py-0.5 rounded border border-cyber-purple/55 text-[11px] uppercase tracking-tight">$1</span>');
-    parsed = parsed.replace(/\[ORG:(.*?)\]/gi, '<span class="text-white font-black bg-cyber-cyan/20 px-1.5 py-0.5 rounded border border-cyber-cyan/55 text-[11px] uppercase tracking-tight">$1</span>');
-    parsed = parsed.replace(/\[LOC:(.*?)\]/gi, '<span class="text-white font-black bg-orange-500/20 px-1.5 py-0.5 rounded border border-orange-500/55 text-[11px] uppercase tracking-tight">$1</span>');
-    parsed = parsed.replace(/\[DATE:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-500/20 px-1.5 py-0.5 rounded border border-yellow-500/55 text-[11px] uppercase tracking-tight">$1</span>');
-    parsed = parsed.replace(/\[TIME:(.*?)\]/gi, '<span class="text-white font-black bg-yellow-400/20 px-1.5 py-0.5 rounded border border-yellow-400/55 text-[11px] uppercase tracking-tight">$1</span>');
-    
+
+    // Render every entity tag as a color-coded chip via the shared vocabulary.
+    // Unknown types fall back to a neutral chip so no tag ever leaks as raw
+    // [TYPE:value] text (which reads as a faded/missed highlight).
+    parsed = parsed.replace(ENTITY_TAG_PATTERN, (_full, type: string, value: string) =>
+        `<span class="${getEntityTagChipClass(type)}">${value}</span>`,
+    );
+
     return parsed;
 };
 
@@ -179,7 +180,7 @@ const isUsableSupportEntityValue = (value: string) => {
 const getBracketSupportEntityTags = (text: string) => {
     const seen = new Set<string>();
     const tags: SupportPreviewEntityTag[] = [];
-    const entityPattern = /\[(PERSON|ORG|LOC|DATE|TIME):([^\]]+)]/gi;
+    const entityPattern = ENTITY_TAG_PATTERN;
 
     Array.from(text.matchAll(entityPattern)).forEach((match) => {
         const type = match[1].toUpperCase();

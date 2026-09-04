@@ -3794,6 +3794,51 @@ describe('DetectiveBoard relationship legend', () => {
     })
   })
 
+  it('re-applies a run’s relationships once their nodes arrive (deferred connect)', async () => {
+    const socket = new MockSocket()
+    renderBoard('investigation-deferred', socket as unknown as WebSocket)
+
+    // Connections arrive before the nodes they reference are on the board.
+    act(() => {
+      socket.emit('CONNECTIONS_FOUND', [
+        { source: 'node-b', target: 'node-c', tag: 'RELATED', reasoning: 'Arrived before nodes' },
+      ])
+    })
+
+    // No relationship edge should be applied yet, since the nodes are missing.
+    await waitFor(() => {
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ data?: { generatedBy?: string } }>
+      expect(edges.some((edge) => edge.data?.generatedBy === 'connectTheDots')).toBe(false)
+    })
+
+    // The nodes stream in — the deferred relationship should be flushed and applied.
+    act(() => {
+      socket.emit('MEMORY_NODE_GATHERED', {
+        append: false,
+        vaultId: 'investigation-deferred',
+        node: { id: 'node-b', title: 'B', summary: 'B', fullText: 'B', sourceURL: 'https://example.com/b' },
+      })
+      socket.emit('MEMORY_NODE_GATHERED', {
+        append: false,
+        vaultId: 'investigation-deferred',
+        node: { id: 'node-c', title: 'C', summary: 'C', fullText: 'C', sourceURL: 'https://example.com/c' },
+      })
+    })
+
+    await waitFor(() => {
+      const edges = (lastReactFlowProps?.edges || []) as Array<{ source: string; target: string; data?: { generatedBy?: string; tag?: string } }>
+      expect(edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: 'node-b',
+            target: 'node-c',
+            data: expect.objectContaining({ generatedBy: 'connectTheDots', tag: 'RELATED' }),
+          }),
+        ]),
+      )
+    })
+  })
+
   it('shows detective display labels while preserving generated relationship tags', async () => {
     const socket = new MockSocket()
     renderBoard('investigation-display-tags', socket as unknown as WebSocket)

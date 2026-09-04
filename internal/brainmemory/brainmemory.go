@@ -130,7 +130,7 @@ var (
 	ErrInvalidSuggestionOutcome = errors.New("invalid brain suggestion outcome")
 	ErrInvalidSourceEvidence    = errors.New("invalid brain source evidence")
 
-	taggedEntityPattern        = regexp.MustCompile(`\[(PERSON|ORG|LOC|DATE):([^\]]+)]`)
+	taggedEntityPattern        = regexp.MustCompile(`\[(PERSON|ORG|LOC|GPE|DATE|EVENT|PRODUCT|MONEY|PERCENT|LAW):([^\]]+)]`)
 	taggedContradictionPattern = regexp.MustCompile(`\[(CONTRADICTION|CONFLICT):([^\]]+)]`)
 	spacePattern               = regexp.MustCompile(`\s+`)
 )

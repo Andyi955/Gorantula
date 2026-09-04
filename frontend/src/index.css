@@ -2932,6 +2932,36 @@ body {
   background: rgba(234, 179, 8, 0.18);
 }
 
+.forensic-dossier-entity-gpe {
+  border-color: rgba(56, 189, 248, 0.56);
+  background: rgba(56, 189, 248, 0.18);
+}
+
+.forensic-dossier-entity-event {
+  border-color: rgba(244, 63, 94, 0.56);
+  background: rgba(244, 63, 94, 0.2);
+}
+
+.forensic-dossier-entity-product {
+  border-color: rgba(16, 185, 129, 0.56);
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.forensic-dossier-entity-money {
+  border-color: rgba(245, 158, 11, 0.56);
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.forensic-dossier-entity-percent {
+  border-color: rgba(45, 212, 191, 0.56);
+  background: rgba(45, 212, 191, 0.2);
+}
+
+.forensic-dossier-entity-law {
+  border-color: rgba(217, 70, 239, 0.56);
+  background: rgba(217, 70, 239, 0.2);
+}
+
 .forensic-node-shell {
   background:
     linear-gradient(180deg, rgba(18, 27, 36, 0.98), rgba(10, 16, 23, 0.98)),
