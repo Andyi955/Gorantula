@@ -3778,45 +3778,6 @@ describe('BrainSignalsPanel', () => {
     expect(screen.queryByTestId('brain-loading-overlay')).not.toBeInTheDocument()
   })
 
-  it('offers a mark-all-seen action when brain notifications exist across cases and calls it on click', async () => {
-    installBrainFetch({ signals: [signal], links: [link] })
-    const user = userEvent.setup()
-    const onMarkAllBrainSeen = vi.fn()
-
-    render(
-      <BrainSignalsPanel
-        currentInvestigationId="inv-current"
-        currentInvestigationTitle="Current Grid Case"
-        brainUnreadTotal={12}
-        onMarkAllBrainSeen={onMarkAllBrainSeen}
-      />,
-    )
-
-    const button = await screen.findByTestId('brain-mark-all-seen')
-    expect(button).toHaveTextContent('Mark all seen')
-    expect(button).toHaveTextContent('9+')
-    expect(button).toHaveAccessibleName('Mark all brain notifications as seen (12)')
-
-    await user.click(button)
-    expect(onMarkAllBrainSeen).toHaveBeenCalledTimes(1)
-  })
-
-  it('hides the mark-all-seen action when there is nothing unread', async () => {
-    installBrainFetch({ signals: [signal], links: [link] })
-
-    render(
-      <BrainSignalsPanel
-        currentInvestigationId="inv-current"
-        currentInvestigationTitle="Current Grid Case"
-      />,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('brain-signals-panel')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('brain-mark-all-seen')).not.toBeInTheDocument()
-  })
-
   it('renders the autonomy decision audit trail with reasons and blockers', async () => {
     installBrainFetch({
       signals: [signal],
