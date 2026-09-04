@@ -19,6 +19,9 @@ const gatewaysFilename = "gateways.json"
 const (
 	GatewayKindRecall        = "recall"
 	GatewayKindContradiction = "contradiction"
+	GatewayKindPattern       = "pattern"
+	GatewayKindClaims        = "claims"
+	GatewayKindSemantic      = "semantic"
 )
 
 var ErrGatewayNotFound = errors.New("brain gateway not found")
@@ -134,6 +137,33 @@ func builtinGatewayDefinitions(now string) []GatewayDefinition {
 			Name:        "Contradiction",
 			Description: "Fires when new evidence conflicts with claims remembered from an older case and needs verification.",
 			Kind:        GatewayKindContradiction,
+			Enabled:     true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			Code:        GatewayPattern,
+			Name:        "Recurring Pattern",
+			Description: "Fires when the same two named clues (for example an organisation and a date) recur together inside both investigations.",
+			Kind:        GatewayKindPattern,
+			Enabled:     true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			Code:        GatewayClaims,
+			Name:        "Quantified Claim",
+			Description: "Fires when both investigations cite the same specific figure - a percentage, money amount, or rate range.",
+			Kind:        GatewayKindClaims,
+			Enabled:     true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			Code:        GatewaySemantic,
+			Name:        "Semantic Overlap",
+			Description: "Fires when two investigations talk about the same subject in different words, via local semantic similarity of the evidence text.",
+			Kind:        GatewayKindSemantic,
 			Enabled:     true,
 			CreatedAt:   now,
 			UpdatedAt:   now,

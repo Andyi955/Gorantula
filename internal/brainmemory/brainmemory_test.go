@@ -3232,7 +3232,7 @@ func TestGatewayRegistrySeedsBuiltIns(t *testing.T) {
 			t.Fatalf("expected complete built-in definition, got %#v", gateway.Definition)
 		}
 	}
-	for _, expected := range []string{GatewayEntityDate, GatewaySourceDomain, GatewayRelationshipTag, GatewayContradiction} {
+	for _, expected := range []string{GatewayEntityDate, GatewaySourceDomain, GatewayRelationshipTag, GatewayContradiction, GatewayPattern, GatewayClaims, GatewaySemantic} {
 		if _, ok := codes[expected]; !ok {
 			t.Fatalf("expected built-in gateway %q in %#v", expected, gateways)
 		}
@@ -3461,9 +3461,14 @@ func TestGenerateSignalsSkipDisabledGateways(t *testing.T) {
 	if _, err := service.UpdateGatewayDefinition(GatewaySourceDomain, GatewayUpdate{Enabled: boolPtr(false)}); err != nil {
 		t.Fatalf("disable source-domain failed: %v", err)
 	}
+	// The ORG+DATE co-occurrence in this fixture is exactly what the pattern
+	// gateway matches, so it must be disabled too before the pair goes quiet.
+	if _, err := service.UpdateGatewayDefinition(GatewayPattern, GatewayUpdate{Enabled: boolPtr(false)}); err != nil {
+		t.Fatalf("disable pattern failed: %v", err)
+	}
 	quiet, err := service.GenerateSignals("inv-current")
 	if err != nil {
-		t.Fatalf("GenerateSignals after disabling both gateways failed: %v", err)
+		t.Fatalf("GenerateSignals after disabling every firing gateway failed: %v", err)
 	}
 	if len(quiet) != 0 {
 		t.Fatalf("expected no signals with all gateways disabled, got %#v", quiet)
@@ -3471,6 +3476,9 @@ func TestGenerateSignalsSkipDisabledGateways(t *testing.T) {
 
 	if _, err := service.UpdateGatewayDefinition(GatewayEntityDate, GatewayUpdate{Enabled: boolPtr(true)}); err != nil {
 		t.Fatalf("re-enable entity-date failed: %v", err)
+	}
+	if _, err := service.UpdateGatewayDefinition(GatewayPattern, GatewayUpdate{Enabled: boolPtr(true)}); err != nil {
+		t.Fatalf("re-enable pattern failed: %v", err)
 	}
 	restored, err := service.GenerateSignals("inv-current")
 	if err != nil {

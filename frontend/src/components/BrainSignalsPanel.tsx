@@ -195,6 +195,10 @@ const gatewayFilterOptions: Array<{ value: GatewayFilter; label: string }> = [
   { value: 'entity-date', label: 'Entity/Date' },
   { value: 'source-domain', label: 'Source Domain' },
   { value: 'relationship-tag', label: 'Relationship' },
+  { value: 'contradiction', label: 'Contradiction' },
+  { value: 'pattern', label: 'Recurring Pattern' },
+  { value: 'claims', label: 'Quantified Claim' },
+  { value: 'semantic', label: 'Semantic Overlap' },
 ]
 
 const strengthFilterOptions: Array<{ value: StrengthFilter; label: string }> = [

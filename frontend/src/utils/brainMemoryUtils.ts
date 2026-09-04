@@ -1,6 +1,6 @@
 import type { BrainGateway, BrainRelevance, BrainSignal, MemoryCluster, MemoryLink } from './brainMemory'
 
-export type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag'
+export type GatewayFilter = 'all' | 'entity-date' | 'source-domain' | 'relationship-tag' | 'contradiction' | 'pattern' | 'claims' | 'semantic'
 export type StrengthFilter = 'all' | 'hot' | 'warm' | 'weak'
 
 export interface BrainSignalGroup {
@@ -30,12 +30,20 @@ export const gatewayLabels: Record<string, string> = {
   'entity-date': 'Entity/Date',
   'source-domain': 'Source Domain',
   'relationship-tag': 'Relationship',
+  'contradiction': 'Contradiction',
+  'pattern': 'Recurring Pattern',
+  'claims': 'Quantified Claim',
+  'semantic': 'Semantic Overlap',
 }
 
 export const gatewayClassNames: Record<string, string> = {
   'entity-date': 'forensic-brain-chip-entity',
   'source-domain': 'forensic-brain-chip-source',
   'relationship-tag': 'forensic-brain-chip-relationship',
+  'contradiction': 'forensic-brain-chip-contradiction',
+  'pattern': 'forensic-brain-chip-pattern',
+  'claims': 'forensic-brain-chip-claims',
+  'semantic': 'forensic-brain-chip-semantic',
 }
 
 export const LOW_PRIORITY_SCORE_THRESHOLD = 0.5
@@ -383,6 +391,14 @@ const gatewayRank = (gateway: BrainGateway) => {
     return 1
   case 'relationship-tag':
     return 2
+  case 'contradiction':
+    return 3
+  case 'pattern':
+    return 4
+  case 'claims':
+    return 5
+  case 'semantic':
+    return 6
   default:
     return 9
   }

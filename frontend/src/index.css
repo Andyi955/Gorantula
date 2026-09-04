@@ -7871,6 +7871,26 @@ body {
   color: #ffe0a6;
 }
 
+.forensic-brain-chip-contradiction {
+  border-color: rgba(255, 122, 122, 0.3);
+  color: #ffc2c2;
+}
+
+.forensic-brain-chip-pattern {
+  border-color: rgba(196, 148, 255, 0.3);
+  color: #e2ccff;
+}
+
+.forensic-brain-chip-claims {
+  border-color: rgba(126, 255, 213, 0.28);
+  color: #b8ffe4;
+}
+
+.forensic-brain-chip-semantic {
+  border-color: rgba(155, 176, 255, 0.3);
+  color: #ccd6ff;
+}
+
 .forensic-brain-relevance-chip {
   display: inline-flex;
   align-items: center;
