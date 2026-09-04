@@ -5022,7 +5022,13 @@ func buildSignal(current memoryProfile, target memoryProfile, timestamp string, 
 		CreatedAt:             timestamp,
 		UpdatedAt:             timestamp,
 	}
-	signal.ID = deterministicID("brain-signal", signal.InvestigationID, signal.TargetInvestigationID, reasonSignature(reasons))
+	// A match's identity is the PAIR it connects, not the reasons that fired
+	// it. Reason-based IDs churned whenever a recompute shifted a reason set
+	// (a claim appearing, a similarity crossing a threshold), which resurrect
+	// dismissed matches and re-inflate the unseen badge after every
+	// recompute. Reason changes still surface: they move the score, and a
+	// climb of 0.05+ re-marks the pair as strengthened.
+	signal.ID = deterministicID("brain-signal", signal.InvestigationID, signal.TargetInvestigationID)
 	return signal, true
 }
 
@@ -5593,20 +5599,6 @@ func limitReasons(reasons []SignalReason, limit int) []SignalReason {
 		return reasons
 	}
 	return reasons[:limit]
-}
-
-func reasonSignature(reasons []SignalReason) string {
-	parts := make([]string, 0, len(reasons))
-	for _, reason := range reasons {
-		parts = append(parts, strings.Join([]string{
-			reason.Gateway,
-			reason.Value,
-			strings.Join(cleanStringSet(reason.CurrentNodeIDs), ","),
-			strings.Join(cleanStringSet(reason.TargetNodeIDs), ","),
-		}, ":"))
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, "|")
 }
 
 func sortSignals(signals []BrainSignal) {
