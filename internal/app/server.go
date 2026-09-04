@@ -20,6 +20,7 @@ import (
 	"github.com/Andyi955/Gorantula/internal/config"
 	"github.com/Andyi955/Gorantula/internal/investigations"
 	"github.com/Andyi955/Gorantula/internal/pipeline"
+	"github.com/Andyi955/Gorantula/internal/research"
 	"github.com/Andyi955/Gorantula/internal/settings"
 	"github.com/Andyi955/Gorantula/models"
 	"github.com/Andyi955/Gorantula/nervous_system"
@@ -63,6 +64,15 @@ func Run() error {
 		investigations.HandleAPI(w, r, br, brainEvidenceNotifier(brainMemoryService))
 	})
 	registerBrainMemoryRoutes(mux, brainMemoryService)
+
+	// Research corpus engine (Phase 0: ingest + claim extraction + listing).
+	researchService := research.NewService("research_corpus", br)
+	mux.HandleFunc("/api/research", func(w http.ResponseWriter, r *http.Request) {
+		research.HandleAPI(w, r, researchService)
+	})
+	mux.HandleFunc("/api/research/", func(w http.ResponseWriter, r *http.Request) {
+		research.HandleAPI(w, r, researchService)
+	})
 
 	mux.HandleFunc("/api/pick-files", func(w http.ResponseWriter, r *http.Request) {
 		// Enable CORS for local dev
