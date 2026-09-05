@@ -28,7 +28,15 @@ func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun)
 	if s.retriever == nil {
 		return fmt.Errorf("paper search is unavailable")
 	}
-	papers, err := s.retriever.Retrieve(ctx, run.Request.Topic, 5)
+	var papers []models.Paper
+	var err error
+	if retriever, ok := s.retriever.(interface {
+		RetrieveWithTrace(context.Context, string, int) ([]models.Paper, []models.PaperSearchAttempt, error)
+	}); ok {
+		papers, run.PaperSearchAttempts, err = retriever.RetrieveWithTrace(ctx, run.Request.Topic, 5)
+	} else {
+		papers, err = s.retriever.Retrieve(ctx, run.Request.Topic, 5)
+	}
 	if err != nil {
 		return fmt.Errorf("paper search failed: %w", err)
 	}

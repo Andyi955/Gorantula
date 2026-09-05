@@ -149,6 +149,9 @@ func publicationPDF(d models.PublicationDraft) ([]byte, error) {
 		body(f.Caption)
 	}
 	heading("4. Reviewer checks and limitations")
+	for _, a := range d.Run.PaperSearchAttempts {
+		body(fmt.Sprintf("Paper search - %s: %d readable records; cached: %t. %s", a.Provider, a.Papers, a.Cached, a.Error))
+	}
 	body("Agent reviews are recorded opinions about the available evidence, not independent scientific certification. Abstract-only evidence cannot establish full study methods.")
 	for _, a := range d.Run.SourceAssessments {
 		sub("Source screening: " + a.Relevance + " / " + a.DataKind)

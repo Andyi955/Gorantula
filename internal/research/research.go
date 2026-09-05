@@ -39,7 +39,7 @@ func NewService(root string, br *brain.Brain) *Service {
 		store:              NewStore(root),
 		brain:              br,
 		novelty:            openAlex,
-		retriever:          openAlex,
+		retriever:          newMultiPaperSearch(openAlex),
 		webSearch:          legs.SearchWebURLs,
 		verificationActive: make(map[string]context.CancelFunc),
 	}

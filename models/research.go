@@ -28,16 +28,19 @@ const (
 
 // Paper is an ingested scientific paper (metadata + available text).
 type Paper struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	Authors    []string `json:"authors,omitempty"`
-	Venue      string   `json:"venue,omitempty"`
-	Year       int      `json:"year,omitempty"`
-	Abstract   string   `json:"abstract,omitempty"`
-	FullText   string   `json:"fullText,omitempty"`
-	SourceURL  string   `json:"sourceURL,omitempty"`
-	License    string   `json:"license,omitempty"`
-	IngestedAt string   `json:"ingestedAt,omitempty"`
+	DOI             string   `json:"doi,omitempty"`
+	Provider        string   `json:"provider,omitempty"`
+	PublicationType string   `json:"publicationType,omitempty"`
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	Authors         []string `json:"authors,omitempty"`
+	Venue           string   `json:"venue,omitempty"`
+	Year            int      `json:"year,omitempty"`
+	Abstract        string   `json:"abstract,omitempty"`
+	FullText        string   `json:"fullText,omitempty"`
+	SourceURL       string   `json:"sourceURL,omitempty"`
+	License         string   `json:"license,omitempty"`
+	IngestedAt      string   `json:"ingestedAt,omitempty"`
 }
 
 // Claim is a grounded, entity-tagged evidence claim extracted from a Paper.

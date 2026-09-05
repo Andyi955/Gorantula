@@ -224,6 +224,9 @@ func writePublication(d models.PublicationDraft) string {
 		b.WriteString("\nLiterature report only. No numerical analysis or empirical verification was performed.\n")
 	}
 	b.WriteString("\n## Source screening\n\nModel assessments with checked source excerpts; not a guarantee of reliable data.\n\n")
+	for _, a := range d.Run.PaperSearchAttempts {
+		fmt.Fprintf(&b, "- Search provider %s: %d readable records; cached: %t. %s\n", a.Provider, a.Papers, a.Cached, a.Error)
+	}
 	for _, a := range d.Run.SourceAssessments {
 		fmt.Fprintf(&b, "- [%s]: %s evidence; %s. Source excerpt: %s. Limitations: %s\n", a.PaperID, a.Relevance, a.DataKind, a.Quote, a.Limitations)
 	}

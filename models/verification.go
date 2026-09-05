@@ -104,6 +104,7 @@ type ReportReview struct {
 }
 
 type VerificationRun struct {
+	PaperSearchAttempts  []PaperSearchAttempt        `json:"paperSearchAttempts,omitempty"`
 	SourceAssessments    []SourceAssessment          `json:"sourceAssessments,omitempty"`
 	CompletedStages      []string                    `json:"completedStages,omitempty"`
 	StageMessage         string                      `json:"stageMessage,omitempty"`
@@ -133,6 +134,13 @@ type VerificationRun struct {
 	CompletedAt          string                      `json:"completedAt,omitempty"`
 	ReplayMatches        *bool                       `json:"replayMatches,omitempty"`
 	TokenUsage           []PipelineProfileTokenUsage `json:"tokenUsage,omitempty"`
+}
+
+type PaperSearchAttempt struct {
+	Provider string `json:"provider"`
+	Papers   int    `json:"papers"`
+	Cached   bool   `json:"cached,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 type VerificationAgentAction struct {

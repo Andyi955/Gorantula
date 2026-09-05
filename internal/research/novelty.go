@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -137,7 +138,11 @@ func (c *OpenAlexNoveltyChecker) Retrieve(ctx context.Context, query string, lim
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenAlex returned HTTP %d", resp.StatusCode)
+		retry := time.Minute
+		if seconds, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && seconds > 0 {
+			retry = time.Duration(min(seconds, 86400)) * time.Second
+		}
+		return nil, fmt.Errorf("OpenAlex returned %w", paperAPIError{resp.StatusCode, retry})
 	}
 
 	var body openAlexResponse

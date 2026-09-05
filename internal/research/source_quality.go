@@ -37,7 +37,7 @@ func (s *Service) screenTopicPapersOnce(ctx context.Context, run *models.Verific
 				chars = chars[n:]
 			}
 		}
-		sources = append(sources, map[string]interface{}{"paperId": p.ID, "title": p.Title, "abstractOnly": p.FullText == "", "excerpts": excerpts[p.ID]})
+		sources = append(sources, map[string]interface{}{"paperId": p.ID, "title": p.Title, "provider": p.Provider, "publicationType": p.PublicationType, "abstractOnly": p.FullText == "", "excerpts": excerpts[p.ID]})
 	}
 	evidence, _ := json.Marshal(map[string]interface{}{"topic": run.Request.Topic, "papers": sources})
 	var response struct {
