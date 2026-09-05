@@ -21,22 +21,30 @@ import (
 // graph + signal surfacing layer, and a candidate hypotheses + bounded review
 // pipeline. Every phase emits a followable trace line so a run can be debugged.
 type Service struct {
-	store   *Store
-	brain   *brain.Brain
-	novelty NoveltyChecker
+	store     *Store
+	brain     *brain.Brain
+	novelty   NoveltyChecker
+	retriever EvidenceRetriever
 }
 
 func NewService(root string, br *brain.Brain) *Service {
+	openAlex := NewOpenAlexNoveltyChecker()
 	return &Service{
-		store:   NewStore(root),
-		brain:   br,
-		novelty: NewOpenAlexNoveltyChecker(),
+		store:     NewStore(root),
+		brain:     br,
+		novelty:   openAlex,
+		retriever: openAlex,
 	}
 }
 
 // SetNoveltyChecker overrides the novelty checker (used by tests).
 func (s *Service) SetNoveltyChecker(checker NoveltyChecker) {
 	s.novelty = checker
+}
+
+// SetEvidenceRetriever overrides the evidence retriever (used by tests).
+func (s *Service) SetEvidenceRetriever(retriever EvidenceRetriever) {
+	s.retriever = retriever
 }
 
 // ListPapers returns all ingested papers.
@@ -247,13 +255,13 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 		// Bounded review: use the LLM reviewer committee when a provider is
 		// available, otherwise fall back to the deterministic heuristic.
 		if s.brain != nil {
-			reviews, rErr := s.brain.ReviewCandidateChecklist(ctx, candidates[i].Hypothesis,
+			reviews, rationale, summary, rErr := s.brain.ReviewCandidateChecklist(ctx, candidates[i].Hypothesis,
 				claimsForCandidate(claims, candidates[i]), papersForCandidate(candidates[i], papers))
 			if rErr != nil {
 				trace("review", fmt.Sprintf("candidate %s checklist review unavailable: %v", candidates[i].ID, rErr))
 				evaluateChecklist(&candidates[i], claims)
 			} else {
-				applyChecklistReviews(&candidates[i], reviews)
+				applyChecklistReviews(&candidates[i], reviews, rationale, summary)
 			}
 		} else {
 			evaluateChecklist(&candidates[i], claims)
@@ -271,6 +279,10 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 				updateNoveltyAnswer(&candidates[i])
 			}
 		}
+
+		// Bounded evidence-expansion round: fetch related papers to resolve any
+		// still-unknown criteria, then re-review. Never forces a yes.
+		s.expandCandidateEvidence(ctx, &candidates[i], claims, papers)
 	}
 	if err := s.store.SaveCandidates(candidates); err != nil {
 		return nil, err

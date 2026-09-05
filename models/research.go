@@ -121,26 +121,39 @@ type ChecklistReviewItem struct {
 
 // ChecklistReviewResponse is the JSON shape a reviewer persona returns.
 type ChecklistReviewResponse struct {
-	Items []ChecklistReviewItem `json:"items"`
+	Items     []ChecklistReviewItem `json:"items"`
+	Rationale string                `json:"rationale,omitempty"`
+	Summary   string                `json:"summary,omitempty"`
+}
+
+// CandidateExpansion records a bounded evidence-expansion round: the criteria
+// attempted and the related papers fetched to try to resolve them.
+type CandidateExpansion struct {
+	Round     int      `json:"round"`
+	Criteria  []string `json:"criteria,omitempty"`
+	Retrieved []Paper  `json:"retrieved,omitempty"`
 }
 
 // CandidateHypothesis is a surfaced cross-paper finding promoted to a
 // reviewable hypothesis with a novelty score, a checklist, and a state.
 type CandidateHypothesis struct {
-	ID            string          `json:"id"`
-	SignalID      string          `json:"signalID"`
-	Hypothesis    string          `json:"hypothesis"`
-	Supporting    []string        `json:"supporting,omitempty"`
-	Contradicting []string        `json:"contradicting,omitempty"`
-	ClaimIDs      []string        `json:"claimIDs,omitempty"`
-	PaperIDs      []string        `json:"paperIDs,omitempty"`
-	NoveltyScore  float32         `json:"noveltyScore,omitempty"`
-	NearestWork   string          `json:"nearestWork,omitempty"`
-	Checklist     []ChecklistItem `json:"checklist,omitempty"`
-	Verdict       string          `json:"verdict,omitempty"`
-	EvidenceGrade string          `json:"evidenceGrade,omitempty"`
-	State         string          `json:"state"`
-	ApprovedBy    string          `json:"approvedBy,omitempty"`
-	ApprovedAt    string          `json:"approvedAt,omitempty"`
-	CreatedAt     string          `json:"createdAt,omitempty"`
+	ID            string              `json:"id"`
+	SignalID      string              `json:"signalID"`
+	Hypothesis    string              `json:"hypothesis"`
+	Supporting    []string            `json:"supporting,omitempty"`
+	Contradicting []string            `json:"contradicting,omitempty"`
+	ClaimIDs      []string            `json:"claimIDs,omitempty"`
+	PaperIDs      []string            `json:"paperIDs,omitempty"`
+	NoveltyScore  float32             `json:"noveltyScore,omitempty"`
+	NearestWork   string              `json:"nearestWork,omitempty"`
+	Checklist     []ChecklistItem     `json:"checklist,omitempty"`
+	Expansion     *CandidateExpansion `json:"expansion,omitempty"`
+	Verdict       string              `json:"verdict,omitempty"`
+	Rationale     string              `json:"rationale,omitempty"`
+	Summary       string              `json:"summary,omitempty"`
+	EvidenceGrade string              `json:"evidenceGrade,omitempty"`
+	State         string              `json:"state"`
+	ApprovedBy    string              `json:"approvedBy,omitempty"`
+	ApprovedAt    string              `json:"approvedAt,omitempty"`
+	CreatedAt     string              `json:"createdAt,omitempty"`
 }

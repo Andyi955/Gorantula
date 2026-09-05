@@ -69,11 +69,20 @@ interface Candidate {
   noveltyScore?: number;
   nearestWork?: string;
   checklist?: ChecklistItem[];
+  expansion?: CandidateExpansion;
   verdict?: string;
+  rationale?: string;
+  summary?: string;
   evidenceGrade?: string;
   state: string;
   approvedBy?: string;
   approvedAt?: string;
+}
+
+interface CandidateExpansion {
+  round: number;
+  criteria?: string[];
+  retrieved?: Paper[];
 }
 
 type View = 'signals' | 'corpus' | 'relations' | 'candidates';
@@ -93,6 +102,41 @@ const STATE_LABEL: Record<string, string> = {
   approved: 'Approved',
   rejected: 'Rejected',
 };
+
+const VERDICT_RECOMMENDATION: Record<string, { label: string; tone: string }> = {
+  agreed: { label: 'Approve — all criteria are satisfied.', tone: 'text-[#90f3da]' },
+  disputed: { label: 'Needs more evidence — don’t approve yet.', tone: 'text-[#f6c879]' },
+  refuted: { label: 'Reject — the evidence directly fails it.', tone: 'text-[#ff8c86]' },
+};
+
+// verdictStatus derives a truthful one-line status from the candidate's final
+// checklist (never from the static verdict alone), so the UI never claims the
+// evidence is stronger than it is. It's the fallback when no LLM summary exists
+// (heuristic review, or older persisted candidates).
+function verdictStatus(candidate: Candidate): string {
+  const checklist = candidate.checklist || [];
+  const total = checklist.length;
+  const yes = checklist.filter((item) => item.answer === 'yes').length;
+  const unknown = checklist.filter((item) => item.answer === 'unknown').length;
+  const no = total - yes - unknown;
+  const verdict = candidate.verdict || 'disputed';
+
+  if (total === 0) {
+    if (verdict === 'agreed') return 'All criteria satisfied — approvable.';
+    if (verdict === 'refuted') return 'Reject — the evidence fails it.';
+    return 'Current evidence doesn’t clearly support or refute it.';
+  }
+
+  if (verdict === 'agreed') return `All ${total} criteria satisfied — approvable.`;
+  if (verdict === 'refuted') return `Reject — ${no} criterion${no === 1 ? '' : 's'} failed.`;
+
+  // disputed / inconclusive
+  const parts: string[] = [];
+  if (yes > 0) parts.push(`${yes}/${total} criteria satisfied`);
+  if (no > 0) parts.push(`${no} failed`);
+  if (unknown > 0) parts.push(`${unknown} unresolved`);
+  return `Inconclusive — ${parts.join(', ')}.`;
+}
 
 const SIGNAL_META: Record<string, { label: string; icon: typeof AlertTriangle; tone: string }> = {
   contradiction: { label: 'Contradiction', icon: AlertTriangle, tone: 'text-[#ff8c86] border-[#ff8c86]/40 bg-[#ff8c86]/10' },
@@ -125,8 +169,11 @@ const ScientificResearchLab = () => {
   const [title, setTitle] = useState('');
   const [abstract, setAbstract] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Nested collapse for the related-papers list inside a candidate's checklist.
+  const [showPapers, setShowPapers] = useState<Record<string, boolean>>({});
 
   const toggleExpanded = (id: string) => setExpanded((cur) => ({ ...cur, [id]: !cur[id] }));
+  const togglePapers = (id: string) => setShowPapers((cur) => ({ ...cur, [id]: !cur[id] }));
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -409,13 +456,31 @@ const ScientificResearchLab = () => {
           const checklist = candidate.checklist || [];
           const confirmed = checklist.filter((item) => item.answer === 'yes').length;
           const title = candidate.hypothesis;
+          const noveltyPct = candidate.noveltyScore !== undefined ? Math.round(candidate.noveltyScore * 100) : null;
+          const noveltyTone = candidate.noveltyScore === undefined
+            ? ''
+            : candidate.noveltyScore >= 0.6
+              ? 'border-[#90f3da]/55 bg-[#90f3da]/12 text-[#90f3da]'
+              : candidate.noveltyScore >= 0.4
+                ? 'border-[#f6c879]/55 bg-[#f6c879]/12 text-[#f6c879]'
+                : 'border-[#ff8c86]/55 bg-[#ff8c86]/12 text-[#ff8c86]';
+          const noveltyLabel = candidate.noveltyScore === undefined
+            ? ''
+            : candidate.noveltyScore >= 0.6
+              ? 'novel'
+              : candidate.noveltyScore >= 0.4
+                ? 'partially covered'
+                : 'already studied';
           return (
             <div key={candidate.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${verdict.tone}`}>{verdict.label}</span>
                 <span className="rounded-md border border-[var(--forensic-border-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)]">{STATE_LABEL[candidate.state] || candidate.state}</span>
-                {candidate.noveltyScore !== undefined && (
-                  <span className="text-[11px] text-[var(--forensic-text-faint)]">novelty {Math.round(candidate.noveltyScore * 100)}%</span>
+                {noveltyPct !== null && (
+                  <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${noveltyTone}`}>
+                    <span aria-hidden>◎</span>
+                    novelty {noveltyPct}% · {noveltyLabel}
+                  </span>
                 )}
               </div>
 
@@ -430,6 +495,21 @@ const ScientificResearchLab = () => {
 
               <p className={`mt-2 text-sm font-semibold text-[var(--forensic-text)] ${expanded[candidate.id] ? '' : 'line-clamp-3'}`}>{title}</p>
               {candidate.evidenceGrade && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{candidate.evidenceGrade} evidence</p>}
+              {(candidate.summary || checklist.length > 0) && (
+                <p className={`mt-2 text-xs font-semibold ${VERDICT_RECOMMENDATION[candidate.verdict || 'disputed']?.tone ?? ''}`}>
+                  {candidate.summary || verdictStatus(candidate)}
+                </p>
+              )}
+              {candidate.rationale && (
+                <div className="mt-2 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2">
+                  <p className="text-xs italic leading-relaxed text-[var(--forensic-text-muted)]">{candidate.rationale}</p>
+                </div>
+              )}
+              {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (
+                <p className="mt-1 text-[11px] text-[var(--forensic-accent)]">
+                  expanded with {candidate.expansion.retrieved.length} related paper(s)
+                </p>
+              )}
 
               {expanded[candidate.id] && (
                 <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 border-t border-[var(--forensic-border-soft)] pt-3 lg:grid-cols-2">
@@ -450,6 +530,33 @@ const ScientificResearchLab = () => {
                   ))}
                   {candidate.nearestWork && (
                     <p className="text-[11px] italic text-[var(--forensic-text-faint)]">nearest existing work: {candidate.nearestWork}</p>
+                  )}
+                  {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (
+                    <div className="col-span-full border-t border-[var(--forensic-border-soft)] pt-2">
+                      <button
+                        type="button"
+                        onClick={() => togglePapers(candidate.id)}
+                        aria-expanded={Boolean(showPapers[candidate.id])}
+                        className="flex w-full items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-accent)] hover:underline"
+                      >
+                        <span>related papers fetched ({candidate.expansion.retrieved.length})</span>
+                        <span className="shrink-0">{showPapers[candidate.id] ? 'Hide' : 'Show'}</span>
+                      </button>
+                      {showPapers[candidate.id] && (
+                        <ul className="mt-2 space-y-1.5">
+                          {candidate.expansion.retrieved.map((paper) => (
+                            <li key={paper.id} className="flex items-baseline gap-1.5 text-[11px] text-[var(--forensic-text-muted)]">
+                              {paper.sourceURL ? (
+                                <a href={paper.sourceURL} target="_blank" rel="noreferrer" className="hover:underline">{paper.title || paper.id}</a>
+                              ) : (
+                                <span>{paper.title || paper.id}</span>
+                              )}
+                              {paper.sourceURL && <span className="text-[var(--forensic-text-faint)]">· {paper.sourceURL}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

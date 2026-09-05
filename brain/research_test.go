@@ -133,13 +133,15 @@ func TestReviewCandidateChecklist(t *testing.T) {
 				{ID: "precision", Answer: "yes", Reason: "effect size reported", Confidence: 0.9},
 				{ID: "novelty", Answer: "unknown", Reason: "not enough evidence in the paper text", Confidence: 0.4},
 			}
+			resp.Rationale = "Clear effect size, but novelty cannot be judged from the paper text."
+			resp.Summary = "Effect size is clear but novelty is unresolved — current evidence can't be approved as-is."
 			return nil
 		},
 	}
 	b := &Brain{ModelRouter: map[string]ModelProvider{"mock": mock}}
 	t.Setenv("DEFAULT_SEARCH_MODEL", "mock")
 
-	items, err := b.ReviewCandidateChecklist(context.Background(), "Metformin improves survival", []models.Claim{
+	items, rationale, summary, err := b.ReviewCandidateChecklist(context.Background(), "Metformin improves survival", []models.Claim{
 		{ID: "c1", Text: "Metformin improves survival.", Entities: []string{"[PRODUCT:Metformin]"}, SourceSnippet: "Metformin improves survival."},
 	}, []models.Paper{
 		{ID: "p1", Title: "Metformin study", Abstract: "A clinical study reported that treatment with Metformin increased survival."},
@@ -152,5 +154,11 @@ func TestReviewCandidateChecklist(t *testing.T) {
 	}
 	if items[1].Answer != "unknown" {
 		t.Errorf("expected unknown for under-evidenced criterion, got %q", items[1].Answer)
+	}
+	if !strings.Contains(rationale, "novelty") {
+		t.Errorf("rationale should be returned: %q", rationale)
+	}
+	if !strings.Contains(summary, "current evidence") {
+		t.Errorf("summary should be returned: %q", summary)
 	}
 }
