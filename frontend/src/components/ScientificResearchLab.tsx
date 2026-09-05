@@ -72,6 +72,7 @@ interface Candidate {
   expansion?: CandidateExpansion;
   verdict?: string;
   rationale?: string;
+  summary?: string;
   evidenceGrade?: string;
   state: string;
   approvedBy?: string;
@@ -107,6 +108,35 @@ const VERDICT_RECOMMENDATION: Record<string, { label: string; tone: string }> = 
   disputed: { label: 'Needs more evidence — don’t approve yet.', tone: 'text-[#f6c879]' },
   refuted: { label: 'Reject — the evidence directly fails it.', tone: 'text-[#ff8c86]' },
 };
+
+// verdictStatus derives a truthful one-line status from the candidate's final
+// checklist (never from the static verdict alone), so the UI never claims the
+// evidence is stronger than it is. It's the fallback when no LLM summary exists
+// (heuristic review, or older persisted candidates).
+function verdictStatus(candidate: Candidate): string {
+  const checklist = candidate.checklist || [];
+  const total = checklist.length;
+  const yes = checklist.filter((item) => item.answer === 'yes').length;
+  const unknown = checklist.filter((item) => item.answer === 'unknown').length;
+  const no = total - yes - unknown;
+  const verdict = candidate.verdict || 'disputed';
+
+  if (total === 0) {
+    if (verdict === 'agreed') return 'All criteria satisfied — approvable.';
+    if (verdict === 'refuted') return 'Reject — the evidence fails it.';
+    return 'Current evidence doesn’t clearly support or refute it.';
+  }
+
+  if (verdict === 'agreed') return `All ${total} criteria satisfied — approvable.`;
+  if (verdict === 'refuted') return `Reject — ${no} criterion${no === 1 ? '' : 's'} failed.`;
+
+  // disputed / inconclusive
+  const parts: string[] = [];
+  if (yes > 0) parts.push(`${yes}/${total} criteria satisfied`);
+  if (no > 0) parts.push(`${no} failed`);
+  if (unknown > 0) parts.push(`${unknown} unresolved`);
+  return `Inconclusive — ${parts.join(', ')}.`;
+}
 
 const SIGNAL_META: Record<string, { label: string; icon: typeof AlertTriangle; tone: string }> = {
   contradiction: { label: 'Contradiction', icon: AlertTriangle, tone: 'text-[#ff8c86] border-[#ff8c86]/40 bg-[#ff8c86]/10' },
@@ -462,14 +492,14 @@ const ScientificResearchLab = () => {
 
               <p className={`mt-2 text-sm font-semibold text-[var(--forensic-text)] ${expanded[candidate.id] ? '' : 'line-clamp-3'}`}>{title}</p>
               {candidate.evidenceGrade && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{candidate.evidenceGrade} evidence</p>}
+              {(candidate.summary || checklist.length > 0) && (
+                <p className={`mt-2 text-xs font-semibold ${VERDICT_RECOMMENDATION[candidate.verdict || 'disputed']?.tone ?? ''}`}>
+                  {candidate.summary || verdictStatus(candidate)}
+                </p>
+              )}
               {candidate.rationale && (
                 <div className="mt-2 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2">
-                  {VERDICT_RECOMMENDATION[candidate.verdict || 'disputed'] && (
-                    <p className={`text-xs font-semibold ${VERDICT_RECOMMENDATION[candidate.verdict || 'disputed'].tone}`}>
-                      {VERDICT_RECOMMENDATION[candidate.verdict || 'disputed'].label}
-                    </p>
-                  )}
-                  <p className="mt-1 text-xs italic leading-relaxed text-[var(--forensic-text-muted)]">{candidate.rationale}</p>
+                  <p className="text-xs italic leading-relaxed text-[var(--forensic-text-muted)]">{candidate.rationale}</p>
                 </div>
               )}
               {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (

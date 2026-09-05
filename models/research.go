@@ -123,6 +123,7 @@ type ChecklistReviewItem struct {
 type ChecklistReviewResponse struct {
 	Items     []ChecklistReviewItem `json:"items"`
 	Rationale string                `json:"rationale,omitempty"`
+	Summary   string                `json:"summary,omitempty"`
 }
 
 // CandidateExpansion records a bounded evidence-expansion round: the criteria
@@ -149,6 +150,7 @@ type CandidateHypothesis struct {
 	Expansion     *CandidateExpansion `json:"expansion,omitempty"`
 	Verdict       string              `json:"verdict,omitempty"`
 	Rationale     string              `json:"rationale,omitempty"`
+	Summary       string              `json:"summary,omitempty"`
 	EvidenceGrade string              `json:"evidenceGrade,omitempty"`
 	State         string              `json:"state"`
 	ApprovedBy    string              `json:"approvedBy,omitempty"`

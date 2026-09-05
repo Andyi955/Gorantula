@@ -184,10 +184,13 @@ func TestApplyChecklistReviews(t *testing.T) {
 		{ID: "novelty", Answer: "unknown", Reason: "not enough evidence in paper text"},
 	}
 
-	applyChecklistReviews(&candidate, reviews, "Weak lead: no reported effect sizes and the two sources conflict.")
+	applyChecklistReviews(&candidate, reviews, "Weak lead: no reported effect sizes and the two sources conflict.", "Two of three criteria unresolved - current evidence can't be approved yet.")
 
 	if candidate.Rationale != "Weak lead: no reported effect sizes and the two sources conflict." {
 		t.Errorf("rationale not applied: %q", candidate.Rationale)
+	}
+	if candidate.Summary != "Two of three criteria unresolved - current evidence can't be approved yet." {
+		t.Errorf("summary not applied: %q", candidate.Summary)
 	}
 
 	if len(candidate.Checklist) != len(candidateChecklist) {
