@@ -121,7 +121,8 @@ type ChecklistReviewItem struct {
 
 // ChecklistReviewResponse is the JSON shape a reviewer persona returns.
 type ChecklistReviewResponse struct {
-	Items []ChecklistReviewItem `json:"items"`
+	Items     []ChecklistReviewItem `json:"items"`
+	Rationale string                `json:"rationale,omitempty"`
 }
 
 // CandidateExpansion records a bounded evidence-expansion round: the criteria
@@ -147,6 +148,7 @@ type CandidateHypothesis struct {
 	Checklist     []ChecklistItem     `json:"checklist,omitempty"`
 	Expansion     *CandidateExpansion `json:"expansion,omitempty"`
 	Verdict       string              `json:"verdict,omitempty"`
+	Rationale     string              `json:"rationale,omitempty"`
 	EvidenceGrade string              `json:"evidenceGrade,omitempty"`
 	State         string              `json:"state"`
 	ApprovedBy    string              `json:"approvedBy,omitempty"`

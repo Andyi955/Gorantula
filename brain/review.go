@@ -14,14 +14,14 @@ const researchReviewSourceLimit = 6000
 
 // ReviewCandidateChecklist runs the bounded-review committee (a reviewer
 // persona) over a candidate hypothesis, answering each checklist criterion as
-// yes / no / unknown against the grounded evidence. The reviewer reads the
-// referenced claims AND the underlying papers' abstracts so it can judge
-// statistical rigor, reproducibility, plausibility, etc. Unknown means the
-// evidence does not contain enough to judge - the reviewer never guesses.
-func (b *Brain) ReviewCandidateChecklist(ctx context.Context, hypothesis string, claims []models.Claim, papers []models.Paper) ([]models.ChecklistReviewItem, error) {
+// yes / no / unknown against the grounded evidence, plus a plain-language
+// "why" rationale. The reviewer reads the referenced claims AND the underlying
+// papers' abstracts. Unknown means the evidence does not contain enough to
+// judge - the reviewer never guesses.
+func (b *Brain) ReviewCandidateChecklist(ctx context.Context, hypothesis string, claims []models.Claim, papers []models.Paper) ([]models.ChecklistReviewItem, string, error) {
 	provider := b.GetSearchProvider()
 	if provider == nil {
-		return nil, fmt.Errorf("no model providers available for checklist review")
+		return nil, "", fmt.Errorf("no model providers available for checklist review")
 	}
 
 	evidence := formatReviewEvidence(claims, papers)
@@ -37,7 +37,7 @@ func (b *Brain) ReviewCandidateChecklist(ctx context.Context, hypothesis string,
 
 	var resp models.ChecklistReviewResponse
 	if err := provider.GenerateJSON(ctx, prompt, &resp); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	normalized := make([]models.ChecklistReviewItem, 0, len(resp.Items))
@@ -50,7 +50,7 @@ func (b *Brain) ReviewCandidateChecklist(ctx context.Context, hypothesis string,
 		}
 		normalized = append(normalized, item)
 	}
-	return normalized, nil
+	return normalized, strings.TrimSpace(resp.Rationale), nil
 }
 
 func normalizeReviewAnswer(answer string) string {
@@ -98,7 +98,7 @@ For EACH criterion answer:
 - "no" = the evidence clearly fails this criterion.
 - "unknown" = there is NOT ENOUGH evidence to judge this criterion, OR the evidence is only a single source, OR the sources conflict. NEVER guess and NEVER force a "yes" from a single paper; unknown is the honest answer when the papers do not report the needed information or do not agree.
 
-Return ONLY a valid JSON object: {"items":[{"id":"precision","answer":"yes|no|unknown","reason":"one short sentence","confidence":0.9}]}. Include an item for EVERY criterion below.
+Return ONLY a valid JSON object: {"items":[{"id":"precision","answer":"yes|no|unknown","reason":"one short sentence","confidence":0.9}], "rationale":"1-2 SHORT plain-English sentences to a non-scientist: what this finding is, and the concrete reasons it should be approved, needs more evidence, or rejected. Do NOT quote paper text. Do NOT start with a verdict word."}. Include an item for EVERY criterion below.
 
 CANDIDATE HYPOTHESIS: %s
 

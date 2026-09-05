@@ -71,6 +71,7 @@ interface Candidate {
   checklist?: ChecklistItem[];
   expansion?: CandidateExpansion;
   verdict?: string;
+  rationale?: string;
   evidenceGrade?: string;
   state: string;
   approvedBy?: string;
@@ -99,6 +100,12 @@ const STATE_LABEL: Record<string, string> = {
   refuted: 'Refuted',
   approved: 'Approved',
   rejected: 'Rejected',
+};
+
+const VERDICT_RECOMMENDATION: Record<string, { label: string; tone: string }> = {
+  agreed: { label: 'Approve — all criteria are satisfied.', tone: 'text-[#90f3da]' },
+  disputed: { label: 'Needs more evidence — don’t approve yet.', tone: 'text-[#f6c879]' },
+  refuted: { label: 'Reject — the evidence directly fails it.', tone: 'text-[#ff8c86]' },
 };
 
 const SIGNAL_META: Record<string, { label: string; icon: typeof AlertTriangle; tone: string }> = {
@@ -455,6 +462,16 @@ const ScientificResearchLab = () => {
 
               <p className={`mt-2 text-sm font-semibold text-[var(--forensic-text)] ${expanded[candidate.id] ? '' : 'line-clamp-3'}`}>{title}</p>
               {candidate.evidenceGrade && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{candidate.evidenceGrade} evidence</p>}
+              {candidate.rationale && (
+                <div className="mt-2 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2">
+                  {VERDICT_RECOMMENDATION[candidate.verdict || 'disputed'] && (
+                    <p className={`text-xs font-semibold ${VERDICT_RECOMMENDATION[candidate.verdict || 'disputed'].tone}`}>
+                      {VERDICT_RECOMMENDATION[candidate.verdict || 'disputed'].label}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs italic leading-relaxed text-[var(--forensic-text-muted)]">{candidate.rationale}</p>
+                </div>
+              )}
               {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (
                 <p className="mt-1 text-[11px] text-[var(--forensic-accent)]">
                   expanded with {candidate.expansion.retrieved.length} related paper(s)

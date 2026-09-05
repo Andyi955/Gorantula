@@ -156,9 +156,11 @@ func evaluateChecklist(candidate *models.CandidateHypothesis, claims []models.Cl
 }
 
 // applyChecklistReviews builds the candidate's checklist from the reviewer
-// persona's answers (the bounded-review debate roster) and finalizes the
-// verdict. Any criterion the reviewer did not answer is left unknown.
-func applyChecklistReviews(candidate *models.CandidateHypothesis, reviews []models.ChecklistReviewItem) {
+// persona's answers (the bounded-review debate roster) plus the plain-language
+// rationale, and finalizes the verdict. Any criterion the reviewer did not
+// answer is left unknown.
+func applyChecklistReviews(candidate *models.CandidateHypothesis, reviews []models.ChecklistReviewItem, rationale string) {
+	candidate.Rationale = strings.TrimSpace(rationale)
 	reviewsByID := make(map[string]models.ChecklistReviewItem, len(reviews))
 	for _, review := range reviews {
 		reviewsByID[review.ID] = review

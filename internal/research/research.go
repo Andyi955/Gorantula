@@ -255,13 +255,13 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 		// Bounded review: use the LLM reviewer committee when a provider is
 		// available, otherwise fall back to the deterministic heuristic.
 		if s.brain != nil {
-			reviews, rErr := s.brain.ReviewCandidateChecklist(ctx, candidates[i].Hypothesis,
+			reviews, rationale, rErr := s.brain.ReviewCandidateChecklist(ctx, candidates[i].Hypothesis,
 				claimsForCandidate(claims, candidates[i]), papersForCandidate(candidates[i], papers))
 			if rErr != nil {
 				trace("review", fmt.Sprintf("candidate %s checklist review unavailable: %v", candidates[i].ID, rErr))
 				evaluateChecklist(&candidates[i], claims)
 			} else {
-				applyChecklistReviews(&candidates[i], reviews)
+				applyChecklistReviews(&candidates[i], reviews, rationale)
 			}
 		} else {
 			evaluateChecklist(&candidates[i], claims)

@@ -92,12 +92,12 @@ func (s *Service) expandCandidateEvidence(ctx context.Context, candidate *models
 func (s *Service) applyReviewWithExpansion(ctx context.Context, candidate *models.CandidateHypothesis, claims []models.Claim, papers, extra []models.Paper) {
 	evidenceClaims := claimsForCandidate(claims, *candidate)
 	reviewPapers := append(append([]models.Paper(nil), papersForCandidate(*candidate, papers)...), extra...)
-	reviews, err := s.brain.ReviewCandidateChecklist(ctx, candidate.Hypothesis, evidenceClaims, reviewPapers)
+	reviews, rationale, err := s.brain.ReviewCandidateChecklist(ctx, candidate.Hypothesis, evidenceClaims, reviewPapers)
 	if err != nil {
 		trace("expansion", fmt.Sprintf("candidate %s re-review failed: %v", candidate.ID, err))
 		return
 	}
-	applyChecklistReviews(candidate, reviews)
+	applyChecklistReviews(candidate, reviews, rationale)
 	neutralizeContradictionCriticalItems(candidate)
 	updateNoveltyAnswer(candidate)
 	trace("expansion", fmt.Sprintf("candidate %s checklist updated from expanded evidence", candidate.ID))

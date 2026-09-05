@@ -184,7 +184,11 @@ func TestApplyChecklistReviews(t *testing.T) {
 		{ID: "novelty", Answer: "unknown", Reason: "not enough evidence in paper text"},
 	}
 
-	applyChecklistReviews(&candidate, reviews)
+	applyChecklistReviews(&candidate, reviews, "Weak lead: no reported effect sizes and the two sources conflict.")
+
+	if candidate.Rationale != "Weak lead: no reported effect sizes and the two sources conflict." {
+		t.Errorf("rationale not applied: %q", candidate.Rationale)
+	}
 
 	if len(candidate.Checklist) != len(candidateChecklist) {
 		t.Fatalf("checklist length = %d, want %d", len(candidate.Checklist), len(candidateChecklist))
