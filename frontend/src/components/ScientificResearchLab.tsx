@@ -437,7 +437,7 @@ const ScientificResearchLab = () => {
               ? 'novel'
               : candidate.noveltyScore >= 0.4
                 ? 'partially covered'
-                : 'well-covered';
+                : 'already studied';
           return (
             <div key={candidate.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
               <div className="flex flex-wrap items-center gap-2">

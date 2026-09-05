@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Andyi955/Gorantula/models"
 )
@@ -63,7 +64,7 @@ func (c *OpenAlexNoveltyChecker) CheckNovelty(ctx context.Context, hypothesis st
 		return 0.5, "", nil
 	}
 
-	requestURL := fmt.Sprintf("%s?search=%s&per-page=5&mailto=gorantula@example.com", c.baseURL, url.QueryEscape(query))
+	requestURL := fmt.Sprintf("%s?search=%s&per-page=10&mailto=gorantula@example.com", c.baseURL, url.QueryEscape(query))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return 0, "", err
@@ -79,11 +80,32 @@ func (c *OpenAlexNoveltyChecker) CheckNovelty(ctx context.Context, hypothesis st
 		return 0, "", err
 	}
 
+	// Claim-specific novelty: count how many of the closest works are
+	// near-duplicates of the hypothesis — a high fraction of the hypothesis's
+	// content words present in the work's title/abstract. Few/none -> novel;
+	// several -> the claim is already established. Using cleaned content words
+	// (stopwords stripped) keeps generic words from inflating the match, and the
+	// score reflects THIS claim, not the broad topic.
+	contentWords := cleanHypothesisTerms(hypothesis)
+	hypWords := make(map[string]struct{}, len(contentWords))
+	for _, word := range contentWords {
+		hypWords[word] = struct{}{}
+	}
+	nearMatches := 0
 	nearest := ""
-	if len(body.Results) > 0 {
+	for _, work := range body.Results {
+		workText := work.Title + " " + reconstructOpenAlexAbstract(work.AbstractInvertedIndex)
+		if measureWordCoverage(hypWords, workText) >= 0.5 {
+			nearMatches++
+			if nearest == "" {
+				nearest = work.Title
+			}
+		}
+	}
+	if nearest == "" && len(body.Results) > 0 {
 		nearest = body.Results[0].Title
 	}
-	return noveltyScoreFromCount(body.Meta.Count), nearest, nil
+	return noveltyScoreFromCount(nearMatches), nearest, nil
 }
 
 // Retrieve fetches related papers for a literature query and returns them as
@@ -196,17 +218,79 @@ func noveltyScoreFromCount(count int) float32 {
 func noveltyQuery(hypothesis string, entities []string) string {
 	var parts []string
 	for _, entity := range entities {
-		if _, name, ok := splitEntityTagForNovelty(entity); ok {
+		if _, name, ok := splitEntityTagForNovelty(entity); ok && name != "" {
 			parts = append(parts, name)
 		}
+	}
+	// Add the substance of the claim so the search targets THIS hypothesis, not
+	// just the broad topic.
+	for _, term := range cleanHypothesisTerms(hypothesis) {
+		parts = append(parts, term)
 	}
 	if len(parts) == 0 {
 		parts = append(parts, strings.TrimSpace(hypothesis))
 	}
-	if len(parts) > 4 {
-		parts = parts[:4]
+	if len(parts) > 5 {
+		parts = parts[:5]
 	}
 	return strings.Join(parts, " ")
+}
+
+var noveltyQueryStopwords = map[string]struct{}{
+	"contradiction": {}, "convergence": {}, "divergence": {}, "hypothesis": {},
+	"vs": {}, "versus": {}, "the": {}, "a": {}, "an": {}, "of": {}, "in": {},
+	"on": {}, "and": {}, "or": {}, "to": {}, "for": {}, "with": {}, "by": {},
+	"not": {}, "is": {}, "are": {}, "was": {}, "were": {}, "it": {}, "its": {},
+}
+
+func cleanHypothesisTerms(hypothesis string) []string {
+	var terms []string
+	seen := make(map[string]struct{})
+	for _, token := range strings.FieldsFunc(strings.ToLower(hypothesis), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if _, stop := noveltyQueryStopwords[token]; stop || token == "" {
+			continue
+		}
+		if _, dup := seen[token]; dup {
+			continue
+		}
+		seen[token] = struct{}{}
+		terms = append(terms, token)
+	}
+	return terms
+}
+
+// measureWordCoverage returns the fraction of the hypothesis's content words
+// that appear in text. Used for claim-specific near-match novelty.
+func measureWordCoverage(hypWords map[string]struct{}, text string) float64 {
+	if len(hypWords) == 0 {
+		return 0
+	}
+	textWords := wordSet(text)
+	matched := 0
+	for word := range hypWords {
+		if _, ok := textWords[word]; ok {
+			matched++
+		}
+	}
+	return float64(matched) / float64(len(hypWords))
+}
+
+// wordSet lowercases text and returns the set of tokens, trimming surrounding
+// punctuation. Mirrors brain.wordSet so novelty coverage is measured the same
+// way across the package boundary.
+func wordSet(text string) map[string]struct{} {
+	words := strings.Fields(strings.ToLower(text))
+	set := make(map[string]struct{}, len(words))
+	for _, word := range words {
+		word = strings.Trim(word, ".,;:!?\"'()[]—-")
+		if word == "" {
+			continue
+		}
+		set[word] = struct{}{}
+	}
+	return set
 }
 
 func splitEntityTagForNovelty(entity string) (prefix, value string, ok bool) {
