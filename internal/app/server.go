@@ -67,6 +67,11 @@ func Run() error {
 
 	// Research corpus engine (Phase 0: ingest + claim extraction + listing).
 	researchService := research.NewService("research_corpus", br)
+	researchService.SetVerificationNotify(func(run models.VerificationRun) {
+		if br.NS != nil && br.NS.Broadcast != nil {
+			br.NS.Broadcast(models.WSMessage{Type: "RESEARCH_VERIFICATION_RESULT", Payload: run})
+		}
+	})
 	mux.HandleFunc("/api/research", func(w http.ResponseWriter, r *http.Request) {
 		research.HandleAPI(w, r, researchService)
 	})

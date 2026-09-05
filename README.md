@@ -64,6 +64,14 @@ The brain prepares next moves by itself but never launches anything without the 
 6. Provider hiccups self-heal: content-filtered prompts are retried with sanitized wording, empty/truncated responses and rate limits retry with backoff, and every model call is recorded to `pipeline-traces/pipeline-trace.jsonl`.
 7. DeepSeek V4 models run with thinking mode disabled by default (the hidden chain-of-thought would otherwise exhaust the output budget); opt back in with `DEEPSEEK_THINKING=low|high|max`.
 
+## Scientific research verification
+
+Research → Verification now includes built-in local statistics and data-figure
+tools, manual or LLM-directed runs, downloadable evidence bundles, and replay
+without a model. No Docker or Python setup is required. See the
+[verification guide](internal/research/VERIFICATION.md) for supported calculations,
+input limits, agent data sharing, and the standalone replay command.
+
 ## Tech Stack
 
 - Backend: Go, Gorilla WebSockets

@@ -14,6 +14,9 @@ import (
 //	GET  /api/research/claims  -> []models.Claim
 //	POST /api/research/ingest  -> {"papers":[...], "claims":[...]}
 func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
+	if handleVerificationAPI(w, r, service) {
+		return
+	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
