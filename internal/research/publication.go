@@ -376,7 +376,11 @@ func (s *Service) exportPublication(d models.PublicationDraft) (string, error) {
 	if e = os.Mkdir(filepath.Join(temp, "figures"), 0700); e != nil {
 		return "", e
 	}
-	files := map[string][]byte{"paper.md": []byte(d.Markdown)}
+	pdf, e := publicationPDF(d)
+	if e != nil {
+		return "", e
+	}
+	files := map[string][]byte{"paper.md": []byte(d.Markdown), "report.pdf": pdf}
 	bundle := d.Run
 	// Export metadata and quoted evidence, not complete source PDFs or paper text.
 	bundle.Papers = append([]models.Paper{}, bundle.Papers...)

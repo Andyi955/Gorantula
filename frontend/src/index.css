@@ -15293,3 +15293,5 @@ body {
 .research-finding-summary { font-size:16px; font-weight:400; line-height:1.7; margin:0 0 12px; color:#e1eaf0; }
 
 .research-start-form input { width:100%; padding:14px; border:1px solid var(--research-line); border-radius:7px; background:#080f17; color:#e1eaf0; margin-top:8px; }
+
+.research-pdf-link { order:2; justify-self:end; color:#64dced; font-size:14px; text-decoration:underline; text-underline-offset:4px; }

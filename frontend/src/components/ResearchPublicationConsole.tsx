@@ -114,6 +114,7 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild }:
         {(selected.stale || !!selected.reviewIssues?.length || missingFigures > 0) && onRebuild && selected.candidate.id && <button className={`${button} mt-3`} disabled={busy} onClick={() => onRebuild(selected.candidate.id!)}>Let the agent rebuild this report</button>}
         
       </div>
+      <a className="research-pdf-link" href={`${API}/publications/${selected.id}/pdf`} target="_blank" rel="noreferrer">Open organised PDF</a>
       <ResearchReportOverview run={selected.run} figures={selected.figures} paperCount={selected.papers?.length ?? 0} claimCount={selected.claims?.length ?? 0} relations={selected.relations ?? []} stale={selected.stale} manualFigures={selected.audit.some(a => a.action === 'figure')} />
       <details className="research-full-report"><summary className="cursor-pointer text-sm">Read full report and sources</summary>
       <article aria-label="Candidate paper" className={`${card} publication-paper`}>
@@ -152,7 +153,7 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild }:
             <div><button className={button} aria-describedby="publication-withdraw-reason" disabled={!!withdrawalReason} onClick={() => void mutate('withdraw')}>Record withdrawal</button><p id="publication-withdraw-reason" className="mt-2 text-xs">{withdrawalReason}</p></div>
           </div>
         </details>
-        <p className="research-export-note">Saving creates a local folder containing the report and its evidence. Nothing is posted online.</p>
+        <p className="research-export-note">Saving creates a local folder containing report.pdf, the report text and its evidence. Nothing is posted online.</p>
         {selected.exportPath && <p role="status" className="research-export-note break-all">Export folder: {selected.exportPath}</p>}
       </div>
       <details className="research-surface research-advanced"><summary className="text-xs">Approval audit and revision</summary><button className={`${button} mt-2`} onClick={() => download("verification-evidence.json", JSON.stringify(selected.run, null, 2))}>Download evidence for review</button><code className="mt-2 block break-all text-xs">{selected.revision}</code>{selected.audit.map((a, i) => <p key={i} className="mt-2 text-xs">{a.at} · {a.operator} · {a.action}: {a.reason}</p>)}</details>

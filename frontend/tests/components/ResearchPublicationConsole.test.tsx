@@ -20,6 +20,7 @@ describe('ResearchPublicationConsole', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Test hypothesis · draft/ }));
     const approve = await screen.findByRole('button', { name: 'Approve for sharing' });
     expect(approve).toBeEnabled();
+    expect(screen.getByRole('link',{name:'Open organised PDF'})).toHaveAttribute('href','http://127.0.0.1:8080/api/research/publications/paper1/pdf');
     fireEvent.click(approve);
     expect(screen.getByLabelText('Reviewer name')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByLabelText('Reviewer name')).toHaveFocus();

@@ -99,6 +99,21 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		} else {
 			respond(value, nil)
 		}
+	case parts[2] == "publications" && len(parts) == 5 && parts[4] == "pdf" && r.Method == http.MethodGet:
+		draft, err := s.GetPublication(parts[3])
+		if err != nil {
+			respond(nil, err)
+			break
+		}
+		pdf, err := publicationPDF(draft)
+		if err != nil {
+			respond(nil, err)
+			break
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", `inline; filename="research-report.pdf"`)
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(pdf)
 	case parts[2] == "publications" && len(parts) == 5 && r.Method == http.MethodPost:
 		var req struct {
 			Revision string `json:"revision"`

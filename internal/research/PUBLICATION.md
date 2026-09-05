@@ -89,3 +89,9 @@ agent pipeline through the rebuild action. No automatic export or Git action.
 Send `POST /api/research/verify` with `{"mode":"agent","topic":"your research question","autoPrepare":true}`. A persisted, cancellable run searches OpenAlex for up to five papers, uses available abstracts to extract grounded claims, computes claim connections, asks the model for a bounded proposal citing real claim IDs, and hands the selected evidence to the verification agent. Two separate model calls review methods and overstatement before draft preparation. Sources without readable text are excluded; abstracts are not full-paper review. Search failures and invalid citations stop with an explicit error. Empty numerical evidence produces a literature-only report with no fabricated chart when both reviewers finish. Existing candidate verification remains available separately.
 
 Progress uses saved `searching`, `connecting`, `proposing`, `checking`, `reviewing`, `preparing`, and `review` stages with `completedStages`. Topic runs have a ten-minute limit; verification retains its fixed tool and turn budgets. No approval or export runs automatically.
+
+## Organised PDF
+
+Every new export includes `report.pdf` in the immutable export directory and its SHA-256 in `manifest.json`. The native Go renderer embeds fonts and saved PNG figures and never requests external resources. Sections cover summary, background and source passages, findings and figures, reviewer comments and limitations, claim connections, linked references, and methods/audit. Literature-only reports explicitly state that no numerical verification took place. Historical exports remain untouched.
+
+`GET /api/research/publications/{id}/pdf` previews the saved revision without approving or exporting it. Stale evidence and the current sharing state remain visible. The UI exposes **Open organised PDF** before approval. Previewing is read-only. Exact data and tool calls remain in the companion JSON files.
