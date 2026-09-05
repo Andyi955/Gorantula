@@ -12,6 +12,9 @@ import (
 func topicFixture(t *testing.T, invalid bool) *Service {
 	t.Helper()
 	s := NewService(t.TempDir(), nil)
+	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
+		return []byte("<html>No supplementary data links.</html>"), u, nil
+	}
 	s.retriever = stubRetriever{papers: []models.Paper{{ID: "p1", Title: "Sleep study", Abstract: "Sleep improves memory in the observed sample.", SourceURL: "https://example.org/paper"}}}
 	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, prompt string, out interface{}) error {
 		var response interface{}
@@ -46,6 +49,9 @@ func TestTopicPipelineSearchToReviewedLiteratureReport(t *testing.T) {
 	}
 	if strings.Join(r.CompletedStages, ",") != "searching,connecting,proposing,checking,reviewing" {
 		t.Fatal(r.CompletedStages)
+	}
+	if len(r.DatasetActions) != 1 || r.DatasetActions[0].Call.Tool != "dataset-discover" {
+		t.Fatal("early-finishing model bypassed source retrieval")
 	}
 	if len(r.ReportReviews) != 2 || len(r.Results) != 0 {
 		t.Fatal("missing review or fabricated computation")
@@ -88,4 +94,3 @@ func TestTopicInputCannotMixCandidate(t *testing.T) {
 		t.Fatal("mixed request accepted")
 	}
 }
-

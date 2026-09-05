@@ -245,6 +245,9 @@ func datasetLinks(data []byte, base string) []string {
 // by the model. Uploaded CSV values can never become network destinations.
 func (s *Service) executeDatasetCall(ctx context.Context, run *models.VerificationRun, call models.DatasetCall) models.DatasetResult {
 	fetch := fetchDatasetURL
+	if s.datasetFetch != nil {
+		fetch = s.datasetFetch
+	}
 	if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" {
 		fetch = func(ctx context.Context, u string) ([]byte, string, error) {
 			return fetchResearchURL(ctx, u, maxPDFBytes)

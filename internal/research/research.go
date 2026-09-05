@@ -25,6 +25,7 @@ type Service struct {
 	brain              *brain.Brain
 	novelty            NoveltyChecker
 	retriever          EvidenceRetriever
+	datasetFetch       func(context.Context, string) ([]byte, string, error) // optional test transport
 	verificationMu     sync.Mutex
 	verificationActive map[string]context.CancelFunc
 	verificationNotify func(models.VerificationRun)
