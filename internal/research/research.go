@@ -21,19 +21,23 @@ import (
 // graph + signal surfacing layer, and a candidate hypotheses + bounded review
 // pipeline. Every phase emits a followable trace line so a run can be debugged.
 type Service struct {
-	store     *Store
-	brain     *brain.Brain
-	novelty   NoveltyChecker
-	retriever EvidenceRetriever
+	store              *Store
+	brain              *brain.Brain
+	novelty            NoveltyChecker
+	retriever          EvidenceRetriever
+	verificationMu     sync.Mutex
+	verificationActive map[string]context.CancelFunc
+	verificationNotify func(models.VerificationRun)
 }
 
 func NewService(root string, br *brain.Brain) *Service {
 	openAlex := NewOpenAlexNoveltyChecker()
 	return &Service{
-		store:     NewStore(root),
-		brain:     br,
-		novelty:   openAlex,
-		retriever: openAlex,
+		store:              NewStore(root),
+		brain:              br,
+		novelty:            openAlex,
+		retriever:          openAlex,
+		verificationActive: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -394,6 +398,10 @@ func (s *Store) SaveCandidates(candidates []models.CandidateHypothesis) error {
 }
 
 func (s *Store) readJSON(filename string, target interface{}) error {
+	// Windows readers can hold a handle that blocks replacement by Rename.
+	// Coordinate with atomic writers so polling never causes a lost run update.
+	researchWriteMu.Lock()
+	defer researchWriteMu.Unlock()
 	path := filepath.Join(s.root, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
