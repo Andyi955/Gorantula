@@ -461,13 +461,23 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 			break
 		}
 		var data []byte
+		resolved := call.URL
+		pmcVerified := false
 		for _, doc := range run.Documents {
 			if doc.URL == call.URL {
 				data = doc.Bytes
+				pmcVerified = doc.PMCChecksumVerified
+				if doc.ResolvedURL != "" {
+					resolved = doc.ResolvedURL
+				}
 			}
 		}
 		if data == nil {
-			data, _, err = fetch(ctx, call.URL)
+			data, resolved, err = fetch(ctx, call.URL)
+			if call.Tool == "paper-docx" && ctx.Err() == nil && (err != nil || !bytes.HasPrefix(data, []byte("PK"))) && strings.HasPrefix(call.URL, "https://pmc.ncbi.nlm.nih.gov/") {
+				data, resolved, err = fetchPMCSupplement(ctx, call.URL, fetch)
+				pmcVerified = err == nil
+			}
 			if err != nil {
 				break
 			}
@@ -477,7 +487,11 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 				err = fmt.Errorf("DOCX has no stable page numbers; use page 0 or omit page")
 				break
 			}
-			out, err = extractDOCX(data, call.URL)
+			out, err = extractDOCX(data, resolved)
+			if err == nil && pmcVerified {
+				out.Links = []string{resolved}
+				out.Warnings = append(out.Warnings, "Read via the official PMC public repository; repository checksum verified. Source availability does not establish study quality.")
+			}
 		} else if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" {
 			out, err = scanPDFResult(ctx, data, call)
 		} else {
@@ -492,7 +506,7 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 				}
 			}
 			if !found {
-				run.Documents = append(run.Documents, models.ResearchDocument{URL: call.URL, Digest: digestBytes(data), Bytes: data})
+				run.Documents = append(run.Documents, models.ResearchDocument{URL: call.URL, ResolvedURL: resolved, PMCChecksumVerified: pmcVerified, Digest: digestBytes(data), Bytes: data})
 			}
 		}
 	default:

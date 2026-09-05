@@ -248,7 +248,7 @@ func (s *Service) executeDatasetCall(ctx context.Context, run *models.Verificati
 	if s.datasetFetch != nil {
 		fetch = s.datasetFetch
 	}
-	if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" {
+	if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" || (call.Tool == "paper-docx" && s.datasetFetch == nil) {
 		fetch = func(ctx context.Context, u string) ([]byte, string, error) {
 			return fetchResearchURL(ctx, u, maxPDFBytes)
 		}

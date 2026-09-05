@@ -211,10 +211,12 @@ type EvidencePassage struct {
 	Text    string `json:"text"`
 }
 type ResearchDocument struct {
-	Name   string `json:"name,omitempty"`
-	URL    string `json:"url"`
-	Digest string `json:"digest"`
-	Bytes  []byte `json:"bytes,omitempty"`
+	PMCChecksumVerified bool   `json:"pmcChecksumVerified,omitempty"`
+	ResolvedURL         string `json:"resolvedUrl,omitempty"`
+	Name                string `json:"name,omitempty"`
+	URL                 string `json:"url"`
+	Digest              string `json:"digest"`
+	Bytes               []byte `json:"bytes,omitempty"`
 }
 
 // OCR boxes use percentages of the rendered page after the requested rotation.
