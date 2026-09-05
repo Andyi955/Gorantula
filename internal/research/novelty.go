@@ -52,6 +52,8 @@ type openAlexResponse struct {
 }
 
 type openAlexWork struct {
+	IsRetracted           bool             `json:"is_retracted"`
+	Type                  string           `json:"type"`
 	Title                 string           `json:"title"`
 	Doi                   string           `json:"doi"`
 	PublicationYear       int              `json:"publication_year"`
@@ -145,6 +147,10 @@ func (c *OpenAlexNoveltyChecker) Retrieve(ctx context.Context, query string, lim
 
 	papers := make([]models.Paper, 0, len(body.Results))
 	for _, work := range body.Results {
+		// Exclude known withdrawn work and non-study records; absence of a flag is not a reliability certificate.
+		if work.IsRetracted || work.Type == "retraction" || work.Type == "paratext" {
+			continue
+		}
 		title := strings.TrimSpace(work.Title)
 		abstract := reconstructOpenAlexAbstract(work.AbstractInvertedIndex)
 		if title == "" && abstract == "" {

@@ -20,6 +20,8 @@ func topicFixture(t *testing.T, invalid bool) *Service {
 	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, prompt string, out interface{}) error {
 		var response interface{}
 		switch {
+		case strings.HasPrefix(prompt, "Screen research sources"):
+			response = map[string]interface{}{"assessments": []models.SourceAssessment{{PaperID: "p1", Relevance: "direct", DataKind: "primary-study", Quote: "Sleep improves memory in the observed sample.", Limitations: "Abstract only; methods and data unavailable."}}}
 		case strings.Contains(prompt, "claim-extraction analyst"):
 			response = map[string]interface{}{"claims": []map[string]interface{}{{"text": "Sleep improves memory in the observed sample.", "entities": []string{"[EVENT:Sleep]"}}}}
 		case strings.HasPrefix(prompt, "Propose one"):

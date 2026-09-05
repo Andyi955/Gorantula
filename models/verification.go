@@ -104,6 +104,7 @@ type ReportReview struct {
 }
 
 type VerificationRun struct {
+	SourceAssessments    []SourceAssessment          `json:"sourceAssessments,omitempty"`
 	CompletedStages      []string                    `json:"completedStages,omitempty"`
 	StageMessage         string                      `json:"stageMessage,omitempty"`
 	ReportReviews        []ReportReview              `json:"reportReviews,omitempty"`
@@ -235,4 +236,14 @@ type TableCellSource struct {
 	Page       int       `json:"page"`
 	Words      []OCRWord `json:"words,omitempty"`
 	ColumnSpan int       `json:"columnSpan,omitempty"`
+}
+
+// SourceAssessment records the screening model's judgment and a server-checked source excerpt.
+type SourceAssessment struct {
+	ExcerptIndex *int   `json:"excerptIndex,omitempty"`
+	PaperID      string `json:"paperId"`
+	Relevance    string `json:"relevance"`
+	DataKind     string `json:"dataKind"`
+	Quote        string `json:"quote"`
+	Limitations  string `json:"limitations"`
 }

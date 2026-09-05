@@ -253,12 +253,24 @@ func (s *Service) executeDatasetCall(ctx context.Context, run *models.Verificati
 			return fetchResearchURL(ctx, u, maxPDFBytes)
 		}
 	}
-	return s.executeDatasetCallWithFetcher(ctx, run, call, fetch)
+	out := s.executeDatasetCallWithFetcher(ctx, run, call, fetch)
+	// Every newly selected snapshot gets structural checks, even if the model forgets to ask.
+	if out.Error == "" && out.DatasetID != "" && run.Dataset.ID == out.DatasetID && call.Tool != "dataset-validate" {
+		checked, err := validateDataset(run.Dataset, models.DatasetCall{Tool: "dataset-validate"})
+		if err != nil {
+			out.Error = err.Error()
+		} else {
+			out.Counts, out.Columns = checked.Counts, checked.Columns
+			out.Warnings = append(out.Warnings, checked.Warnings...)
+			out.Warnings = append(out.Warnings, "Structural checks do not establish relevance, measured origin, or independent study units. Check the source before interpreting results.")
+		}
+	}
+	return out
 }
 
 func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models.VerificationRun, call models.DatasetCall, fetch func(context.Context, string) ([]byte, string, error)) models.DatasetResult {
 	switch call.Tool {
-	case "dataset-validate", "dataset-join", "evidence-lookup", "paper-extract", "paper-table", "paper-scan", "paper-complex-table":
+	case "dataset-validate", "dataset-join", "evidence-lookup", "paper-extract", "paper-table", "paper-scan", "paper-complex-table", "paper-docx":
 		return s.executeResearchDataTool(ctx, run, call, fetch)
 	}
 	out := models.DatasetResult{Call: call}
@@ -323,10 +335,21 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		}
 		if call.Tool == "dataset-discover" {
 			out.Links = datasetLinks(data, source)
+			// Preserve destination-page context so a repository lead can be checked against its actual parent paper.
+			if bytes.Contains(bytes.ToLower(data), []byte("<html")) {
+				if doc, e := goquery.NewDocumentFromReader(bytes.NewReader(data)); e == nil {
+					doc.Find("script,style,nav,header,footer").Remove()
+					pageText := strings.Join(strings.Fields(doc.Find("title").Text()+" "+doc.Find("body").Text()), " ")
+					if len([]rune(pageText)) > 12000 {
+						pageText = string([]rune(pageText)[:12000])
+					}
+					out.Passages = []models.EvidencePassage{{Source: source, Digest: digestBytes(data), Text: pageText}}
+				}
+			}
 			if _, _, e := parseVerificationCSV(string(data)); e == nil {
 				out.Links = append(out.Links, call.URL)
 			}
-			out.Summary = fmt.Sprintf("Found %d observed CSV or supplementary links. No links means data was not found on this page; PDF/ZIP extraction is not supported.", len(out.Links))
+			out.Summary = fmt.Sprintf("Found %d observed CSV or supplementary links. No links means data was not found on this page; Use paper-docx for DOCX supplements or the PDF tools for PDFs; arbitrary ZIP datasets are unsupported.", len(out.Links))
 		} else {
 			var d models.ResearchDataset
 			d, err = s.RegisterDataset("Imported CSV", source+" (retrieved "+time.Now().UTC().Format(time.RFC3339)+"; origin unverified)", string(data))

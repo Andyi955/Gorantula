@@ -150,6 +150,12 @@ func publicationPDF(d models.PublicationDraft) ([]byte, error) {
 	}
 	heading("4. Reviewer checks and limitations")
 	body("Agent reviews are recorded opinions about the available evidence, not independent scientific certification. Abstract-only evidence cannot establish full study methods.")
+	for _, a := range d.Run.SourceAssessments {
+		sub("Source screening: " + a.Relevance + " / " + a.DataKind)
+		body(a.PaperID)
+		body("Source excerpt: " + a.Quote)
+		body("Limitations: " + a.Limitations)
+	}
 	for _, r := range d.Run.ReportReviews {
 		sub(r.Role)
 		body(r.Summary)

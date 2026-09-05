@@ -373,7 +373,7 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 			run.DatasetParents = append(run.DatasetParents, run.Dataset, right)
 			run.Dataset = child
 		}
-	case "paper-extract", "paper-table", "paper-scan", "paper-complex-table":
+	case "paper-extract", "paper-table", "paper-scan", "paper-complex-table", "paper-docx":
 		if strings.HasPrefix(call.URL, "local-pdf:") {
 			id := strings.TrimPrefix(call.URL, "local-pdf:")
 			if !verificationID.MatchString(id) {
@@ -418,7 +418,7 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 			}
 		}
 		if !allowed {
-			err = fmt.Errorf("PDF URL must be a candidate source or observed link")
+			err = fmt.Errorf("Document URL must be a candidate source or observed link")
 			break
 		}
 		if call.Tool == "paper-table" {
@@ -432,7 +432,7 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 			}
 			var table *models.ExtractedTable
 			for _, r := range run.DatasetActions {
-				if (r.Call.Tool == "paper-extract" || r.Call.Tool == "paper-complex-table") && r.Call.URL == call.URL && r.Call.Page == call.Page && (r.ExtractionID == "" && call.ExtractionID == "" || r.ExtractionID != "" && r.ExtractionID == call.ExtractionID) {
+				if (r.Call.Tool == "paper-extract" || r.Call.Tool == "paper-complex-table" || r.Call.Tool == "paper-docx") && r.Call.URL == call.URL && r.Call.Page == call.Page && (r.ExtractionID == "" && call.ExtractionID == "" || r.ExtractionID != "" && r.ExtractionID == call.ExtractionID) {
 					for _, v := range r.Tables {
 						if v.Index == call.TableIndex {
 							copy := v
@@ -452,11 +452,11 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 				break
 			}
 			var d models.ResearchDataset
-			d, err = s.RegisterDataset("Extracted PDF table", fmt.Sprintf("%s page %d table candidate %d; extracted, unverified cell boundaries. %s", call.URL, call.Page, call.TableIndex, call.Rationale), buf.String())
+			d, err = s.RegisterDataset("Extracted document table", fmt.Sprintf("%s page %d table candidate %d; extracted, unverified cell boundaries. %s", call.URL, call.Page, call.TableIndex, call.Rationale), buf.String())
 			if err == nil {
 				run.Dataset = d
 				out.DatasetID = d.ID
-				out.Summary = "Saved extracted table; verify headers, cells and units against the retained PDF before scientific use."
+				out.Summary = "Saved extracted table; verify headers, cells and units against the retained document before scientific use."
 			}
 			break
 		}
@@ -472,7 +472,13 @@ func (s *Service) executeResearchDataTool(ctx context.Context, run *models.Verif
 				break
 			}
 		}
-		if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" {
+		if call.Tool == "paper-docx" {
+			if call.Page != 0 {
+				err = fmt.Errorf("DOCX has no stable page numbers; use page 0 or omit page")
+				break
+			}
+			out, err = extractDOCX(data, call.URL)
+		} else if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" {
 			out, err = scanPDFResult(ctx, data, call)
 		} else {
 			out, err = extractPDFPage(ctx, data, call.URL, call.Page)

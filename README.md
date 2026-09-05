@@ -275,3 +275,13 @@ exports figure specifications, accepts operator-generated PNGs, and records
 revision-specific approval before creating a local repo-ready evidence package.
 Corpus changes invalidate publication approval. Export never commits or pushes;
 see [publication workflow](internal/research/PUBLICATION.md) for limits and paths.
+
+### Research supplements and source screening
+
+The continuous research pipeline screens retrieved papers before proposing findings. It records direct, indirect, or irrelevant topic relevance; distinguishes reviews from primary studies; and retains server-selected source excerpts and limitations. Irrelevant papers are excluded. OpenAlex records marked retracted, retraction notices, and paratext are excluded from retrieval. Unknown or missing metadata is not proof of reliability.
+
+The local `paper-docx` agent tool reads DOCX supplementary text and rectangular Word tables. The advanced Research data tools panel also exposes it. `paper-table` saves a retained table using its exact extraction ID (DOCX uses page 0); the source bytes and table values remain in preparation evidence. Ambiguous merged, nested, revised, or irregular tables are withheld instead of guessed. DOCX XML is bounded to 8 MiB and no embedded code or external objects are executed. A server returning an HTML download gate instead of document bytes is reported as an access problem.
+
+Every newly selected dataset receives automatic structural validation. These checks detect missing/mixed cells, duplicate rows, and unspecified units; they do not establish independent observations, parent-paper provenance, or scientific truth. The agent and report reviewers must assess topic/population/outcome fit and distinguish summary statistics from original observations. Screening assessments appear in the report and PDF. A literature-only result is valid when relevant measurements cannot be obtained.
+
+Deterministic coverage: `go test ./internal/research`. The optional public download check uses `GORANTULA_TEST_LIVE_DOCX=1 go test ./internal/research -run TestDOCXLiveSupplement -count=1 -v` (set the environment variable separately in PowerShell); it can fail when PMC serves a download/access page.
