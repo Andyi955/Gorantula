@@ -11,6 +11,7 @@ import (
 
 func TestTopicDiscoveryFollowsObservedLinksAndReservesBudget(t *testing.T) {
 	s := NewService(t.TempDir(), nil)
+	s.webSearch = nil
 	visited := []string{}
 	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
 		visited = append(visited, u)
@@ -36,6 +37,7 @@ func TestTopicDiscoveryFollowsObservedLinksAndReservesBudget(t *testing.T) {
 }
 func TestTopicDiscoveryRetainsAccessFailure(t *testing.T) {
 	s := NewService(t.TempDir(), nil)
+	s.webSearch = nil
 	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("dataset source returned HTTP 403")
 	}
@@ -49,6 +51,7 @@ func TestTopicDiscoveryRetainsAccessFailure(t *testing.T) {
 }
 func TestTopicDiscoveryHonorsCancellation(t *testing.T) {
 	s := NewService(t.TempDir(), nil)
+	s.webSearch = nil
 	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
 		t.Fatal("request after cancellation")
 		return nil, "", nil
@@ -58,5 +61,40 @@ func TestTopicDiscoveryHonorsCancellation(t *testing.T) {
 	r := models.VerificationRun{ID: strings.Repeat("c", 32), PaperSources: []string{"https://example.org/p"}}
 	if e := s.discoverTopicData(ctx, &r); e != context.Canceled {
 		t.Fatal(e)
+	}
+}
+func TestTopicBraveFallbackRecordsAndFetchesObservedLead(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	searches := 0
+	visited := []string{}
+	s.webSearch = func(_ context.Context, q string, n int) ([]string, error) {
+		searches++
+		if !strings.HasPrefix(q, "moths (") || !strings.Contains(q, "site:github.com") || n != 5 {
+			t.Fatal(q, n)
+		}
+		return []string{"https://repository.org/moths", "https://github.com/example/moths"}, nil
+	}
+	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
+		visited = append(visited, u)
+		if strings.Contains(u, "publisher") {
+			return nil, "", fmt.Errorf("HTTP 403")
+		}
+		return []byte(`<a href="/measurements.csv">Dataset</a>`), u, nil
+	}
+	r := models.VerificationRun{ID: strings.Repeat("d", 32), Request: models.VerificationRequest{Topic: "moths"}, PaperSources: []string{"https://publisher.org/1", "https://publisher.org/2", "https://publisher.org/3"}}
+	if e := s.discoverTopicData(context.Background(), &r); e != nil {
+		t.Fatal(e)
+	}
+	if searches != 1 || len(r.DatasetActions) != 5 || len(visited) != 4 || visited[3] != "https://repository.org/moths" {
+		t.Fatal(searches, r.DatasetActions, visited)
+	}
+	if r.DatasetActions[3].Call.Tool != "web-search" || len(r.DatasetActions[4].Links) != 1 || r.Dataset.ID != "" {
+		t.Fatal("lost provenance or auto-imported")
+	}
+	if e := s.discoverTopicData(context.Background(), &r); e != nil {
+		t.Fatal(e)
+	}
+	if searches != 1 {
+		t.Fatal("repeated Brave charge")
 	}
 }

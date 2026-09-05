@@ -12,6 +12,7 @@ import (
 func topicFixture(t *testing.T, invalid bool) *Service {
 	t.Helper()
 	s := NewService(t.TempDir(), nil)
+	s.webSearch = nil
 	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
 		return []byte("<html>No supplementary data links.</html>"), u, nil
 	}

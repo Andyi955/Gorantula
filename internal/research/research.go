@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/legs"
 	"github.com/Andyi955/Gorantula/models"
 )
 
@@ -25,6 +26,7 @@ type Service struct {
 	brain              *brain.Brain
 	novelty            NoveltyChecker
 	retriever          EvidenceRetriever
+	webSearch          func(context.Context, string, int) ([]string, error)
 	datasetFetch       func(context.Context, string) ([]byte, string, error) // optional test transport
 	verificationMu     sync.Mutex
 	verificationActive map[string]context.CancelFunc
@@ -38,6 +40,7 @@ func NewService(root string, br *brain.Brain) *Service {
 		brain:              br,
 		novelty:            openAlex,
 		retriever:          openAlex,
+		webSearch:          legs.SearchWebURLs,
 		verificationActive: make(map[string]context.CancelFunc),
 	}
 }

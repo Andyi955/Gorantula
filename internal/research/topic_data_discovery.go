@@ -50,6 +50,35 @@ func (s *Service) discoverTopicData(ctx context.Context, run *models.Verificatio
 			return err
 		}
 	}
+	// One Brave fallback uses the existing credential when paper pages yield no
+	// supplementary links. Search hits are leads, never verified source evidence.
+	searched := false
+	for _, a := range run.DatasetActions {
+		if a.Call.Tool == "web-search" {
+			searched = true
+		}
+	}
+	if len(follow) == 0 && !searched && s.webSearch != nil && len(run.DatasetActions) < 5 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		query := run.Request.Topic + " (site:datadryad.org OR site:zenodo.org OR site:figshare.com OR site:github.com OR site:pmc.ncbi.nlm.nih.gov)"
+		if err := s.topicStage(run, "checking", "Paper pages yielded no data links. Searching Brave for accessible repository and supplementary-data leads."); err != nil {
+			return err
+		}
+		links, err := s.webSearch(ctx, query, 5)
+		result := models.DatasetResult{Call: models.DatasetCall{Tool: "web-search", Query: query}, Links: links, Summary: "Brave search leads only. Verify relevance and provenance on the destination page before using data; search ranking is not evidence."}
+		if err != nil {
+			result.Links = nil
+			result.Error = err.Error()
+		} else {
+			follow = append(follow, links...)
+		}
+		run.DatasetActions = append(run.DatasetActions, result)
+		if err := s.saveVerificationRun(*run); err != nil {
+			return err
+		}
+	}
 	// Only follow one observed level, avoiding link cycles and crawler expansion.
 	observed := append([]string{}, follow...)
 	for _, u := range observed {
