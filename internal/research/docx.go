@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/Andyi955/Gorantula/models"
@@ -56,7 +57,7 @@ func extractDOCX(data []byte, source string) (models.DatasetResult, error) {
 	var text, cell strings.Builder
 	var rows [][]string
 	var row []string
-	depth, tableIndex := 0, 0
+	depth, tableIndex, drawings := 0, 0, 0
 	inCell, inText, ambiguous, root := false, false, false, false
 	for {
 		t, e := d.Token()
@@ -72,6 +73,9 @@ func extractDOCX(data []byte, source string) (models.DatasetResult, error) {
 				continue
 			}
 			switch v.Name.Local {
+			case "drawing", "pict":
+				// Count document placements, not unused image files in the ZIP archive.
+				drawings++
 			case "document":
 				root = true
 			case "tbl":
@@ -158,7 +162,18 @@ func extractDOCX(data []byte, source string) (models.DatasetResult, error) {
 	}
 	content := boundedPaperText(strings.TrimSpace(text.String()))
 	out.Passages = []models.EvidencePassage{{Source: source, Digest: out.ExtractionID, Text: content}}
-	out.Summary = fmt.Sprintf("Read DOCX text and %d rectangular table candidates. Tables may contain summary statistics, not raw observations. Verify the parent paper, topic, outcomes and study units before analysis.", len(out.Tables))
+	// Keep captions separately visible when the agent's general document excerpt is truncated.
+	for _, span := range docxFigureCaption.FindAllStringIndex(content, 20) {
+		out.Passages = append(out.Passages, models.EvidencePassage{Source: source, Digest: out.ExtractionID, Offset: span[0], Text: content[span[0]:span[1]]})
+	}
+	out.Counts = map[string]int{"tablesFound": tableIndex, "tablesExtracted": len(out.Tables), "tablesWithheld": tableIndex - len(out.Tables), "embeddedFigures": drawings}
+	if tableIndex == 0 {
+		out.Summary = fmt.Sprintf("Read DOCX text. No Word tables found; %d embedded figures. Figure captions are retained as source passages. There is no table to convert to CSV; plotted graphics are not raw observations.", drawings)
+	} else {
+		out.Summary = fmt.Sprintf("Read DOCX text: %d Word tables found, %d extracted, %d withheld because their layout needs review; %d embedded figures. Tables may contain summary statistics, not raw observations. Verify the parent paper, topic, outcomes and study units before analysis.", tableIndex, len(out.Tables), tableIndex-len(out.Tables), drawings)
+	}
 	out.Warnings = append(out.Warnings, "Extraction does not establish scientific reliability. Figures, equations and embedded files are not interpreted; document text may include tracked revisions.")
 	return out, nil
 }
+
+var docxFigureCaption = regexp.MustCompile(`(?m)Figure\s+S?\d+[.:][^\n]+`)

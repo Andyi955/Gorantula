@@ -70,3 +70,18 @@ func TestDOCXRejectsAmbiguousAndMalformed(t *testing.T) {
 		}
 	}
 }
+
+func TestDOCXFiguresAreNotFailedTables(t *testing.T) {
+	data := docxFixture(t, `<w:p><w:r><w:drawing/></w:r></w:p><w:p><w:r><w:t>Figure S5: Group differences were not significant (p = 0.07).</w:t></w:r></w:p>`)
+	out, err := extractDOCX(data, "fixture")
+	if err != nil || out.Counts["embeddedFigures"] != 1 || out.Counts["tablesFound"] != 0 || out.Counts["tablesWithheld"] != 0 || !strings.Contains(out.Summary, "No Word tables found") || len(out.Tables) != 0 {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if len(out.Passages) != 2 || out.Passages[1].Text != "Figure S5: Group differences were not significant (p = 0.07)." {
+		t.Fatal("caption missing or changed")
+	}
+	p := out.Passages[1]
+	if out.Passages[0].Text[p.Offset:p.Offset+len(p.Text)] != p.Text {
+		t.Fatal("caption source offset changed")
+	}
+}
