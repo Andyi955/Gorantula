@@ -8,7 +8,8 @@ interface Run {
   id: string; status: string; pipelineStage?: string; publicationId?: string;
   reportError?: string; error?: string; interpretation?: string; createdAt: string;
   candidate: Candidate; dataset?: { id?: string }; results: unknown[];
-  request?: { autoPrepare?: boolean };
+  request?: { autoPrepare?: boolean; topic?: string };
+  completedStages?: string[]; stageMessage?: string;
 }
 async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const r = await fetch(API + path, body === undefined ? { signal } : {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body), signal});
@@ -18,6 +19,7 @@ async function request<T>(path: string, body?: unknown, signal?: AbortSignal): P
 
 export default function ResearchPipeline({ candidates, initialRunId, onNavigate }: { candidates: Candidate[]; initialRunId?: string; onNavigate?: (view: 'corpus' | 'relations' | 'verification') => void }) {
   const [choosing, setChoosing] = useState(false);
+  const [topic, setTopic] = useState('');
   const [candidateId, setCandidateId] = useState('');
   const [runId, setRunId] = useState(initialRunId ?? '');
   const [run, setRun] = useState<Run>();
@@ -44,23 +46,26 @@ export default function ResearchPipeline({ candidates, initialRunId, onNavigate 
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
   }, [runId]);
-  const start = async (id = candidateId || candidates[0]?.id) => {
-    if (!id || busy) return;
+  const start = async (id?: string, retryTopic?: string) => {
+    const searchTopic = retryTopic ?? (!id ? topic.trim() : '');
+    id = id || candidateId || candidates[0]?.id;
+    if ((!id && !searchTopic) || busy) return;
     setBusy(true); setError('');
     try {
-      const next = await request<Run>('/verify', { mode: 'agent', candidateId: id, autoPrepare: true });
+      const next = await request<Run>('/verify', searchTopic ? {mode:'agent', topic:searchTopic, autoPrepare:true} : { mode: 'agent', candidateId: id, autoPrepare: true });
       setRun(next); setRunId(next.id); setChoosing(false);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
   const active = !!run && (['queued', 'running'].includes(run.status) || run.pipelineStage === 'preparing');
   const currentCandidate = run?.candidate ?? candidates.find(c => c.id === candidateId) ?? candidates[0];
-  const stage = run?.publicationId ? 4 : run ? 3 : 0;
+  const stage = run?.publicationId ? 4 : run?.pipelineStage === 'searching' ? 1 : ['connecting','proposing'].includes(run?.pipelineStage ?? '') ? 2 : run ? 3 : 0;
+  const completed = run?.completedStages ?? [];
   const showForm = choosing || !run;
   const steps = [
     { title:'Set the topic', note:currentCandidate ? 'A focused research idea' : 'Choose a research idea', icon:Microscope, done:!!currentCandidate, action:() => setChoosing(true) },
-    { title:'Source papers', note:`${currentCandidate?.paperIDs?.length ?? 0} papers attached to this idea`, icon:FileText, done:false, action:() => onNavigate?.('corpus') },
-    { title:'Connect the evidence', note:`${currentCandidate?.claimIDs?.length ?? 0} extracted claims attached`, icon:GitBranch, done:false, action:() => onNavigate?.('relations') },
+    { title:'Source papers', note:`${currentCandidate?.paperIDs?.length ?? 0} papers attached to this idea`, icon:FileText, done:completed.includes('searching'), action:() => onNavigate?.('corpus') },
+    { title:'Connect the evidence', note:`${currentCandidate?.claimIDs?.length ?? 0} extracted claims attached`, icon:GitBranch, done:completed.includes('connecting'), action:() => onNavigate?.('relations') },
     { title:'Challenge & check', note:run?.publicationId ? 'Recorded checks and report ready' : active ? 'The agent is working' : 'Calculations and source review', icon:Sparkles, done:!!run?.publicationId, action:() => onNavigate?.('verification') },
     { title:'Your decision', note:'Review and decide on sharing', icon:Check, done:false, action:() => document.querySelector('.research-decision')?.scrollIntoView({behavior:'smooth', block:'center'}) },
   ];
@@ -77,20 +82,22 @@ export default function ResearchPipeline({ candidates, initialRunId, onNavigate 
     <main className="research-workspace-main">
       <header className="research-page-heading"><h2>{showForm ? 'Research to report' : run?.publicationId ? 'Your research is ready to review' : 'Your research is in progress'}</h2><p>{showForm ? 'Choose a topic. Let the agents follow the evidence.' : run?.publicationId ? 'Here is what the checks found — and what still needs evidence.' : 'The agent handles the data and calculations. Progress is saved as it works.'}</p></header>
       {showForm && <div className="research-surface research-start-form">
-        <label>Research idea<select aria-label="Research idea" value={candidateId || candidates[0]?.id || ''} onChange={e => setCandidateId(e.target.value)}>
+        <label>New research topic<input aria-label="New research topic" maxLength={500} value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. How does sleep affect memory consolidation?" /></label>
+        <p className="research-muted">Enter a topic to search online, connect evidence, run checks and prepare a reviewed report.</p>
+        <details><summary>Or check an existing research idea</summary><label>Research idea<select aria-label="Research idea" value={candidateId || candidates[0]?.id || ''} onChange={e => setCandidateId(e.target.value)}>
           {!candidates.length && <option value="">Add papers in Corpus to find research ideas</option>}
           {candidates.map(c => <option key={c.id} value={c.id}>{c.hypothesis}</option>)}
-        </select></label>
-        <button className="research-primary" disabled={busy || active || !candidates.length} onClick={() => void start()}>{busy ? 'Starting…' : active ? 'Research in progress…' : 'Start research pipeline'}</button>
+        </select></label></details>
+        <button className="research-primary" disabled={busy || active || (!topic.trim() && !candidates.length)} onClick={() => void start()}>{busy ? 'Starting…' : active ? 'Research in progress…' : 'Start research pipeline'}</button>
         {run && <button className="research-text-button" onClick={() => setChoosing(false)}>Back to current research</button>}
         <p className="research-muted">No CSV or chart upload needed. If usable data cannot be found, the agent explains the gap.</p>
       </div>}
       {error && <p role="alert" className="research-error">{error}</p>}
       {run && !showForm && !run.publicationId && <div className="research-surface research-progress-card">
         <Sparkles size={26} /><h3>{run.pipelineStage === 'needs_attention' ? 'The pipeline needs attention' : run.pipelineStage === 'preparing' ? 'Building your report and charts' : 'Following the evidence'}</h3>
-        <p role="status" className="research-muted">{run.pipelineStage === 'needs_attention' ? 'The agent stopped with a specific gap to resolve.' : run.pipelineStage === 'preparing' ? 'Checking reproducibility and preparing your report…' : active ? 'The research agent is working. You can leave this tab; progress is saved.' : run.status}</p>
+        <p role="status" className="research-muted">{run.pipelineStage === 'needs_attention' ? 'The agent stopped with a specific gap to resolve.' : run.stageMessage && active ? run.stageMessage : run.pipelineStage === 'preparing' ? 'Checking reproducibility and preparing your report…' : active ? 'The research agent is working. You can leave this tab; progress is saved.' : run.status}</p>
         {active && <button className="research-text-button" onClick={() => void request(`/runs/${run.id}/cancel`, {}).catch(e => setError(String(e)))}>Stop this run</button>}
-        {run.pipelineStage === 'needs_attention' && <div><p>{run.reportError || run.error}</p>{run.interpretation && <p className="research-narrative">{run.interpretation}</p>}<button className="research-primary" disabled={busy} onClick={() => void start(run.candidate.id)}>Ask the agent to try again</button></div>}
+        {run.pipelineStage === 'needs_attention' && <div><p>{run.reportError || run.error}</p>{run.interpretation && <p className="research-narrative">{run.interpretation}</p>}<button className="research-primary" disabled={busy} onClick={() => void start(run.candidate.id, run.request?.topic)}>Ask the agent to try again</button></div>}
       </div>}
       {run?.publicationId && !showForm && <ResearchPublicationConsole key={run.publicationId} publicationId={run.publicationId} onRebuild={id => void start(id)} />}
     </main>

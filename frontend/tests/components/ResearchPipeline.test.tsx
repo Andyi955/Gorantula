@@ -42,4 +42,15 @@ describe('ResearchPipeline', () => {
     expect(screen.getByRole('button', {name:'Ask the agent to try again'})).toBeEnabled();
     expect(screen.queryByRole('button', {name:'Approve for sharing'})).not.toBeInTheDocument();
   });
+  it('starts online research from a typed topic without an existing candidate', async () => {
+    const fetchMock = vi.fn(async (url: string) => json(url.endsWith('/verify') ? {...run,status:'running',pipelineStage:'searching',publicationId:undefined,stageMessage:'Searching online for papers.'} : []));
+    vi.stubGlobal('fetch',fetchMock);
+    render(<ResearchPipeline candidates={[]} />);
+    fireEvent.change(screen.getByLabelText('New research topic'),{target:{value:'sleep and memory'}});
+    fireEvent.click(screen.getByRole('button',{name:'Start research pipeline'}));
+    await screen.findByText('Searching online for papers.');
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/verify'),expect.objectContaining({body:JSON.stringify({mode:'agent',topic:'sleep and memory',autoPrepare:true})}));
+    expect(screen.getByRole('list',{name:'Pipeline progress'}).querySelector('[aria-current="step"]')).toHaveTextContent('Source papers');
+  });
+
 });

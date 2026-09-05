@@ -136,7 +136,7 @@ func (s *Service) PreparePublication(ctx context.Context, runID string) (models.
 	if e != nil {
 		return d, e
 	}
-	if run.ID == "" || run.Status == "running" || run.Status == "queued" || len(run.Results) == 0 {
+	if run.ID == "" || run.Status == "running" || run.Status == "queued" || (len(run.Results) == 0 && !literatureReport(run)) {
 		return d, fmt.Errorf("choose a finished verification with recorded results")
 	}
 	c, rev, e := s.publicationSource(run.Candidate.ID)
@@ -164,7 +164,7 @@ func (s *Service) PreparePublication(ctx context.Context, runID string) (models.
 			return d, fmt.Errorf("source claim %s changed; verify its current evidence before preparing a paper", old.ID)
 		}
 	}
-	replay, e := ReplayVerificationBundle(ctx, run)
+	replay, e := replayPublication(ctx, run)
 	if e != nil {
 		return d, e
 	}
@@ -184,7 +184,7 @@ func (s *Service) PreparePublication(ctx context.Context, runID string) (models.
 	}
 	for _, r := range relations {
 		for _, cl := range d.Claims {
-			if r.SourceClaimID == cl.ID || r.TargetClaimID == cl.ID {
+			if r.SourceClaimID == cl.ID && containsClaim(d.Claims, r.TargetClaimID) {
 				d.Relations = append(d.Relations, r)
 				break
 			}
@@ -216,6 +216,19 @@ func writePublication(d models.PublicationDraft) string {
 	fmt.Fprintf(&b, "\n## Method\n\nVerification run `%s`; execution status `%s`. Input `%s`. Tool implementation `%s`; runtime `%s`. Exact calls, preparation history, assumptions and source spans are retained in evidence.json.\n\n## Findings\n\n", d.RunID, d.Run.Status, d.Run.Dataset.Digest, d.Run.ImplementationDigest, d.Run.Runtime)
 	for _, r := range d.Run.Results {
 		fmt.Fprintf(&b, "- Artifact `%s` (%s; evidential verdict %s): %s\n", r.OutputDigest, r.Status, r.Verdict, r.Summary)
+	}
+	if d.Run.Interpretation != "" {
+		fmt.Fprintf(&b, "\n## Plain-language interpretation\n\nModel commentary, not a measurement:\n\n%s\n", d.Run.Interpretation)
+	}
+	if len(d.Run.Results) == 0 {
+		b.WriteString("\nLiterature report only. No numerical analysis or empirical verification was performed.\n")
+	}
+	b.WriteString("\n## Agent reviews\n\n")
+	for _, review := range d.Run.ReportReviews {
+		fmt.Fprintf(&b, "### %s\n\n%s\n\n", review.Role, review.Summary)
+		for _, c := range review.Concerns {
+			fmt.Fprintf(&b, "- %s\n", c)
+		}
 	}
 	b.WriteString("\n## Contradictions & Open Objections\n\n")
 	if len(d.Relations) == 0 {
@@ -327,7 +340,7 @@ func (s *Service) PublicationAction(ctx context.Context, id, revision, action, o
 		if d.Status != "approved" || d.Stale || d.ApprovedRevision != d.Revision {
 			return d, fmt.Errorf("export requires approval of the current paper and evidence revision")
 		}
-		if _, e := ReplayVerificationBundle(ctx, d.Run); e != nil {
+		if _, e := replayPublication(ctx, d.Run); e != nil {
 			return d, e
 		}
 		d.Status = "exported"

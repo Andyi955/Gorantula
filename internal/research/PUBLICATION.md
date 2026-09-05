@@ -83,3 +83,9 @@ Approval remains explicit. Clicking an incomplete approval highlights the name,
 consent, notes or affected report section and moves focus; it makes no approval
 request until the prerequisites pass. Older affected drafts can start a fresh
 agent pipeline through the rebuild action. No automatic export or Git action.
+
+## Topic pipeline
+
+Send `POST /api/research/verify` with `{"mode":"agent","topic":"your research question","autoPrepare":true}`. A persisted, cancellable run searches OpenAlex for up to five papers, uses available abstracts to extract grounded claims, computes claim connections, asks the model for a bounded proposal citing real claim IDs, and hands the selected evidence to the verification agent. Two separate model calls review methods and overstatement before draft preparation. Sources without readable text are excluded; abstracts are not full-paper review. Search failures and invalid citations stop with an explicit error. Empty numerical evidence produces a literature-only report with no fabricated chart when both reviewers finish. Existing candidate verification remains available separately.
+
+Progress uses saved `searching`, `connecting`, `proposing`, `checking`, `reviewing`, `preparing`, and `review` stages with `completedStages`. Topic runs have a ten-minute limit; verification retains its fixed tool and turn budgets. No approval or export runs automatically.

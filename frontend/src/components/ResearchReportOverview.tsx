@@ -6,6 +6,7 @@ export interface ReportFigure {
 }
 export interface ReportEvidence {
   interpretation?: string;
+  reportReviews?: {role:string;summary:string;concerns:string[]}[];
   results?: {status: string; summary: string; outputDigest?: string}[];
   datasetActions?: {call: {tool: string}; error?: string; passages?: unknown[]}[];
   studyReviews?: {supported: boolean; reason: string}[];
@@ -18,11 +19,12 @@ export default function ResearchReportOverview({run, figures, paperCount, claimC
   relations: {id: string; relationKind: string; sourceClaimID?: string; targetClaimID?: string}[];
   stale: boolean; manualFigures: boolean;
 }) {
-  const parts = run?.interpretation?.split(/\n\s*\n/).filter(Boolean) ?? [];
+  const parts = run?.interpretation?.split(/\n\s*\n/).filter(p => p.trim() && !/^(What we found|What remains uncertain|What happens next)\s*:?$/i.test(p.trim())) ?? [];
   const intro = parts[0]?.replace(/^What we found\s*:?\s*/i, '') || run?.results?.[0]?.summary || 'Open the full report to read the recorded findings.';
   const checks = run?.results?.filter(r => r.status === 'completed').length ?? 0;
   const sourceChecks = run?.datasetActions?.filter(a => a.call.tool === 'evidence-lookup' && !a.error && !!a.passages?.length).length ?? 0;
   const reviews = run?.studyReviews ?? [];
+  const reportReviews = run?.reportReviews ?? [];
   const reviewLabel = stale ? 'Needs a fresh review' : reviews.some(r => !r.supported) ? 'Review raised concerns' : 'Broader claim unresolved';
   return <>
     <div className="research-summary-strip">
@@ -59,12 +61,13 @@ export default function ResearchReportOverview({run, figures, paperCount, claimC
       <section className="research-surface research-review" aria-label="Reviewer verdict">
         <p className="research-eyebrow">Reviewer verdict</p>
         <div className="research-verdict"><AlertCircle size={19} />{reviewLabel}</div>
-        <p className="research-muted">{reviews.length ? `${reviews.length} recorded study-design review${reviews.length === 1 ? '' : 's'}. These checks do not certify a discovery.` : 'No formal study-design review is recorded for this run. Descriptive calculations can still be reported.'}</p>
+        <p className="research-muted">{reportReviews.length ? `${reportReviews.length} agent reviews completed. Open their comments below; this is not independent certification.` : reviews.length ? `${reviews.length} recorded study-design review${reviews.length === 1 ? '' : 's'}. These checks do not certify a discovery.` : 'No formal study-design review is recorded for this run. Descriptive calculations can still be reported.'}</p>
         <div className="research-review-rows">
           <div><FileText size={20} /><span>Source context<small>{sourceChecks ? `${sourceChecks} source lookup${sourceChecks === 1 ? '' : 's'} recorded` : 'Not checked in this run'}</small></span>{sourceChecks ? <CheckCircle2 size={18} /> : <AlertCircle size={18} className="research-amber" />}</div>
           <div><Table2 size={20} /><span>Recorded calculations<small>{checks ? `${checks} completed · replay checked during preparation` : 'No completed calculations'}</small></span>{checks ? <CheckCircle2 size={18} /> : <AlertCircle size={18} className="research-amber" />}</div>
           <div><Scale size={20} /><span>Broader claim<small>Unresolved</small></span><AlertCircle size={18} className="research-amber" /></div>
         </div>
+        {reportReviews.map((r,i) => <details className="research-explanation" key={i}><summary>{r.role}</summary><p>{r.summary}</p>{r.concerns.map((c,j) => <p key={j}>{c}</p>)}</details>)}
         {!!reviews.length && <details className="research-explanation"><summary>Read reviewer comments</summary>{reviews.map((r,i) => <p key={i}>{r.reason}</p>)}</details>}
       </section>
     </div>

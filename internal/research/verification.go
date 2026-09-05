@@ -170,6 +170,10 @@ func (s *Service) SetVerificationNotify(fn func(models.VerificationRun)) { s.ver
 
 func (s *Service) StartVerification(req models.VerificationRequest) (models.VerificationRun, error) {
 	var run models.VerificationRun
+	req.Topic = strings.TrimSpace(req.Topic)
+	if req.Topic != "" && (len(req.Topic) > 500 || req.Mode != "agent" || !req.AutoPrepare || req.CandidateID != "" || req.DatasetID != "") {
+		return run, fmt.Errorf("topic requires agent auto-preparation, at most 500 bytes, and no candidate or dataset ID")
+	}
 	if req.Mode != "manual" && req.Mode != "agent" && req.Mode != "replay" {
 		return run, fmt.Errorf("mode must be manual, agent, or replay")
 	}
@@ -202,6 +206,8 @@ func (s *Service) StartVerification(req models.VerificationRequest) (models.Veri
 		for _, result := range previous.Results {
 			req.Calls = append(req.Calls, result.Call)
 		}
+	} else if req.Topic != "" {
+		run.Candidate = models.CandidateHypothesis{Hypothesis: req.Topic}
 	} else {
 		if req.ReplayOf != "" {
 			return run, fmt.Errorf("replayOf is only valid in replay mode")
@@ -275,6 +281,9 @@ func (s *Service) StartVerification(req models.VerificationRequest) (models.Veri
 	run.Status = "queued"
 	if req.AutoPrepare {
 		run.PipelineStage = "checking"
+		if req.Topic != "" {
+			run.PipelineStage = "searching"
+		}
 	}
 	run.Results = []models.VerificationResult{}
 	run.ToolVersion = verificationToolVersion
@@ -289,7 +298,11 @@ func (s *Service) StartVerification(req models.VerificationRequest) (models.Veri
 	if s.verificationActive == nil {
 		s.verificationActive = make(map[string]context.CancelFunc)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	timeout := 2 * time.Minute
+	if req.Topic != "" {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	if err := s.verificationStore("runs").saveSlice(run.ID+".json", run); err != nil {
 		cancel()
 		return run, err
@@ -331,6 +344,9 @@ func (s *Service) executeVerificationRun(ctx context.Context, cancel context.Can
 	defer func() { s.verificationMu.Lock(); delete(s.verificationActive, run.ID); s.verificationMu.Unlock() }()
 	run.Status = "running"
 	err := s.saveVerificationRun(run)
+	if err == nil && run.Request.Topic != "" {
+		err = s.prepareTopic(ctx, &run)
+	}
 	if err == nil {
 		if run.Request.Mode == "agent" {
 			err = s.runVerificationAgent(ctx, &run)
@@ -352,6 +368,9 @@ func (s *Service) executeVerificationRun(ctx context.Context, cancel context.Can
 				}
 			}
 		}
+	}
+	if err == nil && run.Request.Topic != "" {
+		err = s.reviewTopicReport(ctx, &run)
 	}
 	run.Status = "completed"
 	for i, result := range run.Results {
@@ -385,9 +404,9 @@ func (s *Service) executeVerificationRun(ctx context.Context, cancel context.Can
 	run.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	if run.Request.AutoPrepare {
 		run.PipelineStage = "preparing"
-		if run.Status == "cancelled" || len(run.Results) == 0 {
+		if run.Status != "completed" || (len(run.Results) == 0 && !literatureReport(run)) {
 			run.PipelineStage = "needs_attention"
-			run.ReportError = "No calculation results were available for a report. Read the agent's explanation below."
+			run.ReportError = firstNonEmpty(run.Error, "No calculation results were available for a report. Read the agent's explanation below.")
 		}
 	}
 	if saveErr := s.saveVerificationRun(run); saveErr != nil {

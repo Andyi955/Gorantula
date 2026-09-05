@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -75,6 +76,10 @@ func (c *OpenAlexNoveltyChecker) CheckNovelty(ctx context.Context, hypothesis st
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return 0, "", fmt.Errorf("OpenAlex returned HTTP %d", resp.StatusCode)
+	}
+
 	var body openAlexResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return 0, "", err
@@ -119,7 +124,7 @@ func (c *OpenAlexNoveltyChecker) Retrieve(ctx context.Context, query string, lim
 		limit = 5
 	}
 
-	requestURL := fmt.Sprintf("%s?search=%s&per-page=%d&mailto=gorantula@example.com", c.baseURL, url.QueryEscape(query), limit)
+	requestURL := fmt.Sprintf("%s?search=%s&filter=has_abstract:true&per-page=%d&mailto=gorantula@example.com", c.baseURL, url.QueryEscape(query), limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, err
@@ -129,9 +134,12 @@ func (c *OpenAlexNoveltyChecker) Retrieve(ctx context.Context, query string, lim
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OpenAlex returned HTTP %d", resp.StatusCode)
+	}
 
 	var body openAlexResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&body); err != nil {
 		return nil, err
 	}
 

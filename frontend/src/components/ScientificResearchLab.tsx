@@ -629,7 +629,7 @@ const ScientificResearchLab = () => {
           <>
             {view === 'signals' && renderSignals()}
             {view === 'candidates' && renderCandidates()}
-            {view === 'pipeline' && <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={setView} />}
+            {view === 'pipeline' && <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={next => { setView(next); void reload(); }} />}
             {view === 'verification' && <ResearchVerificationConsole candidates={candidates} />}
             {view === 'publish' && <ResearchPublicationConsole onRebuild={id => void rebuildReport(id)} />}
             {view === 'corpus' && renderCorpus()}
