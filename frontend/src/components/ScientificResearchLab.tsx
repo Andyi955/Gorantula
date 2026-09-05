@@ -416,13 +416,31 @@ const ScientificResearchLab = () => {
           const checklist = candidate.checklist || [];
           const confirmed = checklist.filter((item) => item.answer === 'yes').length;
           const title = candidate.hypothesis;
+          const noveltyPct = candidate.noveltyScore !== undefined ? Math.round(candidate.noveltyScore * 100) : null;
+          const noveltyTone = candidate.noveltyScore === undefined
+            ? ''
+            : candidate.noveltyScore >= 0.6
+              ? 'border-[#90f3da]/55 bg-[#90f3da]/12 text-[#90f3da]'
+              : candidate.noveltyScore >= 0.4
+                ? 'border-[#f6c879]/55 bg-[#f6c879]/12 text-[#f6c879]'
+                : 'border-[#ff8c86]/55 bg-[#ff8c86]/12 text-[#ff8c86]';
+          const noveltyLabel = candidate.noveltyScore === undefined
+            ? ''
+            : candidate.noveltyScore >= 0.6
+              ? 'novel'
+              : candidate.noveltyScore >= 0.4
+                ? 'partially covered'
+                : 'well-covered';
           return (
             <div key={candidate.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${verdict.tone}`}>{verdict.label}</span>
                 <span className="rounded-md border border-[var(--forensic-border-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)]">{STATE_LABEL[candidate.state] || candidate.state}</span>
-                {candidate.noveltyScore !== undefined && (
-                  <span className="text-[11px] text-[var(--forensic-text-faint)]">novelty {Math.round(candidate.noveltyScore * 100)}%</span>
+                {noveltyPct !== null && (
+                  <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${noveltyTone}`}>
+                    <span aria-hidden>◎</span>
+                    novelty {noveltyPct}% · {noveltyLabel}
+                  </span>
                 )}
               </div>
 
