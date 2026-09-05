@@ -169,8 +169,11 @@ const ScientificResearchLab = () => {
   const [title, setTitle] = useState('');
   const [abstract, setAbstract] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Nested collapse for the related-papers list inside a candidate's checklist.
+  const [showPapers, setShowPapers] = useState<Record<string, boolean>>({});
 
   const toggleExpanded = (id: string) => setExpanded((cur) => ({ ...cur, [id]: !cur[id] }));
+  const togglePapers = (id: string) => setShowPapers((cur) => ({ ...cur, [id]: !cur[id] }));
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -530,13 +533,29 @@ const ScientificResearchLab = () => {
                   )}
                   {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (
                     <div className="col-span-full border-t border-[var(--forensic-border-soft)] pt-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-faint)]">related papers fetched</p>
-                      {candidate.expansion.retrieved.map((paper) => (
-                        <p key={paper.id} className="mt-1 text-[11px] text-[var(--forensic-text-muted)]">
-                          {paper.title || paper.id}
-                          {paper.sourceURL && <span className="ml-1 text-[var(--forensic-accent)]">· {paper.sourceURL}</span>}
-                        </p>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => togglePapers(candidate.id)}
+                        aria-expanded={Boolean(showPapers[candidate.id])}
+                        className="flex w-full items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-accent)] hover:underline"
+                      >
+                        <span>related papers fetched ({candidate.expansion.retrieved.length})</span>
+                        <span className="shrink-0">{showPapers[candidate.id] ? 'Hide' : 'Show'}</span>
+                      </button>
+                      {showPapers[candidate.id] && (
+                        <ul className="mt-2 space-y-1.5">
+                          {candidate.expansion.retrieved.map((paper) => (
+                            <li key={paper.id} className="flex items-baseline gap-1.5 text-[11px] text-[var(--forensic-text-muted)]">
+                              {paper.sourceURL ? (
+                                <a href={paper.sourceURL} target="_blank" rel="noreferrer" className="hover:underline">{paper.title || paper.id}</a>
+                              ) : (
+                                <span>{paper.title || paper.id}</span>
+                              )}
+                              {paper.sourceURL && <span className="text-[var(--forensic-text-faint)]">· {paper.sourceURL}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </div>
