@@ -32,7 +32,7 @@ func decodeStrictJSON(data []byte, target interface{}) error {
 // files. CLI access without Origin remains supported.
 func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) bool {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 3 || parts[0] != "api" || parts[1] != "research" || (parts[2] != "datasets" && parts[2] != "verify" && parts[2] != "runs") {
+	if len(parts) < 3 || parts[0] != "api" || parts[1] != "research" || (parts[2] != "datasets" && parts[2] != "verify" && parts[2] != "runs" && parts[2] != "publications") {
 		return false
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -80,6 +80,42 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		return true
 	}
 	switch {
+	case parts[2] == "publications" && len(parts) == 3 && r.Method == http.MethodGet:
+		value, err := s.ListPublications()
+		respond(value, err)
+	case parts[2] == "publications" && len(parts) == 4 && r.Method == http.MethodGet:
+		value, err := s.GetPublication(parts[3])
+		respond(value, err)
+	case parts[2] == "publications" && len(parts) == 3 && r.Method == http.MethodPost:
+		var req struct {
+			RunID string `json:"runId"`
+		}
+		if !read(&req) {
+			return true
+		}
+		value, err := s.PreparePublication(r.Context(), req.RunID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+		} else {
+			respond(value, nil)
+		}
+	case parts[2] == "publications" && len(parts) == 5 && r.Method == http.MethodPost:
+		var req struct {
+			Revision string `json:"revision"`
+			Operator string `json:"operator"`
+			Reason   string `json:"reason"`
+			FigureID string `json:"figureId"`
+			Data     []byte `json:"data"`
+		}
+		if !read(&req) {
+			return true
+		}
+		value, err := s.PublicationAction(r.Context(), parts[3], req.Revision, parts[4], req.Operator, req.Reason, req.FigureID, req.Data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+		} else {
+			respond(value, nil)
+		}
 	case len(parts) == 4 && parts[2] == "datasets" && parts[3] == "pdf-files" && r.Method == http.MethodPost:
 		var req struct {
 			Name string `json:"name"`

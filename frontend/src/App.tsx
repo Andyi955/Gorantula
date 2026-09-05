@@ -2583,7 +2583,7 @@ function App() {
           data-testid="app-sidebar"
           aria-label="Investigations sidebar"
           className={`forensic-sidebar forensic-sidebar-shell ${isSidebarCollapsed ? 'forensic-sidebar-collapsed' : ''} shrink-0 flex flex-col`}
-          style={{ width: `${renderedSidebarWidth}px` }}
+          style={{ width: `${renderedSidebarWidth}px`, display: activeTab === 'research' ? 'none' : undefined }}
         >
           <button
             type="button"

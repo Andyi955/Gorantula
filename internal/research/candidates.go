@@ -240,7 +240,7 @@ func isCriticalChecklistItem(id string) bool {
 // claim IDs, so a reviewer judges the candidate against its own evidence.
 func claimsForCandidate(claims []models.Claim, candidate models.CandidateHypothesis) []models.Claim {
 	if len(candidate.ClaimIDs) == 0 {
-		return claims
+		return nil
 	}
 	byID := make(map[string]models.Claim, len(claims))
 	for _, claim := range claims {
@@ -259,7 +259,7 @@ func claimsForCandidate(claims []models.Claim, candidate models.CandidateHypothe
 // paper IDs, so a reviewer can read the underlying paper text.
 func papersForCandidate(candidate models.CandidateHypothesis, papers []models.Paper) []models.Paper {
 	if len(candidate.PaperIDs) == 0 {
-		return papers
+		return nil
 	}
 	byID := make(map[string]models.Paper, len(papers))
 	for _, paper := range papers {

@@ -22,6 +22,7 @@ describe('ResearchVerificationConsole', () => {
     await screen.findByText('Calculated p = 0.33; not proof.');
     expect(screen.getByText('Hypothesis verdict: inconclusive')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Run mode'), { target: { value: 'manual' } });
+    fireEvent.change(screen.getByLabelText('Dataset', {exact:true}), {target: {value: 'data-1'}});
     fireEvent.change(screen.getByLabelText('Group column'), { target: { value: 'group' } });
     fireEvent.change(screen.getByLabelText('Numeric value column'), { target: { value: 'value' } });
     fireEvent.change(screen.getByLabelText('Statement being tested'), { target: { value: 'Means differ' } });
@@ -39,7 +40,7 @@ describe('ResearchVerificationConsole', () => {
       return json([]);
     }));
     render(<ResearchVerificationConsole candidates={candidates} />);
-    await screen.findByText('Source: Synthetic fixture');
+    await screen.findByRole('option', {name: /Synthetic data/});
     fireEvent.click(screen.getByRole('button', { name: 'Run verification' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Configure a research provider first');
     expect(screen.queryByText('completed')).not.toBeInTheDocument();
@@ -75,10 +76,22 @@ describe('ResearchVerificationConsole', () => {
   it('displays actual CSV inspection counts and samples', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/datasets') ? json([dataset]) : url.endsWith('/inspect') ? json({summary: 'Units are not inferred.', columns: [{name: 'value', numeric: 3, missing: 1, text: 0, min: 2, max: 9}], sample: [['a','2']]}) : json([])));
     render(<ResearchVerificationConsole candidates={candidates} />);
+    await screen.findByRole('option', {name: /Synthetic data/});
+    fireEvent.change(screen.getByLabelText('Dataset', {exact:true}), {target: {value: 'data-1'}});
     fireEvent.click(await screen.findByRole('button', {name: 'Inspect CSV'}));
     expect(await screen.findByText('Units are not inferred.')).toBeInTheDocument();
     expect(screen.getByText('2 to 9')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', {name: 'Missing'})).toBeInTheDocument();
+  });
+
+  it('defaults to agent discovery even when an unrelated dataset exists', async () => {
+    const fetchMock = vi.fn(async (url: string) => json(url.endsWith('/datasets') ? [dataset] : []));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ResearchVerificationConsole candidates={candidates} />);
+    await screen.findByRole('option', {name: /Synthetic data/});
+    expect(screen.getByLabelText('Dataset', {exact:true})).toHaveValue('discover');
+    fireEvent.click(screen.getByRole('button', {name: 'Run verification'}));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/verify'), expect.objectContaining({body: JSON.stringify({mode: 'agent', candidateId: 'candidate-1'})})));
   });
 
 });

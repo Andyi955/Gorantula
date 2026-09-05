@@ -259,7 +259,7 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		return s.executeResearchDataTool(ctx, run, call, fetch)
 	}
 	out := models.DatasetResult{Call: call}
-	if call.Tool != "dataset-filter" && (call.Column != "" || call.Operator != "" || call.Value != "" || call.Rationale != "") {
+	if call.Tool != "dataset-filter" && call.Tool != "dataset-use" && (call.Column != "" || call.Operator != "" || call.Value != "" || call.Rationale != "") {
 		out.Error = "this dataset tool does not accept filter arguments"
 		return out
 	}
@@ -282,6 +282,27 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		}
 	}
 	switch call.Tool {
+	case "dataset-use":
+		if hasSuccessfulCalculation(run.Results) {
+			err = fmt.Errorf("dataset is frozen after the first successful calculation")
+			break
+		}
+		if strings.TrimSpace(call.Rationale) == "" || call.URL != "" || call.Column != "" || call.Operator != "" || call.Value != "" {
+			err = fmt.Errorf("dataset-use requires an existing datasetId and a relevance rationale, not a URL or filter")
+			break
+		}
+		var d models.ResearchDataset
+		d, err = s.loadDataset(call.DatasetID)
+		if err == nil {
+			// Keep earlier calculation inputs for replay if selection follows a failure.
+			if run.Dataset.ID != "" {
+				run.DatasetParents = append(run.DatasetParents, run.Dataset)
+			}
+			run.Dataset = d
+			out, err = inspectDataset(d)
+			out.Call, out.DatasetID = call, d.ID
+			out.Summary = "Selected and inspected saved data. Relevance rationale: " + call.Rationale + ". " + out.Summary
+		}
 	case "dataset-discover", "dataset-import":
 		if !allowed {
 			err = fmt.Errorf("URL must be a candidate paper source or an observed dataset link")
@@ -313,6 +334,10 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 			}
 		}
 	case "dataset-inspect":
+		if run.Dataset.ID == "" {
+			err = fmt.Errorf("no dataset selected: use dataset-use with an availableDatasets id and relevance rationale, or dataset-discover followed by dataset-import; do not repeat dataset-inspect before selecting data")
+			break
+		}
 		out, err = inspectDataset(run.Dataset)
 		out.Call = call
 	case "dataset-filter":

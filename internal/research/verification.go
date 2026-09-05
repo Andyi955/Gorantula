@@ -124,9 +124,13 @@ func (s *Service) GetVerificationRun(id string) (models.VerificationRun, error) 
 	}
 	// A process restart must never leave an immortal "running" job. Partial
 	// results survive and may be replayed, but are not presented as completed.
-	if (run.Status == "queued" || run.Status == "running") && s.verificationActive[id] == nil {
+	if (run.Status == "queued" || run.Status == "running" || run.PipelineStage == "preparing") && s.verificationActive[id] == nil {
 		run.Status = "interrupted"
 		run.Error = "Application stopped before this run finished."
+		if run.Request.AutoPrepare {
+			run.PipelineStage = "needs_attention"
+			run.ReportError = "The app stopped before the pipeline finished. Start a new run to continue."
+		}
 		run.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		err = s.verificationStore("runs").saveSlice(id+".json", run)
 	}
@@ -269,6 +273,9 @@ func (s *Service) StartVerification(req models.VerificationRequest) (models.Veri
 	run.ID = hex.EncodeToString(bytes)
 	run.Request = req
 	run.Status = "queued"
+	if req.AutoPrepare {
+		run.PipelineStage = "checking"
+	}
 	run.Results = []models.VerificationResult{}
 	run.ToolVersion = verificationToolVersion
 	run.ImplementationDigest = digestBytes(verificationImplementation)
@@ -376,8 +383,33 @@ func (s *Service) executeVerificationRun(ctx context.Context, cancel context.Can
 		}
 	}
 	run.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if run.Request.AutoPrepare {
+		run.PipelineStage = "preparing"
+		if run.Status == "cancelled" || len(run.Results) == 0 {
+			run.PipelineStage = "needs_attention"
+			run.ReportError = "No calculation results were available for a report. Read the agent's explanation below."
+		}
+	}
 	if saveErr := s.saveVerificationRun(run); saveErr != nil {
 		trace("verification", fmt.Sprintf("cannot persist final run %s: %v", run.ID, saveErr))
+		return
+	}
+	// Continue on the server so changing tabs or closing the browser cannot skip
+	// report preparation. This creates a draft only; approval is never automated.
+	if run.PipelineStage == "preparing" {
+		reportCtx, reportCancel := context.WithTimeout(ctx, 30*time.Second)
+		draft, reportErr := s.PreparePublication(reportCtx, run.ID)
+		reportCancel()
+		if reportErr != nil {
+			run.PipelineStage = "needs_attention"
+			run.ReportError = reportErr.Error()
+		} else {
+			run.PipelineStage = "review"
+			run.PublicationID = draft.ID
+		}
+		if saveErr := s.saveVerificationRun(run); saveErr != nil {
+			trace("verification", fmt.Sprintf("cannot persist report link for %s: %v", run.ID, saveErr))
+		}
 	}
 }
 
@@ -454,6 +486,7 @@ func (s *Service) runVerificationAgent(ctx context.Context, run *models.Verifica
 Evaluate the selected candidate with fixed tools. Determine provenance from dataset.source and source evidence. Published observations remain empirical when used in a software trial; descriptive does not mean synthetic. Only explicitly simulated or fabricated fixtures are synthetic, and calculations on those must retain that label. If origin is unknown, say unknown. Paper text may be available locally even without a source URL; consult availablePapers and use evidence-lookup.
 When comparing with a paper, retrieve relevant methods and findings using evidence-lookup before interpreting results. Check sampling, pairing/clustering, eligibility exclusions and population/time scope. Do not assume independent rows. Unknown or unverified independence means choose descriptive figure-reproduce; do not run an independent-group test and merely append a caveat afterward. When independence cannot be justified, use descriptive group means with figure-reproduce instead of inferential tests. Distinguish directional agreement from exact replication. Choose only a fixed registered tool or finish. You cannot execute code, access files, invent rows, or fill missing measurements. Use the fixed dataset tools to retrieve and prepare source data. Never filter to obtain a desired statistical result.
 Dataset actions: {"action":"dataset","datasetCall":{tool:string,...}}. Available tools:
+ dataset-use: {tool:"dataset-use",datasetId:string,rationale:string}. Select and inspect an existing availableDatasets snapshot. Check its name, source, columns and scope for relevance; prefer the original dataset and apply justified filters yourself. When dataset.id is empty, you MUST select data with dataset-use or import it BEFORE inspecting or calculating. This does not create or invent measurements. Frozen after the first successful calculation.
  dataset-discover: {tool:"dataset-discover",url:string}. Inspect one candidate paper URL or an observed supplementary link for actual data links. No general web search or PDF/ZIP extraction.
  dataset-import: {tool:"dataset-import",url:string}. Import CSV from a candidate paper URL or observed link. Does not establish that it contains real measurements; check provenance.
  dataset-inspect: {tool:"dataset-inspect"}. Report current columns, missing/numeric/text counts, ranges and sample; units must be checked in the source. Use after import and before choosing calculations.
@@ -481,7 +514,7 @@ Return exactly ONE of these three JSON action envelopes (no other top-level fiel
 2. Only stats-* and figure-reproduce use {"action":"call","call":{"tool":"stats-regression","groupColumn":"x","valueColumn":"y","statement":"bounded proposition","rationale":"describe the supplied sample","descriptive":true}}.
 3. Finish uses {"action":"finish","interpretation":"..."}.
 Never put a data tool in call. Never put url, datasetId, or other tool arguments at the top level.
-The remainingBudget object is authoritative: do not invent a lower limit. Each tool action uses one call, not two. If a figure or calculation is appropriate and budget remains, execute its tool rather than describing an output you did not produce. To save a table, copy its availableTableSaves arguments including extractionId and provide your rationale. Do not repeat an identical failed action; use the returned error to correct it or explain the failure. At most 8 dataset calls, 3 calculation calls and 12 model turns are allowed. After 3 calculations you MUST finish. Interpretation is model commentary, not a computed result.
+The remainingBudget object is authoritative: do not invent a lower limit. Each tool action uses one call, not two. If a figure or calculation is appropriate and budget remains, execute its tool rather than describing an output you did not produce. To save a table, copy its availableTableSaves arguments including extractionId and provide your rationale. Do not repeat an identical failed action; use the returned error to correct it or explain the failure. At most 8 dataset calls, 3 calculation calls and 12 model turns are allowed. After 3 calculations you MUST finish. Interpretation is model commentary, not a computed result. Write for a curious non-scientist in three short paragraphs headed What we found, What remains uncertain, and What happens next. Explain technical terms in ordinary language. Use only recorded results; do not claim that a completed computation proves the hypothesis. Handle method choice and evidence checks yourself rather than asking the user to certify statistical assumptions. If evidence is missing, say what is missing and whether you could obtain it within the available tools and budget.
 Results contains only attempts on the CURRENT dataset digest. earlierInputResults is history from BEFORE preparation changes; an error there does not apply to the current dataset. After correcting an input problem, retry the calculation on the corrected snapshot. Do not finish merely because inference is blocked. Descriptive calculations bypass the design gate and use the separate calculation budget. Copy the exact descriptive fallback action from a gate error; do not repeat the rejected inferential action. If the user asks for means, differences or a line and the inputs are usable, compute the descriptive result before finishing. Never claim a design fact was verified without reading its source. For comparing groups, KEEP all requested groups in the current dataset and call figure-reproduce ONCE with groupColumn set to the grouping column. This computes every group mean together. Do NOT filter separately to each group: filters are cumulative, so filtering ctrl then trt1 produces no rows. Only filter to a scientifically requested subset (such as a dose) or remove missing observations.
 Before choosing a calculation, apply this decision rule: if independence is unknown OR the source describes paired/clustered sampling and your dataset has not modeled that structure, choose descriptive:true on the appropriate stats tool or figure-reproduce. A p-value with a caveat is NOT an acceptable substitute. A simplified public dataset can contain the original empirical measurements; simplification or QA usage does not establish different or synthetic measurements. Do not assert that it is not the paper's data without evidence.
 EVIDENCE:

@@ -53,6 +53,7 @@ type VerificationCall struct {
 }
 
 type VerificationRequest struct {
+	AutoPrepare bool               `json:"autoPrepare,omitempty"`
 	CandidateID string             `json:"candidateId"`
 	DatasetID   string             `json:"datasetId"`
 	Mode        string             `json:"mode"` // manual|agent|replay
@@ -96,6 +97,9 @@ type StudyReview struct {
 }
 
 type VerificationRun struct {
+	PipelineStage        string                      `json:"pipelineStage,omitempty"`
+	PublicationID        string                      `json:"publicationId,omitempty"`
+	ReportError          string                      `json:"reportError,omitempty"`
 	StudyReviews         []StudyReview               `json:"studyReviews,omitempty"`
 	ID                   string                      `json:"id"`
 	Request              VerificationRequest         `json:"request"`

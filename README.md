@@ -267,3 +267,11 @@ On Windows, the first backend start may trigger a Windows Defender Firewall prom
 - If searches fail, check `BRAVE_API_KEY`.
 - If AI calls fail, check that the matching provider has both `*_ENABLED=true` and a valid key or local host.
 - If a board or timeline looks stale, refresh the active investigation data from the UI before re-running analysis.
+
+### Research publication (Phase 4)
+
+The Scientific Research **Publish** view prepares a source-linked candidate paper,
+exports figure specifications, accepts operator-generated PNGs, and records
+revision-specific approval before creating a local repo-ready evidence package.
+Corpus changes invalidate publication approval. Export never commits or pushes;
+see [publication workflow](internal/research/PUBLICATION.md) for limits and paths.
