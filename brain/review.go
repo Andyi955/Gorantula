@@ -94,9 +94,9 @@ func formatReviewEvidence(claims []models.Claim, papers []models.Paper) string {
 const researchReviewPromptTemplate = `You are a scientific review committee (Methods Reviewer, Domain Oracle, Red-Team Critic) deciding how credible a candidate research hypothesis is, based ONLY on the evidence text below.
 
 For EACH criterion answer:
-- "yes" = there is clear evidence in the text to satisfy it.
+- "yes" = the evidence CLEARLY and consistently supports it.
 - "no" = the evidence clearly fails this criterion.
-- "unknown" = there is NOT ENOUGH evidence in the provided text to judge this criterion. NEVER guess; unknown is the honest answer when the papers do not report the needed information.
+- "unknown" = there is NOT ENOUGH evidence to judge this criterion, OR the evidence is only a single source, OR the sources conflict. NEVER guess and NEVER force a "yes" from a single paper; unknown is the honest answer when the papers do not report the needed information or do not agree.
 
 Return ONLY a valid JSON object: {"items":[{"id":"precision","answer":"yes|no|unknown","reason":"one short sentence","confidence":0.9}]}. Include an item for EVERY criterion below.
 

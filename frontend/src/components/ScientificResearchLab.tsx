@@ -69,11 +69,18 @@ interface Candidate {
   noveltyScore?: number;
   nearestWork?: string;
   checklist?: ChecklistItem[];
+  expansion?: CandidateExpansion;
   verdict?: string;
   evidenceGrade?: string;
   state: string;
   approvedBy?: string;
   approvedAt?: string;
+}
+
+interface CandidateExpansion {
+  round: number;
+  criteria?: string[];
+  retrieved?: Paper[];
 }
 
 type View = 'signals' | 'corpus' | 'relations' | 'candidates';
@@ -430,6 +437,11 @@ const ScientificResearchLab = () => {
 
               <p className={`mt-2 text-sm font-semibold text-[var(--forensic-text)] ${expanded[candidate.id] ? '' : 'line-clamp-3'}`}>{title}</p>
               {candidate.evidenceGrade && <p className="mt-1 text-xs text-[var(--forensic-text-muted)]">{candidate.evidenceGrade} evidence</p>}
+              {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (
+                <p className="mt-1 text-[11px] text-[var(--forensic-accent)]">
+                  expanded with {candidate.expansion.retrieved.length} related paper(s)
+                </p>
+              )}
 
               {expanded[candidate.id] && (
                 <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2 border-t border-[var(--forensic-border-soft)] pt-3 lg:grid-cols-2">
@@ -450,6 +462,17 @@ const ScientificResearchLab = () => {
                   ))}
                   {candidate.nearestWork && (
                     <p className="text-[11px] italic text-[var(--forensic-text-faint)]">nearest existing work: {candidate.nearestWork}</p>
+                  )}
+                  {candidate.expansion && candidate.expansion.retrieved && candidate.expansion.retrieved.length > 0 && (
+                    <div className="col-span-full border-t border-[var(--forensic-border-soft)] pt-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-faint)]">related papers fetched</p>
+                      {candidate.expansion.retrieved.map((paper) => (
+                        <p key={paper.id} className="mt-1 text-[11px] text-[var(--forensic-text-muted)]">
+                          {paper.title || paper.id}
+                          {paper.sourceURL && <span className="ml-1 text-[var(--forensic-accent)]">· {paper.sourceURL}</span>}
+                        </p>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}
