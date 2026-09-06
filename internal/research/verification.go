@@ -558,6 +558,27 @@ EVIDENCE:
 			return fmt.Errorf("invalid agent action: %w", err)
 		}
 		if action.Action == "finish" && action.DatasetCall == nil && action.Call == nil && strings.TrimSpace(action.Interpretation) != "" && len(action.Interpretation) <= 4000 {
+			// If the agent is about to give up without ever importing or
+			// analysing data, surface open-data repository candidates once so it
+			// has a real chance to find an importable dataset before concluding
+			// that none exists.
+			if !hasSuccessfulCalculation(run.Results) && run.Dataset.ID == "" && strings.TrimSpace(run.Request.Topic) != "" && len(run.DatasetActions) < 8 {
+				nudged := false
+				for _, a := range run.DatasetActions {
+					if a.Call.Tool == "repo-search-check" {
+						nudged = true
+					}
+				}
+				if !nudged {
+					result := s.executeDatasetCall(ctx, run, models.DatasetCall{Tool: "dataset-search", Query: run.Request.Topic, Rationale: "The agent found no usable dataset; surface open-data repository candidates for a topic-relevant CSV."})
+					run.DatasetActions = append(run.DatasetActions, result)
+					run.DatasetActions = append(run.DatasetActions, models.DatasetResult{Call: models.DatasetCall{Tool: "repo-search-check"}, Summary: "Open-data repository candidates are listed above. If one is relevant, import it with dataset-import and run a calculation; otherwise finish and explicitly explain."})
+					if err := s.saveVerificationRun(*run); err != nil {
+						return err
+					}
+					continue
+				}
+			}
 			// One bounded recovery nudge prevents abandoning a corrected/repairable input.
 			if !hasSuccessfulCalculation(run.Results) && len(run.Results) > 0 && len(run.Results) < 3 && len(run.DatasetActions) < 8 {
 				nudged := false

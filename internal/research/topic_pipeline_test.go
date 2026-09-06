@@ -11,6 +11,11 @@ import (
 
 func topicFixture(t *testing.T, invalid bool) *Service {
 	t.Helper()
+	originalFetch := openDataFetch
+	t.Cleanup(func() { openDataFetch = originalFetch })
+	openDataFetch = func(_ context.Context, _ string, _ int64) ([]byte, string, error) {
+		return []byte(`{"hits":{"total":0,"hits":[]}}`), "", nil
+	}
 	s := NewService(t.TempDir(), nil)
 	s.webSearch = nil
 	s.datasetFetch = func(_ context.Context, u string) ([]byte, string, error) {
@@ -53,8 +58,17 @@ func TestTopicPipelineSearchToReviewedLiteratureReport(t *testing.T) {
 	if strings.Join(r.CompletedStages, ",") != "searching,connecting,proposing,checking,reviewing" {
 		t.Fatal(r.CompletedStages)
 	}
-	if len(r.DatasetActions) != 1 || r.DatasetActions[0].Call.Tool != "dataset-discover" {
+	if len(r.DatasetActions) < 1 || r.DatasetActions[0].Call.Tool != "dataset-discover" {
 		t.Fatal("early-finishing model bypassed source retrieval")
+	}
+	hasRepoSearch := false
+	for _, a := range r.DatasetActions {
+		if a.Call.Tool == "dataset-search" {
+			hasRepoSearch = true
+		}
+	}
+	if !hasRepoSearch {
+		t.Fatal("repo-search recovery was not surfaced before finishing")
 	}
 	if len(r.ReportReviews) != 2 || len(r.Results) != 0 {
 		t.Fatal("missing review or fabricated computation")
