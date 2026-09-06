@@ -87,9 +87,10 @@ func TestDatasetSearchToolReturnsLinksAndSummary(t *testing.T) {
 	if !strings.Contains(out.Summary, "Metformin lifespan meta-analysis") || !strings.Contains(out.Summary, "Zenodo") {
 		t.Fatalf("summary = %q", out.Summary)
 	}
-	// Persist the search so its links become import candidates, then import one.
+	// Persist the search so its links become import candidates, then import one
+	// (the import carries a rationale, which must not be rejected as a filter arg).
 	run.DatasetActions = append(run.DatasetActions, out)
-	importOut := s.executeDatasetCall(context.Background(), &run, models.DatasetCall{Tool: "dataset-import", URL: out.Links[0]})
+	importOut := s.executeDatasetCall(context.Background(), &run, models.DatasetCall{Tool: "dataset-import", URL: out.Links[0], Rationale: "Topic-relevant meta-analysis measurements to verify against."})
 	if importOut.Error != "" || importOut.DatasetID == "" {
 		t.Fatalf("import from search link should register a dataset: err=%s out=%+v", importOut.Error, importOut)
 	}

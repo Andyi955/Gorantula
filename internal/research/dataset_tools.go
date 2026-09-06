@@ -274,7 +274,11 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		return s.executeResearchDataTool(ctx, run, call, fetch)
 	}
 	out := models.DatasetResult{Call: call}
-	if call.Tool != "dataset-filter" && call.Tool != "dataset-use" && call.Tool != "dataset-search" && (call.Column != "" || call.Operator != "" || call.Value != "" || call.Rationale != "") {
+	// Reject filter arguments (column/operator/value) on tools that do not take
+	// them. A rationale is benign justification metadata and must be allowed on
+	// any tool (e.g. dataset-import/data-set-search always carry one), so it is
+	// not treated as a filter argument.
+	if call.Tool != "dataset-filter" && (call.Column != "" || call.Operator != "" || call.Value != "") {
 		out.Error = "this dataset tool does not accept filter arguments"
 		return out
 	}
