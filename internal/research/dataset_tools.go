@@ -274,7 +274,7 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		return s.executeResearchDataTool(ctx, run, call, fetch)
 	}
 	out := models.DatasetResult{Call: call}
-	if call.Tool != "dataset-filter" && call.Tool != "dataset-use" && (call.Column != "" || call.Operator != "" || call.Value != "" || call.Rationale != "") {
+	if call.Tool != "dataset-filter" && call.Tool != "dataset-use" && call.Tool != "dataset-search" && (call.Column != "" || call.Operator != "" || call.Value != "" || call.Rationale != "") {
 		out.Error = "this dataset tool does not accept filter arguments"
 		return out
 	}
@@ -365,6 +365,32 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 			break
 		}
 		out, err = inspectDataset(run.Dataset)
+		out.Call = call
+	case "dataset-search":
+		if strings.TrimSpace(call.Query) == "" {
+			err = fmt.Errorf("dataset-search requires a query")
+			break
+		}
+		var found []openDataset
+		found, err = searchOpenData(ctx, call.Query)
+		if err != nil {
+			break
+		}
+		if len(found) == 0 {
+			out.Summary = "No open-data repository candidate with a downloadable CSV/TSV matched the query. This records that none was found; it is not evidence that the data does not exist."
+			out.Call = call
+			break
+		}
+		var sb strings.Builder
+		sb.WriteString("Open-data repository candidates (verify relevance and provenance before importing; a downloadable file is not proof of good data): ")
+		for i, d := range found {
+			if i > 0 {
+				sb.WriteString(" | ")
+			}
+			fmt.Fprintf(&sb, "%s [%s, %d KB, file %s]", d.Name, d.Provider, d.Size>>10, d.File)
+			out.Links = append(out.Links, d.DownloadURL)
+		}
+		out.Summary = truncateRunes(sb.String(), 1600)
 		out.Call = call
 	case "dataset-filter":
 		if hasSuccessfulCalculation(run.Results) {
