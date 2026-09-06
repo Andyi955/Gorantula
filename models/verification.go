@@ -53,6 +53,8 @@ type VerificationCall struct {
 }
 
 type VerificationRequest struct {
+	Topic       string             `json:"topic,omitempty"`
+	AutoPrepare bool               `json:"autoPrepare,omitempty"`
 	CandidateID string             `json:"candidateId"`
 	DatasetID   string             `json:"datasetId"`
 	Mode        string             `json:"mode"` // manual|agent|replay
@@ -95,7 +97,21 @@ type StudyReview struct {
 	CheckedFacts   []string         `json:"checkedFacts"`
 }
 
+type ReportReview struct {
+	Role     string   `json:"role"`
+	Summary  string   `json:"summary"`
+	Concerns []string `json:"concerns"`
+}
+
 type VerificationRun struct {
+	PaperSearchAttempts  []PaperSearchAttempt        `json:"paperSearchAttempts,omitempty"`
+	SourceAssessments    []SourceAssessment          `json:"sourceAssessments,omitempty"`
+	CompletedStages      []string                    `json:"completedStages,omitempty"`
+	StageMessage         string                      `json:"stageMessage,omitempty"`
+	ReportReviews        []ReportReview              `json:"reportReviews,omitempty"`
+	PipelineStage        string                      `json:"pipelineStage,omitempty"`
+	PublicationID        string                      `json:"publicationId,omitempty"`
+	ReportError          string                      `json:"reportError,omitempty"`
 	StudyReviews         []StudyReview               `json:"studyReviews,omitempty"`
 	ID                   string                      `json:"id"`
 	Request              VerificationRequest         `json:"request"`
@@ -118,6 +134,13 @@ type VerificationRun struct {
 	CompletedAt          string                      `json:"completedAt,omitempty"`
 	ReplayMatches        *bool                       `json:"replayMatches,omitempty"`
 	TokenUsage           []PipelineProfileTokenUsage `json:"tokenUsage,omitempty"`
+}
+
+type PaperSearchAttempt struct {
+	Provider string `json:"provider"`
+	Papers   int    `json:"papers"`
+	Cached   bool   `json:"cached,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 type VerificationAgentAction struct {
@@ -196,10 +219,12 @@ type EvidencePassage struct {
 	Text    string `json:"text"`
 }
 type ResearchDocument struct {
-	Name   string `json:"name,omitempty"`
-	URL    string `json:"url"`
-	Digest string `json:"digest"`
-	Bytes  []byte `json:"bytes,omitempty"`
+	PMCChecksumVerified bool   `json:"pmcChecksumVerified,omitempty"`
+	ResolvedURL         string `json:"resolvedUrl,omitempty"`
+	Name                string `json:"name,omitempty"`
+	URL                 string `json:"url"`
+	Digest              string `json:"digest"`
+	Bytes               []byte `json:"bytes,omitempty"`
 }
 
 // OCR boxes use percentages of the rendered page after the requested rotation.
@@ -221,4 +246,14 @@ type TableCellSource struct {
 	Page       int       `json:"page"`
 	Words      []OCRWord `json:"words,omitempty"`
 	ColumnSpan int       `json:"columnSpan,omitempty"`
+}
+
+// SourceAssessment records the screening model's judgment and a server-checked source excerpt.
+type SourceAssessment struct {
+	ExcerptIndex *int   `json:"excerptIndex,omitempty"`
+	PaperID      string `json:"paperId"`
+	Relevance    string `json:"relevance"`
+	DataKind     string `json:"dataKind"`
+	Quote        string `json:"quote"`
+	Limitations  string `json:"limitations"`
 }

@@ -67,7 +67,7 @@ export default function ResearchDataWorkbench({candidateId, datasetId, datasets,
       else if (isLayoutTool) {
         const numbers = (text: string) => text.trim() ? text.split(',').map(v => {const n = Number(v.trim()); if (!v.trim() || !Number.isFinite(n)) throw new Error('Invalid layout number'); return n;}) : [];
         void execute({tool, url, page, endPage: Math.max(page,endPage), rotation, headerRows, columnCuts:numbers(columnCuts), region:numbers(region), joinWrappedRows});
-      } else void execute({tool, url, page});
+      } else void execute({tool, url, page: tool === 'paper-docx' ? 0 : page});
     } catch { setError('Check your inputs: use column=unit for units and comma-separated numbers for page percentages.'); }
   };
   return <details className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
@@ -75,7 +75,7 @@ export default function ResearchDataWorkbench({candidateId, datasetId, datasets,
     <p className="mt-2 text-xs text-[var(--forensic-text-muted)]">Review source evidence and prepare data before verification. The agent can also use these tools automatically.</p>
     <form className="mt-3 grid gap-3 sm:grid-cols-2" onSubmit={e => {e.preventDefault(); submit();}}>
       <label className="text-xs">Data tool<select aria-label="Data tool" className={field} value={tool} onChange={e => {setTool(e.target.value); setResult(undefined);}}>
-        <option value="dataset-validate">Validate dataset</option><option value="dataset-join">Join datasets</option><option value="evidence-lookup">Find source passages</option><option value="dataset-discover">Discover supplementary links</option><option value="paper-extract">Extract PDF page and tables</option><option value="paper-scan">Scan PDF with local OCR</option><option value="paper-complex-table">Read complex PDF table</option>
+        <option value="dataset-validate">Validate dataset</option><option value="dataset-join">Join datasets</option><option value="evidence-lookup">Find source passages</option><option value="dataset-discover">Discover supplementary links</option><option value="paper-docx">Read DOCX supplement and tables</option><option value="paper-extract">Extract PDF page and tables</option><option value="paper-scan">Scan PDF with local OCR</option><option value="paper-complex-table">Read complex PDF table</option>
       </select></label>
       {(tool === 'dataset-validate' || tool === 'dataset-join') && <>
         <label className="text-xs">{tool === 'dataset-join' ? 'Left join key' : 'Observation ID column (optional)'}<input className={field} required={tool === 'dataset-join'} value={column} onChange={e => setColumn(e.target.value)} /></label>
@@ -88,9 +88,9 @@ export default function ResearchDataWorkbench({candidateId, datasetId, datasets,
         <label className="text-xs">Right column units (optional, one column=unit per line)<textarea className={field} value={rightUnits} onChange={e => setRightUnits(e.target.value)} /></label>
       </>}
       {tool === 'evidence-lookup' && <label className="text-xs">Exact source phrase<input required maxLength={200} className={field} value={query} onChange={e => setQuery(e.target.value)} /></label>}
-      {(isPDFTool || tool === 'dataset-discover') && <label className="text-xs">Paper or observed supplement URL<input type="text" required className={field} value={url} onChange={e => setURL(e.target.value)} /></label>}
+      {(isPDFTool || tool === 'paper-docx' || tool === 'dataset-discover') && <label className="text-xs">Paper or observed supplement URL<input type="text" required className={field} value={url} onChange={e => setURL(e.target.value)} /></label>}
       {isPDFTool && <label className="text-xs">PDF page<input type="number" min={1} required className={field} value={page} onChange={e => setPage(Number(e.target.value))} /></label>}
-      {(isPDFTool || tool === 'dataset-join') && <label className="text-xs">Preparation rationale<input required maxLength={2000} className={field} value={rationale} onChange={e => setRationale(e.target.value)} /></label>}
+      {(isPDFTool || tool === 'paper-docx' || tool === 'dataset-join') && <label className="text-xs">Preparation rationale<input required maxLength={2000} className={field} value={rationale} onChange={e => setRationale(e.target.value)} /></label>}
       {isPDFTool && <label className="text-xs sm:col-span-2">Or upload a PDF (up to 10 MiB)<input type="file" accept=".pdf,application/pdf" disabled={busy} className="mt-1 block" onChange={e => {
         const file=e.target.files?.[0];if(!file)return;if(file.size>10*1048576){setError('PDF must be at most 10 MiB.');return;}
         setBusy(true);setError('');const reader=new FileReader();reader.onerror=()=>{setError('Could not read PDF.');setBusy(false);};reader.onload=()=>{

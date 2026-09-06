@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/legs"
 	"github.com/Andyi955/Gorantula/models"
 )
 
@@ -25,6 +26,8 @@ type Service struct {
 	brain              *brain.Brain
 	novelty            NoveltyChecker
 	retriever          EvidenceRetriever
+	webSearch          func(context.Context, string, int) ([]string, error)
+	datasetFetch       func(context.Context, string) ([]byte, string, error) // optional test transport
 	verificationMu     sync.Mutex
 	verificationActive map[string]context.CancelFunc
 	verificationNotify func(models.VerificationRun)
@@ -36,7 +39,8 @@ func NewService(root string, br *brain.Brain) *Service {
 		store:              NewStore(root),
 		brain:              br,
 		novelty:            openAlex,
-		retriever:          openAlex,
+		retriever:          newMultiPaperSearch(openAlex),
+		webSearch:          legs.SearchWebURLs,
 		verificationActive: make(map[string]context.CancelFunc),
 	}
 }
@@ -120,6 +124,8 @@ func (s *Service) transitionCandidate(id string, mutate func(*models.CandidateHy
 // existing paper ID updates the paper record and re-extracts only if the paper
 // has no claims yet.
 func (s *Service) IngestPapers(ctx context.Context, papers []models.Paper) ([]models.Claim, error) {
+	topicCorpusMu.Lock()
+	defer topicCorpusMu.Unlock()
 	startedAt := time.Now()
 	existing, err := s.store.LoadPapers()
 	if err != nil {
@@ -287,6 +293,12 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 		// Bounded evidence-expansion round: fetch related papers to resolve any
 		// still-unknown criteria, then re-review. Never forces a yes.
 		s.expandCandidateEvidence(ctx, &candidates[i], claims, papers)
+	}
+	// Topic proposals are independent of graph-generated candidates and keep their history.
+	for _, existing := range existingCandidates {
+		if strings.HasPrefix(existing.ID, "topic-") {
+			candidates = append(candidates, existing)
+		}
 	}
 	if err := s.store.SaveCandidates(candidates); err != nil {
 		return nil, err

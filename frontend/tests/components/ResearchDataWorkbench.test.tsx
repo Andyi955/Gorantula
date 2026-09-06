@@ -5,6 +5,22 @@ const json = (value: unknown) => ({ok: true, json: async () => value});
 afterEach(() => vi.unstubAllGlobals());
 
 describe('ResearchDataWorkbench', () => {
+  it('reads DOCX without PDF page controls and saves the returned document reference', async () => {
+    const fetchMock=vi.fn(async(_url: unknown, _options: RequestInit)=>json({sessionId:'prep',dataset:{},result:{summary:'Read DOCX.',extractionId:'docx-hash',tables:[{index:0,page:0,rows:[['site','visits'],['A','12']]}]}}));
+    vi.stubGlobal('fetch',fetchMock);
+    render(<ResearchDataWorkbench candidateId="candidate" datasets={[]} onDataset={vi.fn()} />);
+    fireEvent.click(screen.getByText('Research data tools'));
+    fireEvent.change(screen.getByLabelText('Data tool'),{target:{value:'paper-docx'}});
+    expect(screen.queryByLabelText('PDF page')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Paper or observed supplement URL'),{target:{value:'https://example.org/supplement.docx'}});
+    fireEvent.change(screen.getByLabelText('Preparation rationale'),{target:{value:'Inspect measurements'}});
+    fireEvent.click(screen.getByRole('button',{name:'Run data tool'}));
+    await screen.findByText('Read DOCX.');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).call).toEqual({tool:'paper-docx',url:'https://example.org/supplement.docx',page:0});
+    fireEvent.click(screen.getByRole('button',{name:'Save extracted table 0'}));
+    await waitFor(()=>expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).call).toMatchObject({tool:'paper-table',page:0,extractionId:'docx-hash'});
+  });
   it('shows validation warnings and keeps the saved preparation link', async () => {
     const fetchMock = vi.fn(async () => json({sessionId:'prep',dataset:{id:'left'},result:{summary:'Validation complete.',warnings:['Repeated IDs require design review'],counts:{duplicateRows:2}}}));
     vi.stubGlobal('fetch',fetchMock);

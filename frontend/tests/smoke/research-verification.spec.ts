@@ -32,6 +32,7 @@ test('research verification imports data, submits typed calls, and replays resul
   });
   await page.getByRole('button', { name: 'Research', exact: true }).click();
   await page.getByRole('button', { name: 'Verification', exact: true }).click();
+  await page.getByText('Add a CSV dataset', {exact:true}).click();
   await page.getByRole('button', {name: 'Load known-answer example'}).click();
   await expect(page.getByLabel('CSV contents', {exact: true})).toHaveValue('group,value\na,1\na,3\nb,9\nb,11\n');
   await page.getByLabel('Dataset name', { exact: true }).fill('Synthetic data');
@@ -50,6 +51,7 @@ test('research verification imports data, submits typed calls, and replays resul
   await expect(page.getByText('Hypothesis verdict: inconclusive')).toBeVisible();
   await page.getByRole('button', { name: 'Replay without a model' }).click();
   await expect(page.getByText('Replay matches saved output digests.')).toBeVisible();
+  await page.getByText('Advanced: work with data manually', {exact:true}).click();
   await page.getByText('Research data tools', {exact: true}).click();
   await page.getByRole('button', {name: 'Run data tool', exact: true}).click();
   await expect(page.getByText('Review observation independence')).toBeVisible();

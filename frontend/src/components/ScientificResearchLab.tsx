@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Microscope, Plus, GitBranch, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
 import ResearchVerificationConsole from './ResearchVerificationConsole';
+import ResearchPublicationConsole from './ResearchPublicationConsole';
+import ResearchPipeline from './ResearchPipeline';
 
 const RESEARCH_API = 'http://127.0.0.1:8080/api/research';
 
@@ -86,7 +88,7 @@ interface CandidateExpansion {
   retrieved?: Paper[];
 }
 
-type View = 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification';
+type View = 'pipeline' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
 
 const VERDICT_META: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Agreed', tone: 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' },
@@ -157,7 +159,15 @@ const relationLabel = (kind: string) => {
 };
 
 const ScientificResearchLab = () => {
-  const [view, setView] = useState<View>('signals');
+  const [view, setView] = useState<View>('pipeline');
+  const [pipelineRunId, setPipelineRunId] = useState<string>();
+  const rebuildReport = async (candidateId: string) => {
+    try {
+      const response = await fetch(`${RESEARCH_API}/verify`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'agent', candidateId, autoPrepare:true})});
+      if (!response.ok) throw new Error(await response.text());
+      const run = await response.json(); setPipelineRunId(run.id); setView('pipeline');
+    } catch (e) { setError(String(e)); }
+  };
   const [papers, setPapers] = useState<Paper[]>([]);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [relations, setRelations] = useState<ClaimRelation[]>([]);
@@ -591,19 +601,21 @@ const ScientificResearchLab = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-[var(--forensic-bg-root)] p-6 text-[var(--forensic-text)]">
-      <div className="mx-auto max-w-6xl">
-        <div className="flex items-center gap-2">
+    <div className={`research-lab h-full overflow-y-auto bg-[var(--forensic-bg-root)] text-[var(--forensic-text)] ${view === 'pipeline' ? 'research-lab-pipeline' : 'p-6'}`}>
+      <div className={view === 'pipeline' ? 'research-lab-inner' : 'mx-auto max-w-6xl'}>
+        <div className="research-lab-title flex items-center gap-2">
           <Microscope size={18} className="text-[var(--forensic-accent)]" aria-hidden />
           <h1 className="text-lg font-black tracking-tight text-[var(--forensic-text)]">Scientific Research</h1>
         </div>
         <p className="mt-1 text-xs text-[var(--forensic-text-faint)]">Cross-paper evidence engine — contradictions, convergences, and grounded claims.</p>
 
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="research-tabs mt-3 flex flex-wrap gap-2">
           {nav([
             { id: 'signals', label: 'Findings', count: `${signals.length}` },
             { id: 'candidates', label: 'Candidates', count: `${candidates.length}` },
+            { id: 'pipeline', label: 'Pipeline', count: '' },
             { id: 'verification', label: 'Verification', count: '' },
+            { id: 'publish', label: 'Publish', count: '' },
             { id: 'corpus', label: 'Corpus', count: `${papers.length}` },
             { id: 'relations', label: 'Claim graph', count: `${relations.length}` },
           ])}
@@ -617,7 +629,9 @@ const ScientificResearchLab = () => {
           <>
             {view === 'signals' && renderSignals()}
             {view === 'candidates' && renderCandidates()}
+            {view === 'pipeline' && <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={next => { setView(next); void reload(); }} />}
             {view === 'verification' && <ResearchVerificationConsole candidates={candidates} />}
+            {view === 'publish' && <ResearchPublicationConsole onRebuild={id => void rebuildReport(id)} />}
             {view === 'corpus' && renderCorpus()}
             {view === 'relations' && renderRelations()}
           </>

@@ -50,6 +50,8 @@ describe('ScientificResearchLab', () => {
 
   it('surfaces a contradiction finding card with a source paper chip', async () => {
     render(<ScientificResearchLab />);
+    await screen.findByRole('heading', {name:'Research to report'});
+    fireEvent.click(screen.getByRole('button', {name:/Findings/}));
     await waitFor(() => expect(screen.getByText(/Contradiction: Metformin increases/)).toBeInTheDocument());
     expect(screen.getByText('Contradiction')).toBeInTheDocument();
     expect(screen.getByText('m1')).toBeInTheDocument();
@@ -58,7 +60,7 @@ describe('ScientificResearchLab', () => {
   it('lists papers on the Corpus view with the count in the nav', async () => {
     render(<ScientificResearchLab />);
     // Await the initial load so the nav count reflects the fetched corpus.
-    await screen.findByText(/Contradiction: Metformin increases/);
+    await screen.findByRole('heading', {name:'Research to report'});
     const corpusTab = screen.getByRole('button', { name: /Corpus/ });
     expect(corpusTab.textContent).toContain('1');
     fireEvent.click(corpusTab);

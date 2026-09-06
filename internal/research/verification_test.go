@@ -233,6 +233,34 @@ func TestVerificationAgentUsesToolResultsThenFinishes(t *testing.T) {
 	}
 }
 
+func TestFinishWithoutDataSetsRejectedInterpretation(t *testing.T) {
+	run := models.VerificationRun{}
+	if err := finishWithoutData(&run); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(run.Interpretation, "rejected") || !strings.Contains(run.Interpretation, "no usable data") {
+		t.Fatalf("interpretation = %q", run.Interpretation)
+	}
+}
+
+func TestVerificationAgentToleratesExtraTopLevelField(t *testing.T) {
+	s, req := verificationFixture(t)
+	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, response interface{}) error {
+		// The model adds a harmless top-level field; it must not fail the run.
+		return json.Unmarshal([]byte(`{"action":"finish","interpretation":"Synthetic only; no approval.","proposition":"model-added-field"}`), response)
+	}}}}
+	req.Mode = "agent"
+	req.Calls = nil
+	run, err := s.StartVerification(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := awaitVerification(t, s, run.ID)
+	if finished.Status != "completed" || finished.Interpretation == "" {
+		t.Fatalf("extra top-level field failed the run: status=%s err=%s", finished.Status, finished.Error)
+	}
+}
+
 func TestVerificationAgentRejectsCommandInjection(t *testing.T) {
 	s, req := verificationFixture(t)
 	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, response interface{}) error {

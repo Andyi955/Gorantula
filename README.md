@@ -267,3 +267,23 @@ On Windows, the first backend start may trigger a Windows Defender Firewall prom
 - If searches fail, check `BRAVE_API_KEY`.
 - If AI calls fail, check that the matching provider has both `*_ENABLED=true` and a valid key or local host.
 - If a board or timeline looks stale, refresh the active investigation data from the UI before re-running analysis.
+
+### Research publication (Phase 4)
+
+The Scientific Research **Publish** view prepares a source-linked candidate paper,
+exports figure specifications, accepts operator-generated PNGs, and records
+revision-specific approval before creating a local repo-ready evidence package.
+Corpus changes invalidate publication approval. Export never commits or pushes;
+see [publication workflow](internal/research/PUBLICATION.md) for limits and paths.
+
+### Research supplements and source screening
+
+Paper discovery queries Crossref, arXiv and Europe PMC through their official APIs, then uses OpenAlex if fewer than the requested number of distinct readable papers are available. No Python client installation or additional key is required for these providers. Results are ranked for screening and deduplicated by DOI, title and record ID. The service caches provider/query results in memory for 24 hours (up to 128 entries), spaces arXiv calls, and honours rate-limit cooldowns while continuing with other providers. Every topic run retains provider errors, counts and cache usage in its evidence and report. arXiv/posted-content records carry explicit peer-review uncertainty; metadata-only records without abstracts cannot become evidence. These search providers do not guarantee access to full text or raw data.
+
+The continuous research pipeline screens retrieved papers before proposing findings. It records direct, indirect, or irrelevant topic relevance; distinguishes reviews from primary studies; and retains server-selected source excerpts and limitations. Irrelevant papers are excluded. OpenAlex records marked retracted, retraction notices, and paratext are excluded from retrieval. Unknown or missing metadata is not proof of reliability.
+
+The local `paper-docx` agent tool reads DOCX supplementary text and rectangular Word tables. The advanced Research data tools panel also exposes it. `paper-table` saves a retained table using its exact extraction ID (DOCX uses page 0); the source bytes and table values remain in preparation evidence. Ambiguous merged, nested, revised, or irregular tables are withheld instead of guessed. DOCX XML is bounded to 8 MiB and no embedded code or external objects are executed. For observed PMC DOCX links, an HTML download gate or failed download triggers a bounded fallback to the official public PMC S3 repository. It verifies the article ID, exact filename, open-access/retraction metadata and MD5 checksum, and retains the resolved source URL. Multiple matching versions require review; it never guesses a version. Other access problems remain explicit.
+
+Every newly selected dataset receives automatic structural validation. These checks detect missing/mixed cells, duplicate rows, and unspecified units; they do not establish independent observations, parent-paper provenance, or scientific truth. The agent and report reviewers must assess topic/population/outcome fit and distinguish summary statistics from original observations. Screening assessments appear in the report and PDF. A literature-only result is valid when relevant measurements cannot be obtained.
+
+Deterministic coverage: `go test ./internal/research`. The optional public download check uses `GORANTULA_TEST_LIVE_DOCX=1 go test ./internal/research -run TestDOCXLiveSupplement -count=1 -v` (set the environment variable separately in PowerShell); it exercises the official repository fallback and can fail if that service or file is unavailable.

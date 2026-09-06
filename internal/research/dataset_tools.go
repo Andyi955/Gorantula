@@ -245,21 +245,40 @@ func datasetLinks(data []byte, base string) []string {
 // by the model. Uploaded CSV values can never become network destinations.
 func (s *Service) executeDatasetCall(ctx context.Context, run *models.VerificationRun, call models.DatasetCall) models.DatasetResult {
 	fetch := fetchDatasetURL
-	if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" {
+	if s.datasetFetch != nil {
+		fetch = s.datasetFetch
+	}
+	if call.Tool == "paper-scan" || call.Tool == "paper-complex-table" || (call.Tool == "paper-docx" && s.datasetFetch == nil) {
 		fetch = func(ctx context.Context, u string) ([]byte, string, error) {
 			return fetchResearchURL(ctx, u, maxPDFBytes)
 		}
 	}
-	return s.executeDatasetCallWithFetcher(ctx, run, call, fetch)
+	out := s.executeDatasetCallWithFetcher(ctx, run, call, fetch)
+	// Every newly selected snapshot gets structural checks, even if the model forgets to ask.
+	if out.Error == "" && out.DatasetID != "" && run.Dataset.ID == out.DatasetID && call.Tool != "dataset-validate" {
+		checked, err := validateDataset(run.Dataset, models.DatasetCall{Tool: "dataset-validate"})
+		if err != nil {
+			out.Error = err.Error()
+		} else {
+			out.Counts, out.Columns = checked.Counts, checked.Columns
+			out.Warnings = append(out.Warnings, checked.Warnings...)
+			out.Warnings = append(out.Warnings, "Structural checks do not establish relevance, measured origin, or independent study units. Check the source before interpreting results.")
+		}
+	}
+	return out
 }
 
 func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models.VerificationRun, call models.DatasetCall, fetch func(context.Context, string) ([]byte, string, error)) models.DatasetResult {
 	switch call.Tool {
-	case "dataset-validate", "dataset-join", "evidence-lookup", "paper-extract", "paper-table", "paper-scan", "paper-complex-table":
+	case "dataset-validate", "dataset-join", "evidence-lookup", "paper-extract", "paper-table", "paper-scan", "paper-complex-table", "paper-docx":
 		return s.executeResearchDataTool(ctx, run, call, fetch)
 	}
 	out := models.DatasetResult{Call: call}
-	if call.Tool != "dataset-filter" && (call.Column != "" || call.Operator != "" || call.Value != "" || call.Rationale != "") {
+	// Reject filter arguments (column/operator/value) on tools that do not take
+	// them. A rationale is benign justification metadata and must be allowed on
+	// any tool (e.g. dataset-import/data-set-search always carry one), so it is
+	// not treated as a filter argument.
+	if call.Tool != "dataset-filter" && (call.Column != "" || call.Operator != "" || call.Value != "") {
 		out.Error = "this dataset tool does not accept filter arguments"
 		return out
 	}
@@ -282,6 +301,27 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		}
 	}
 	switch call.Tool {
+	case "dataset-use":
+		if hasSuccessfulCalculation(run.Results) {
+			err = fmt.Errorf("dataset is frozen after the first successful calculation")
+			break
+		}
+		if strings.TrimSpace(call.Rationale) == "" || call.URL != "" || call.Column != "" || call.Operator != "" || call.Value != "" {
+			err = fmt.Errorf("dataset-use requires an existing datasetId and a relevance rationale, not a URL or filter")
+			break
+		}
+		var d models.ResearchDataset
+		d, err = s.loadDataset(call.DatasetID)
+		if err == nil {
+			// Keep earlier calculation inputs for replay if selection follows a failure.
+			if run.Dataset.ID != "" {
+				run.DatasetParents = append(run.DatasetParents, run.Dataset)
+			}
+			run.Dataset = d
+			out, err = inspectDataset(d)
+			out.Call, out.DatasetID = call, d.ID
+			out.Summary = "Selected and inspected saved data. Relevance rationale: " + call.Rationale + ". " + out.Summary
+		}
 	case "dataset-discover", "dataset-import":
 		if !allowed {
 			err = fmt.Errorf("URL must be a candidate paper source or an observed dataset link")
@@ -299,10 +339,21 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		}
 		if call.Tool == "dataset-discover" {
 			out.Links = datasetLinks(data, source)
+			// Preserve destination-page context so a repository lead can be checked against its actual parent paper.
+			if bytes.Contains(bytes.ToLower(data), []byte("<html")) {
+				if doc, e := goquery.NewDocumentFromReader(bytes.NewReader(data)); e == nil {
+					doc.Find("script,style,nav,header,footer").Remove()
+					pageText := strings.Join(strings.Fields(doc.Find("title").Text()+" "+doc.Find("body").Text()), " ")
+					if len([]rune(pageText)) > 12000 {
+						pageText = string([]rune(pageText)[:12000])
+					}
+					out.Passages = []models.EvidencePassage{{Source: source, Digest: digestBytes(data), Text: pageText}}
+				}
+			}
 			if _, _, e := parseVerificationCSV(string(data)); e == nil {
 				out.Links = append(out.Links, call.URL)
 			}
-			out.Summary = fmt.Sprintf("Found %d observed CSV or supplementary links. No links means data was not found on this page; PDF/ZIP extraction is not supported.", len(out.Links))
+			out.Summary = fmt.Sprintf("Found %d observed CSV or supplementary links. No links means data was not found on this page; Use paper-docx for DOCX supplements or the PDF tools for PDFs; arbitrary ZIP datasets are unsupported.", len(out.Links))
 		} else {
 			var d models.ResearchDataset
 			d, err = s.RegisterDataset("Imported CSV", source+" (retrieved "+time.Now().UTC().Format(time.RFC3339)+"; origin unverified)", string(data))
@@ -313,7 +364,37 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 			}
 		}
 	case "dataset-inspect":
+		if run.Dataset.ID == "" {
+			err = fmt.Errorf("no dataset selected: use dataset-use with an availableDatasets id and relevance rationale, or dataset-discover followed by dataset-import; do not repeat dataset-inspect before selecting data")
+			break
+		}
 		out, err = inspectDataset(run.Dataset)
+		out.Call = call
+	case "dataset-search":
+		if strings.TrimSpace(call.Query) == "" {
+			err = fmt.Errorf("dataset-search requires a query")
+			break
+		}
+		var found []openDataset
+		found, err = searchOpenData(ctx, call.Query)
+		if err != nil {
+			break
+		}
+		if len(found) == 0 {
+			out.Summary = "No open-data repository candidate with a downloadable CSV/TSV matched the query. This records that none was found; it is not evidence that the data does not exist."
+			out.Call = call
+			break
+		}
+		var sb strings.Builder
+		sb.WriteString("Open-data repository candidates (verify relevance and provenance before importing; a downloadable file is not proof of good data): ")
+		for i, d := range found {
+			if i > 0 {
+				sb.WriteString(" | ")
+			}
+			fmt.Fprintf(&sb, "%s [%s, %d KB, file %s]", d.Name, d.Provider, d.Size>>10, d.File)
+			out.Links = append(out.Links, d.DownloadURL)
+		}
+		out.Summary = truncateRunes(sb.String(), 1600)
 		out.Call = call
 	case "dataset-filter":
 		if hasSuccessfulCalculation(run.Results) {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -51,6 +53,8 @@ type openAlexResponse struct {
 }
 
 type openAlexWork struct {
+	IsRetracted           bool             `json:"is_retracted"`
+	Type                  string           `json:"type"`
 	Title                 string           `json:"title"`
 	Doi                   string           `json:"doi"`
 	PublicationYear       int              `json:"publication_year"`
@@ -74,6 +78,10 @@ func (c *OpenAlexNoveltyChecker) CheckNovelty(ctx context.Context, hypothesis st
 		return 0, "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, "", fmt.Errorf("OpenAlex returned HTTP %d", resp.StatusCode)
+	}
 
 	var body openAlexResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -119,7 +127,7 @@ func (c *OpenAlexNoveltyChecker) Retrieve(ctx context.Context, query string, lim
 		limit = 5
 	}
 
-	requestURL := fmt.Sprintf("%s?search=%s&per-page=%d&mailto=gorantula@example.com", c.baseURL, url.QueryEscape(query), limit)
+	requestURL := fmt.Sprintf("%s?search=%s&filter=has_abstract:true&per-page=%d&mailto=gorantula@example.com", c.baseURL, url.QueryEscape(query), limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, err
@@ -129,14 +137,25 @@ func (c *OpenAlexNoveltyChecker) Retrieve(ctx context.Context, query string, lim
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		retry := time.Minute
+		if seconds, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && seconds > 0 {
+			retry = time.Duration(min(seconds, 86400)) * time.Second
+		}
+		return nil, fmt.Errorf("OpenAlex returned %w", paperAPIError{resp.StatusCode, retry})
+	}
 
 	var body openAlexResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&body); err != nil {
 		return nil, err
 	}
 
 	papers := make([]models.Paper, 0, len(body.Results))
 	for _, work := range body.Results {
+		// Exclude known withdrawn work and non-study records; absence of a flag is not a reliability certificate.
+		if work.IsRetracted || work.Type == "retraction" || work.Type == "paratext" {
+			continue
+		}
 		title := strings.TrimSpace(work.Title)
 		abstract := reconstructOpenAlexAbstract(work.AbstractInvertedIndex)
 		if title == "" && abstract == "" {

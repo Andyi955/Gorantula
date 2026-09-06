@@ -104,11 +104,14 @@ var canonicalResearchEntityTypes = map[string]struct{}{
 }
 
 func claimSourceForPaper(paper models.Paper) (label, source string) {
-	if strings.TrimSpace(paper.Abstract) != "" {
-		return "abstract", paper.Abstract
-	}
+	// Prefer real article body text over a summary: evidence extraction is more
+	// faithful to the paper when full text is available, and grounding still
+	// points at actual paper text. The abstract is the fallback.
 	if strings.TrimSpace(paper.FullText) != "" {
 		return "fullText", paper.FullText
+	}
+	if strings.TrimSpace(paper.Abstract) != "" {
+		return "abstract", paper.Abstract
 	}
 	return "", ""
 }

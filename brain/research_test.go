@@ -71,6 +71,21 @@ func TestExtractClaimsGroundsAndTags(t *testing.T) {
 	}
 }
 
+func TestClaimSourceForPaperPrefersFullText(t *testing.T) {
+	paper := models.Paper{Abstract: "A short summary.", FullText: "Full body text reports specific measurements and results."}
+	label, source := claimSourceForPaper(paper)
+	if label != "fullText" || source != "Full body text reports specific measurements and results." {
+		t.Fatalf("claimSourceForPaper = %q, %q", label, source)
+	}
+}
+func TestClaimSourceForPaperFallsBackToAbstract(t *testing.T) {
+	paper := models.Paper{Abstract: "Summary only."}
+	label, source := claimSourceForPaper(paper)
+	if label != "abstract" || source != "Summary only." {
+		t.Fatalf("claimSourceForPaper = %q, %q", label, source)
+	}
+}
+
 func TestGroundClaimTextExactAndFallback(t *testing.T) {
 	source := "The model was trained on an enormous dataset of citations. It achieves state-of-the-art results."
 
