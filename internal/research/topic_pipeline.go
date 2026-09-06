@@ -59,6 +59,21 @@ func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun)
 	if len(run.Papers) == 0 {
 		return fmt.Errorf("search returned no papers with readable text; try a more specific topic")
 	}
+	// Try to pull an open full text (Europe PMC XML or arXiv HTML) for each
+	// paper so claim extraction and source screening use real article body text
+	// instead of an abstract alone. A failed or unavailable fetch keeps the
+	// abstract and is recorded as abstract-only; nothing is invented.
+	for i := range run.Papers {
+		if strings.TrimSpace(run.Papers[i].FullText) != "" {
+			continue
+		}
+		fetchCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		text, fullTextErr := fetchPaperFullText(fetchCtx, run.Papers[i])
+		cancel()
+		if fullTextErr == nil {
+			run.Papers[i].FullText = text
+		}
+	}
 	if err = s.screenTopicPapers(ctx, run); err != nil {
 		return err
 	}
