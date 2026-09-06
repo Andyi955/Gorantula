@@ -413,7 +413,7 @@ func (s *Service) exportPublication(d models.PublicationDraft) (string, error) {
 	files["claims.json"], _ = json.MarshalIndent(d.Claims, "", "  ")
 	files["publication.json"], _ = json.MarshalIndent(map[string]interface{}{"id": d.ID, "revision": d.Revision, "sourceRevision": d.SourceRevision, "publicationStatus": d.Status, "evidenceStatus": d.EvidenceStatus, "candidate": d.Candidate}, "", "  ")
 	files["claim-relations.json"], _ = json.MarshalIndent(d.Relations, "", "  ")
-	files["REPRODUCE.md"] = []byte("# Reproduction\n\nFrom a checkout of the recorded Gorantula implementation, run:\n\n```powershell\ngo run ./cmd/research-replay -bundle /absolute/path/to/evidence.json\n```\n\nRequires the recorded Go runtime and implementation. No model, Docker or OCR rerun. Inspect the evidence for source claims and assumptions.\n")
+	files["REPRODUCE.md"] = []byte(reproductionReadme(d.Run))
 	files["commit-message.txt"] = []byte("research: publish evidence report " + d.CandidateID + "\n\nPublication approval does not establish scientific support. Evidence status: inconclusive.\n")
 	manifest := map[string]string{}
 	for name, data := range files {
@@ -430,4 +430,39 @@ func (s *Service) exportPublication(d models.PublicationDraft) (string, error) {
 		return "", e
 	}
 	return filepath.Abs(dest)
+}
+
+// reproductionReadme writes a self-describing REPRODUCE.md so a reviewer knows
+// the exact toolchain an export was made with before attempting a replay. The
+// replay binary enforces an exact match (tool version + implementation digest +
+// Go runtime), so a mismatched rebuild fails loudly instead of quietly producing
+// different numbers.
+func reproductionReadme(bundle models.VerificationRun) string {
+	var b strings.Builder
+	b.WriteString("# Reproduction\n\n")
+	b.WriteString("This folder is an immutable export of one verification result from Gorantula. The numeric results were produced by the fixed local verification tools and recorded; this readme records the exact implementation and runtime used.\n\n")
+	b.WriteString("## Replay\n\n")
+	b.WriteString("From a checkout of the recorded Gorantula implementation, re-run the recorded calls without an LLM, server, Docker, or OCR re-run:\n\n")
+	b.WriteString("```powershell\n")
+	b.WriteString("go run ./cmd/research-replay -bundle ./evidence.json\n")
+	b.WriteString("```\n\n")
+	b.WriteString("The replay recomputes each recorded call and compares its output digest to the saved bundle. It reports `matches: true` only when every result reproduces exactly.\n\n")
+	b.WriteString("## Required toolchain (recorded at export time)\n\n")
+	b.WriteString(fmt.Sprintf("- Verification tool version: %s\n", bundle.ToolVersion))
+	b.WriteString(fmt.Sprintf("- Implementation digest: %s\n", bundle.ImplementationDigest))
+	b.WriteString(fmt.Sprintf("- Go runtime: %s\n", bundle.Runtime))
+	b.WriteString("\nThe replay binary rejects a bundle whose tool version, implementation digest, or Go runtime differs from the build that re-runs it. If it fails, those recorded values are what is required; do not treat a toolchain mismatch as a different scientific result.\n\n")
+	if bundle.Dataset.ID != "" {
+		b.WriteString("## Input data\n\n")
+		b.WriteString(fmt.Sprintf("- Dataset: %s\n", bundle.Dataset.Name))
+		if bundle.Dataset.Source != "" {
+			b.WriteString(fmt.Sprintf("- Source: %s\n", bundle.Dataset.Source))
+		}
+		b.WriteString(fmt.Sprintf("- Prepared rows: %d\n", bundle.Dataset.Rows))
+		b.WriteString(fmt.Sprintf("- Input digest: %s\n", bundle.Dataset.Digest))
+		b.WriteString("\nThe dataset is recorded as an immutable CSV snapshot in evidence.json. The replay re-verifies the input digest against the recorded bytes before recomputing.\n\n")
+	}
+	b.WriteString("## Honest limits\n\n")
+	b.WriteString("Replay reproduces the recorded computation in the recorded environment; it is not independent replication and it does not establish causation, novelty, or the correctness of the source claims. Inspect evidence.json for source spans, assumptions, and the exact calls. Failed or inconclusive attempts are retained and must not be treated as support.\n")
+	return b.String()
 }

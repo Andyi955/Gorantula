@@ -133,6 +133,18 @@ func TestPublicationApprovalAndReplayExport(t *testing.T) {
 			t.Fatal("manifest mismatch", file, e)
 		}
 	}
+	readme, e := os.ReadFile(filepath.Join(d.ExportPath, "REPRODUCE.md"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, want := range []string{bundle.ToolVersion, bundle.ImplementationDigest, bundle.Runtime, "research-replay", "matches"} {
+		if !strings.Contains(string(readme), want) {
+			t.Fatalf("REPRODUCE.md missing %q", want)
+		}
+	}
+	if !strings.Contains(string(readme), "not independent replication") || !strings.Contains(string(readme), "does not establish causation") {
+		t.Fatal("REPRODUCE.md must state its honest limits")
+	}
 	d, e = s.PublicationAction(ctx, d.ID, d.Revision, "withdraw", "reviewer", "New objection", "", nil)
 	if e != nil || d.Status != "withdrawn" {
 		t.Fatal(e)
