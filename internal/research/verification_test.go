@@ -233,6 +233,16 @@ func TestVerificationAgentUsesToolResultsThenFinishes(t *testing.T) {
 	}
 }
 
+func TestFinishWithoutDataSetsRejectedInterpretation(t *testing.T) {
+	run := models.VerificationRun{}
+	if err := finishWithoutData(&run); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(run.Interpretation, "rejected") || !strings.Contains(run.Interpretation, "no usable data") {
+		t.Fatalf("interpretation = %q", run.Interpretation)
+	}
+}
+
 func TestVerificationAgentToleratesExtraTopLevelField(t *testing.T) {
 	s, req := verificationFixture(t)
 	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, response interface{}) error {

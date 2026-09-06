@@ -643,6 +643,9 @@ EVIDENCE:
 			continue
 		}
 		if action.Action != "call" || action.DatasetCall != nil || action.Call == nil || action.Interpretation != "" || len(run.Results) >= 3 {
+			if !hasSuccessfulCalculation(run.Results) {
+				return finishWithoutData(run)
+			}
 			return fmt.Errorf("invalid action or verification call budget exhausted")
 		}
 		if err := validateVerificationCall(*action.Call); err != nil {
@@ -655,6 +658,9 @@ EVIDENCE:
 			fallbackJSON, _ := json.Marshal(models.VerificationAgentAction{Action: "call", Call: &fallback})
 			gateErr = fmt.Errorf("%w. This exact descriptive action bypasses the design gate and remains available even when dataset calls are exhausted: %s", gateErr, fallbackJSON)
 			if len(run.DatasetActions) >= 8 {
+				if !hasSuccessfulCalculation(run.Results) {
+					return finishWithoutData(run)
+				}
 				return gateErr
 			}
 			run.DatasetActions = append(run.DatasetActions, models.DatasetResult{Call: models.DatasetCall{Tool: "study-design-check", Rationale: action.Call.Tool}, DatasetID: run.Dataset.ID, Error: gateErr.Error()})
@@ -673,7 +679,18 @@ EVIDENCE:
 			return err
 		}
 	}
-	return fmt.Errorf("verification agent turn budget exhausted")
+	return finishWithoutData(run)
+}
+
+// finishWithoutData completes a run gracefully when the agent exhausted its
+// budget without analysing any usable data, treating the research question as
+// rejected for lack of available data rather than a hard failure. A question
+// with no available data is not a finding; it must not fabricate a result.
+func finishWithoutData(run *models.VerificationRun) error {
+	if strings.TrimSpace(run.Interpretation) == "" {
+		run.Interpretation = "What we found: no usable dataset for this question was obtained within the available tools and budget - the searches were attempted but no relevant numeric data was found. What remains uncertain: whether an accessible repository holds such data is unknown. What happens next: this research question is rejected because no usable data is available. It is not a finding, and no calculation or figure was produced."
+	}
+	return nil
 }
 
 // Full OCR boxes and cells stay in the bundle; the model receives short exact
