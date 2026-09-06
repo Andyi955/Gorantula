@@ -19,7 +19,7 @@ func TestPaperFullTextEndpointArxiv(t *testing.T) {
 func TestPaperFullTextEndpointPMC(t *testing.T) {
 	p := models.Paper{ID: "europepmc-MED-123", SourceURL: "https://pmc.ncbi.nlm.nih.gov/articles/PMC9876543/"}
 	endpoint, ok := paperFullTextEndpoint(p)
-	if !ok || endpoint != "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC/PMC9876543/fullTextXML" {
+	if !ok || endpoint != "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9876543/?report=xml" {
 		t.Fatalf("pmc endpoint = %q, %v", endpoint, ok)
 	}
 }

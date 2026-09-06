@@ -196,28 +196,50 @@ func (s *Service) persistTopicEvidence(run models.VerificationRun) error {
 	if err != nil {
 		return err
 	}
+	// Snapshot the store before any enrichment so a paper gaining full text is
+	// recognised as a legitimate source change (its claims are re-extracted and
+	// replaced from the richer source) rather than a false conflict.
+	storePapers := append([]models.Paper(nil), papers...)
 	for _, p := range run.Papers {
-		found := false
-		for _, old := range papers {
-			if old.ID == p.ID {
-				found = true
-				break
+		updated := false
+		for i := range papers {
+			if papers[i].ID != p.ID {
+				continue
 			}
+			// Enrich the stored paper with now-available source so its claims
+			// stay grounded in the current paper; never discard prior text.
+			if strings.TrimSpace(papers[i].FullText) == "" && strings.TrimSpace(p.FullText) != "" {
+				papers[i].FullText = p.FullText
+			}
+			if strings.TrimSpace(papers[i].Abstract) == "" && strings.TrimSpace(p.Abstract) != "" {
+				papers[i].Abstract = p.Abstract
+			}
+			updated = true
+			break
 		}
-		if !found {
+		if !updated {
 			papers = append(papers, p)
 		}
 	}
 	for _, c := range run.Claims {
 		found := false
-		for _, old := range claims {
-			if old.ID == c.ID {
-				if publicationHash(old) != publicationHash(c) {
+		for i := range claims {
+			old := &claims[i]
+			if old.ID != c.ID {
+				continue
+			}
+			found = true
+			if publicationHash(old) != publicationHash(c) {
+				// A claim conflict is only an error when the source paper is
+				// unchanged; if the paper gained full text, the claims were
+				// legitimately re-extracted from richer source and replace the
+				// old abstract-only ones.
+				if paperSourceUnchanged(c.PaperID, storePapers, run.Papers) {
 					return fmt.Errorf("source claim changed while researching; start a fresh run")
 				}
-				found = true
-				break
+				*old = c
 			}
+			break
 		}
 		if !found {
 			claims = append(claims, c)
@@ -234,6 +256,29 @@ func (s *Service) persistTopicEvidence(run models.VerificationRun) error {
 		return err
 	}
 	return s.store.SaveCandidates(candidates)
+}
+
+// paperSourceUnchanged reports whether the source text (abstract + full text) of
+// a paper is the same in the store as in the run. It distinguishes a genuine
+// claim conflict from a legitimate re-extraction after the paper gained full text.
+func paperSourceUnchanged(paperID string, storePapers, runPapers []models.Paper) bool {
+	var storeP, runP *models.Paper
+	for i := range storePapers {
+		if storePapers[i].ID == paperID {
+			storeP = &storePapers[i]
+			break
+		}
+	}
+	for i := range runPapers {
+		if runPapers[i].ID == paperID {
+			runP = &runPapers[i]
+			break
+		}
+	}
+	if storeP == nil || runP == nil {
+		return false
+	}
+	return storeP.Abstract == runP.Abstract && storeP.FullText == runP.FullText
 }
 
 func (s *Service) reviewTopicReport(ctx context.Context, run *models.VerificationRun) error {

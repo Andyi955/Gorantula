@@ -27,12 +27,12 @@ var xmlBodyRe = regexp.MustCompile(`(?is)<body[^>]*>(.*?)</body>`)
 var xmlTagRe = regexp.MustCompile(`<[^>]+>`)
 
 // paperFullTextEndpoint returns the open/public full-text URL for a paper where
-// an accessible rendering exists: Europe PMC open-access article XML (from its
-// PMCID) or an arXiv HTML article. OK is false when the paper has no known
-// open full-text source, so the caller keeps the abstract and reports honestly.
+// an accessible rendering exists: a PubMed Central article XML (from its PMCID)
+// or an arXiv HTML article. OK is false when the paper has no known open
+// full-text source, so the caller keeps the abstract and reports honestly.
 func paperFullTextEndpoint(paper models.Paper) (endpoint string, ok bool) {
 	if pmcid := extractPMCID(paper); pmcid != "" {
-		return "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC/" + pmcid + "/fullTextXML", true
+		return "https://www.ncbi.nlm.nih.gov/pmc/articles/" + pmcid + "/?report=xml", true
 	}
 	if u, err := url.Parse(paper.SourceURL); err == nil && u.Hostname() == "arxiv.org" && strings.HasPrefix(u.Path, "/abs/") {
 		return "https://arxiv.org/html/" + strings.TrimPrefix(u.Path, "/abs/"), true
@@ -71,11 +71,11 @@ func fetchPaperFullText(ctx context.Context, paper models.Paper) (string, error)
 	return text, nil
 }
 
-// fullTextFromBody converts an XML (Europe PMC) or HTML (arXiv) full-text body
-// into plain prose, stripping markup so the claim extractor and source screener
-// see readable text. Markup is removed; nothing is added or rewritten.
+// fullTextFromBody converts an XML (PubMed Central) or HTML (arXiv) full-text
+// body into plain prose, stripping markup so the claim extractor and source
+// screener see readable text. Markup is removed; nothing is added or rewritten.
 func fullTextFromBody(endpoint string, data []byte) string {
-	if strings.Contains(endpoint, "/fullTextXML") {
+	if strings.Contains(endpoint, "report=xml") {
 		return extractXMLBodyText(data)
 	}
 	return extractHTMLText(data)

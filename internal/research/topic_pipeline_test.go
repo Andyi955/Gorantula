@@ -97,3 +97,52 @@ func TestTopicInputCannotMixCandidate(t *testing.T) {
 		t.Fatal("mixed request accepted")
 	}
 }
+
+func TestPersistTopicEvidenceReplacesClaimsWhenPaperGainsFullText(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	storePaper := models.Paper{ID: "p1", Title: "Sleep", Abstract: "Abstract summary."}
+	oldClaim := models.Claim{ID: "p1-claim-1", PaperID: "p1", Text: "Abstract-based claim.", Provenance: "abstract", SourceSnippet: "Abstract summary."}
+	if e := s.store.SavePapers([]models.Paper{storePaper}); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.store.SaveClaims([]models.Claim{oldClaim}); e != nil {
+		t.Fatal(e)
+	}
+
+	run := models.VerificationRun{
+		Papers:    []models.Paper{{ID: "p1", Title: "Sleep", Abstract: "Abstract summary.", FullText: "Full body text reports actual measurements and results."}},
+		Claims:    []models.Claim{{ID: "p1-claim-1", PaperID: "p1", Text: "Full-text-based claim.", Provenance: "fullText", SourceSnippet: "Full body text reports actual measurements and results."}},
+		Candidate: models.CandidateHypothesis{ID: "topic-x", Hypothesis: "Does sleep help?", State: "proposed"},
+	}
+	if e := s.persistTopicEvidence(run); e != nil {
+		t.Fatalf("full-text enrichment should replace claims, not error: %v", e)
+	}
+	got, _ := s.ListClaims()
+	for _, c := range got {
+		if c.ID == "p1-claim-1" && c.Text == "Full-text-based claim." && c.Provenance == "fullText" {
+			return
+		}
+	}
+	t.Fatalf("claim not replaced with full-text-based version: %+v", got)
+}
+
+func TestPersistTopicEvidenceRejectsChangedClaimWithUnchangedSource(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	storePaper := models.Paper{ID: "p1", Title: "Sleep", Abstract: "Abstract summary."}
+	oldClaim := models.Claim{ID: "p1-claim-1", PaperID: "p1", Text: "Claim A.", Provenance: "abstract", SourceSnippet: "Abstract summary."}
+	if e := s.store.SavePapers([]models.Paper{storePaper}); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.store.SaveClaims([]models.Claim{oldClaim}); e != nil {
+		t.Fatal(e)
+	}
+
+	run := models.VerificationRun{
+		Papers:    []models.Paper{{ID: "p1", Title: "Sleep", Abstract: "Abstract summary."}}, // same source, no full text
+		Claims:    []models.Claim{{ID: "p1-claim-1", PaperID: "p1", Text: "Claim B.", Provenance: "abstract", SourceSnippet: "Abstract summary."}},
+		Candidate: models.CandidateHypothesis{ID: "topic-x", Hypothesis: "Does sleep help?", State: "proposed"},
+	}
+	if e := s.persistTopicEvidence(run); e == nil || !strings.Contains(e.Error(), "source claim changed") {
+		t.Fatalf("expected source claim changed error, got %v", e)
+	}
+}
