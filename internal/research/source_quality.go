@@ -48,7 +48,7 @@ func (s *Service) screenTopicPapersOnce(ctx context.Context, run *models.Verific
 	if err != nil {
 		return fmt.Errorf("source screening failed: %w", err)
 	}
-	if err := decodeStrictJSON(raw, &response); err != nil {
+	if err := decodeJSON(raw, &response); err != nil {
 		return fmt.Errorf("invalid source screening JSON: %w", err)
 	}
 	if len(response.Assessments) != len(run.Papers) {

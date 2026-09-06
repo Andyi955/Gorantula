@@ -27,6 +27,22 @@ func decodeStrictJSON(data []byte, target interface{}) error {
 	return nil
 }
 
+// decodeJSON decodes a single object WITHOUT rejecting unknown fields.
+// LLM-generated payloads (agent actions, source-screening and study-design
+// responses) frequently include a harmless extra field that must not fail a run;
+// required fields are still validated by the caller. API request bodies keep
+// using decodeStrictJSON.
+func decodeJSON(data []byte, target interface{}) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	if err := d.Decode(target); err != nil {
+		return err
+	}
+	if err := d.Decode(new(interface{})); err != io.EOF {
+		return fmt.Errorf("expected one JSON object")
+	}
+	return nil
+}
+
 // These new endpoints reject cross-site browser calls and require JSON for
 // mutations, so visiting a web page cannot launch local calculations or import
 // files. CLI access without Origin remains supported.

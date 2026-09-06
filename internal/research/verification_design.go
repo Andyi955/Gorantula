@@ -171,7 +171,7 @@ func (s *Service) reviewAgentDesign(ctx context.Context, run *models.Verificatio
 		CheckedFacts   []string `json:"checkedFacts"`
 	}
 	if err == nil && len(raw) <= 6000 {
-		err = decodeStrictJSON(raw, &answer)
+		err = decodeJSON(raw, &answer)
 	} else if err == nil {
 		err = fmt.Errorf("review response too large")
 	}
