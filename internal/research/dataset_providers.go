@@ -12,6 +12,10 @@ import (
 // tests can stub it; production uses the bounded, public-URL-and-IP safe fetcher.
 var openDataFetch = fetchResearchURL
 
+// dataDownloadFetch fetches a candidate dataset file. It is a variable so tests
+// can stub it without network.
+var dataDownloadFetch = fetchDatasetURL
+
 const openDataSearchLimit = 4 << 20
 
 // truncateRunes shortens s to at most n runes, appending an ellipsis when it

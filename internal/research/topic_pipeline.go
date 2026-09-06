@@ -75,6 +75,12 @@ func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun)
 		}
 	}
 	if err = s.screenTopicPapers(ctx, run); err != nil {
+		// The retrieved papers may not address the question. Before rejecting a
+		// potentially discoverable dataset topic, try a data-grounded fallback so
+		// the engine can still compute a finding from a relevant open dataset.
+		if fallbackErr := s.proposeFromDataset(ctx, run); fallbackErr == nil {
+			return nil
+		}
 		return err
 	}
 	completeTopicStage(run, "searching")
@@ -178,6 +184,86 @@ func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun)
 	}
 	completeTopicStage(run, "proposing")
 	return s.topicStage(run, "checking", "The verification agent is reading sources and looking for usable data. Missing data will be reported explicitly.")
+}
+
+// proposeFromDataset is a fallback for a topic where the retrieved papers do not
+// address the question but an open-data repository has a relevant CSV. It
+// imports the best available small CSV, then proposes a bounded, data-grounded
+// hypothesis (a group comparison between a categorical and a numeric column, or
+// a correlation) using ONLY the dataset columns so the engine can compute a
+// finding from the data rather than reject a discoverable question. It never
+// fabricates measurements; if no importable CSV matches it returns an error.
+func (s *Service) proposeFromDataset(ctx context.Context, run *models.VerificationRun) error {
+	if s.brain == nil || strings.TrimSpace(run.Request.Topic) == "" {
+		return fmt.Errorf("dataset proposal needs a model provider and a topic")
+	}
+	candidates, err := searchOpenData(ctx, run.Request.Topic)
+	if err != nil {
+		return fmt.Errorf("open-data search failed: %w", err)
+	}
+	if len(candidates) == 0 {
+		return fmt.Errorf("no open-data dataset matched the topic")
+	}
+	var imported models.ResearchDataset
+	var lastErr error
+	for _, c := range candidates {
+		data, _, ferr := dataDownloadFetch(ctx, c.DownloadURL)
+		if ferr != nil {
+			lastErr = ferr
+			continue
+		}
+		d, derr := s.RegisterDataset(c.Name+" (open data)", "Open-data repository: "+c.Provider+"; file "+c.File+"; provenance unverified", string(data))
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		imported = d
+		break
+	}
+	if imported.ID == "" {
+		return fmt.Errorf("no importable open-data CSV for the topic: %v", lastErr)
+	}
+	insp, err := inspectDataset(imported)
+	if err != nil {
+		return err
+	}
+	cols := make([]map[string]interface{}, 0, len(insp.Columns))
+	for _, col := range insp.Columns {
+		cols = append(cols, map[string]interface{}{"name": col.Name, "numeric": col.Numeric, "text": col.Text, "missing": col.Missing})
+	}
+	payload, _ := json.Marshal(map[string]interface{}{"topic": run.Request.Topic, "columns": cols, "rows": imported.Rows})
+	var proposal struct {
+		Hypothesis string `json:"hypothesis"`
+		Group      string `json:"group,omitempty"`
+		Value      string `json:"value,omitempty"`
+		CorrelateA string `json:"correlateA,omitempty"`
+		CorrelateB string `json:"correlateB,omitempty"`
+	}
+	err = s.brain.GetSearchProvider().GenerateJSON(ctx, `Propose ONE bounded, testable research question that ANSWERS THE USER'S ORIGINAL QUESTION using ONLY the attached dataset columns. Never claim causation or proven truth. Do not invent measurements. The dataset has `+fmt.Sprintf("%d", imported.Rows)+` rows with these columns (numeric/text/missing counts): `+string(payload)+`. The user's question is: `+run.Request.Topic+`. If a categorical column and a numeric column can answer it, propose a group comparison and set group (categorical col name) and value (numeric col name). Else if two numeric columns can answer it, propose a correlation and set correlateA and correlateB. If no columns can answer the user's question, return an empty hypothesis. Return JSON {"hypothesis":"one plain-language question or tentative claim, maximum 800 characters","group":"","value":"","correlateA":"","correlateB":""}.`, &proposal)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(proposal.Hypothesis) == "" || len(proposal.Hypothesis) > 3200 {
+		return fmt.Errorf("the dataset could not produce a bounded hypothesis for the question")
+	}
+	run.Dataset = imported
+	// The dataset is the evidence; the screened papers did not address the topic.
+	run.Papers = nil
+	run.PaperSources = nil
+	run.Candidate = models.CandidateHypothesis{ID: "topic-" + run.ID, Hypothesis: proposal.Hypothesis, State: models.CandidateStateProposed, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	// The dataset is evidence in its own right; record a measurement claim so the
+	// verification agent and report have something grounded.
+	claim := models.Claim{ID: "topic-claim-1", PaperID: "dataset:" + imported.ID, Text: "Dataset " + imported.Name + " records " + fmt.Sprintf("%d", imported.Rows) + " rows.", Kind: "method", Provenance: "dataset", SourceSnippet: imported.Name}
+	run.Claims = []models.Claim{claim}
+	run.Candidate.ClaimIDs = []string{claim.ID}
+	evaluateChecklist(&run.Candidate, run.Claims)
+	completeTopicStage(run, "searching")
+	completeTopicStage(run, "connecting")
+	completeTopicStage(run, "proposing")
+	if err = s.persistTopicEvidence(*run); err != nil {
+		return err
+	}
+	return s.topicStage(run, "checking", "Using the imported open-data dataset. The verification agent is inspecting columns and choosing an appropriate calculation.")
 }
 
 // Merge only this run's selected evidence; unrelated candidates and operator decisions survive.

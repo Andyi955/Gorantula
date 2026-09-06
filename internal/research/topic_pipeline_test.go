@@ -104,6 +104,50 @@ func TestTopicPipelineEmptySearchStopsBeforeProposal(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+func TestProposeFromDatasetImportsAndProposes(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	originalSearch, originalDl := openDataFetch, dataDownloadFetch
+	defer func() { openDataFetch, dataDownloadFetch = originalSearch, originalDl }()
+	openDataFetch = func(_ context.Context, _ string, _ int64) ([]byte, string, error) {
+		return []byte(`{"hits":{"total":1,"hits":[{"id":1,"metadata":{"title":"Penguins","description":"Body mass by species."},"files":[{"key":"penguins.csv","size":90000,"links":{"self":"https://zenodo.org/records/1/files/penguins.csv/content"}}]}]}}`), "", nil
+	}
+	dataDownloadFetch = func(_ context.Context, _ string) ([]byte, string, error) {
+		return []byte("species,body_mass_g\nAdelie,3701\nGentoo,5076\nChinstrap,3733\n"), "", nil
+	}
+	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, out interface{}) error {
+		return json.Unmarshal([]byte(`{"hypothesis":"Do penguin species differ in body mass?","group":"species","value":"body_mass_g"}`), out)
+	}}}}
+	run := models.VerificationRun{ID: strings.Repeat("f", 32), Request: models.VerificationRequest{Topic: "Do penguin species differ in body mass?"}}
+	if err := s.proposeFromDataset(context.Background(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.Dataset.ID == "" || run.Dataset.Rows != 3 {
+		t.Fatalf("dataset not imported: id=%q rows=%d", run.Dataset.ID, run.Dataset.Rows)
+	}
+	if strings.TrimSpace(run.Candidate.Hypothesis) == "" || len(run.Claims) != 1 {
+		t.Fatalf("hypothesis/claim not set: hyp=%q claims=%d", run.Candidate.Hypothesis, len(run.Claims))
+	}
+	if run.Candidate.ClaimIDs[0] != run.Claims[0].ID {
+		t.Fatalf("candidate claim ids not linked")
+	}
+}
+
+func TestProposeFromDatasetRejectsWhenNoDataset(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	originalSearch := openDataFetch
+	defer func() { openDataFetch = originalSearch }()
+	openDataFetch = func(_ context.Context, _ string, _ int64) ([]byte, string, error) {
+		return []byte(`{"hits":{"total":0,"hits":[]}}`), "", nil
+	}
+	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, out interface{}) error {
+		return json.Unmarshal([]byte(`{"hypothesis":"x","group":"","value":""}`), out)
+	}}}}
+	run := models.VerificationRun{ID: strings.Repeat("g", 32), Request: models.VerificationRequest{Topic: "no data topic"}}
+	if err := s.proposeFromDataset(context.Background(), &run); err == nil {
+		t.Fatal("expected error when no open-data dataset is available")
+	}
+}
+
 func TestTopicInputCannotMixCandidate(t *testing.T) {
 	s := topicFixture(t, false)
 	_, e := s.StartVerification(models.VerificationRequest{Topic: "sleep", CandidateID: "old", Mode: "agent", AutoPrepare: true})
