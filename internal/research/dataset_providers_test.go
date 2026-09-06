@@ -66,6 +66,26 @@ func TestSearchOpenDataQueryRequired(t *testing.T) {
 	}
 }
 
+func TestSearchOpenDataRetriesWideQuery(t *testing.T) {
+	original := openDataFetch
+	defer func() { openDataFetch = original }()
+	openDataFetch = func(_ context.Context, raw string, _ int64) ([]byte, string, error) {
+		// The primary topic query yields nothing; the dataset-oriented retry
+		// (everything:...) surfaces a CSV-bearing record.
+		if strings.Contains(raw, "everything") {
+			return []byte(zenodoFixture), "", nil
+		}
+		return []byte(`{"hits":{"total":0,"hits":[]}}`), "", nil
+	}
+	got, err := searchOpenData(context.Background(), "iris flower petal length")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].DownloadURL != "https://zenodo.org/records/1/files/analysis_data.csv/content" {
+		t.Fatalf("retry should return the CSV-bearing candidate: %+v", got)
+	}
+}
+
 func TestDatasetSearchToolReturnsLinksAndSummary(t *testing.T) {
 	s := NewService(t.TempDir(), nil)
 	original := openDataFetch

@@ -59,18 +59,37 @@ type zenodoResponse struct {
 	} `json:"hits"`
 }
 
-// searchOpenData queries an open-data repository (Zenodo, primary) for a
-// topic-relevant dataset with a directly downloadable CSV/TSV. It returns
-// candidates with their download URLs; it never verifies the measurements.
-// A read that yields nothing or fails is an honest "no candidate", never a
-// fabricated dataset.
+// searchOpenData queries open-data repositories (Zenodo primary, then a
+// dataset-oriented retry) for a topic-relevant dataset with a directly
+// downloadable CSV/TSV. It returns candidates with their download URLs; it never
+// verifies the measurements. A read that yields nothing or fails is an honest
+// "no candidate", never a fabricated dataset.
 func searchOpenData(ctx context.Context, query string) ([]openDataset, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("a dataset search query is required")
+	}
+	if out, err := searchZenodo(ctx, query); err == nil && len(out) > 0 {
+		return out, nil
+	}
+	// A natural-language topic often does not match dataset titles. Retry with a
+	// dataset-oriented query and a wider scan to surface records whose metadata
+	// carries the measurements even when the title does not.
+	wide := "everything:" + query + " AND (dataset OR data OR measurements OR csv)"
+	if out, err := searchZenodo(ctx, wide); err == nil && len(out) > 0 {
+		return out, nil
+	}
+	return nil, nil
+}
+
+// searchZenodo queries the Zenodo API for records with a directly downloadable
+// CSV/TSV file, returning up to four candidates.
+func searchZenodo(ctx context.Context, query string) ([]openDataset, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("a dataset search query is required")
 	}
 	v := url.Values{}
 	v.Set("q", query)
-	v.Set("size", "10")
+	v.Set("size", "12")
 	endpoint := "https://zenodo.org/api/records?" + v.Encode()
 	data, _, err := openDataFetch(ctx, endpoint, openDataSearchLimit)
 	if err != nil {
