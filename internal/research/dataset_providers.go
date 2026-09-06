@@ -66,8 +66,7 @@ func searchOpenData(ctx context.Context, query string) ([]openDataset, error) {
 	}
 	v := url.Values{}
 	v.Set("q", query)
-	v.Set("size", "8")
-	v.Set("sort", "mostrecent")
+	v.Set("size", "10")
 	endpoint := "https://zenodo.org/api/records?" + v.Encode()
 	data, _, err := openDataFetch(ctx, endpoint, openDataSearchLimit)
 	if err != nil {
