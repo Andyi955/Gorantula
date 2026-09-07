@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/Andyi955/Gorantula/models"
 )
@@ -180,16 +181,30 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 		return nil, err
 	}
 	out := make([]string, 0, count)
-	seenQ := map[string]bool{}
-	// Avoid re-running the exact same question across discovery runs: collect
-	// every question already proposed in any earlier discovery and skip them.
-	seenBefore := map[string]bool{}
+	accepted := make([]string, 0, count)
+	// Avoid re-running the same question (in any wording) across discovery runs.
+	var priorQuestions []string
 	if previous, _ := s.ListDiscoveries(); len(previous) > 0 {
 		for _, prev := range previous {
 			for _, q := range prev.Questions {
-				seenBefore[strings.ToLower(strings.TrimSpace(q.Question))] = true
+				if strings.TrimSpace(q.Question) != "" {
+					priorQuestions = append(priorQuestions, q.Question)
+				}
 			}
 		}
+	}
+	isDuplicate := func(q string) bool {
+		for _, p := range priorQuestions {
+			if discoveryQuestionDuplicateSemantic(q, p) {
+				return true
+			}
+		}
+		for _, a := range accepted {
+			if discoveryQuestionDuplicateSemantic(q, a) {
+				return true
+			}
+		}
+		return false
 	}
 	for _, q := range resp.Questions {
 		q = strings.TrimSpace(q)
@@ -199,12 +214,11 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 		if strings.HasSuffix(q, "?") {
 			q = strings.TrimSuffix(q, "?")
 		}
-		key := strings.ToLower(q)
-		if seenQ[key] || seenBefore[key] {
+		if isDuplicate(q) {
 			continue
 		}
-		seenQ[key] = true
 		out = append(out, q)
+		accepted = append(accepted, q)
 		if len(out) == count {
 			break
 		}
@@ -269,4 +283,76 @@ func randToken(n int) []byte {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return b
+}
+
+// discoveryDedupStopwords are generic question scaffolding, not content. Subject
+// nouns and measured variables (penguin, body mass, yield, richness…) are kept,
+// so "species differ in body mass" and "penguins differ in mass" stay distinct
+// while differently-worded phrasings of the SAME claim collide.
+var discoveryDedupStopwords = map[string]bool{
+	"do": true, "does": true, "is": true, "are": true, "was": true, "were": true,
+	"what": true, "how": true, "can": true, "would": true, "could": true, "which": true,
+	"the": true, "a": true, "an": true, "and": true, "or": true, "of": true,
+	"in": true, "on": true, "to": true, "for": true, "with": true, "by": true,
+	"between": true, "among": true, "than": true, "from": true, "vs": true, "versus": true,
+	"differ": true, "differently": true, "difference": true, "different": true,
+	"correlate": true, "correlates": true, "correlation": true, "related": true,
+	"associated": true, "effect": true, "effects": true, "affect": true, "affects": true,
+	"change": true, "changes": true, "increase": true, "decrease": true, "lower": true,
+	"higher": true, "more": true, "less": true, "same": true, "not": true,
+	"its": true, "their": true, "there": true, "be": true,
+}
+
+// discoveryQuestionWords returns the content words of a question, lowercased and
+// with generic scaffolding removed.
+func discoveryQuestionWords(q string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(q), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if w == "" || discoveryDedupStopwords[w] {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// discoveryWordMatch reports whether two content words are the same for dedup
+// purposes: exact match, or one is a prefix of the other (so penguin/penguins
+// collide without mangling words like iris or species).
+func discoveryWordMatch(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if len(a) >= 3 && len(b) >= 3 && (strings.HasPrefix(a, b) || strings.HasPrefix(b, a)) {
+		return true
+	}
+	return false
+}
+
+// discoveryQuestionDuplicateSemantic reports whether two questions are
+// near-duplicates (same meaning, possibly different wording) using Jaccard
+// overlap on content words. Identical questions collide; a generic and a
+// specific question (species vs penguins) generally do not.
+func discoveryQuestionDuplicateSemantic(a, b string) bool {
+	wa := discoveryQuestionWords(a)
+	wb := discoveryQuestionWords(b)
+	if len(wa) == 0 || len(wb) == 0 {
+		return false
+	}
+	shared := 0
+	for _, aw := range wa {
+		for _, bw := range wb {
+			if discoveryWordMatch(aw, bw) {
+				shared++
+				break
+			}
+		}
+	}
+	union := len(wa) + len(wb) - shared
+	if union == 0 {
+		return false
+	}
+	return float64(shared)/float64(union) >= 0.5
 }
