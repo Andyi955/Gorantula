@@ -171,8 +171,8 @@ func (s *Service) SetVerificationNotify(fn func(models.VerificationRun)) { s.ver
 func (s *Service) StartVerification(req models.VerificationRequest) (models.VerificationRun, error) {
 	var run models.VerificationRun
 	req.Topic = strings.TrimSpace(req.Topic)
-	if req.Topic != "" && (len(req.Topic) > 500 || req.Mode != "agent" || !req.AutoPrepare || req.CandidateID != "" || req.DatasetID != "") {
-		return run, fmt.Errorf("topic requires agent auto-preparation, at most 500 bytes, and no candidate or dataset ID")
+	if req.Topic != "" && (len(req.Topic) > 500 || req.Mode != "agent" || !req.AutoPrepare || req.CandidateID != "") {
+		return run, fmt.Errorf("topic requires agent auto-preparation, at most 500 bytes, no candidate ID; a DatasetID is allowed to seed a dataset-first run")
 	}
 	if req.Mode != "manual" && req.Mode != "agent" && req.Mode != "replay" {
 		return run, fmt.Errorf("mode must be manual, agent, or replay")

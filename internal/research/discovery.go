@@ -234,7 +234,25 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 // no-data finish counts as rejected, and anything else counts as failed.
 func (s *Service) runDiscoveryQuestion(ctx context.Context, discoveryID, question string) models.DiscoveryQuestion {
 	q := models.DiscoveryQuestion{ID: hex.EncodeToString(randToken(8)), Question: question, Status: "failed"}
-	vr, err := s.StartVerification(models.VerificationRequest{Mode: "agent", Topic: question, AutoPrepare: true})
+	// Dataset-first: find and register a dataset for this question, then seed the
+	// run with it so the verification agent computes on that data instead of
+	// re-searching papers and rejecting.
+	datasetID := ""
+	if candidates, err := searchOpenData(ctx, question); err == nil && len(candidates) > 0 {
+		for _, c := range candidates {
+			data, _, ferr := dataDownloadFetch(ctx, c.DownloadURL)
+			if ferr != nil {
+				continue
+			}
+			d, derr := s.RegisterDataset(c.Name+" (discovery)", "Open-data repository: "+c.Provider+"; file "+c.File+"; provenance unverified", string(data))
+			if derr != nil {
+				continue
+			}
+			datasetID = d.ID
+			break
+		}
+	}
+	vr, err := s.StartVerification(models.VerificationRequest{Mode: "agent", Topic: question, DatasetID: datasetID, AutoPrepare: true})
 	if err != nil {
 		q.Error = err.Error()
 		return q
