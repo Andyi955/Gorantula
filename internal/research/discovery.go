@@ -176,10 +176,6 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 	var resp struct {
 		Questions []string `json:"questions"`
 	}
-	err := s.brain.GetSearchProvider().GenerateJSON(ctx, `You propose `+fmt.Sprintf("%d", count)+` SPECIFIC, TESTABLE scientific research questions. Every question must be answerable with a computation on real data (a group comparison or a correlation), never vague or philosophical. Prefer questions that an available open dataset below, or a claim in the corpus, can directly answer; if a dataset is named, anchor the question to it. Do not invent data. If the theme is empty, choose across different fields. Return JSON {"questions":["one plain question each, maximum 90 characters"]}. Requested count: `+fmt.Sprintf("%d", count)+`. CONTEXT: `+string(payload), &resp)
-	if err != nil {
-		return nil, err
-	}
 	out := make([]string, 0, count)
 	accepted := make([]string, 0, count)
 	// Avoid re-running the same question (in any wording) across discovery runs.
@@ -206,27 +202,42 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 		}
 		return false
 	}
-	for _, q := range resp.Questions {
-		q = strings.TrimSpace(q)
-		if q == "" || len(q) > 200 {
+	// The model occasionally returns no valid questions; retry a couple of times
+	// before giving up rather than failing the whole discovery on one bad reply.
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		out = out[:0]
+		accepted = accepted[:0]
+		resp.Questions = nil
+		lastErr = s.brain.GetSearchProvider().GenerateJSON(ctx, `You propose `+fmt.Sprintf("%d", count)+` SPECIFIC, TESTABLE scientific research questions. Every question must be answerable with a computation on real data (a group comparison or a correlation), never vague or philosophical. Prefer questions that an available open dataset below, or a claim in the corpus, can directly answer; if a dataset is named, anchor the question to it. Do not invent data. If the theme is empty, choose across different fields. Return JSON {"questions":["one plain question each, maximum 90 characters"]}. Requested count: `+fmt.Sprintf("%d", count)+`. CONTEXT: `+string(payload), &resp)
+		if lastErr != nil {
 			continue
 		}
-		if strings.HasSuffix(q, "?") {
-			q = strings.TrimSuffix(q, "?")
+		for _, q := range resp.Questions {
+			q = strings.TrimSpace(q)
+			if q == "" || len(q) > 200 {
+				continue
+			}
+			if strings.HasSuffix(q, "?") {
+				q = strings.TrimSuffix(q, "?")
+			}
+			if isDuplicate(q) {
+				continue
+			}
+			out = append(out, q)
+			accepted = append(accepted, q)
+			if len(out) == count {
+				break
+			}
 		}
-		if isDuplicate(q) {
-			continue
-		}
-		out = append(out, q)
-		accepted = append(accepted, q)
-		if len(out) == count {
-			break
+		if len(out) > 0 {
+			return out, nil
 		}
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("the model did not propose any bounded research question")
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	return out, nil
+	return nil, fmt.Errorf("the model did not propose any bounded research question")
 }
 
 // runDiscoveryQuestion runs one question through the topic verification pipeline
