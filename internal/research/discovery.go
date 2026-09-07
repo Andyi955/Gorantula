@@ -181,6 +181,16 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 	}
 	out := make([]string, 0, count)
 	seenQ := map[string]bool{}
+	// Avoid re-running the exact same question across discovery runs: collect
+	// every question already proposed in any earlier discovery and skip them.
+	seenBefore := map[string]bool{}
+	if previous, _ := s.ListDiscoveries(); len(previous) > 0 {
+		for _, prev := range previous {
+			for _, q := range prev.Questions {
+				seenBefore[strings.ToLower(strings.TrimSpace(q.Question))] = true
+			}
+		}
+	}
 	for _, q := range resp.Questions {
 		q = strings.TrimSpace(q)
 		if q == "" || len(q) > 200 {
@@ -189,10 +199,11 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 		if strings.HasSuffix(q, "?") {
 			q = strings.TrimSuffix(q, "?")
 		}
-		if seenQ[strings.ToLower(q)] {
+		key := strings.ToLower(q)
+		if seenQ[key] || seenBefore[key] {
 			continue
 		}
-		seenQ[strings.ToLower(q)] = true
+		seenQ[key] = true
 		out = append(out, q)
 		if len(out) == count {
 			break
