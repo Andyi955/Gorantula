@@ -48,7 +48,7 @@ func decodeJSON(data []byte, target interface{}) error {
 // files. CLI access without Origin remains supported.
 func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) bool {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 3 || parts[0] != "api" || parts[1] != "research" || (parts[2] != "datasets" && parts[2] != "verify" && parts[2] != "runs" && parts[2] != "publications") {
+	if len(parts) < 3 || parts[0] != "api" || parts[1] != "research" || (parts[2] != "datasets" && parts[2] != "verify" && parts[2] != "runs" && parts[2] != "publications" && parts[2] != "discover" && parts[2] != "discoveries") {
 		return false
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -275,6 +275,27 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		} else {
 			respond(map[string]bool{"cancelRequested": true}, nil)
 		}
+	case len(parts) == 3 && parts[2] == "discover" && r.Method == http.MethodPost:
+		var req struct {
+			Theme string `json:"theme"`
+			Count int    `json:"count"`
+		}
+		if !read(&req) {
+			return true
+		}
+		run, err := s.StartDiscovery(r.Context(), req.Theme, req.Count)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			w.WriteHeader(http.StatusAccepted)
+			respond(run, nil)
+		}
+	case len(parts) == 3 && parts[2] == "discoveries" && r.Method == http.MethodGet:
+		runs, err := s.ListDiscoveries()
+		respond(runs, err)
+	case len(parts) == 4 && parts[2] == "discoveries" && r.Method == http.MethodGet:
+		run, err := s.GetDiscovery(parts[3])
+		respond(run, err)
 	default:
 		http.NotFound(w, r)
 	}
