@@ -49,7 +49,11 @@ func (s *Service) StartDiscovery(ctx context.Context, theme string, count int) (
 	if err := s.saveDiscovery(run); err != nil {
 		return models.DiscoveryRun{}, err
 	}
-	go s.executeDiscovery(ctx, run, count)
+	// Run the discovery in the background with a context NOT tied to the HTTP
+	// request, which is cancelled as soon as the handler returns. Each question's
+	// own verification run has its own deadline; the discovery completes when all
+	// questions are scored.
+	go s.executeDiscovery(context.Background(), run, count)
 	return run, nil
 }
 
@@ -94,9 +98,11 @@ func (s *Service) GetDiscovery(id string) (models.DiscoveryRun, error) {
 
 func (s *Service) executeDiscovery(ctx context.Context, run models.DiscoveryRun, count int) {
 	defer func() {
-		run.Status = "completed"
-		if run.CompletedAt == "" {
-			run.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		if run.Status == "running" {
+			run.Status = "completed"
+			if run.CompletedAt == "" {
+				run.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+			}
 		}
 		_ = s.saveDiscovery(run)
 	}()
