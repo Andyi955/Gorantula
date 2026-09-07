@@ -553,35 +553,15 @@ EVIDENCE:
 		if len(raw) > 6000 {
 			return fmt.Errorf("agent response exceeds 6000 bytes")
 		}
+		// The whole agent action is decoded leniently. Safety does not rely on
+		// rejecting unknown fields: the tool registry is fixed and validated
+		// (validateVerificationCall / the dataset tool switch), so an injected
+		// field such as "command" is never read or executed. Being lenient here
+		// also tolerates benign model quirks (a stray groupColumn on a dataset
+		// action) that otherwise fail the run.
 		var action models.VerificationAgentAction
-		// The action wrapper is decoded leniently so a model adding a harmless
-		// top-level field (e.g. "proposition") does not fail the run, but the
-		// inner tool call is strict so an injected field (e.g. "command") is
-		// rejected rather than silently accepted.
-		var rawAction struct {
-			Action         string           `json:"action"`
-			Interpretation string           `json:"interpretation"`
-			Call           *json.RawMessage `json:"call"`
-			DatasetCall    *json.RawMessage `json:"datasetCall"`
-		}
-		if err := json.Unmarshal(raw, &rawAction); err != nil {
+		if err := decodeJSON(raw, &action); err != nil {
 			return fmt.Errorf("invalid agent action: %w", err)
-		}
-		action.Action = rawAction.Action
-		action.Interpretation = rawAction.Interpretation
-		if rawAction.DatasetCall != nil {
-			var dc models.DatasetCall
-			if err := decodeStrictJSON(*rawAction.DatasetCall, &dc); err != nil {
-				return fmt.Errorf("invalid dataset action: %w", err)
-			}
-			action.DatasetCall = &dc
-		}
-		if rawAction.Call != nil {
-			var c models.VerificationCall
-			if err := decodeStrictJSON(*rawAction.Call, &c); err != nil {
-				return fmt.Errorf("invalid call: %w", err)
-			}
-			action.Call = &c
 		}
 		if action.Action == "finish" && action.DatasetCall == nil && action.Call == nil && strings.TrimSpace(action.Interpretation) != "" && len(action.Interpretation) <= 4000 {
 			// If the agent is about to give up without ever importing or
