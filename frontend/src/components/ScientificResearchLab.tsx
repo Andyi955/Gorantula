@@ -3,6 +3,7 @@ import { Microscope, Plus, GitBranch, AlertTriangle, CheckCircle2, ArrowRight } 
 import ResearchVerificationConsole from './ResearchVerificationConsole';
 import ResearchPublicationConsole from './ResearchPublicationConsole';
 import ResearchPipeline from './ResearchPipeline';
+import ResearchDiscoveries from './ResearchDiscoveries';
 
 const RESEARCH_API = 'http://127.0.0.1:8080/api/research';
 
@@ -88,7 +89,7 @@ interface CandidateExpansion {
   retrieved?: Paper[];
 }
 
-type View = 'pipeline' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
+type View = 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
 
 const VERDICT_META: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Agreed', tone: 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' },
@@ -614,6 +615,7 @@ const ScientificResearchLab = () => {
             { id: 'signals', label: 'Findings', count: `${signals.length}` },
             { id: 'candidates', label: 'Candidates', count: `${candidates.length}` },
             { id: 'pipeline', label: 'Pipeline', count: '' },
+            { id: 'discoveries', label: 'Discoveries', count: '' },
             { id: 'verification', label: 'Verification', count: '' },
             { id: 'publish', label: 'Publish', count: '' },
             { id: 'corpus', label: 'Corpus', count: `${papers.length}` },
@@ -630,6 +632,7 @@ const ScientificResearchLab = () => {
             {view === 'signals' && renderSignals()}
             {view === 'candidates' && renderCandidates()}
             {view === 'pipeline' && <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={next => { setView(next); void reload(); }} />}
+            {view === 'discoveries' && <ResearchDiscoveries />}
             {view === 'verification' && <ResearchVerificationConsole candidates={candidates} />}
             {view === 'publish' && <ResearchPublicationConsole onRebuild={id => void rebuildReport(id)} />}
             {view === 'corpus' && renderCorpus()}
