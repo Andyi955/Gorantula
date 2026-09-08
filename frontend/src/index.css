@@ -15711,7 +15711,26 @@ body {
 }
 
 .research-lab .research-chart { border-top-color: var(--hud-line); }
-.research-lab .research-bar { background: linear-gradient(90deg, var(--hud-accent-dim), var(--hud-accent-soft)); box-shadow: inset 0 0 0 1px var(--hud-accent-dim); }
+
+/* Energy bars: brighter than a flat fill so magnitude reads at a glance, and
+   they grow out of the zero line on first paint. The per-row delay is set
+   inline by the chart so the three rows arrive as a sweep, not a jump. */
+.research-lab .research-bar {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--forensic-accent) 26%, transparent),
+    color-mix(in srgb, var(--forensic-accent) 68%, transparent)
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--forensic-accent) 36%, transparent),
+    0 0 20px -8px var(--hud-accent-soft);
+  transform-origin: left center;
+  animation: hud-bar-grow 560ms cubic-bezier(0.16, 0.84, 0.24, 1) both;
+}
+@keyframes hud-bar-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
 .research-lab .research-bar-track { background-image: repeating-linear-gradient(90deg, transparent 0%, transparent calc(25% - 1px), var(--hud-line) 25%); }
 .research-lab .research-zero { background: var(--hud-accent-soft); }
 
@@ -15783,6 +15802,76 @@ body {
 .research-lab .research-sharing-options { border-top-color: var(--hud-line); color: var(--hud-text-faint); }
 .research-lab .research-export-note { color: var(--hud-text-faint); }
 
+/* --- Motion ------------------------------------------------------------
+   Every animation here communicates something the operator needs to know:
+   a chart is drawing, a stage is the current one, a fetch is in flight, or a
+   control took the press. Nothing loops for decoration alone, and all of it
+   is switched off under prefers-reduced-motion. */
+
+/* The journey rail draws its connector down as the stages complete. */
+.research-lab .research-steps li:not(:last-child)::after {
+  transform-origin: top center;
+  animation: hud-line-draw 420ms ease-out both;
+}
+.research-lab .research-steps li:nth-child(1)::after { animation-delay: 60ms; }
+.research-lab .research-steps li:nth-child(2)::after { animation-delay: 140ms; }
+.research-lab .research-steps li:nth-child(3)::after { animation-delay: 220ms; }
+.research-lab .research-steps li:nth-child(4)::after { animation-delay: 300ms; }
+@keyframes hud-line-draw {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+/* The current stage breathes, so "where am I" survives a glance. */
+.research-lab .research-steps .is-current .research-step-number {
+  animation: hud-step-breathe 2.8s ease-in-out infinite;
+}
+@keyframes hud-step-breathe {
+  0%, 100% { box-shadow: 0 0 16px -2px var(--hud-accent-soft), 0 0 0 0 var(--hud-accent-dim); }
+  50% { box-shadow: 0 0 20px -2px var(--hud-accent-soft), 0 0 0 5px transparent; }
+}
+
+/* The rail's context card is a projected readout: a slow scan crosses it so
+   the cockpit never looks frozen. Long period on purpose — it is ambience. */
+.research-lab .research-topic { position: relative; overflow: hidden; }
+.research-lab .research-topic::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--hud-scan), transparent);
+  opacity: 0;
+  animation: hud-sweep 8s linear infinite;
+}
+
+/* Loading is a sweeping scan, not a frozen line of text. */
+.hud-skeleton {  position: relative;
+  overflow: hidden;
+  height: 14px;
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: var(--hud-surface-2);
+}
+.hud-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--hud-accent-dim), transparent);
+  animation: hud-shimmer 1.4s linear infinite;
+}
+@keyframes hud-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* Press and hover feedback: the machine acknowledges the operator. */
+.hud-panel--action { transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease; }
+.hud-panel--action:hover { transform: translateY(-1px); }
+.hud-button:active:not(:disabled),
+.hud-tab:active { transform: translateY(1px); }
+
 /* --- Reduced motion ----------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -15791,6 +15880,14 @@ body {
   .hud-panel--action,
   .hud-button,
   .hud-tab { transition: none; }
+  .hud-panel--action:hover,
+  .hud-button:active,
+  .hud-tab:active { transform: none; }
+  .research-lab .research-bar { animation: none; }
+  .research-lab .research-steps li:not(:last-child)::after,
+  .research-lab .research-steps .is-current .research-step-number,
+  .research-lab .research-topic::after { animation: none; }
+  .hud-skeleton::after { animation: none; background: var(--hud-accent-dim); }
 }
 
 /* --- Report overlay ----------------------------------------------------- */

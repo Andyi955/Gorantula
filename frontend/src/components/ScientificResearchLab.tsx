@@ -704,13 +704,20 @@ const ScientificResearchLab = () => {
         {error && <div className="mx-6 mt-3 rounded border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</div>}
 
         {loading ? (
-          <p className="px-6 py-6 text-sm text-[var(--forensic-text-muted)]">Loading corpus…</p>
+          <div className="px-6 py-6" role="status" aria-live="polite">
+            <p className="hud-label">Loading corpus…</p>
+            <div className="mt-3 flex flex-col gap-2">
+              <div className="hud-skeleton w-2/3" />
+              <div className="hud-skeleton w-1/2" />
+              <div className="hud-skeleton w-3/5" />
+            </div>
+          </div>
         ) : view === 'pipeline' ? (
           <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={next => { setView(next); void reload(); }} />
         ) : (
           <div className="research-workspace">
             {rail}
-            <main className="research-workspace-main">
+            <main key={view} className="research-workspace-main">
               {meta && (
                 <header className="research-page-heading">
                   <h2>{meta.heading}</h2>
