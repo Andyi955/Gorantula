@@ -6,6 +6,36 @@ import (
 	"testing"
 )
 
+func TestOpenDataCandidateNamesFitTheRegistrationLimit(t *testing.T) {
+	// RegisterDataset rejects a name over 200 bytes. A joined name once exceeded
+	// it and the merged table was skipped in silence, so the run fell back to a
+	// single-provider table that could not answer the question.
+	worldBank := openDataset{Provider: "World Bank", Name: strings.Repeat("L", 150) + " — World Bank, all countries"}
+	who := openDataset{Provider: "WHO", Name: strings.Repeat("W", 90) + " — WHO, by country"}
+	merged, ok := mergeProviderCandidates([]openDataset{worldBank, who})
+	if !ok {
+		t.Fatal("expected a merged candidate")
+	}
+	if len(merged.Name) > 200 {
+		t.Errorf("merged name is %d bytes: %q", len(merged.Name), merged.Name)
+	}
+
+	original := openDataProviders
+	defer func() { openDataProviders = original }()
+	openDataProviders = []func(context.Context, string) ([]openDataset, error){
+		func(context.Context, string) ([]openDataset, error) {
+			return []openDataset{{Provider: "Zenodo", Name: strings.Repeat("x", 400), DownloadURL: "https://zenodo.example/1.csv"}}, nil
+		},
+	}
+	out, err := searchOpenData(context.Background(), "does x correlate with y")
+	if err != nil || len(out) != 1 {
+		t.Fatalf("out=%v err=%v", out, err)
+	}
+	if len(out[0].Name) > 200 {
+		t.Errorf("pooled name is %d bytes: %q", len(out[0].Name), out[0].Name)
+	}
+}
+
 func TestMergeProviderCandidatesJoinsWorldBankAndWHO(t *testing.T) {
 	candidates := []openDataset{
 		{Provider: "World Bank", Name: "GDP per capita", DownloadURL: "https://wb", Format: "worldbank:GDP per capita"},
@@ -25,13 +55,13 @@ func TestMergeOpenDatasetTablesJoinsOnCountryAndYear(t *testing.T) {
 	originalBulk := providerBulkFetch
 	defer func() { dataDownloadFetch = original; providerBulkFetch = originalBulk }()
 	dataDownloadFetch = func(_ context.Context, raw string) ([]byte, string, error) {
-		return []byte(`[{"page":1},[{"country":{"value":"Kenya"},"countryiso3code":"KEN","date":"2015","value":1350},{"country":{"value":"Kenya"},"countryiso3code":"KEN","date":"2016","value":1400}]]`), raw, nil
+		return []byte("country,country_code,year,life,gdp\nKenya,KEN,2015,60,1350\nKenya,KEN,2016,61,1400\n"), raw, nil
 	}
 	providerBulkFetch = func(_ context.Context, raw string) ([]byte, string, error) {
-		return []byte(`{"value":[{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":60.5},{"SpatialDim":"KEN","TimeDim":2016,"Dim1":"SEX_BTSX","NumericValue":61.2},{"SpatialDim":"TCD","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":52}]}`), raw, nil
+		return []byte(`{"value":[{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":55.5},{"SpatialDim":"KEN","TimeDim":2016,"Dim1":"SEX_BTSX","NumericValue":56.2},{"SpatialDim":"TCD","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":52}]}`), raw, nil
 	}
 	merged := openDataset{Provider: "World Bank + WHO", Format: "merge", Merge: []openDataset{
-		{Provider: "World Bank", DownloadURL: "https://api.worldbank.org/v2/x", Format: "worldbank:GDP per capita"},
+		{Provider: "World Bank", DownloadURL: "https://api.worldbank.org/v2/x"},
 		{Provider: "WHO", DownloadURL: "https://ghoapi.azureedge.net/api/X", Format: "who:Healthy life expectancy"},
 	}}
 	out, _, err := downloadOpenDataset(context.Background(), merged)
@@ -39,11 +69,13 @@ func TestMergeOpenDatasetTablesJoinsOnCountryAndYear(t *testing.T) {
 		t.Fatalf("downloadOpenDataset: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if lines[0] != "country_code,year,gdp_per_capita,healthy_life_expectancy" {
+	// Both World Bank value columns must survive: keeping only the first one
+	// silently dropped the variable the question needed.
+	if lines[0] != "country_code,year,life,gdp,healthy_life_expectancy" {
 		t.Errorf("header = %q", lines[0])
 	}
 	// Chad is only in the WHO table, so the inner join drops it.
-	if len(lines) != 3 || lines[1] != "KEN,2015,1350,60.5" || lines[2] != "KEN,2016,1400,61.2" {
+	if len(lines) != 3 || lines[1] != "KEN,2015,60,1350,55.5" || lines[2] != "KEN,2016,61,1400,56.2" {
 		t.Fatalf("rows = %v", lines)
 	}
 }

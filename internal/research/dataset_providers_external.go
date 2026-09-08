@@ -393,7 +393,7 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 		rows   [][]string
 		codeAt int
 		yearAt int
-		value  int
+		values []int
 	}
 	tables := make([]table, 0, len(candidate.Merge))
 	final := ""
@@ -407,7 +407,7 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 		if err != nil {
 			return nil, "", err
 		}
-		built := table{header: header, rows: rows, codeAt: -1, yearAt: -1, value: -1}
+		built := table{header: header, rows: rows, codeAt: -1, yearAt: -1}
 		for i, name := range header {
 			switch strings.ToLower(strings.TrimSpace(name)) {
 			case "country_code":
@@ -419,6 +419,9 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 		if built.codeAt < 0 || built.yearAt < 0 {
 			return nil, "", fmt.Errorf("cannot join %s: no country_code/year columns", part.Provider)
 		}
+		// Keep every value column: a provider candidate may already carry two
+		// indicators (World Bank GDP per capita and life expectancy), and dropping
+		// all but the first silently removes the variable the question needs.
 		for i, name := range header {
 			if i == built.codeAt || i == built.yearAt {
 				continue
@@ -427,10 +430,9 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 			case "country", "rows", "group":
 				continue
 			}
-			built.value = i
-			break
+			built.values = append(built.values, i)
 		}
-		if built.value < 0 {
+		if len(built.values) == 0 {
 			return nil, "", fmt.Errorf("cannot join %s: no value column", part.Provider)
 		}
 		tables = append(tables, built)
@@ -443,20 +445,44 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 	for _, row := range left.rows {
 		index[row[left.codeAt]+"|"+row[left.yearAt]] = row
 	}
-	out := [][]string{{"country_code", "year", left.header[left.value], right.header[right.value]}}
+	header := []string{"country_code", "year"}
+	for _, at := range left.values {
+		header = append(header, left.header[at])
+	}
+	for _, at := range right.values {
+		header = append(header, right.header[at])
+	}
+	out := [][]string{header}
 	for _, row := range right.rows {
 		other, ok := index[row[right.codeAt]+"|"+row[right.yearAt]]
 		if !ok {
 			continue
 		}
-		leftValue, leftErr := strconv.ParseFloat(strings.TrimSpace(other[left.value]), 64)
-		rightValue, rightErr := strconv.ParseFloat(strings.TrimSpace(row[right.value]), 64)
-		if leftErr != nil || rightErr != nil {
+		record := []string{row[right.codeAt], row[right.yearAt]}
+		complete := true
+		for _, at := range left.values {
+			value, parseErr := strconv.ParseFloat(strings.TrimSpace(other[at]), 64)
+			if parseErr != nil {
+				complete = false
+				break
+			}
+			record = append(record, strconv.FormatFloat(value, 'g', -1, 64))
+		}
+		if !complete {
 			continue
 		}
-		out = append(out, []string{row[right.codeAt], row[right.yearAt],
-			strconv.FormatFloat(leftValue, 'g', -1, 64),
-			strconv.FormatFloat(rightValue, 'g', -1, 64)})
+		for _, at := range right.values {
+			value, parseErr := strconv.ParseFloat(strings.TrimSpace(row[at]), 64)
+			if parseErr != nil {
+				complete = false
+				break
+			}
+			record = append(record, strconv.FormatFloat(value, 'g', -1, 64))
+		}
+		if !complete {
+			continue
+		}
+		out = append(out, record)
 	}
 	if len(out) < 2 {
 		return nil, "", fmt.Errorf("the two provider tables share no country and year")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // openDataFetch fetches an open-data repository response. It is a variable so
@@ -131,7 +132,34 @@ func searchOpenData(ctx context.Context, query string) ([]openDataset, error) {
 	if merged, ok := mergeProviderCandidates(out); ok {
 		out = append([]openDataset{merged}, out...)
 	}
+	// RegisterDataset rejects a name over 200 bytes, and a long provider title
+	// (Zenodo titles, joined indicator names) would otherwise be skipped in
+	// silence and fall back to a weaker candidate.
+	for i := range out {
+		out[i].Name = truncateBytes(out[i].Name, 200)
+	}
 	return out, nil
+}
+
+// truncateBytes shortens s to at most max bytes without splitting a rune.
+func truncateBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut])
+}
+
+// shortProviderName keeps the indicator phrase and drops the provider suffix, so
+// a joined name stays inside the 200-byte registration limit.
+func shortProviderName(name string) string {
+	if head, _, found := strings.Cut(name, " — "); found {
+		return strings.TrimSpace(head)
+	}
+	return strings.TrimSpace(name)
 }
 
 // mergeProviderCandidates joins one World Bank table with one WHO table on
@@ -155,7 +183,7 @@ func mergeProviderCandidates(candidates []openDataset) (openDataset, bool) {
 		return openDataset{}, false
 	}
 	return openDataset{
-		Name:        worldBank.Name + " joined with " + who.Name + " — World Bank + WHO, by country and year",
+		Name:        truncateBytes("Joined (World Bank + WHO): "+shortProviderName(worldBank.Name)+" + "+shortProviderName(who.Name), 200),
 		Description: "World Bank indicator and WHO indicator joined on country and year, so both variables are in one table.",
 		Provider:    "World Bank + WHO",
 		File:        worldBank.File + "+" + who.File,
