@@ -22,12 +22,12 @@ async function request<T>(path: string, body?: unknown, signal?: AbortSignal): P
   if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
   return response.json() as Promise<T>;
 }
-const field = 'mt-1 w-full min-w-0 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2 text-sm text-[var(--forensic-text)] placeholder-[var(--forensic-text-faint)] outline-none focus:border-[var(--forensic-accent)]';
-const button = 'rounded-lg border border-[var(--forensic-border-soft)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)] transition-colors hover:border-[var(--forensic-border)] hover:text-[var(--forensic-text)] disabled:opacity-40';
-const primaryButton = 'rounded-lg border border-[var(--forensic-accent)] bg-[var(--forensic-glow)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-[var(--forensic-accent-strong)] transition-colors hover:border-[var(--forensic-accent-strong)] disabled:opacity-40';
+const field = 'hud-field min-w-0';
+const button = 'hud-button';
+const primaryButton = 'hud-button hud-button--primary';
 // Match the research verdict palette; completion describes execution, not scientific support.
 const statusTone = (status: string) => status === 'completed' ? 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' : status === 'failed' ? 'text-[#ff8c86] border-[#ff8c86]/45 bg-[#ff8c86]/10' : 'text-[#f6c879] border-[#f6c879]/45 bg-[#f6c879]/10';
-const card = 'rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4';
+const card = 'hud-panel p-4';
 
 export default function ResearchVerificationConsole({ candidates }: Props) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -165,7 +165,7 @@ export default function ResearchVerificationConsole({ candidates }: Props) {
 
     <details className={card}><summary className="cursor-pointer text-sm">Advanced: work with data manually</summary><ResearchDataWorkbench candidateId={candidate?.id} datasetId={dataset?.id} datasets={datasets} onDataset={id => {setDatasetId(id); void reload();}} /></details>
     <h3 className="text-sm font-bold">Verification history</h3>
-    {loading ? <p className="text-sm">Loading verification history…</p> : !runs.length && <p className="rounded-xl border border-dashed border-[var(--forensic-border-soft)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">No verification runs yet. Choose a candidate and dataset to begin.</p>}
+    {loading ? <p className="text-sm">Loading verification history…</p> : !runs.length && <p className="rounded border border-dashed border-[var(--hud-line)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">No verification runs yet. Choose a candidate and dataset to begin.</p>}
     {runs.map(run => {
       const active = run.status === 'running' || run.status === 'queued';
       // Prefer polled results when a previously opened run has since advanced.

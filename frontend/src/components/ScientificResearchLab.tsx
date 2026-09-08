@@ -270,22 +270,19 @@ const ScientificResearchLab = () => {
         <button
           key={item.id}
           type="button"
+          aria-pressed={view === item.id}
           onClick={() => setView(item.id)}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
-            view === item.id
-              ? 'border-[var(--forensic-accent)] bg-[var(--forensic-glow)] text-[var(--forensic-accent-strong)]'
-              : 'border-[var(--forensic-border-soft)] text-[var(--forensic-text-muted)] hover:border-[var(--forensic-border)] hover:text-[var(--forensic-text)]'
-          }`}
+          className="hud-tab"
         >
           {item.label}
-          <span className="ml-1.5 opacity-60">{item.count}</span>
+          {item.count && <span className="hud-tab-count">{item.count}</span>}
         </button>
       ))}
     </div>
   );
 
   const emptyState = (message: string) => (
-    <div className="mt-6 rounded-xl border border-dashed border-[var(--forensic-border-soft)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">
+    <div className="mt-6 rounded border border-dashed border-[var(--hud-line)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">
       {message}
     </div>
   );
@@ -300,7 +297,7 @@ const ScientificResearchLab = () => {
           const meta = SIGNAL_META[signal.kind] || SIGNAL_META.hypothesis;
           const Icon = meta.icon;
           return (
-            <div key={signal.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+            <div key={signal.id} className="hud-panel hud-panel--action p-4">
               <div className="flex items-center gap-2">
                 <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${meta.tone}`}>
                   <Icon size={12} aria-hidden />
@@ -356,7 +353,7 @@ const ScientificResearchLab = () => {
 
   const renderCorpus = () => (
     <div className="mt-4 flex flex-col gap-3">
-      <div className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+      <div className="hud-panel p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-[var(--forensic-text)]">
           <Plus size={16} className="text-[var(--forensic-accent)]" aria-hidden />
           Add papers
@@ -366,20 +363,20 @@ const ScientificResearchLab = () => {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Title"
-          className="mt-3 w-full rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2 text-sm text-[var(--forensic-text)] placeholder-[var(--forensic-text-faint)] outline-none focus:border-[var(--forensic-accent)]"
+          className="hud-field mt-3"
         />
         <textarea
           value={abstract}
           onChange={(e) => setAbstract(e.target.value)}
           placeholder="Abstract / full text"
           rows={4}
-          className="mt-2 w-full resize-none rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2 text-sm text-[var(--forensic-text)] placeholder-[var(--forensic-text-faint)] outline-none focus:border-[var(--forensic-accent)]"
+          className="hud-field mt-2 resize-none"
         />
         <button
           type="button"
           onClick={submitIngest}
           disabled={adding || !title.trim() || !abstract.trim()}
-          className="mt-3 rounded-lg border border-[var(--forensic-accent)] bg-[var(--forensic-glow)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-[var(--forensic-accent-strong)] disabled:opacity-40"
+          className="hud-button hud-button--primary mt-3"
         >
           {adding ? 'Ingesting…' : 'Ingest & analyze'}
         </button>
@@ -389,7 +386,7 @@ const ScientificResearchLab = () => {
         emptyState('No papers yet — add one above to seed the corpus.')
       ) : (
         papers.map((paper) => (
-          <div key={paper.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+          <div key={paper.id} className="hud-panel p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--forensic-text)]">{paper.title}</p>
@@ -417,7 +414,7 @@ const ScientificResearchLab = () => {
           const target = claimById[relation.targetClaimID];
           const basis = relation.basis?.map((key) => key.split('|').pop()).filter(Boolean).join(', ') || '';
           return (
-            <div key={relation.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+            <div key={relation.id} className="hud-panel hud-panel--action p-4">
               <p className={`text-sm text-[var(--forensic-text)] ${expanded[relation.id] ? '' : 'line-clamp-3'}`}>
                 <span className="font-semibold">{source ? source.text : relation.sourceClaimID}</span>{' '}
                 <span className="text-[var(--forensic-accent)]">{relationLabel(relation.relationKind)}</span>{' '}
@@ -484,7 +481,7 @@ const ScientificResearchLab = () => {
                 ? 'partially covered'
                 : 'already studied';
           return (
-            <div key={candidate.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+            <div key={candidate.id} className="hud-panel hud-panel--action p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${verdict.tone}`}>{verdict.label}</span>
                 <span className="rounded-md border border-[var(--forensic-border-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)]">{STATE_LABEL[candidate.state] || candidate.state}</span>
@@ -513,7 +510,7 @@ const ScientificResearchLab = () => {
                 </p>
               )}
               {candidate.rationale && (
-                <div className="mt-2 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2">
+                <div className="hud-inset mt-2 px-3 py-2">
                   <p className="text-xs italic leading-relaxed text-[var(--forensic-text-muted)]">{candidate.rationale}</p>
                 </div>
               )}
@@ -587,10 +584,10 @@ const ScientificResearchLab = () => {
                     </button>
                   )}
                   {candidate.state !== 'approved' && (
-                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'approve')} className="rounded-lg border border-[#90f3da]/50 bg-[#90f3da]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#90f3da] hover:bg-[#90f3da]/20">Approve</button>
+                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'approve')} className="hud-button text-[#90f3da]">Approve</button>
                   )}
                   {candidate.state !== 'rejected' && (
-                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'reject')} className="rounded-lg border border-[#ff8c86]/45 bg-[#ff8c86]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#ff8c86] hover:bg-[#ff8c86]/20">Reject</button>
+                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'reject')} className="hud-button hud-button--danger text-[#ff8c86]">Reject</button>
                   )}
                 </div>
               </div>

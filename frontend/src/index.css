@@ -15295,3 +15295,550 @@ body {
 .research-start-form input { width:100%; padding:14px; border:1px solid var(--research-line); border-radius:7px; background:#080f17; color:#e1eaf0; margin-top:8px; }
 
 .research-pdf-link { order:2; justify-self:end; color:#64dced; font-size:14px; text-decoration:underline; text-underline-offset:4px; }
+
+/* ==========================================================================
+   STARK-TECH HUD LAYER — Research lab
+   --------------------------------------------------------------------------
+   Direction: the research surfaces should read as instrument panels projected
+   in front of the operator, not as flat dashboard cards. Four decisions carry
+   the look, and each one trades something away on purpose:
+
+     1. MACHINED EDGES. 3px radius + 1px hairline instead of the soft 12px
+        bubble. Instrument housings are cut, not moulded. Cost: it reads
+        slightly colder, which is the point.
+     2. CORNER BRACKETS. A reticle on every panel — the one signature element
+        repeated everywhere, so the surface feels like one machine. Drawn with
+        background gradients so no extra DOM is added to the React tree.
+     3. ONE ENERGY COLOUR. Cyan is the only "powered" colour. Mint/amber/red
+        stay strictly semantic readouts, never decoration, so a red pixel
+        always means something.
+     4. MONO TELEMETRY. Counts, ids, digests, scores and timings are tabular
+        mono; prose stays in the UI sans. That contrast is what makes it read
+        as an instrument rather than a report.
+
+   Motion is deliberately a single idea — a scan sweep across live panels plus
+   a pulse on live status — and every bit of it is disabled under
+   prefers-reduced-motion.
+   ========================================================================== */
+
+.research-lab {
+  /* --forensic-text-faint (#677789) is only ~4.4:1 on this surface, which
+     fails AA at the 11px sizes used for metadata. The lab carries a lighter
+     faint that measures ~5.6:1 on the panel background. */
+  --hud-text-faint: #8d9faf;
+
+  --hud-accent: var(--forensic-accent);
+  --hud-accent-soft: color-mix(in srgb, var(--forensic-accent) 40%, transparent);
+  --hud-accent-dim: color-mix(in srgb, var(--forensic-accent) 18%, transparent);
+  --hud-bracket: color-mix(in srgb, var(--forensic-accent) 78%, transparent);
+  --hud-line: color-mix(in srgb, var(--forensic-accent) 15%, rgba(124, 150, 174, 0.22));
+  --hud-line-strong: color-mix(in srgb, var(--forensic-accent) 36%, transparent);
+  --hud-bracket-len: 13px;
+  --hud-bracket-w: 1px;
+  --hud-radius: 3px;
+  --hud-surface: rgba(13, 22, 31, 0.9);
+  --hud-surface-2: rgba(7, 13, 19, 0.93);
+  --hud-glow: 0 0 26px -12px rgba(129, 227, 255, 0.72);
+  --hud-inset: inset 0 1px 0 rgba(129, 227, 255, 0.05);
+  --hud-grid: rgba(100, 134, 160, 0.075);
+  --hud-scan: color-mix(in srgb, var(--forensic-accent) 45%, transparent);
+  --hud-scanlines: repeating-linear-gradient(
+    180deg,
+    rgba(160, 220, 255, 0.022) 0 1px,
+    transparent 1px 3px
+  );
+  --hud-tone: var(--forensic-accent);
+
+  /* The app root is monospace everywhere and no webfont is loaded, so the lab
+     sets its own split: prose in the UI sans (readable at 13-14px, and the
+     pipeline already worked this way), telemetry in mono (below). */
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  background-color: var(--forensic-bg-root);
+  /* A faint projection grid + top vignette, so the lab reads as a holographic
+     surface rather than a flat black page. Fixed attachment is avoided on
+     purpose: the lab scrolls internally and parallax here would only shimmer. */
+  background-image:
+    radial-gradient(ellipse 130% 72% at 50% -8%, rgba(129, 227, 255, 0.07), transparent 62%),
+    linear-gradient(var(--hud-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hud-grid) 1px, transparent 1px);
+  background-size: auto, 46px 46px, 46px 46px;
+  background-position: center top, center top, center top;
+}
+
+/* --- Panels ------------------------------------------------------------- */
+
+.hud-panel {
+  position: relative;
+  border: 1px solid var(--hud-line);
+  border-radius: var(--hud-radius);
+  background-color: var(--hud-surface);
+  background-image:
+    /* top-left */ linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    /* top-right */ linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    /* bottom-left */ linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    /* bottom-right */ linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    linear-gradient(var(--hud-bracket), var(--hud-bracket)),
+    var(--hud-scanlines);
+  background-size:
+    var(--hud-bracket-len) var(--hud-bracket-w),
+    var(--hud-bracket-w) var(--hud-bracket-len),
+    var(--hud-bracket-len) var(--hud-bracket-w),
+    var(--hud-bracket-w) var(--hud-bracket-len),
+    var(--hud-bracket-len) var(--hud-bracket-w),
+    var(--hud-bracket-w) var(--hud-bracket-len),
+    var(--hud-bracket-len) var(--hud-bracket-w),
+    var(--hud-bracket-w) var(--hud-bracket-len),
+    auto;
+  background-position:
+    left top, left top,
+    right top, right top,
+    left bottom, left bottom,
+    right bottom, right bottom,
+    left top;
+  background-repeat: no-repeat;
+  box-shadow: var(--hud-inset, inset 0 1px 0 rgba(129, 227, 255, 0.05));
+}
+
+/* The powered channel: a hairline of energy along the top edge, brightest in
+   the middle and fading out at both ends so it reads as a lit rail. */
+.hud-panel::before {
+  content: '';
+  position: absolute;
+  inset: -1px 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--hud-accent-dim) 10%,
+    var(--hud-accent-soft) 50%,
+    var(--hud-accent-dim) 90%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+.hud-panel--quiet { box-shadow: none; }
+.hud-panel--quiet::before { display: none; }
+
+/* The UA [hidden] rule loses to the author `display:grid/flex` these research
+   blocks set, so a hidden report section would still paint without this. */
+.research-lab [hidden] { display: none !important; }
+
+/* Tone rails: the left edge carries the panel's meaning. Mint = a real
+   finding, amber = honestly no data, red = the run itself failed. */
+.hud-panel--toned { border-left: 3px solid var(--hud-tone); }
+.hud-tone-worked { --hud-tone: var(--forensic-success); }
+.hud-tone-nodata { --hud-tone: var(--forensic-warning); }
+.hud-tone-failed { --hud-tone: var(--forensic-danger); }
+.hud-tone-archived { --hud-tone: #7b8b9a; }
+
+/* Dense inner tile — no brackets, just a hairline and a lit left rail, so a
+   grid of them stays calm instead of turning into bracket soup. */
+.hud-tile {
+  position: relative;
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: var(--hud-surface-2);
+  padding: 12px 13px 12px 15px;
+}
+.hud-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--hud-tone), transparent);
+  opacity: 0.8;
+}
+
+/* Quiet inset box for quoted rationale / nested evidence. */
+.hud-inset {
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: var(--hud-surface-2);
+}
+
+.hud-panel--action { transition: border-color 140ms ease, box-shadow 140ms ease; }
+.hud-panel--action:hover,
+.hud-panel--action:focus-within {
+  border-color: var(--hud-line-strong);
+  box-shadow: var(--hud-glow);
+}
+
+/* --- Live sweep --------------------------------------------------------- */
+
+.hud-panel--live { overflow: hidden; }
+.hud-panel--live::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--hud-scan) 22%,
+    var(--hud-accent) 50%,
+    var(--hud-scan) 78%,
+    transparent
+  );
+  box-shadow: 0 0 12px 1px var(--hud-accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  animation: hud-sweep 6s linear infinite;
+}
+@keyframes hud-sweep {
+  0% { top: 0; opacity: 0; }
+  8% { opacity: 0.9; }
+  92% { opacity: 0.9; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.hud-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hud-accent);
+  box-shadow: 0 0 8px 1px var(--hud-accent-soft);
+  animation: hud-pulse 2.2s ease-in-out infinite;
+}
+@keyframes hud-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+/* --- Telemetry type ----------------------------------------------------- */
+
+.hud-readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--forensic-text);
+}
+
+/* Every instrument affordance stays mono, so the sans reads as "prose" and
+   the mono reads as "machine output" — the contrast is the point. */
+.research-lab .hud-label,
+.research-lab .hud-chip,
+.research-lab .hud-button,
+.research-lab .hud-tab,
+.research-lab .hud-tab-count,
+.research-lab .research-eyebrow,
+.research-lab .research-bar-label small,
+.research-lab code {
+  font-family: var(--font-mono);
+}
+
+.hud-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hud-text-faint);
+}
+
+/* A labelled hairline that separates sections without a heavy rule. */
+.hud-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--hud-text-faint);
+}
+.hud-rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--hud-line), transparent);
+}
+
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.hud-chip svg { flex-shrink: 0; }
+
+/* --- Controls ----------------------------------------------------------- */
+
+.hud-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: var(--hud-surface-2);
+  color: var(--forensic-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  transition: color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.hud-button:hover:not(:disabled) {
+  color: var(--forensic-accent);
+  border-color: var(--hud-line-strong);
+  box-shadow: var(--hud-glow);
+}
+.hud-button:disabled { opacity: 0.4; }
+.hud-button--primary {
+  color: var(--forensic-accent-strong);
+  border-color: var(--hud-accent-soft);
+  background: linear-gradient(180deg, var(--forensic-glow-strong), var(--hud-surface-2));
+  box-shadow: var(--hud-glow);
+}
+.hud-button--danger:hover:not(:disabled) {
+  color: var(--forensic-danger);
+  border-color: color-mix(in srgb, var(--forensic-danger) 60%, transparent);
+  box-shadow: 0 0 24px -12px rgba(255, 140, 134, 0.75);
+}
+
+/* A picker row, not an instrument control: long hypothesis labels must stay
+   readable, so this variant drops the uppercase mono treatment. */
+.hud-button--list {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 9px 12px;
+  color: var(--forensic-text-muted);
+}
+
+.hud-field {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: var(--hud-surface-2);
+  color: var(--forensic-text);
+  font-size: 13px;
+}
+.hud-field::placeholder { color: var(--hud-text-faint); }
+.hud-field:focus-visible {
+  outline: none;
+  border-color: var(--hud-accent-soft);
+  box-shadow: 0 0 0 1px var(--hud-accent-dim), var(--hud-glow);
+}
+
+.hud-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--forensic-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.hud-tab:hover { color: var(--forensic-text); border-color: var(--hud-line-strong); }
+.hud-tab[aria-pressed='true'] {
+  color: var(--forensic-accent-strong);
+  border-color: var(--hud-accent-soft);
+  background: linear-gradient(180deg, var(--forensic-glow), transparent);
+  box-shadow: var(--hud-glow);
+}
+.hud-tab-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.research-lab button:focus-visible,
+.research-lab a:focus-visible,
+.research-lab summary:focus-visible,
+.research-lab input:focus-visible,
+.research-lab select:focus-visible,
+.research-lab textarea:focus-visible {
+  outline: 2px solid var(--hud-accent);
+  outline-offset: 2px;
+}
+
+/* --- Upgrades to the existing research-* semantic surfaces --------------
+   These classes are used only by the research components, so restyling them
+   here lifts every console at once without duplicating markup. */
+
+.research-lab .research-surface,
+.research-lab .research-summary-strip,
+.research-lab .research-topic,
+.research-lab .research-review-rows > div {
+  border-radius: var(--hud-radius);
+  border-color: var(--hud-line);
+  background: var(--hud-surface);
+}
+
+.research-lab .research-summary-strip {
+  background-image: var(--hud-scanlines);
+  border-left: 2px solid var(--hud-accent-dim);
+}
+.research-lab .research-summary-strip span { font-size: 12px; letter-spacing: 0.02em; }
+.research-lab .research-summary-strip svg { color: var(--hud-accent); }
+
+.research-lab .research-surface { box-shadow: var(--hud-inset, inset 0 1px 0 rgba(129, 227, 255, 0.05)); }
+
+.research-lab .research-review-rows > div { background: var(--hud-surface-2); }
+
+.research-lab .research-decision {
+  border-radius: var(--hud-radius);
+  border-color: var(--hud-accent-soft);
+  background: linear-gradient(120deg, var(--hud-surface), var(--hud-surface-2));
+  box-shadow: var(--hud-glow);
+}
+
+.research-lab .research-evidence-link,
+.research-lab .research-full-report,
+.research-lab .research-explanation {
+  border-radius: var(--hud-radius);
+}
+
+.research-lab .research-chart { border-top-color: var(--hud-line); }
+.research-lab .research-bar { background: linear-gradient(90deg, var(--hud-accent-dim), var(--hud-accent-soft)); box-shadow: inset 0 0 0 1px var(--hud-accent-dim); }
+.research-lab .research-bar-track { background-image: repeating-linear-gradient(90deg, transparent 0%, transparent calc(25% - 1px), var(--hud-line) 25%); }
+.research-lab .research-zero { background: var(--hud-accent-soft); }
+
+.research-lab .research-muted,
+.research-lab .research-page-heading p { color: var(--forensic-text-muted); }
+
+/* Metadata that was rendering at the AA-failing faint. */
+.research-lab .text-\[var\(--forensic-text-faint\)\] { color: var(--hud-text-faint); }
+
+.research-lab .research-verdict {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--forensic-warning) 10%, transparent);
+  border-color: color-mix(in srgb, var(--forensic-warning) 55%, transparent);
+}
+
+/* Pipeline journey rail and its controls. */
+.research-lab .research-journey {
+  border-right-color: var(--hud-line);
+  background: linear-gradient(150deg, var(--hud-surface), var(--hud-surface-2));
+}
+.research-lab .research-topic { border-color: var(--hud-line); background: var(--hud-surface); }
+.research-lab .research-topic svg { color: var(--hud-accent); }
+.research-lab .research-step-number {
+  border-color: var(--hud-line-strong);
+  color: var(--hud-text-faint);
+  background: var(--hud-surface-2);
+}
+.research-lab .research-steps li:not(:last-child)::after { background: var(--hud-line); }
+.research-lab .research-steps .is-complete .research-step-number {
+  color: var(--hud-accent);
+  border-color: var(--hud-accent-soft);
+  background: color-mix(in srgb, var(--forensic-accent) 12%, var(--hud-surface-2));
+}
+.research-lab .research-steps .is-current .research-step-number {
+  background: var(--hud-accent);
+  border-color: var(--hud-accent);
+  color: #04202a;
+  box-shadow: 0 0 16px -2px var(--hud-accent-soft);
+}
+.research-lab .research-new,
+.research-lab .research-history { border-radius: 2px; border-color: var(--hud-line); background: var(--hud-surface-2); }
+.research-lab .research-history button { border-bottom-color: var(--hud-line); }
+.research-lab .research-history small { color: var(--hud-text-faint); }
+
+.research-lab .research-primary,
+.research-lab .research-decision-actions > button:first-child {
+  border-radius: 2px;
+  border-color: var(--hud-accent-soft);
+  background: linear-gradient(180deg, var(--forensic-glow-strong), var(--hud-surface-2));
+  box-shadow: var(--hud-glow);
+}
+.research-lab .research-text-button { color: var(--hud-accent); }
+.research-lab .research-start-form input,
+.research-lab .research-start-form select {
+  border-radius: 2px;
+  border-color: var(--hud-line);
+  background: var(--hud-surface-2);
+  color: var(--forensic-text);
+}
+.research-lab .research-error {
+  border-radius: 2px;
+  border-color: color-mix(in srgb, var(--forensic-danger) 55%, transparent);
+  background: color-mix(in srgb, var(--forensic-danger) 8%, transparent);
+  color: #ffb0ab;
+}
+.research-lab .research-report-state { color: var(--hud-text-faint); }
+.research-lab .research-report-state strong { color: var(--hud-accent); }
+.research-lab .research-page-heading h2 { letter-spacing: -0.01em; }
+.research-lab .research-sharing-options { border-top-color: var(--hud-line); color: var(--hud-text-faint); }
+.research-lab .research-export-note { color: var(--hud-text-faint); }
+
+/* --- Reduced motion ----------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-panel--live::after { display: none; }
+  .hud-live-dot { animation: none; opacity: 1; transform: none; }
+  .hud-panel--action,
+  .hud-button,
+  .hud-tab { transition: none; }
+}
+
+/* --- Report overlay ----------------------------------------------------- */
+
+/* Portalled to <body>: the research tab is a z-10 stacking context, so an
+   in-tree fixed overlay would sit under the z-50 app chrome. 90 clears the
+   chrome (50), the restore-loading veil (60) and the app modal (80) while
+   staying under the boot splash (100). */
+.hud-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(2, 6, 9, 0.72);
+  backdrop-filter: blur(3px);
+}
+.hud-overlay__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, 100%);
+  height: 100%;
+  border-left: 1px solid var(--hud-accent-soft);
+  background: var(--forensic-bg-root);
+  background-image:
+    radial-gradient(ellipse 120% 60% at 50% 0%, rgba(129, 227, 255, 0.06), transparent 60%),
+    var(--hud-scanlines);
+  box-shadow: -30px 0 60px -30px rgba(0, 0, 0, 0.9);
+  animation: hud-overlay-in 180ms ease-out;
+}
+@keyframes hud-overlay-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.hud-overlay__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--hud-line);
+  background: var(--hud-surface);
+}
+.hud-overlay__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 40px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-overlay__panel { animation: none; }
+}
