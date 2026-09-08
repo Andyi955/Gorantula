@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +18,14 @@ import (
 )
 
 var discoveryMu sync.Mutex
+
+// ErrDiscoveryNotFound is returned when a discovery id does not exist; it wraps
+// os.ErrNotExist so the API layer maps it to 404.
+var ErrDiscoveryNotFound = fmt.Errorf("discovery not found: %w", os.ErrNotExist)
+
+// ErrDiscoveryRunning is returned when a caller tries to archive or delete a
+// discovery whose background run is still writing its own record.
+var ErrDiscoveryRunning = errors.New("discovery is still running; wait for it to finish")
 
 func (s *Service) discoveryStore() *Store {
 	return NewStore(filepath.Join(s.store.root, "discoveries"))
@@ -61,20 +71,51 @@ func (s *Service) StartDiscovery(ctx context.Context, theme string, count int) (
 func (s *Service) saveDiscovery(run models.DiscoveryRun) error {
 	discoveryMu.Lock()
 	defer discoveryMu.Unlock()
+	return s.saveDiscoveryLocked(run)
+}
+
+// saveDiscoveryLocked writes a discovery record; the caller must already hold
+// discoveryMu, so callers that mutate a run under the lock never re-enter it.
+func (s *Service) saveDiscoveryLocked(run models.DiscoveryRun) error {
 	return s.discoveryStore().saveSlice(run.ID+".json", run)
 }
+
 func (s *Service) loadDiscovery(id string) (models.DiscoveryRun, error) {
 	var run models.DiscoveryRun
 	if !verificationID.MatchString(id) {
-		return run, fmt.Errorf("invalid discovery ID")
+		return run, ErrDiscoveryNotFound
 	}
 	err := s.discoveryStore().readJSON(id+".json", &run)
 	if err != nil || run.ID != id {
-		return run, fmt.Errorf("discovery not found")
+		return run, ErrDiscoveryNotFound
 	}
 	return run, nil
 }
+
+// ListDiscoveries returns discovery runs that have not been archived.
 func (s *Service) ListDiscoveries() ([]models.DiscoveryRun, error) {
+	all, err := s.listAllDiscoveries()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]models.DiscoveryRun, 0, len(all))
+	for _, run := range all {
+		if run.Dismissed {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out, nil
+}
+
+// ListDiscoveriesIncludingDismissed returns every discovery run, archived ones
+// included, so a caller can show and restore dismissed runs.
+func (s *Service) ListDiscoveriesIncludingDismissed() ([]models.DiscoveryRun, error) {
+	return s.listAllDiscoveries()
+}
+
+// listAllDiscoveries returns every stored run in jsonIDs order, dismissed or not.
+func (s *Service) listAllDiscoveries() ([]models.DiscoveryRun, error) {
 	discoveryMu.Lock()
 	defer discoveryMu.Unlock()
 	ids, err := jsonIDs(s.discoveryStore().root)
@@ -90,6 +131,68 @@ func (s *Service) ListDiscoveries() ([]models.DiscoveryRun, error) {
 		out = append(out, run)
 	}
 	return out, nil
+}
+
+// DismissDiscovery archives a discovery run: it is retained on disk with a
+// dismissed marker and timestamp and hidden from the default listing, exactly
+// like a dismissed brain suggestion. RestoreDiscovery reverses it.
+func (s *Service) DismissDiscovery(id string) (models.DiscoveryRun, error) {
+	discoveryMu.Lock()
+	defer discoveryMu.Unlock()
+	run, err := s.loadDiscovery(id)
+	if err != nil {
+		return run, err
+	}
+	if run.Status == "running" {
+		return models.DiscoveryRun{}, ErrDiscoveryRunning
+	}
+	run.Dismissed = true
+	if run.DismissedAt == "" {
+		run.DismissedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if err := s.saveDiscoveryLocked(run); err != nil {
+		return models.DiscoveryRun{}, err
+	}
+	return run, nil
+}
+
+// RestoreDiscovery un-archives a dismissed discovery run.
+func (s *Service) RestoreDiscovery(id string) (models.DiscoveryRun, error) {
+	discoveryMu.Lock()
+	defer discoveryMu.Unlock()
+	run, err := s.loadDiscovery(id)
+	if err != nil {
+		return run, err
+	}
+	run.Dismissed = false
+	run.DismissedAt = ""
+	if err := s.saveDiscoveryLocked(run); err != nil {
+		return models.DiscoveryRun{}, err
+	}
+	return run, nil
+}
+
+// DeleteDiscovery permanently removes a discovery run's record from disk.
+func (s *Service) DeleteDiscovery(id string) error {
+	discoveryMu.Lock()
+	defer discoveryMu.Unlock()
+	if !verificationID.MatchString(id) {
+		return ErrDiscoveryNotFound
+	}
+	run, err := s.loadDiscovery(id)
+	if err != nil {
+		return err
+	}
+	if run.Status == "running" {
+		return ErrDiscoveryRunning
+	}
+	if err := os.Remove(filepath.Join(s.discoveryStore().root, id+".json")); err != nil {
+		if os.IsNotExist(err) {
+			return ErrDiscoveryNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // GetDiscovery returns one discovery run with its per-question progress.
@@ -179,8 +282,9 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 	out := make([]string, 0, count)
 	accepted := make([]string, 0, count)
 	// Avoid re-running the same question (in any wording) across discovery runs.
+	// Dismissed runs still count as prior work, so this reads every stored run.
 	var priorQuestions []string
-	if previous, _ := s.ListDiscoveries(); len(previous) > 0 {
+	if previous, _ := s.listAllDiscoveries(); len(previous) > 0 {
 		for _, prev := range previous {
 			for _, q := range prev.Questions {
 				if strings.TrimSpace(q.Question) != "" {

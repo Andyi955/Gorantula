@@ -29,4 +29,6 @@ type DiscoveryRun struct {
 	WorkedCount int  `json:"workedCount"`
 	RejectedCount int `json:"rejectedCount"`
 	Error     string `json:"error,omitempty"`
+	Dismissed   bool   `json:"dismissed"`
+	DismissedAt string `json:"dismissedAt,omitempty"`
 }
