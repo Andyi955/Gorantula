@@ -98,7 +98,6 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild, r
     });
   };
   return <section aria-label="Publication console" className="research-publication">
-    {!publicationId && <div><h2 className="text-xl font-semibold">Review and publish</h2><p className="research-muted">Your reports, evidence and sharing decisions.</p></div>}
     {error && <p role="alert" className="text-sm text-[#ff8c86]">{error}</p>}
     {!publicationId && <><div className={card}>
       <label className="text-xs">Finished verification<select aria-label="Finished verification" className={field} value={runId} onChange={e => setRunId(e.target.value)}><option value="">Choose a run</option>{runs.map(r => <option key={r.id} value={r.id}>{r.candidate.hypothesis} — {r.status}</option>)}</select></label>

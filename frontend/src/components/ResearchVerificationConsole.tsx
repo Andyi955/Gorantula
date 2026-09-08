@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ResearchDataWorkbench from './ResearchDataWorkbench';
-import { FlaskConical, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8080/api/research';
 interface Dataset { id: string; name: string; source: string; columns: string[]; rows: number; digest: string; parentId?: string }
@@ -85,12 +85,8 @@ export default function ResearchVerificationConsole({ candidates }: Props) {
     catch (e) { if (mounted.current) setError(String(e)); }
   };
 
-  return <section className="mt-4 flex flex-col gap-3" aria-label="Verification console">
-    <div>
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--forensic-text)]"><FlaskConical size={16} className="text-[var(--forensic-accent)]" aria-hidden />Check a research idea</h2>
-      <p className="mt-1 text-xs leading-relaxed text-[var(--forensic-text-muted)]">Choose an idea and let the research agent look for data, choose the checks, and explain the results. You do not need to choose a statistical test.</p>
-    </div>
-    {error && <p role="alert" className="rounded-lg border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</p>}
+  return <section className="flex flex-col gap-3" aria-label="Verification console">
+    {error && <p role="alert" className="rounded border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</p>}
     <form className={`${card} grid gap-3 sm:grid-cols-2`} onSubmit={e => { e.preventDefault(); void act(() => request('/verify', {
       mode, candidateId: candidate?.id, datasetId: dataset?.id,
       ...(mode === 'manual' ? { calls: [{ tool, groupColumn, valueColumn, statement, rationale }] } : {}),

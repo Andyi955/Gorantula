@@ -153,14 +153,10 @@ export default function ResearchDiscoveries() {
   };
 
   return (
-    <section aria-label="Autonomous discovery" className="mt-4 flex flex-col gap-4">
+    <section aria-label="Autonomous discovery" className="flex flex-col gap-4">
       <div className="hud-panel p-4">
-        <p className="hud-label">Autonomous discovery</p>
-        <p className="mt-2 text-sm leading-relaxed text-[var(--forensic-text-muted)]">
-          The engine proposes its own research questions, runs each one, and shows which produced a recorded finding
-          versus which had no usable data. Nothing is fabricated to fill a gap.
-        </p>
-        <div className="mt-4 flex flex-wrap items-end gap-3">
+        <p className="hud-label">New discovery batch</p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="min-w-[220px] flex-1 text-xs text-[var(--forensic-text-muted)]">
             Optional theme
             <input
