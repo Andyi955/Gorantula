@@ -59,6 +59,26 @@ func TestAggregateDatasetRejectsBadRequests(t *testing.T) {
 	}
 }
 
+func TestDatasetUseRejectsUnrelatedSavedDatasetForTopicRun(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, out interface{}) error {
+		body, _ := json.Marshal(map[string]interface{}{"relevant": false, "columns": []string{}})
+		return json.Unmarshal(body, out)
+	}}}}
+	unrelated, err := s.RegisterDataset("Lizard thermal trials", "fixture", "lizard_id,mass,tube\n1,20,3\n2,22,4\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := models.VerificationRun{ID: strings.Repeat("a", 32), Request: models.VerificationRequest{Topic: "Does GDP per capita correlate with life expectancy"}}
+	out := s.executeDatasetCall(context.Background(), &run, models.DatasetCall{Tool: "dataset-use", DatasetID: unrelated.ID, Rationale: "Try a saved snapshot from an earlier run."})
+	if out.Error == "" {
+		t.Fatal("selecting a dataset that cannot answer the topic must be refused")
+	}
+	if run.Dataset.ID != "" {
+		t.Errorf("the run must not adopt the rejected dataset: %+v", run.Dataset)
+	}
+}
+
 func TestDatasetInspectionAndImmutableFilter(t *testing.T) {
 	s, _ := verificationFixture(t)
 	original := "group,value\na,1\na,3\nb,NA\nb,9\nb,11\nc,text\n"

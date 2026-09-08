@@ -468,11 +468,11 @@ func csvHeaderColumns(data []byte) []string {
 	return fields
 }
 
-// discoveryDatasetFits asks the model whether a candidate dataset contains the
-// variables the question needs, and requires it to name at least one column
-// that actually exists. A bare "yes" is not enough, and a bare "no" is not
-// enough to reject either: the check fails open when no model is available.
-func (s *Service) discoveryDatasetFits(ctx context.Context, question string, candidate openDataset, columns []string) bool {
+// datasetAnswersQuestion asks the model whether a table's columns contain the
+// variables a question needs, and requires it to name at least one column that
+// actually exists. A bare "yes" is not enough, and the check fails open when no
+// model is available, so it can never block every run.
+func (s *Service) datasetAnswersQuestion(ctx context.Context, question, name, description string, columns []string) bool {
 	if s.brain == nil || s.brain.GetSearchProvider() == nil {
 		return true
 	}
@@ -482,7 +482,7 @@ DATASET: %s
 DESCRIPTION: %s
 COLUMNS: %s
 Answer JSON {"relevant":true|false,"columns":["exact column names from COLUMNS you would use"]}.
-Set relevant true only when the listed columns contain the variables the question needs, and name those columns exactly. A dataset that is merely topically adjacent is not relevant.`, question, candidate.Name, truncateRunes(candidate.Description, 300), strings.Join(columns, ", "))
+Set relevant true only when the listed columns contain the variables the question needs, and name those columns exactly. A dataset that is merely topically adjacent is not relevant.`, question, name, truncateRunes(description, 300), strings.Join(columns, ", "))
 	var resp struct {
 		Relevant bool     `json:"relevant"`
 		Columns  []string `json:"columns"`
@@ -507,6 +507,11 @@ Set relevant true only when the listed columns contain the variables the questio
 		}
 	}
 	return false
+}
+
+// discoveryDatasetFits is the open-data candidate form of the relevance check.
+func (s *Service) discoveryDatasetFits(ctx context.Context, question string, candidate openDataset, columns []string) bool {
+	return s.datasetAnswersQuestion(ctx, question, candidate.Name, candidate.Description, columns)
 }
 
 // discoveryDedupStopwords are generic question scaffolding, not content. Subject

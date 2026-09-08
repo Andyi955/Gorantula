@@ -532,6 +532,15 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		var d models.ResearchDataset
 		d, err = s.loadDataset(call.DatasetID)
 		if err == nil {
+			// A saved snapshot from an earlier run is not data supplied for this
+			// question. Selecting one that cannot answer the topic is how an
+			// off-topic computation used to be scored as a finding, so the same
+			// relevance check that guards seeding guards selection too.
+			if strings.TrimSpace(run.Request.Topic) != "" && d.ID != run.Dataset.ID &&
+				!s.datasetAnswersQuestion(ctx, run.Request.Topic, d.Name, d.Source, d.Columns) {
+				err = fmt.Errorf("the selected dataset does not contain the variables this question needs; use dataset-search to find data that does, or dataset-import a candidate link")
+				break
+			}
 			// Keep earlier calculation inputs for replay if selection follows a failure.
 			if run.Dataset.ID != "" {
 				run.DatasetParents = append(run.DatasetParents, run.Dataset)
