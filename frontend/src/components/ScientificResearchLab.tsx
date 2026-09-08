@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Microscope, Plus, Check, GitBranch, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Microscope, Plus, Check, Archive, ArchiveRestore, GitBranch, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
 import ResearchVerificationConsole from './ResearchVerificationConsole';
 import ResearchPublicationConsole from './ResearchPublicationConsole';
 import ResearchPipeline from './ResearchPipeline';
@@ -81,6 +81,8 @@ interface Candidate {
   state: string;
   approvedBy?: string;
   approvedAt?: string;
+  dismissed?: boolean;
+  dismissedAt?: string;
 }
 
 interface CandidateExpansion {
@@ -106,6 +108,17 @@ const STATE_LABEL: Record<string, string> = {
   approved: 'Approved',
   rejected: 'Rejected',
 };
+
+// "Open" is every state the operator has not yet decided on. The finer state
+// (proposed / reviewed / tested / supported / refuted) stays visible as a chip
+// on each card, so four filters cover seven states without a tab per state.
+const CANDIDATE_OPEN_STATES = ['proposed', 'reviewed', 'tested', 'supported', 'refuted'];
+const CANDIDATE_FILTERS: { id: 'open' | 'approved' | 'rejected' | 'all'; label: string }[] = [
+  { id: 'open', label: 'Open' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'all', label: 'All' },
+];
 
 const VERDICT_RECOMMENDATION: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Approve — all criteria are satisfied.', tone: 'text-[#90f3da]' },
@@ -222,6 +235,11 @@ const ScientificResearchLab = () => {
   const [relations, setRelations] = useState<ClaimRelation[]>([]);
   const [signals, setSignals] = useState<ResearchSignal[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  // Archived candidates are fetched separately so the queue that feeds the
+  // Pipeline picker and the Verification console stays free of shelved ideas.
+  const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
+  const [showArchivedCandidates, setShowArchivedCandidates] = useState(false);
+  const [candidateFilter, setCandidateFilter] = useState<'open' | 'approved' | 'rejected' | 'all'>('open');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -261,6 +279,16 @@ const ScientificResearchLab = () => {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const loadArchivedCandidates = useCallback(async () => {
+    try {
+      const all = await fetch(`${RESEARCH_API}/candidates?includeDismissed=1`).then((res) => res.json());
+      setArchivedCandidates(Array.isArray(all) ? all.filter((c: Candidate) => c.dismissed) : []);
+    } catch {
+      // The active queue still renders; the archived view just stays empty.
+      setArchivedCandidates([]);
+    }
+  }, []);
 
   const claimCountByPaper = useMemo(() => {
     const map: Record<string, number> = {};
@@ -303,10 +331,15 @@ const ScientificResearchLab = () => {
     }
   };
 
-  const transitionCandidate = async (id: string, action: 'approve' | 'reject') => {
+  const transitionCandidate = async (id: string, action: 'approve' | 'reject' | 'dismiss' | 'restore') => {
     try {
-      await fetch(`${RESEARCH_API}/candidates/${id}/${action}?by=operator`, { method: 'POST' });
-      await reload();
+      const response = await fetch(`${RESEARCH_API}/candidates/${id}/${action}?by=operator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) throw new Error(await response.text());
+      await Promise.all([reload(), loadArchivedCandidates()]);
     } catch {
       setError('Could not update the candidate.');
     }
@@ -503,12 +536,44 @@ const ScientificResearchLab = () => {
   };
 
   const renderCandidates = () => {
-    if (candidates.length === 0) {
-      return emptyState('No candidates yet. Ingest papers that share entities to surface reviewable hypotheses.');
-    }
+    const all = showArchivedCandidates ? [...candidates, ...archivedCandidates] : candidates;
+    const countFor = (id: typeof candidateFilter) => id === 'open'
+      ? all.filter((c) => CANDIDATE_OPEN_STATES.includes(c.state)).length
+      : id === 'all' ? all.length : all.filter((c) => c.state === id).length;
+    const visible = all.filter((c) => (candidateFilter === 'open'
+      ? CANDIDATE_OPEN_STATES.includes(c.state)
+      : candidateFilter === 'all' || c.state === candidateFilter));
     return (
       <div className="flex flex-col gap-3">
-        {candidates.map((candidate) => {
+        <div className="flex flex-wrap items-center gap-2">
+          {CANDIDATE_FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className="hud-tab"
+              aria-pressed={candidateFilter === filter.id}
+              onClick={() => setCandidateFilter(filter.id)}
+            >
+              {filter.label}<span className="hud-tab-count">{countFor(filter.id)}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="hud-tab ml-auto"
+            aria-pressed={showArchivedCandidates}
+            onClick={() => {
+              const next = !showArchivedCandidates;
+              setShowArchivedCandidates(next);
+              if (next) void loadArchivedCandidates();
+            }}
+          >
+            Show archived
+          </button>
+        </div>
+        {visible.length === 0 && emptyState(all.length === 0
+          ? 'No candidates yet. Ingest papers that share entities to surface reviewable hypotheses.'
+          : 'Nothing in this view. Try another filter.')}
+        {visible.map((candidate) => {
           const verdict = VERDICT_META[candidate.verdict || 'disputed'] || VERDICT_META.disputed;
           const checklist = candidate.checklist || [];
           const confirmed = checklist.filter((item) => item.answer === 'yes').length;
@@ -533,6 +598,7 @@ const ScientificResearchLab = () => {
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${verdict.tone}`}>{verdict.label}</span>
                 <span className="rounded-md border border-[var(--forensic-border-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)]">{STATE_LABEL[candidate.state] || candidate.state}</span>
+                {candidate.dismissed && <span className="hud-chip text-[#8b9dae]">Archived</span>}
                 {noveltyPct !== null && (
                   <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${noveltyTone}`}>
                     <span aria-hidden>◎</span>
@@ -636,6 +702,25 @@ const ScientificResearchLab = () => {
                   )}
                   {candidate.state !== 'rejected' && (
                     <button type="button" onClick={() => transitionCandidate(candidate.id, 'reject')} className="hud-button hud-button--danger text-[#ff8c86]">Reject</button>
+                  )}
+                  {candidate.dismissed ? (
+                    <button
+                      type="button"
+                      onClick={() => void transitionCandidate(candidate.id, 'restore')}
+                      className="hud-button"
+                      aria-label={`Restore ${candidate.hypothesis.slice(0, 60)} to the queue`}
+                    >
+                      <ArchiveRestore size={13} aria-hidden />Restore
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void transitionCandidate(candidate.id, 'dismiss')}
+                      className="hud-button"
+                      aria-label={`Archive ${candidate.hypothesis.slice(0, 60)} out of the queue`}
+                    >
+                      <Archive size={13} aria-hidden />Archive
+                    </button>
                   )}
                 </div>
               </div>
