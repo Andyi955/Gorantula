@@ -191,6 +191,43 @@ func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun)
 	return s.topicStage(run, "checking", "The verification agent is reading sources and looking for usable data. Missing data will be reported explicitly.")
 }
 
+// seedTopicDataset records the topic's open-data candidates and selects the
+// first one the relevance check accepts, so a topic run starts with the table
+// that answers it instead of an unrelated saved snapshot. It never overrides a
+// dataset that was supplied with the request, and every failure is silent: the
+// run continues on the paper path.
+func (s *Service) seedTopicDataset(ctx context.Context, run *models.VerificationRun) error {
+	if run.Dataset.ID != "" || strings.TrimSpace(run.Request.Topic) == "" {
+		return nil
+	}
+	candidates, err := searchOpenData(ctx, run.Request.Topic)
+	if err != nil {
+		return err
+	}
+	summary, links := describeOpenDataCandidates(candidates)
+	run.DatasetActions = append(run.DatasetActions, models.DatasetResult{
+		Call:    models.DatasetCall{Tool: "dataset-search", Query: run.Request.Topic, Rationale: "Open-data candidates for this topic, listed before the agent chooses a dataset."},
+		Summary: summary,
+		Links:   links,
+	})
+	for _, candidate := range candidates {
+		data, _, fetchErr := downloadOpenDataset(ctx, candidate)
+		if fetchErr != nil {
+			continue
+		}
+		if !s.discoveryDatasetFits(ctx, run.Request.Topic, candidate, csvHeaderColumns(data)) {
+			continue
+		}
+		dataset, registerErr := s.RegisterDataset(candidate.Name+" (open data)", "Open-data repository: "+candidate.Provider+"; file "+candidate.File+"; provenance unverified", string(data))
+		if registerErr != nil {
+			continue
+		}
+		run.Dataset = dataset
+		return nil
+	}
+	return nil
+}
+
 // proposeFromDataset is a fallback for a topic where the retrieved papers do not
 // address the question but an open-data repository has a relevant CSV. It
 // imports the best available small CSV, then proposes a bounded, data-grounded

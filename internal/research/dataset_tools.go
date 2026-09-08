@@ -40,6 +40,26 @@ func fetchDatasetURL(ctx context.Context, raw string) ([]byte, string, error) {
 	return fetchResearchURL(ctx, raw, maxDatasetBytes)
 }
 
+// describeOpenDataCandidates renders the candidate list the agent sees and the
+// download links that dataset-import accepts, so the search tool and the
+// up-front seeding of a topic run describe candidates identically.
+func describeOpenDataCandidates(found []openDataset) (string, []string) {
+	if len(found) == 0 {
+		return "No open-data repository candidate with a downloadable CSV/TSV matched the query. This records that none was found; it is not evidence that the data does not exist.", nil
+	}
+	var sb strings.Builder
+	sb.WriteString("Open-data repository candidates (verify relevance and provenance before importing; a downloadable file is not proof of good data): ")
+	links := make([]string, 0, len(found))
+	for i, d := range found {
+		if i > 0 {
+			sb.WriteString(" | ")
+		}
+		fmt.Fprintf(&sb, "%s [%s, %d KB, file %s]", d.Name, d.Provider, d.Size>>10, d.File)
+		links = append(links, d.DownloadURL)
+	}
+	return truncateRunes(sb.String(), 1600), links
+}
+
 func fetchResearchURL(ctx context.Context, raw string, limit int64) ([]byte, string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || (u.Port() != "" && u.Port() != "443" && u.Port() != "80") {
@@ -426,21 +446,7 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		if err != nil {
 			break
 		}
-		if len(found) == 0 {
-			out.Summary = "No open-data repository candidate with a downloadable CSV/TSV matched the query. This records that none was found; it is not evidence that the data does not exist."
-			out.Call = call
-			break
-		}
-		var sb strings.Builder
-		sb.WriteString("Open-data repository candidates (verify relevance and provenance before importing; a downloadable file is not proof of good data): ")
-		for i, d := range found {
-			if i > 0 {
-				sb.WriteString(" | ")
-			}
-			fmt.Fprintf(&sb, "%s [%s, %d KB, file %s]", d.Name, d.Provider, d.Size>>10, d.File)
-			out.Links = append(out.Links, d.DownloadURL)
-		}
-		out.Summary = truncateRunes(sb.String(), 1600)
+		out.Summary, out.Links = describeOpenDataCandidates(found)
 		out.Call = call
 	case "dataset-filter":
 		if hasSuccessfulCalculation(run.Results) {

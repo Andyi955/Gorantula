@@ -451,6 +451,13 @@ func (s *Service) runVerificationAgent(ctx context.Context, run *models.Verifica
 		if err := s.discoverTopicData(ctx, run); err != nil {
 			return err
 		}
+		// Then offer the topic's open-data candidates and seed the run with the
+		// first one the relevance check accepts. Without this a paper-first run
+		// can settle on an unrelated saved snapshot and never import the data
+		// that answers the topic.
+		if err := s.seedTopicDataset(ctx, run); err != nil {
+			trace("topic", fmt.Sprintf("open-data seeding unavailable: %v", err))
+		}
 	}
 	availableDatasets, err := s.ListDatasets()
 	if err != nil {
