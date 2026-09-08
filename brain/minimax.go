@@ -376,10 +376,58 @@ func extractJSONValueWithDelimiters(content string, open, close rune) (string, e
 func uniqueJSONParseVariants(content string) []string {
 	trimmed := strings.TrimSpace(content)
 	repaired := removeTrailingJSONCommas(trimmed)
-	if repaired == trimmed {
-		return []string{trimmed}
+	escaped := escapeRawJSONControlChars(repaired)
+	variants := []string{trimmed}
+	if repaired != trimmed {
+		variants = append(variants, repaired)
 	}
-	return []string{trimmed, repaired}
+	if escaped != repaired {
+		variants = append(variants, escaped)
+	}
+	return variants
+}
+
+// escapeRawJSONControlChars escapes literal newlines, tabs and other control
+// characters that appear inside string literals. Models routinely emit a real
+// newline inside a JSON string, which is invalid JSON; without this repair the
+// whole agent turn is discarded and a finished computation is lost.
+func escapeRawJSONControlChars(content string) string {
+	var builder strings.Builder
+	builder.Grow(len(content) + 16)
+	inString := false
+	escaped := false
+	for _, c := range content {
+		if escaped {
+			builder.WriteRune(c)
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			builder.WriteRune(c)
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			builder.WriteRune(c)
+			continue
+		}
+		if inString && c < 0x20 {
+			switch c {
+			case '\n':
+				builder.WriteString(`\n`)
+			case '\r':
+				builder.WriteString(`\r`)
+			case '\t':
+				builder.WriteString(`\t`)
+			default:
+				builder.WriteString(fmt.Sprintf(`\u%04x`, c))
+			}
+			continue
+		}
+		builder.WriteRune(c)
+	}
+	return builder.String()
 }
 
 func removeTrailingJSONCommas(content string) string {

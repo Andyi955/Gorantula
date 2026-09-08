@@ -518,8 +518,22 @@ func whoCSV(data []byte, label string) ([]byte, error) {
 	}
 	column := columnNameFromLabel(label)
 	out := [][]string{{"country_code", "year", "group", column}}
+	// A WHO indicator often reports both sexes as separate rows. Keeping all of
+	// them would give two rows per country-year and let a join silently pick
+	// whichever landed last, so when the both-sexes row exists it is the only one
+	// kept.
+	bothSexes := false
+	for _, row := range body.Value {
+		if row.Dim1 == "SEX_BTSX" {
+			bothSexes = true
+			break
+		}
+	}
 	for _, row := range body.Value {
 		if row.NumericValue == nil || row.TimeDim == nil || row.SpatialDim == "" {
+			continue
+		}
+		if bothSexes && row.Dim1 != "SEX_BTSX" {
 			continue
 		}
 		out = append(out, []string{row.SpatialDim, strconv.Itoa(*row.TimeDim), row.Dim1, strconv.FormatFloat(*row.NumericValue, 'g', -1, 64)})

@@ -80,6 +80,31 @@ func TestMergeOpenDatasetTablesJoinsOnCountryAndYear(t *testing.T) {
 	}
 }
 
+func TestWHOCSVKeepsBothSexesRowsWhenPresent(t *testing.T) {
+	payload := `{"value":[{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"SEX_MALE","NumericValue":58.1},{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"SEX_FMLE","NumericValue":62.4},{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":60.2},{"SpatialDim":"KEN","TimeDim":2016,"Dim1":"SEX_BTSX","NumericValue":60.9}]}`
+	out, err := whoCSV([]byte(payload), "Life expectancy at birth (years)")
+	if err != nil {
+		t.Fatalf("whoCSV: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("sex-specific rows must be dropped when both-sexes rows exist, got %v", lines)
+	}
+	if lines[1] != "KEN,2015,SEX_BTSX,60.2" {
+		t.Errorf("row = %q", lines[1])
+	}
+
+	// An indicator with no sex dimension keeps every row.
+	plain := `{"value":[{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"AGE0-4","NumericValue":1},{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"AGE5-9","NumericValue":2}]}`
+	out, err = whoCSV([]byte(plain), "Cases")
+	if err != nil {
+		t.Fatalf("whoCSV: %v", err)
+	}
+	if lines := strings.Split(strings.TrimSpace(string(out)), "\n"); len(lines) != 3 {
+		t.Fatalf("rows without a sex dimension must be kept, got %v", lines)
+	}
+}
+
 func TestWorldBankMatchesPairsTwoIndicators(t *testing.T) {
 	matches := worldBankMatches("Does life expectancy correlate with GDP per capita across countries")
 	if len(matches) != 2 {
@@ -206,14 +231,15 @@ func TestWHOCSVNamesTheValueColumn(t *testing.T) {
 		t.Fatalf("whoCSV: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected a header and two rows, got %v", lines)
+	// The sex-specific row is dropped because a both-sexes row exists.
+	if len(lines) != 2 {
+		t.Fatalf("expected a header and the both-sexes row, got %v", lines)
 	}
 	if lines[0] != "country_code,year,group,life_expectancy_at_birth_years" {
 		t.Errorf("header = %q", lines[0])
 	}
-	if lines[2] != "GBR,2019,SEX_BTSX,81.3" {
-		t.Errorf("row = %q", lines[2])
+	if lines[1] != "GBR,2019,SEX_BTSX,81.3" {
+		t.Errorf("row = %q", lines[1])
 	}
 }
 

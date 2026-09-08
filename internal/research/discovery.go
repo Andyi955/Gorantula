@@ -482,7 +482,7 @@ DATASET: %s
 DESCRIPTION: %s
 COLUMNS: %s
 Answer JSON {"relevant":true|false,"columns":["exact column names from COLUMNS you would use"]}.
-Set relevant true only when the listed columns contain the variables the question needs, and name those columns exactly. A dataset that is merely topically adjacent is not relevant.`, question, name, truncateRunes(description, 300), strings.Join(columns, ", "))
+Set relevant true only when the listed columns measure the exact quantities the question names. A column that measures a related but different quantity is NOT relevant, even when the topic is adjacent: healthy life expectancy is not life expectancy; per capita income is not GDP per capita unless the column is per capita; prevalence is not incidence. Name the columns you would use and nothing else.`, question, name, truncateRunes(description, 300), strings.Join(columns, ", "))
 	var resp struct {
 		Relevant bool     `json:"relevant"`
 		Columns  []string `json:"columns"`
