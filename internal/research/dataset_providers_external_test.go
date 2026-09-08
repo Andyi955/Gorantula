@@ -6,6 +6,48 @@ import (
 	"testing"
 )
 
+func TestMergeProviderCandidatesJoinsWorldBankAndWHO(t *testing.T) {
+	candidates := []openDataset{
+		{Provider: "World Bank", Name: "GDP per capita", DownloadURL: "https://wb", Format: "worldbank:GDP per capita"},
+		{Provider: "WHO", Name: "Healthy life expectancy", DownloadURL: "https://who", Format: "who:Healthy life expectancy"},
+	}
+	merged, ok := mergeProviderCandidates(candidates)
+	if !ok || merged.Provider != "World Bank + WHO" || len(merged.Merge) != 2 || merged.Format != "merge" {
+		t.Fatalf("merge = %+v ok=%v", merged, ok)
+	}
+	if _, ok := mergeProviderCandidates(candidates[:1]); ok {
+		t.Error("a single-provider question must not produce a merged table")
+	}
+}
+
+func TestMergeOpenDatasetTablesJoinsOnCountryAndYear(t *testing.T) {
+	original := dataDownloadFetch
+	originalBulk := providerBulkFetch
+	defer func() { dataDownloadFetch = original; providerBulkFetch = originalBulk }()
+	dataDownloadFetch = func(_ context.Context, raw string) ([]byte, string, error) {
+		return []byte(`[{"page":1},[{"country":{"value":"Kenya"},"countryiso3code":"KEN","date":"2015","value":1350},{"country":{"value":"Kenya"},"countryiso3code":"KEN","date":"2016","value":1400}]]`), raw, nil
+	}
+	providerBulkFetch = func(_ context.Context, raw string) ([]byte, string, error) {
+		return []byte(`{"value":[{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":60.5},{"SpatialDim":"KEN","TimeDim":2016,"Dim1":"SEX_BTSX","NumericValue":61.2},{"SpatialDim":"TCD","TimeDim":2015,"Dim1":"SEX_BTSX","NumericValue":52}]}`), raw, nil
+	}
+	merged := openDataset{Provider: "World Bank + WHO", Format: "merge", Merge: []openDataset{
+		{Provider: "World Bank", DownloadURL: "https://api.worldbank.org/v2/x", Format: "worldbank:GDP per capita"},
+		{Provider: "WHO", DownloadURL: "https://ghoapi.azureedge.net/api/X", Format: "who:Healthy life expectancy"},
+	}}
+	out, _, err := downloadOpenDataset(context.Background(), merged)
+	if err != nil {
+		t.Fatalf("downloadOpenDataset: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if lines[0] != "country_code,year,gdp_per_capita,healthy_life_expectancy" {
+		t.Errorf("header = %q", lines[0])
+	}
+	// Chad is only in the WHO table, so the inner join drops it.
+	if len(lines) != 3 || lines[1] != "KEN,2015,1350,60.5" || lines[2] != "KEN,2016,1400,61.2" {
+		t.Fatalf("rows = %v", lines)
+	}
+}
+
 func TestWorldBankMatchesPairsTwoIndicators(t *testing.T) {
 	matches := worldBankMatches("Does life expectancy correlate with GDP per capita across countries")
 	if len(matches) != 2 {

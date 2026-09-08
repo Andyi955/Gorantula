@@ -16,6 +16,16 @@ var openDataFetch = fetchResearchURL
 // can stub it without network.
 var dataDownloadFetch = fetchDatasetURL
 
+// maxProviderBytes bounds provider payloads that are legitimately large: one WHO
+// indicator is several megabytes, well over the per-dataset analysis limit.
+const maxProviderBytes = 24 << 20
+
+// providerBulkFetch fetches a large provider payload. It is a variable so tests
+// can stub it without network.
+var providerBulkFetch = func(ctx context.Context, raw string) ([]byte, string, error) {
+	return fetchResearchURL(ctx, raw, maxProviderBytes)
+}
+
 const openDataSearchLimit = 4 << 20
 
 // truncateRunes shortens s to at most n runes, appending an ellipsis when it
@@ -41,6 +51,10 @@ type openDataset struct {
 	// already CSV; the other values name a JSON API that is converted to CSV at
 	// download time so the analysis tools see a plain table.
 	Format string
+	// Merge holds provider tables that are joined on country and year into this
+	// candidate, for questions that need a variable from two providers (for
+	// example WHO healthy life expectancy with World Bank income).
+	Merge []openDataset
 }
 
 type zenodoResponse struct {
@@ -111,7 +125,44 @@ func searchOpenData(ctx context.Context, query string) ([]openDataset, error) {
 			out = append(out, candidate)
 		}
 	}
+	// A question that names a variable only one provider holds needs both
+	// tables joined before any calculation. Put the merged table first so the
+	// relevance check sees it, and leave the parts available as fallbacks.
+	if merged, ok := mergeProviderCandidates(out); ok {
+		out = append([]openDataset{merged}, out...)
+	}
 	return out, nil
+}
+
+// mergeProviderCandidates joins one World Bank table with one WHO table on
+// country and year. It returns false unless exactly one usable candidate comes
+// from each provider, so a single-provider question is unaffected.
+func mergeProviderCandidates(candidates []openDataset) (openDataset, bool) {
+	var worldBank, who *openDataset
+	for i := range candidates {
+		switch candidates[i].Provider {
+		case "World Bank":
+			if worldBank == nil {
+				worldBank = &candidates[i]
+			}
+		case "WHO":
+			if who == nil {
+				who = &candidates[i]
+			}
+		}
+	}
+	if worldBank == nil || who == nil {
+		return openDataset{}, false
+	}
+	return openDataset{
+		Name:        worldBank.Name + " joined with " + who.Name + " — World Bank + WHO, by country and year",
+		Description: "World Bank indicator and WHO indicator joined on country and year, so both variables are in one table.",
+		Provider:    "World Bank + WHO",
+		File:        worldBank.File + "+" + who.File,
+		DownloadURL: worldBank.DownloadURL,
+		Format:      "merge",
+		Merge:       []openDataset{*worldBank, *who},
+	}, true
 }
 
 // searchZenodo queries the Zenodo API for records with a directly downloadable

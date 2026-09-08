@@ -156,9 +156,11 @@ func searchWHO(ctx context.Context, query string) ([]openDataset, error) {
 	if match == nil {
 		return nil, nil
 	}
+	// The WHO OData endpoint rejects $top with HTTP 400 and one indicator is
+	// several megabytes, so only the country filter is applied and the download
+	// uses the bulk limit.
 	values := url.Values{}
 	values.Set("$filter", "SpatialDimType eq 'COUNTRY'")
-	values.Set("$top", "8000")
 	endpoint := "https://ghoapi.azureedge.net/api/" + match.Code + "?" + values.Encode()
 	return []openDataset{{
 		Name:        match.Name + " — World Health Organization, by country",
@@ -279,6 +281,9 @@ var providerStopwords = map[string]bool{
 // downloadOpenDataset fetches a candidate and returns CSV bytes, converting the
 // provider JSON payloads into a plain table the analysis tools can read.
 func downloadOpenDataset(ctx context.Context, candidate openDataset) ([]byte, string, error) {
+	if len(candidate.Merge) > 0 {
+		return mergeOpenDatasetTables(ctx, candidate)
+	}
 	format, label, _ := strings.Cut(candidate.Format, ":")
 	switch format {
 	case "worldbank":
@@ -298,7 +303,7 @@ func downloadOpenDataset(ctx context.Context, candidate openDataset) ([]byte, st
 		converted, err := worldBankPairCSV(data, second, worldBankName(parts[0]), worldBankName(parts[1]))
 		return converted, final, err
 	case "who":
-		data, final, err := dataDownloadFetch(ctx, candidate.DownloadURL)
+		data, final, err := providerBulkFetch(ctx, candidate.DownloadURL)
 		if err != nil {
 			return nil, "", err
 		}
@@ -377,6 +382,87 @@ func worldBankRows(data []byte) ([]worldBankRow, error) {
 		rows = append(rows, worldBankRow{Country: row.Country.Value, CountryCode: row.CountryCode, Date: row.Date, Value: row.Value})
 	}
 	return rows, nil
+}
+
+// mergeOpenDatasetTables inner-joins provider tables on country code and year,
+// so a question needing a variable from two providers has both columns in one
+// table and can be answered with a single correlation.
+func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte, string, error) {
+	type table struct {
+		header []string
+		rows   [][]string
+		codeAt int
+		yearAt int
+		value  int
+	}
+	tables := make([]table, 0, len(candidate.Merge))
+	final := ""
+	for _, part := range candidate.Merge {
+		data, source, err := downloadOpenDataset(ctx, part)
+		if err != nil {
+			return nil, "", err
+		}
+		final = source
+		header, rows, err := parseVerificationCSV(string(data))
+		if err != nil {
+			return nil, "", err
+		}
+		built := table{header: header, rows: rows, codeAt: -1, yearAt: -1, value: -1}
+		for i, name := range header {
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "country_code":
+				built.codeAt = i
+			case "year":
+				built.yearAt = i
+			}
+		}
+		if built.codeAt < 0 || built.yearAt < 0 {
+			return nil, "", fmt.Errorf("cannot join %s: no country_code/year columns", part.Provider)
+		}
+		for i, name := range header {
+			if i == built.codeAt || i == built.yearAt {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "country", "rows", "group":
+				continue
+			}
+			built.value = i
+			break
+		}
+		if built.value < 0 {
+			return nil, "", fmt.Errorf("cannot join %s: no value column", part.Provider)
+		}
+		tables = append(tables, built)
+	}
+	if len(tables) != 2 {
+		return nil, "", fmt.Errorf("a merged table needs exactly two provider tables")
+	}
+	left, right := tables[0], tables[1]
+	index := make(map[string][]string, len(left.rows))
+	for _, row := range left.rows {
+		index[row[left.codeAt]+"|"+row[left.yearAt]] = row
+	}
+	out := [][]string{{"country_code", "year", left.header[left.value], right.header[right.value]}}
+	for _, row := range right.rows {
+		other, ok := index[row[right.codeAt]+"|"+row[right.yearAt]]
+		if !ok {
+			continue
+		}
+		leftValue, leftErr := strconv.ParseFloat(strings.TrimSpace(other[left.value]), 64)
+		rightValue, rightErr := strconv.ParseFloat(strings.TrimSpace(row[right.value]), 64)
+		if leftErr != nil || rightErr != nil {
+			continue
+		}
+		out = append(out, []string{row[right.codeAt], row[right.yearAt],
+			strconv.FormatFloat(leftValue, 'g', -1, 64),
+			strconv.FormatFloat(rightValue, 'g', -1, 64)})
+	}
+	if len(out) < 2 {
+		return nil, "", fmt.Errorf("the two provider tables share no country and year")
+	}
+	encoded, err := encodeCSV(out)
+	return encoded, final, err
 }
 
 func worldBankCSV(data []byte, label string) ([]byte, error) {
