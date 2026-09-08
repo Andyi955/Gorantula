@@ -22,6 +22,11 @@ func completeTopicStage(run *models.VerificationRun, stage string) {
 }
 
 func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun) error {
+	// A seeded dataset means the operator (or discovery engine) already knows the
+	// data for this question; skip the paper-first search and compute directly.
+	if strings.TrimSpace(run.Request.DatasetID) != "" {
+		return s.prepareDatasetFirst(ctx, run)
+	}
 	if err := s.topicStage(run, "searching", "Searching online for up to five papers with available abstracts."); err != nil {
 		return err
 	}
@@ -264,6 +269,56 @@ func (s *Service) proposeFromDataset(ctx context.Context, run *models.Verificati
 		return err
 	}
 	return s.topicStage(run, "checking", "Using the imported open-data dataset. The verification agent is inspecting columns and choosing an appropriate calculation.")
+}
+
+// prepareDatasetFirst runs a topic with an explicitly seeded dataset (the
+// discovery engine hands it the dataset it anchored a question to). It inspects
+// the dataset's columns, proposes a bounded hypothesis the dataset can answer,
+// and hands it to the verification agent to compute, skipping the paper-first
+// search.
+func (s *Service) prepareDatasetFirst(ctx context.Context, run *models.VerificationRun) error {
+	d, err := s.loadDataset(run.Request.DatasetID)
+	if err != nil {
+		return fmt.Errorf("seeded dataset unavailable: %w", err)
+	}
+	insp, err := inspectDataset(d)
+	if err != nil {
+		return err
+	}
+	cols := make([]map[string]interface{}, 0, len(insp.Columns))
+	for _, col := range insp.Columns {
+		cols = append(cols, map[string]interface{}{"name": col.Name, "numeric": col.Numeric, "text": col.Text, "missing": col.Missing})
+	}
+	payload, _ := json.Marshal(map[string]interface{}{"topic": run.Request.Topic, "columns": cols, "rows": d.Rows})
+	var proposal struct {
+		Hypothesis string `json:"hypothesis"`
+		Group      string `json:"group,omitempty"`
+		Value      string `json:"value,omitempty"`
+		CorrelateA string `json:"correlateA,omitempty"`
+		CorrelateB string `json:"correlateB,omitempty"`
+	}
+	err = s.brain.GetSearchProvider().GenerateJSON(ctx, `Propose ONE bounded, testable research question that ANSWERS THE USER'S ORIGINAL QUESTION using ONLY the attached dataset columns. Never claim causation or proven truth. The dataset has `+fmt.Sprintf("%d", d.Rows)+` rows with these columns (numeric/text/missing counts): `+string(payload)+`. The user's question is: `+run.Request.Topic+`. If a categorical column and a numeric column can answer it, propose a group comparison (set group and value). Else if two numeric columns can, propose a correlation (set correlateA and correlateB). If no columns can answer, return an empty hypothesis. Return JSON {"hypothesis":"one plain-language question, maximum 800 characters","group":"","value":"","correlateA":"","correlateB":""}.`, &proposal)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(proposal.Hypothesis) == "" || len(proposal.Hypothesis) > 3200 {
+		return fmt.Errorf("the dataset could not answer the question")
+	}
+	run.Dataset = d
+	run.Papers = nil
+	run.PaperSources = nil
+	run.Candidate = models.CandidateHypothesis{ID: "topic-" + run.ID, Hypothesis: proposal.Hypothesis, State: models.CandidateStateProposed, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	claim := models.Claim{ID: "topic-claim-1", PaperID: "dataset:" + d.ID, Text: "Dataset " + d.Name + " records " + fmt.Sprintf("%d", d.Rows) + " rows.", Kind: "method", Provenance: "dataset", SourceSnippet: d.Name}
+	run.Claims = []models.Claim{claim}
+	run.Candidate.ClaimIDs = []string{claim.ID}
+	evaluateChecklist(&run.Candidate, run.Claims)
+	completeTopicStage(run, "searching")
+	completeTopicStage(run, "connecting")
+	completeTopicStage(run, "proposing")
+	if err = s.persistTopicEvidence(*run); err != nil {
+		return err
+	}
+	return s.topicStage(run, "checking", "Using the seeded dataset. The verification agent is inspecting columns and choosing an appropriate calculation.")
 }
 
 // Merge only this run's selected evidence; unrelated candidates and operator decisions survive.

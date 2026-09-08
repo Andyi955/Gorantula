@@ -263,8 +263,14 @@ func TestVerificationAgentToleratesExtraTopLevelField(t *testing.T) {
 
 func TestVerificationAgentRejectsCommandInjection(t *testing.T) {
 	s, req := verificationFixture(t)
+	turn := 0
 	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, response interface{}) error {
-		return json.Unmarshal([]byte(`{"action":"call","call":{"tool":"stats-reanalysis","command":"echo unsafe","groupColumn":"group","valueColumn":"value","statement":"x","rationale":"y"}}`), response)
+		turn++
+		action := `{"action":"call","call":{"descriptive":true,"tool":"stats-reanalysis","command":"echo unsafe","groupColumn":"group","valueColumn":"value","statement":"x","rationale":"y"}}`
+		if turn > 1 {
+			action = `{"action":"finish","interpretation":"Synthetic result only. The injected command field was ignored and never executed."}`
+		}
+		return json.Unmarshal([]byte(action), response)
 	}}}}
 	req.Mode = "agent"
 	req.Calls = nil
@@ -273,8 +279,13 @@ func TestVerificationAgentRejectsCommandInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished := awaitVerification(t, s, run.ID)
-	if finished.Status != "failed" || len(finished.Results) != 0 || !strings.Contains(finished.Error, "unknown field") {
-		t.Fatalf("invalid call accepted: %+v", finished)
+	// The injected "command" field must be inert: it is never executed and never
+	// surfaces as an error; only the recognized stats-reanalysis call runs.
+	if finished.Error != "" || len(finished.Results) == 0 || finished.Results[0].Call.Tool != "stats-reanalysis" {
+		t.Fatalf("injected command field was not inert: status=%s err=%s results=%d", finished.Status, finished.Error, len(finished.Results))
+	}
+	if strings.Contains(finished.Error, "echo unsafe") {
+		t.Fatal("the injected command was treated as executable")
 	}
 }
 
