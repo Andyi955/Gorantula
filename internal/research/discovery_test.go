@@ -114,6 +114,45 @@ func listDiscoveryAPI(t *testing.T, s *Service, path string) []models.DiscoveryR
 	return runs
 }
 
+func TestRotatedDiscoverySeedsDifferBetweenRuns(t *testing.T) {
+	first := rotatedDiscoverySeeds(0)
+	second := rotatedDiscoverySeeds(1)
+	if len(first) != 3 || len(second) != 3 {
+		t.Fatalf("expected 3 seeds each, got %v and %v", first, second)
+	}
+	if first[0] == second[0] && first[1] == second[1] && first[2] == second[2] {
+		t.Errorf("consecutive blank-theme runs must explore different fields, got %v twice", first)
+	}
+	for _, seed := range append(first, second...) {
+		if strings.TrimSpace(seed) == "" {
+			t.Errorf("seeds must not be empty: %v", append(first, second...))
+		}
+	}
+	if got := rotatedDiscoverySeeds(len(discoverySeedPool)); got[0] != first[0] {
+		t.Errorf("rotation must wrap around: %v vs %v", got, first)
+	}
+}
+
+func TestCSVHeaderColumnsReadsHeaderOnly(t *testing.T) {
+	got := csvHeaderColumns([]byte("\ufeffpond_id, frog density ,year\r\n1,2,3\r\n"))
+	want := []string{"pond_id", "frog density", "year"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("column %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDiscoveryDatasetFitsFailsOpenWithoutAModel(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	if !service.discoveryDatasetFits(context.Background(), "Does X correlate with Y", openDataset{Name: "anything"}, []string{"a", "b"}) {
+		t.Error("without a model the relevance check must accept the dataset rather than block every run")
+	}
+}
+
 func TestDiscoveryDismissHidesRunFromListing(t *testing.T) {
 	s, run := newDiscoveryServiceWithRun(t, "completed")
 

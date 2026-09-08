@@ -71,26 +71,72 @@ func fetchResearchURL(ctx context.Context, raw string, limit int64) ([]byte, str
 		}
 		return nil
 	}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, "", err
+	// Many data hosts answer an unadorned request with 403, so the fetch
+	// identifies itself as a browser and retries once with a plain client
+	// agent, which some hosts gate differently. Access failures stay explicit:
+	// a 403 means access failed, not that the data does not exist.
+	return fetchWithAgents(ctx, client, u.String(), limit)
+}
+
+// fetchWithAgents runs the request once per configured user agent, retrying
+// only on status codes that mean "access refused" rather than "not there".
+func fetchWithAgents(ctx context.Context, client *http.Client, raw string, limit int64) ([]byte, string, error) {
+	var lastErr error
+	for attempt, agent := range datasetUserAgents {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, "", ctx.Err()
+			case <-time.After(400 * time.Millisecond):
+			}
+		}
+		data, final, retryable, err := fetchResearchURLOnce(ctx, client, raw, limit, agent)
+		if err == nil {
+			return data, final, nil
+		}
+		lastErr = err
+		if !retryable {
+			break
+		}
 	}
+	return nil, "", lastErr
+}
+
+// datasetUserAgents are tried in order. The second entry exists because some
+// hosts treat a browser string as a scraper and a plain client as acceptable,
+// and vice versa.
+var datasetUserAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+	"curl/8.5.0",
+}
+
+func fetchResearchURLOnce(ctx context.Context, client *http.Client, raw string, limit int64, agent string) ([]byte, string, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return nil, "", false, err
+	}
+	req.Header.Set("User-Agent", agent)
+	req.Header.Set("Accept", "text/csv, application/csv, text/plain, application/octet-stream, */*")
+	req.Header.Set("Accept-Language", "en")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("dataset source returned HTTP %d", resp.StatusCode)
+		retryable := resp.StatusCode == http.StatusForbidden ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusServiceUnavailable
+		return nil, "", retryable, fmt.Errorf("dataset source returned HTTP %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if int64(len(data)) > limit {
-		return nil, "", fmt.Errorf("source exceeds %d MiB", limit>>20)
+		return nil, "", false, fmt.Errorf("source exceeds %d MiB", limit>>20)
 	}
-	return data, resp.Request.URL.String(), nil
+	return data, resp.Request.URL.String(), false, nil
 }
 
 func inspectDataset(d models.ResearchDataset) (models.DatasetResult, error) {

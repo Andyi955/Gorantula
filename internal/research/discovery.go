@@ -246,9 +246,12 @@ func (s *Service) executeDiscovery(ctx context.Context, run models.DiscoveryRun,
 // or computation can actually answer.
 func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, count int) ([]string, error) {
 	theme = strings.TrimSpace(theme)
+	// Dismissed runs still count as prior work, so this reads every stored run
+	// once and uses it for both seed rotation and question de-duplication.
+	previous, _ := s.listAllDiscoveries()
 	seeds := []string{theme}
 	if theme == "" {
-		seeds = []string{"ecology", "health", "climate", "agriculture", "metabolism"}
+		seeds = rotatedDiscoverySeeds(len(previous))
 	}
 	var datasetMentions []string
 	seen := map[string]bool{}
@@ -282,14 +285,11 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 	out := make([]string, 0, count)
 	accepted := make([]string, 0, count)
 	// Avoid re-running the same question (in any wording) across discovery runs.
-	// Dismissed runs still count as prior work, so this reads every stored run.
 	var priorQuestions []string
-	if previous, _ := s.listAllDiscoveries(); len(previous) > 0 {
-		for _, prev := range previous {
-			for _, q := range prev.Questions {
-				if strings.TrimSpace(q.Question) != "" {
-					priorQuestions = append(priorQuestions, q.Question)
-				}
+	for _, prev := range previous {
+		for _, q := range prev.Questions {
+			if strings.TrimSpace(q.Question) != "" {
+				priorQuestions = append(priorQuestions, q.Question)
 			}
 		}
 	}
@@ -354,9 +354,22 @@ func (s *Service) runDiscoveryQuestion(ctx context.Context, discoveryID, questio
 	// re-searching papers and rejecting.
 	datasetID := ""
 	if candidates, err := searchOpenData(ctx, question); err == nil && len(candidates) > 0 {
+		// Only seed with a dataset the model judges able to answer the question.
+		// The search happily returns topically adjacent files (a precipitation
+		// table for a question about Bayesian extrapolation), and a seeded run
+		// then computes something real on the wrong data.
+		checked := 0
 		for _, c := range candidates {
+			if checked >= discoveryDatasetChecks {
+				break
+			}
 			data, _, ferr := dataDownloadFetch(ctx, c.DownloadURL)
 			if ferr != nil {
+				continue
+			}
+			checked++
+			if !s.discoveryDatasetFits(ctx, question, c, csvHeaderColumns(data)) {
+				trace("discovery", fmt.Sprintf("skipped unrelated dataset %q for %q", truncateRunes(c.Name, 60), truncateRunes(question, 60)))
 				continue
 			}
 			d, derr := s.RegisterDataset(c.Name+" (discovery)", "Open-data repository: "+c.Provider+"; file "+c.File+"; provenance unverified", string(data))
@@ -412,10 +425,87 @@ func (s *Service) runDiscoveryQuestion(ctx context.Context, discoveryID, questio
 	}
 }
 
+// discoverySeedPool is scanned when no theme is given. The window rotates with
+// the number of prior runs: a fixed list made consecutive blank-theme batches
+// converge on the same few fields, and the model then re-proposed variants of
+// the same questions until de-duplication rejected every one of them.
+var discoverySeedPool = []string{
+	"ecology", "health", "climate", "agriculture", "metabolism",
+	"marine biology", "nutrition", "forestry", "soil science", "economics",
+}
+
+func rotatedDiscoverySeeds(priorRuns int) []string {
+	start := priorRuns % len(discoverySeedPool)
+	seeds := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		seeds = append(seeds, discoverySeedPool[(start+i)%len(discoverySeedPool)])
+	}
+	return seeds
+}
+
 func randToken(n int) []byte {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return b
+}
+
+// discoveryDatasetChecks bounds how many candidate files are downloaded and
+// judged per question, so one question cannot spend the whole budget.
+const discoveryDatasetChecks = 3
+
+// csvHeaderColumns returns the header names of a CSV payload for the relevance
+// judgement. It tolerates a BOM and gives up quietly on anything unparseable.
+func csvHeaderColumns(data []byte) []string {
+	line, _, _ := strings.Cut(strings.TrimPrefix(string(data), "\ufeff"), "\n")
+	fields := strings.Split(strings.TrimRight(line, "\r"), ",")
+	if len(fields) > 32 {
+		fields = fields[:32]
+	}
+	for i := range fields {
+		fields[i] = strings.TrimSpace(fields[i])
+	}
+	return fields
+}
+
+// discoveryDatasetFits asks the model whether a candidate dataset contains the
+// variables the question needs, and requires it to name at least one column
+// that actually exists. A bare "yes" is not enough, and a bare "no" is not
+// enough to reject either: the check fails open when no model is available.
+func (s *Service) discoveryDatasetFits(ctx context.Context, question string, candidate openDataset, columns []string) bool {
+	if s.brain == nil || s.brain.GetSearchProvider() == nil {
+		return true
+	}
+	prompt := fmt.Sprintf(`You decide whether a dataset can answer a research question using only a group comparison or a correlation on its own columns.
+QUESTION: %s
+DATASET: %s
+DESCRIPTION: %s
+COLUMNS: %s
+Answer JSON {"relevant":true|false,"columns":["exact column names from COLUMNS you would use"]}.
+Set relevant true only when the listed columns contain the variables the question needs, and name those columns exactly. A dataset that is merely topically adjacent is not relevant.`, question, candidate.Name, truncateRunes(candidate.Description, 300), strings.Join(columns, ", "))
+	var resp struct {
+		Relevant bool     `json:"relevant"`
+		Columns  []string `json:"columns"`
+	}
+	if err := s.brain.GetSearchProvider().GenerateJSON(ctx, prompt, &resp); err != nil {
+		trace("discovery", fmt.Sprintf("relevance check unavailable for %q: %v", truncateRunes(question, 60), err))
+		return true
+	}
+	if !resp.Relevant {
+		return false
+	}
+	// The model must point at a real column, otherwise "relevant" is unsupported.
+	for _, named := range resp.Columns {
+		named = strings.ToLower(strings.TrimSpace(named))
+		if named == "" {
+			continue
+		}
+		for _, actual := range columns {
+			if strings.ToLower(strings.TrimSpace(actual)) == named {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // discoveryDedupStopwords are generic question scaffolding, not content. Subject

@@ -144,11 +144,11 @@ export default function ResearchVerificationConsole({ candidates }: Props) {
         <label className="text-xs">Provenance (source and relevance)<input required maxLength={2000} className={field} value={source} onChange={e => setSource(e.target.value)} placeholder="Paper DOI, supplement, or synthetic test data" /></label>
         <label className="text-xs sm:col-span-2">CSV file<input type="file" accept=".csv,text/csv" className="mt-1 block" onChange={e => {
           const file = e.target.files?.[0]; if (!file) return;
-          if (file.size > 1048576) { setError('CSV must be at most 1 MiB.'); return; }
+          if (file.size > 4194304) { setError('CSV must be at most 4 MiB.'); return; }
           void file.text().then(text => { if (mounted.current) { setCSV(text); setName(file.name); } }).catch(e => setError(String(e)));
         }} /></label>
         <label className="text-xs sm:col-span-2">CSV contents<textarea aria-label="CSV contents" required className={`${field} h-28 font-mono`} value={csv} onChange={e => setCSV(e.target.value)} placeholder={'group,value\ncontrol,2\ncontrol,3\ntreatment,4\ntreatment,5'} /></label>
-        <p className="text-xs text-[var(--forensic-text-muted)]">Up to 2,000 rows, 32 columns, 1 MiB. Originals stay unchanged.</p>
+        <p className="text-xs text-[var(--forensic-text-muted)]">Up to 10,000 rows, 32 columns, 4 MiB. Originals stay unchanged.</p>
         <button className={primaryButton} disabled={busy || !csv || !name || !source}>Save dataset snapshot</button>
       </form>
       <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); void act(async () => {
