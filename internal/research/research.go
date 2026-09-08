@@ -80,6 +80,48 @@ func (s *Service) ListCandidates() ([]models.CandidateHypothesis, error) {
 	return s.store.LoadCandidates()
 }
 
+// ListCandidateQueue returns the reviewable idea queue: candidates derived from
+// corpus signals. Run-scoped candidates from a free-text topic run are excluded
+// because they belong to that run, not to the queue (they remain persisted and
+// resolvable for the run's own verification and publication). Archived
+// candidates are hidden unless includeDismissed is set.
+func (s *Service) ListCandidateQueue(includeDismissed bool) ([]models.CandidateHypothesis, error) {
+	all, err := s.store.LoadCandidates()
+	if err != nil {
+		return nil, err
+	}
+	queue := make([]models.CandidateHypothesis, 0, len(all))
+	for _, candidate := range all {
+		if candidateIsRunScoped(candidate) {
+			continue
+		}
+		if candidate.Dismissed && !includeDismissed {
+			continue
+		}
+		queue = append(queue, candidate)
+	}
+	return queue, nil
+}
+
+// DismissCandidate archives a candidate out of the queue without discarding its
+// checklist or evidence, mirroring the brain dismissal model.
+func (s *Service) DismissCandidate(id string) (models.CandidateHypothesis, bool, error) {
+	return s.transitionCandidate(id, func(c *models.CandidateHypothesis) {
+		c.Dismissed = true
+		if c.DismissedAt == "" {
+			c.DismissedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+	})
+}
+
+// RestoreCandidate returns an archived candidate to the queue.
+func (s *Service) RestoreCandidate(id string) (models.CandidateHypothesis, bool, error) {
+	return s.transitionCandidate(id, func(c *models.CandidateHypothesis) {
+		c.Dismissed = false
+		c.DismissedAt = ""
+	})
+}
+
 // ApproveCandidate moves a candidate to the `approved` state (operator
 // agreement) and records who/when.
 func (s *Service) ApproveCandidate(id, by string) (models.CandidateHypothesis, bool, error) {
@@ -255,9 +297,10 @@ func (s *Service) rebuildCandidates(ctx context.Context) ([]models.CandidateHypo
 
 	for i := range candidates {
 		// Preserve terminal (approved/rejected) candidates so an operator's
-		// decision survives a corpus re-ingest; refresh everything else.
+		// decision survives a corpus re-ingest, and preserve archived ones so a
+		// shelved idea is not silently revived by the next ingest.
 		if preserved, ok := existingByID[candidates[i].ID]; ok &&
-			(preserved.State == models.CandidateStateApproved || preserved.State == models.CandidateStateRejected) {
+			(preserved.State == models.CandidateStateApproved || preserved.State == models.CandidateStateRejected || preserved.Dismissed) {
 			candidates[i] = preserved
 			continue
 		}

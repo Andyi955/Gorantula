@@ -20,6 +20,15 @@ import (
 
 var publicationMu sync.Mutex
 
+// publicationSafeCandidate returns the candidate with operator shelving
+// cleared. Archiving a candidate is a queue-view decision, not evidence, so it
+// must not change the content digest of a stored publication revision.
+func publicationSafeCandidate(candidate models.CandidateHypothesis) models.CandidateHypothesis {
+	candidate.Dismissed = false
+	candidate.DismissedAt = ""
+	return candidate
+}
+
 func publicationHash(v interface{}) string { b, _ := json.Marshal(v); return digestBytes(b) }
 func (s *Service) publicationStore() *Store {
 	return NewStore(filepath.Join(s.store.root, "publications"))
@@ -53,10 +62,10 @@ func (s *Service) publicationSource(candidateID string) (models.CandidateHypothe
 	if e != nil {
 		return c, "", e
 	}
-	return c, publicationHash([]interface{}{c, claims, papers, rels}), nil
+	return c, publicationHash([]interface{}{publicationSafeCandidate(c), claims, papers, rels}), nil
 }
 func publicationRevision(d models.PublicationDraft) string {
-	return publicationHash([]interface{}{d.SourceRevision, d.Markdown, d.Figures, d.Candidate, d.Claims, d.Papers, d.Relations, publicationHash(d.Run)})
+	return publicationHash([]interface{}{d.SourceRevision, d.Markdown, d.Figures, publicationSafeCandidate(d.Candidate), d.Claims, d.Papers, d.Relations, publicationHash(d.Run)})
 }
 
 // Preserve each content revision before advancing the current state record.
