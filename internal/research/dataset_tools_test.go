@@ -10,6 +10,55 @@ import (
 	"testing"
 )
 
+func TestAggregateDatasetCollapsesPanelToOneRowPerGroup(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	d, err := s.RegisterDataset("panel", "fixture", "country,year,gdp,life\nKenya,2000,1000,55\nKenya,2001,1100,56\nChad,2000,500,50\nChad,2001,600,51\nChad,2002,,52\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.aggregateDataset(d, models.DatasetCall{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"gdp", "life"}, Operation: "mean", Rationale: "One row per country for a cross-country comparison."})
+	if err != nil {
+		t.Fatalf("aggregateDataset: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.CSV), "\n")
+	if lines[0] != "country,rows,gdp_mean,life_mean" {
+		t.Errorf("header = %q", lines[0])
+	}
+	if len(lines) != 3 {
+		t.Fatalf("expected two group rows, got %v", lines)
+	}
+	if lines[1] != "Kenya,2,1050,55.5" {
+		t.Errorf("Kenya row = %q", lines[1])
+	}
+	// Chad's third row has no gdp: the mean uses the two present values and the
+	// row count still reports every row in the group.
+	if lines[2] != "Chad,3,550,51" {
+		t.Errorf("Chad row = %q", lines[2])
+	}
+	if out.Rows != 2 || out.ParentID != d.ID {
+		t.Errorf("child dataset = %+v", out)
+	}
+}
+
+func TestAggregateDatasetRejectsBadRequests(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	d, err := s.RegisterDataset("panel", "fixture", "country,year,gdp\nKenya,2000,1000\nChad,2000,500\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []models.DatasetCall{
+		{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"gdp"}, Operation: "mean"},
+		{Tool: "dataset-aggregate", GroupColumn: "nope", ValueColumns: []string{"gdp"}, Operation: "mean", Rationale: "x"},
+		{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"nope"}, Operation: "mean", Rationale: "x"},
+		{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"gdp"}, Operation: "average", Rationale: "x"},
+	}
+	for i, call := range cases {
+		if _, err := s.aggregateDataset(d, call); err == nil {
+			t.Errorf("case %d should be rejected: %+v", i, call)
+		}
+	}
+}
+
 func TestDatasetInspectionAndImmutableFilter(t *testing.T) {
 	s, _ := verificationFixture(t)
 	original := "group,value\na,1\na,3\nb,NA\nb,9\nb,11\nc,text\n"

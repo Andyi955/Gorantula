@@ -16,6 +16,7 @@ type ResearchDataset struct {
 	OtherParentID     string       `json:"otherParentId,omitempty"`
 	OtherParentDigest string       `json:"otherParentDigest,omitempty"`
 	Filter            *DatasetCall `json:"filter,omitempty"`
+	Aggregate         *DatasetCall `json:"aggregate,omitempty"`
 }
 
 // VerificationCall is the entire executable vocabulary; it contains no code,
@@ -174,6 +175,10 @@ type DatasetCall struct {
 	IDColumn        string            `json:"idColumn,omitempty"`
 	Units           map[string]string `json:"units,omitempty"`
 	RightUnits      map[string]string `json:"rightUnits,omitempty"`
+	// dataset-aggregate: collapse repeated rows per group into one row per group.
+	GroupColumn  string   `json:"groupColumn,omitempty"`
+	ValueColumns []string `json:"valueColumns,omitempty"`
+	Operation    string   `json:"operation,omitempty"`
 }
 type DatasetColumn struct {
 	Name    string   `json:"name"`

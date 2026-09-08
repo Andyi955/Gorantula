@@ -166,7 +166,16 @@ func (s *Service) prepareTopic(ctx context.Context, run *models.VerificationRun)
 		return fmt.Errorf("proposal cited unknown claim IDs")
 	}
 	run.Claims = claims
-	run.Candidate = models.CandidateHypothesis{ID: "topic-" + run.ID, Hypothesis: proposal.Hypothesis, State: models.CandidateStateProposed, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	// The user's topic IS the question being answered. The model's proposed
+	// wording repeatedly narrowed it to the population of whichever paper was
+	// retrieved — a cross-country question became "within Ghana" — and the agent
+	// then answered the narrowed version instead of the question asked. Keep the
+	// topic and the model's evidence selection; the claims still ground the run.
+	hypothesis := strings.TrimSpace(run.Request.Topic)
+	if hypothesis == "" {
+		hypothesis = proposal.Hypothesis
+	}
+	run.Candidate = models.CandidateHypothesis{ID: "topic-" + run.ID, Hypothesis: hypothesis, State: models.CandidateStateProposed, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	for _, c := range claims {
 		run.Candidate.ClaimIDs = append(run.Candidate.ClaimIDs, c.ID)
 	}

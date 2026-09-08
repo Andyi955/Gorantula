@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -276,6 +277,158 @@ func (s *Service) filterDataset(d models.ResearchDataset, call models.DatasetCal
 	return child, s.verificationStore("datasets").saveSlice(child.ID+".json", child)
 }
 
+// aggregateDataset collapses repeated rows per group into one row per group. A
+// country-year panel is not a set of independent observations, so a question
+// about differences across countries needs one row per country before any
+// correlation; without this the only way to reduce a panel is to filter it down
+// to a single entity.
+func (s *Service) aggregateDataset(d models.ResearchDataset, call models.DatasetCall) (models.ResearchDataset, error) {
+	if strings.TrimSpace(call.Rationale) == "" || len(call.Rationale) > 2000 {
+		return d, fmt.Errorf("provide a bounded aggregate and rationale")
+	}
+	operation := strings.ToLower(strings.TrimSpace(call.Operation))
+	switch operation {
+	case "mean", "median", "sum", "min", "max", "count":
+	default:
+		return d, fmt.Errorf("unsupported aggregate operation")
+	}
+	if len(call.ValueColumns) == 0 || len(call.ValueColumns) > 4 {
+		return d, fmt.Errorf("name 1 to 4 value columns")
+	}
+	headers, rows, err := parseVerificationCSV(d.CSV)
+	if err != nil {
+		return d, err
+	}
+	groupIndex := -1
+	for i, h := range headers {
+		if h == call.GroupColumn {
+			groupIndex = i
+		}
+	}
+	if groupIndex < 0 {
+		return d, fmt.Errorf("unknown group column")
+	}
+	valueIndexes := make([]int, 0, len(call.ValueColumns))
+	for _, name := range call.ValueColumns {
+		index := -1
+		for i, h := range headers {
+			if h == name {
+				index = i
+			}
+		}
+		if index < 0 {
+			return d, fmt.Errorf("unknown value column %q", name)
+		}
+		valueIndexes = append(valueIndexes, index)
+	}
+	order := []string{}
+	samples := map[string][][]float64{}
+	counts := map[string]int{}
+	for _, row := range rows {
+		group := strings.TrimSpace(row[groupIndex])
+		if group == "" {
+			continue
+		}
+		if _, seen := samples[group]; !seen {
+			order = append(order, group)
+			samples[group] = make([][]float64, len(valueIndexes))
+		}
+		counts[group]++
+		for i, index := range valueIndexes {
+			cell := strings.TrimSpace(row[index])
+			if missingDatasetCell(cell) {
+				continue
+			}
+			n, parseErr := strconv.ParseFloat(cell, 64)
+			if parseErr != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+				continue
+			}
+			samples[group][i] = append(samples[group][i], n)
+		}
+	}
+	if len(order) < 2 {
+		return d, fmt.Errorf("aggregate needs at least two groups")
+	}
+	outHeaders := []string{call.GroupColumn, "rows"}
+	for _, name := range call.ValueColumns {
+		outHeaders = append(outHeaders, name+"_"+operation)
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write(outHeaders)
+	kept := 0
+	for _, group := range order {
+		record := []string{group, strconv.Itoa(counts[group])}
+		complete := true
+		for i := range valueIndexes {
+			if len(samples[group][i]) == 0 {
+				complete = false
+				break
+			}
+			record = append(record, strconv.FormatFloat(aggregateValues(samples[group][i], operation), 'g', -1, 64))
+		}
+		if !complete {
+			continue
+		}
+		_ = w.Write(record)
+		kept++
+	}
+	w.Flush()
+	if w.Error() != nil {
+		return d, w.Error()
+	}
+	if kept < 2 {
+		return d, fmt.Errorf("aggregate leaves fewer than two complete groups")
+	}
+	child := models.ResearchDataset{Name: d.Name, Source: d.Source, CSV: buf.String(), Digest: digestBytes(buf.Bytes()), Columns: outHeaders, Rows: kept, ParentID: d.ID, ParentDigest: d.Digest, Aggregate: &call}
+	encoded, _ := json.Marshal(child)
+	child.ID = digestBytes(encoded)
+	return child, s.verificationStore("datasets").saveSlice(child.ID+".json", child)
+}
+
+func aggregateValues(sample []float64, operation string) float64 {
+	switch operation {
+	case "count":
+		return float64(len(sample))
+	case "sum":
+		total := 0.0
+		for _, value := range sample {
+			total += value
+		}
+		return total
+	case "min":
+		best := sample[0]
+		for _, value := range sample {
+			if value < best {
+				best = value
+			}
+		}
+		return best
+	case "max":
+		best := sample[0]
+		for _, value := range sample {
+			if value > best {
+				best = value
+			}
+		}
+		return best
+	case "median":
+		sorted := append([]float64(nil), sample...)
+		sort.Float64s(sorted)
+		middle := len(sorted) / 2
+		if len(sorted)%2 == 1 {
+			return sorted[middle]
+		}
+		return (sorted[middle-1] + sorted[middle]) / 2
+	default: // mean
+		total := 0.0
+		for _, value := range sample {
+			total += value
+		}
+		return total / float64(len(sample))
+	}
+}
+
 func datasetLinks(data []byte, base string) []string {
 	u, err := url.Parse(base)
 	if err != nil {
@@ -458,6 +611,19 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		if err == nil {
 			run.DatasetParents = append(run.DatasetParents, run.Dataset)
 			out.Summary = fmt.Sprintf("Kept %d of %d rows. Original snapshot retained; filter and parent digest recorded.", d.Rows, run.Dataset.Rows)
+			out.DatasetID = d.ID
+			run.Dataset = d
+		}
+	case "dataset-aggregate":
+		if hasSuccessfulCalculation(run.Results) {
+			err = fmt.Errorf("dataset is frozen after the first successful calculation")
+			break
+		}
+		var d models.ResearchDataset
+		d, err = s.aggregateDataset(run.Dataset, call)
+		if err == nil {
+			run.DatasetParents = append(run.DatasetParents, run.Dataset)
+			out.Summary = fmt.Sprintf("Collapsed %d rows into %d group rows: one row per %s with the %s of %s. Original snapshot retained; aggregate and parent digest recorded.", run.Dataset.Rows, d.Rows, call.GroupColumn, call.Operation, strings.Join(call.ValueColumns, ", "))
 			out.DatasetID = d.ID
 			run.Dataset = d
 		}
