@@ -21,7 +21,7 @@ import (
 
 const verificationToolVersion = "native-v1"
 const maxDatasetBytes = 4 << 20
-const maxDatasetRows = 10000
+const maxDatasetRows = 30000
 
 func digestBytes(data []byte) string {
 	sum := sha256.Sum256(data)

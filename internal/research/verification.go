@@ -513,7 +513,7 @@ When comparing with a paper, retrieve relevant methods and findings using eviden
 Dataset actions: {"action":"dataset","datasetCall":{tool:string,...}}. Available tools:
  dataset-use: {tool:"dataset-use",datasetId:string,rationale:string}. Select and inspect an existing availableDatasets snapshot. Check its name, source, columns and scope for relevance; prefer the original dataset and apply justified filters yourself. When dataset.id is empty, you MUST select data with dataset-use or import it BEFORE inspecting or calculating. This does not create or invent measurements. Frozen after the first successful calculation.
  dataset-discover: {tool:"dataset-discover",url:string}. Inspect one candidate paper URL or an observed supplementary link for actual data links. No general web search or PDF/ZIP extraction.
- dataset-search: {tool:"dataset-search",query:string,rationale:string}. Query open-data repositories (Zenodo) for a topic-relevant dataset with a directly downloadable CSV/TSV. Returns candidate download links (also recorded in datasetActions) that you may then dataset-import. A candidate is a lead, not verified measurements: confirm its title, description and provenance on the destination page and that its rows are raw observations for the topic before calculating. Zero matches only records that none was found, not that the data does not exist.
+ dataset-search: {tool:"dataset-search",query:string,rationale:string}. Query open-data providers (World Bank, WHO, Our World in Data, Zenodo) for a topic-relevant dataset with a directly downloadable CSV/TSV, or an indicator API the server converts to CSV. Returns candidate download links (also recorded in datasetActions) that you may then dataset-import. A candidate is a lead, not verified measurements: confirm its title, description and provenance on the destination page and that its rows are raw observations for the topic before calculating. Zero matches only records that none was found, not that the data does not exist.
  dataset-import: {tool:"dataset-import",url:string}. Import CSV from a candidate paper URL or observed link. Does not establish that it contains real measurements; check provenance.
  dataset-inspect: {tool:"dataset-inspect"}. Report current columns, missing/numeric/text counts, ranges and sample; units must be checked in the source. Use after import and before choosing calculations.
  dataset-filter: {tool:"dataset-filter",column:string,operator:"eq"|"ne"|"gt"|"gte"|"lt"|"lte"|"not-missing",value:string,rationale:string}. Keep matching rows, preserve original. Equality uses exact text; numeric comparisons exclude nonnumeric/missing cells. No imputation. Justify exclusions scientifically before testing. Complete missing-value exclusions for the selected columns BEFORE calculating. Import/filter remain available after failed calculations, but freeze after the first successful calculation.
@@ -568,7 +568,12 @@ EVIDENCE:
 			// analysing data, surface open-data repository candidates once so it
 			// has a real chance to find an importable dataset before concluding
 			// that none exists.
-			if !hasSuccessfulCalculation(run.Results) && run.Dataset.ID == "" && strings.TrimSpace(run.Request.Topic) != "" && len(run.DatasetActions) < 8 {
+			// A saved snapshot from an earlier run counts as a dataset but is not
+			// data supplied for this question, so the nudge must not be skipped
+			// just because run.Dataset is set: the agent can select a plausible
+			// old table and never look for the indicator data that answers the
+			// topic.
+			if !hasSuccessfulCalculation(run.Results) && strings.TrimSpace(run.Request.Topic) != "" && len(run.DatasetActions) < 8 {
 				nudged := false
 				for _, a := range run.DatasetActions {
 					if a.Call.Tool == "repo-search-check" {

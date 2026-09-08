@@ -37,6 +37,10 @@ type openDataset struct {
 	File        string
 	Size        int64
 	DownloadURL string
+	// Format selects the download conversion. Empty or "csv" means the body is
+	// already CSV; the other values name a JSON API that is converted to CSV at
+	// download time so the analysis tools see a plain table.
+	Format string
 }
 
 type zenodoResponse struct {
@@ -59,26 +63,55 @@ type zenodoResponse struct {
 	} `json:"hits"`
 }
 
-// searchOpenData queries open-data repositories (Zenodo primary, then a
-// dataset-oriented retry) for a topic-relevant dataset with a directly
-// downloadable CSV/TSV. It returns candidates with their download URLs; it never
-// verifies the measurements. A read that yields nothing or fails is an honest
-// "no candidate", never a fabricated dataset.
+// openDataProviders are tried in order and their results are pooled, so one
+// provider's loose keyword match cannot starve the others: a question about
+// predator populations also matches the World Population chart, and the run
+// must still see the Zenodo candidates that actually answer it. The relevance
+// check is what decides which candidate is used.
+var openDataProviders = []func(context.Context, string) ([]openDataset, error){
+	searchWorldBank,
+	searchWHO,
+	searchOurWorldInData,
+	func(ctx context.Context, query string) ([]openDataset, error) { return searchZenodo(ctx, query) },
+	// A natural-language topic often does not match dataset titles. Retry with a
+	// dataset-oriented query and a wider scan to surface records whose metadata
+	// carries the measurements even when the title does not.
+	func(ctx context.Context, query string) ([]openDataset, error) {
+		return searchZenodo(ctx, "everything:"+query+" AND (dataset OR data OR measurements OR csv)")
+	},
+}
+
+// openDataCandidateLimit bounds how many candidates the pooled search returns.
+const openDataCandidateLimit = 7
+
+// searchOpenData queries every open-data provider for a topic-relevant dataset
+// with a directly downloadable CSV/TSV, or a JSON indicator API that converts to
+// one. It returns candidates with their download URLs; it never verifies the
+// measurements. A read that yields nothing or fails is an honest "no candidate",
+// never a fabricated dataset.
 func searchOpenData(ctx context.Context, query string) ([]openDataset, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("a dataset search query is required")
 	}
-	if out, err := searchZenodo(ctx, query); err == nil && len(out) > 0 {
-		return out, nil
+	var out []openDataset
+	seen := map[string]bool{}
+	for _, search := range openDataProviders {
+		if len(out) >= openDataCandidateLimit {
+			break
+		}
+		found, err := search(ctx, query)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range found {
+			if seen[candidate.DownloadURL] {
+				continue
+			}
+			seen[candidate.DownloadURL] = true
+			out = append(out, candidate)
+		}
 	}
-	// A natural-language topic often does not match dataset titles. Retry with a
-	// dataset-oriented query and a wider scan to surface records whose metadata
-	// carries the measurements even when the title does not.
-	wide := "everything:" + query + " AND (dataset OR data OR measurements OR csv)"
-	if out, err := searchZenodo(ctx, wide); err == nil && len(out) > 0 {
-		return out, nil
-	}
-	return nil, nil
+	return out, nil
 }
 
 // searchZenodo queries the Zenodo API for records with a directly downloadable

@@ -363,7 +363,7 @@ func (s *Service) runDiscoveryQuestion(ctx context.Context, discoveryID, questio
 			if checked >= discoveryDatasetChecks {
 				break
 			}
-			data, _, ferr := dataDownloadFetch(ctx, c.DownloadURL)
+			data, _, ferr := downloadOpenDataset(ctx, c)
 			if ferr != nil {
 				continue
 			}
@@ -450,8 +450,9 @@ func randToken(n int) []byte {
 }
 
 // discoveryDatasetChecks bounds how many candidate files are downloaded and
-// judged per question, so one question cannot spend the whole budget.
-const discoveryDatasetChecks = 3
+// judged per question. Providers are pooled, so this must be large enough to
+// reach past a provider's loose keyword match to the right file.
+const discoveryDatasetChecks = 5
 
 // csvHeaderColumns returns the header names of a CSV payload for the relevance
 // judgement. It tolerates a BOM and gives up quietly on anything unparseable.
