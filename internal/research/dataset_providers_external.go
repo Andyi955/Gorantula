@@ -389,11 +389,12 @@ func worldBankRows(data []byte) ([]worldBankRow, error) {
 // table and can be answered with a single correlation.
 func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte, string, error) {
 	type table struct {
-		header []string
-		rows   [][]string
-		codeAt int
-		yearAt int
-		values []int
+		header  []string
+		rows    [][]string
+		codeAt  int
+		yearAt  int
+		groupAt int
+		values  []int
 	}
 	tables := make([]table, 0, len(candidate.Merge))
 	final := ""
@@ -407,7 +408,7 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 		if err != nil {
 			return nil, "", err
 		}
-		built := table{header: header, rows: rows, codeAt: -1, yearAt: -1}
+		built := table{header: header, rows: rows, codeAt: -1, yearAt: -1, groupAt: -1}
 		for i, name := range header {
 			switch strings.ToLower(strings.TrimSpace(name)) {
 			case "country_code":
@@ -427,7 +428,13 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 				continue
 			}
 			switch strings.ToLower(strings.TrimSpace(name)) {
-			case "country", "rows", "group":
+			case "country", "rows":
+				continue
+			case "group":
+				// A WHO indicator may split rows by sex or age band. Carrying the
+				// dimension keeps that duplication visible instead of letting the
+				// join silently keep whichever row came last.
+				built.groupAt = i
 				continue
 			}
 			built.values = append(built.values, i)
@@ -446,6 +453,10 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 		index[row[left.codeAt]+"|"+row[left.yearAt]] = row
 	}
 	header := []string{"country_code", "year"}
+	carryGroup := left.groupAt >= 0 || right.groupAt >= 0
+	if carryGroup {
+		header = append(header, "group")
+	}
 	for _, at := range left.values {
 		header = append(header, left.header[at])
 	}
@@ -459,6 +470,15 @@ func mergeOpenDatasetTables(ctx context.Context, candidate openDataset) ([]byte,
 			continue
 		}
 		record := []string{row[right.codeAt], row[right.yearAt]}
+		if carryGroup {
+			group := ""
+			if right.groupAt >= 0 {
+				group = row[right.groupAt]
+			} else if left.groupAt >= 0 {
+				group = other[left.groupAt]
+			}
+			record = append(record, group)
+		}
 		complete := true
 		for _, at := range left.values {
 			value, parseErr := strconv.ParseFloat(strings.TrimSpace(other[at]), 64)

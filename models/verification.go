@@ -179,6 +179,7 @@ type DatasetCall struct {
 	GroupColumn  string   `json:"groupColumn,omitempty"`
 	ValueColumns []string `json:"valueColumns,omitempty"`
 	Operation    string   `json:"operation,omitempty"`
+	WeightColumn string   `json:"weightColumn,omitempty"`
 }
 type DatasetColumn struct {
 	Name    string   `json:"name"`

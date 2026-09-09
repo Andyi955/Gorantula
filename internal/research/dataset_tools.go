@@ -288,9 +288,12 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 	}
 	operation := strings.ToLower(strings.TrimSpace(call.Operation))
 	switch operation {
-	case "mean", "median", "sum", "min", "max", "count":
+	case "mean", "median", "sum", "min", "max", "count", "weighted-mean":
 	default:
 		return d, fmt.Errorf("unsupported aggregate operation")
+	}
+	if operation == "weighted-mean" && strings.TrimSpace(call.WeightColumn) == "" {
+		return d, fmt.Errorf("weighted-mean requires a weight column")
 	}
 	if len(call.ValueColumns) == 0 || len(call.ValueColumns) > 4 {
 		return d, fmt.Errorf("name 1 to 4 value columns")
@@ -298,6 +301,17 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 	headers, rows, err := parseVerificationCSV(d.CSV)
 	if err != nil {
 		return d, err
+	}
+	weightIndex := -1
+	if operation == "weighted-mean" {
+		for i, h := range headers {
+			if h == call.WeightColumn {
+				weightIndex = i
+			}
+		}
+		if weightIndex < 0 {
+			return d, fmt.Errorf("unknown weight column %q", call.WeightColumn)
+		}
 	}
 	groupIndex := -1
 	for i, h := range headers {
@@ -323,6 +337,7 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 	}
 	order := []string{}
 	samples := map[string][][]float64{}
+	weights := map[string][][]float64{}
 	counts := map[string]int{}
 	for _, row := range rows {
 		group := strings.TrimSpace(row[groupIndex])
@@ -332,6 +347,7 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 		if _, seen := samples[group]; !seen {
 			order = append(order, group)
 			samples[group] = make([][]float64, len(valueIndexes))
+			weights[group] = make([][]float64, len(valueIndexes))
 		}
 		counts[group]++
 		for i, index := range valueIndexes {
@@ -342,6 +358,13 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 			n, parseErr := strconv.ParseFloat(cell, 64)
 			if parseErr != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 				continue
+			}
+			if weightIndex >= 0 {
+				weight, weightErr := strconv.ParseFloat(strings.TrimSpace(row[weightIndex]), 64)
+				if weightErr != nil || math.IsNaN(weight) || math.IsInf(weight, 0) || weight <= 0 {
+					continue
+				}
+				weights[group][i] = append(weights[group][i], weight)
 			}
 			samples[group][i] = append(samples[group][i], n)
 		}
@@ -365,7 +388,11 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 				complete = false
 				break
 			}
-			record = append(record, strconv.FormatFloat(aggregateValues(samples[group][i], operation), 'g', -1, 64))
+			if weightIndex >= 0 && len(weights[group][i]) != len(samples[group][i]) {
+				complete = false
+				break
+			}
+			record = append(record, strconv.FormatFloat(aggregateValues(samples[group][i], weights[group][i], operation), 'g', -1, 64))
 		}
 		if !complete {
 			continue
@@ -386,10 +413,20 @@ func (s *Service) aggregateDataset(d models.ResearchDataset, call models.Dataset
 	return child, s.verificationStore("datasets").saveSlice(child.ID+".json", child)
 }
 
-func aggregateValues(sample []float64, operation string) float64 {
+func aggregateValues(sample, weights []float64, operation string) float64 {
 	switch operation {
 	case "count":
 		return float64(len(sample))
+	case "weighted-mean":
+		total, weightTotal := 0.0, 0.0
+		for i, value := range sample {
+			total += value * weights[i]
+			weightTotal += weights[i]
+		}
+		if weightTotal == 0 {
+			return 0
+		}
+		return total / weightTotal
 	case "sum":
 		total := 0.0
 		for _, value := range sample {

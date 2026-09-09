@@ -69,14 +69,47 @@ func TestMergeOpenDatasetTablesJoinsOnCountryAndYear(t *testing.T) {
 		t.Fatalf("downloadOpenDataset: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	// Both World Bank value columns must survive: keeping only the first one
-	// silently dropped the variable the question needed.
-	if lines[0] != "country_code,year,life,gdp,healthy_life_expectancy" {
+	// Both World Bank value columns must survive, and the WHO dimension column
+	// is carried so a non-sex split stays visible instead of collapsing.
+	if lines[0] != "country_code,year,group,life,gdp,healthy_life_expectancy" {
 		t.Errorf("header = %q", lines[0])
 	}
 	// Chad is only in the WHO table, so the inner join drops it.
-	if len(lines) != 3 || lines[1] != "KEN,2015,60,1350,55.5" || lines[2] != "KEN,2016,61,1400,56.2" {
+	if len(lines) != 3 || lines[1] != "KEN,2015,SEX_BTSX,60,1350,55.5" || lines[2] != "KEN,2016,SEX_BTSX,61,1400,56.2" {
 		t.Fatalf("rows = %v", lines)
+	}
+}
+
+func TestMergeKeepsNonSexDimensionsVisible(t *testing.T) {
+	original := dataDownloadFetch
+	originalBulk := providerBulkFetch
+	defer func() { dataDownloadFetch = original; providerBulkFetch = originalBulk }()
+	dataDownloadFetch = func(_ context.Context, raw string) ([]byte, string, error) {
+		return []byte("country,country_code,year,gdp\nKenya,KEN,2015,1350\nKenya,KEN,2016,1400\n"), raw, nil
+	}
+	// An age-banded WHO indicator: two rows per country-year, no both-sexes row.
+	providerBulkFetch = func(_ context.Context, raw string) ([]byte, string, error) {
+		return []byte(`{"value":[{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"AGE0-4","NumericValue":1},{"SpatialDim":"KEN","TimeDim":2015,"Dim1":"AGE5-9","NumericValue":2},{"SpatialDim":"KEN","TimeDim":2016,"Dim1":"AGE0-4","NumericValue":3},{"SpatialDim":"KEN","TimeDim":2016,"Dim1":"AGE5-9","NumericValue":4}]}`), raw, nil
+	}
+	merged := openDataset{Provider: "World Bank + WHO", Format: "merge", Merge: []openDataset{
+		{Provider: "World Bank", DownloadURL: "https://api.worldbank.org/v2/x"},
+		{Provider: "WHO", DownloadURL: "https://ghoapi.azureedge.net/api/X", Format: "who:Cases"},
+	}}
+	out, _, err := downloadOpenDataset(context.Background(), merged)
+	if err != nil {
+		t.Fatalf("downloadOpenDataset: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if lines[0] != "country_code,year,group,gdp,cases" {
+		t.Errorf("header = %q", lines[0])
+	}
+	// One row per country-year-age band: the dimension is visible rather than
+	// silently collapsed to whichever row came last.
+	if len(lines) != 5 {
+		t.Fatalf("rows = %v", lines)
+	}
+	if lines[1] != "KEN,2015,AGE0-4,1350,1" || lines[2] != "KEN,2015,AGE5-9,1350,2" {
+		t.Errorf("rows = %v", lines)
 	}
 }
 

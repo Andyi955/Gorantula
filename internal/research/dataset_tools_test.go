@@ -59,6 +59,35 @@ func TestAggregateDatasetRejectsBadRequests(t *testing.T) {
 	}
 }
 
+func TestAggregateDatasetWeightedMean(t *testing.T) {
+	s := NewService(t.TempDir(), nil)
+	d, err := s.RegisterDataset("panel", "fixture", "country,year,life,population\nKenya,2000,50,100\nKenya,2001,60,900\nChad,2000,40,100\nChad,2001,40,100\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Kenya's unweighted mean is 55; weighting by population gives 59.
+	plain, err := s.aggregateDataset(d, models.DatasetCall{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"life"}, Operation: "mean", Rationale: "unweighted"})
+	if err != nil {
+		t.Fatalf("aggregateDataset(mean): %v", err)
+	}
+	if !strings.Contains(plain.CSV, "Kenya,2,55") {
+		t.Errorf("unweighted mean = %q", plain.CSV)
+	}
+	weighted, err := s.aggregateDataset(d, models.DatasetCall{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"life"}, Operation: "weighted-mean", WeightColumn: "population", Rationale: "population weighted"})
+	if err != nil {
+		t.Fatalf("aggregateDataset(weighted-mean): %v", err)
+	}
+	if !strings.Contains(weighted.CSV, "Kenya,2,59") {
+		t.Errorf("weighted mean = %q", weighted.CSV)
+	}
+	if _, err := s.aggregateDataset(d, models.DatasetCall{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"life"}, Operation: "weighted-mean", WeightColumn: "nope", Rationale: "bad weight"}); err == nil {
+		t.Error("an unknown weight column must be rejected")
+	}
+	if _, err := s.aggregateDataset(d, models.DatasetCall{Tool: "dataset-aggregate", GroupColumn: "country", ValueColumns: []string{"life"}, Operation: "weighted-mean", Rationale: "no weight"}); err == nil {
+		t.Error("weighted-mean without a weight column must be rejected")
+	}
+}
+
 func TestDatasetUseRejectsUnrelatedSavedDatasetForTopicRun(t *testing.T) {
 	s := NewService(t.TempDir(), nil)
 	s.brain = &brain.Brain{ModelRouter: map[string]brain.ModelProvider{"deepseek": verificationModel{generate: func(_ context.Context, _ string, out interface{}) error {
