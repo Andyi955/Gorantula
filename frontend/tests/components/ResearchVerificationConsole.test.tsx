@@ -11,7 +11,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('ResearchVerificationConsole', () => {
   it('submits typed manual inputs and shows computational results separately from approval', async () => {
-    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
       if (url.endsWith('/datasets')) return json([dataset]);
       if (url.endsWith('/verify')) return json(history[0]);
       if (url.endsWith('/runs')) return json(history);

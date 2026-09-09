@@ -73,9 +73,14 @@ export const useDetectiveBoardPersistence = ({
     const edgesRef = useRef(edges)
     const pendingIntegrationNodeIdsRef = useRef(pendingIntegrationNodeIds)
 
-    nodesRef.current = nodes
-    edgesRef.current = edges
-    pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds
+    // Keep the refs current for the persistence callbacks, which run after
+    // commit. Writing them during render violates the React rule that refs are
+    // not read or written while rendering.
+    useEffect(() => {
+        nodesRef.current = nodes
+        edgesRef.current = edges
+        pendingIntegrationNodeIdsRef.current = pendingIntegrationNodeIds
+    }, [nodes, edges, pendingIntegrationNodeIds])
 
     const clearPendingBoardPersist = useCallback(() => {
         if (persistTimerRef.current) {
