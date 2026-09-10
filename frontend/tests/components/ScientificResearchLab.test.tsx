@@ -50,8 +50,10 @@ describe('ScientificResearchLab', () => {
 
   it('surfaces a contradiction finding card with a source paper chip', async () => {
     render(<ScientificResearchLab />);
-    await screen.findByRole('heading', {name:'Research to report'});
-    fireEvent.click(screen.getByRole('button', {name:/Findings/}));
+    // The lab opens on the Overview; wait for it rather than for a specific
+    // sub-view, so these tests do not depend on which tab is the default.
+    await screen.findByRole('heading', { name: /Ask a question/i });
+    fireEvent.click(screen.getByRole('button', { name: /Findings/ }));
     await waitFor(() => expect(screen.getByText(/Contradiction: Metformin increases/)).toBeInTheDocument());
     expect(screen.getByText('Contradiction')).toBeInTheDocument();
     expect(screen.getByText('m1')).toBeInTheDocument();
@@ -59,10 +61,10 @@ describe('ScientificResearchLab', () => {
 
   it('lists papers on the Corpus view with the count in the nav', async () => {
     render(<ScientificResearchLab />);
-    // Await the initial load so the nav count reflects the fetched corpus.
-    await screen.findByRole('heading', {name:'Research to report'});
+    await screen.findByRole('heading', { name: /Ask a question/i });
+    // Wait for the fetched corpus to be reflected in the nav count.
     const corpusTab = screen.getByRole('button', { name: /Corpus/ });
-    expect(corpusTab.textContent).toContain('1');
+    await waitFor(() => expect(corpusTab.textContent).toContain('1'));
     fireEvent.click(corpusTab);
     await waitFor(() => expect(screen.getByText('Metformin survival increase')).toBeInTheDocument());
   });

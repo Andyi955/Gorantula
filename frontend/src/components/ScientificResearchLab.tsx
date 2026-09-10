@@ -4,6 +4,7 @@ import ResearchVerificationConsole from './ResearchVerificationConsole';
 import ResearchPublicationConsole from './ResearchPublicationConsole';
 import ResearchPipeline from './ResearchPipeline';
 import ResearchDiscoveries from './ResearchDiscoveries';
+import ResearchOverview from './ResearchOverview';
 
 const RESEARCH_API = 'http://127.0.0.1:8080/api/research';
 
@@ -91,7 +92,7 @@ interface CandidateExpansion {
   retrieved?: Paper[];
 }
 
-type View = 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
+type View = 'overview' | 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
 
 const VERDICT_META: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Agreed', tone: 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' },
@@ -176,6 +177,12 @@ const relationLabel = (kind: string) => {
 // renders in the same rail + main-column shell the pipeline uses. That keeps
 // the layout from jumping when you move between tabs.
 const VIEW_META: Record<Exclude<View, 'pipeline'>, { eyebrow: string; rail: string; heading: string; blurb: string }> = {
+  overview: {
+    eyebrow: 'Overview',
+    rail: 'What this area does, what it has found so far, and where to go next.',
+    heading: 'Research',
+    blurb: 'Ask a question. The engine finds the data and runs the numbers.',
+  },
   signals: {
     eyebrow: 'Findings',
     rail: 'Contradictions, convergences and gaps the engine surfaced across your papers.',
@@ -221,7 +228,7 @@ const VIEW_META: Record<Exclude<View, 'pipeline'>, { eyebrow: string; rail: stri
 };
 
 const ScientificResearchLab = () => {
-  const [view, setView] = useState<View>('pipeline');
+  const [view, setView] = useState<View>('overview');
   const [pipelineRunId, setPipelineRunId] = useState<string>();
   const rebuildReport = async (candidateId: string) => {
     try {
@@ -775,6 +782,7 @@ const ScientificResearchLab = () => {
 
         <div className="research-tabs flex flex-wrap gap-2">
           {nav([
+            { id: 'overview', label: 'Overview', count: '' },
             { id: 'signals', label: 'Findings', count: `${signals.length}` },
             { id: 'candidates', label: 'Candidates', count: `${candidates.length}` },
             { id: 'pipeline', label: 'Pipeline', count: '' },
@@ -803,11 +811,21 @@ const ScientificResearchLab = () => {
           <div className="research-workspace">
             {rail}
             <main key={view} className="research-workspace-main">
-              {meta && (
+              {/* The overview carries its own hero heading, so the shared page
+                  heading would just repeat it. */}
+              {meta && view !== 'overview' && (
                 <header className="research-page-heading">
                   <h2>{meta.heading}</h2>
                   <p>{meta.blurb}</p>
                 </header>
+              )}
+              {view === 'overview' && (
+                <ResearchOverview
+                  onNavigate={(next) => setView(next)}
+                  paperCount={papers.length}
+                  candidateCount={candidates.length}
+                  findingCount={signals.length}
+                />
               )}
               {view === 'signals' && renderSignals()}
               {view === 'candidates' && renderCandidates()}
