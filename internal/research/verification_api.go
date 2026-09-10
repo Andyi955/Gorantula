@@ -286,11 +286,14 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		var req struct {
 			Theme string `json:"theme"`
 			Count int    `json:"count"`
+			// StopOnResult ends the round as soon as one question produces a
+			// result, instead of running every proposed question.
+			StopOnResult bool `json:"stopOnResult"`
 		}
 		if !read(&req) {
 			return true
 		}
-		run, err := s.StartDiscovery(r.Context(), req.Theme, req.Count)
+		run, err := s.StartDiscovery(r.Context(), req.Theme, req.Count, req.StopOnResult)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
@@ -307,6 +310,17 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		respond(runs, err)
 	case len(parts) == 4 && parts[2] == "discoveries" && r.Method == http.MethodGet:
 		run, err := s.GetDiscovery(parts[3])
+		respond(run, err)
+	case len(parts) == 5 && parts[2] == "discoveries" && parts[4] == "stop" && r.Method == http.MethodPost:
+		var req struct{}
+		if !read(&req) {
+			return true
+		}
+		run, err := s.StopDiscovery(parts[3])
+		if errors.Is(err, ErrDiscoveryNotRunning) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			break
+		}
 		respond(run, err)
 	case len(parts) == 5 && parts[2] == "discoveries" && parts[4] == "dismiss" && r.Method == http.MethodPost:
 		var req struct{}

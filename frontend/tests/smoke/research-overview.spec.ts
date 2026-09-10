@@ -74,20 +74,22 @@ test('one press runs a discovery and lands on the results', async ({ page }) => 
     }
     let value: unknown = [];
     if (path.endsWith('/discover')) {
-      expect(JSON.parse(request.postData() || '{}')).toMatchObject({ count: 2 });
+      expect(JSON.parse(request.postData() || '{}')).toMatchObject({ count: 2, stopOnResult: true });
       started = true;
-      value = { id: 'run-1', theme: '', status: 'running', workedCount: 0, rejectedCount: 0, questions: [] };
+      value = { id: 'run-1', theme: '', status: 'running', workedCount: 0, rejectedCount: 0, planned: 2, questions: [{ id: 'q1', question: 'Does X correlate with Y', status: 'running' }] };
     }
     if (path.endsWith('/discoveries/run-1')) {
       value = {
         id: 'run-1',
         theme: '',
         status: 'completed',
+        planned: 2,
         workedCount: 1,
         rejectedCount: 1,
+        stopReason: 'stopped early: this question produced a result',
         questions: [
           { id: 'q1', question: 'Does X correlate with Y', status: 'completed', runId: 'vr-1', publicationId: 'pub-1' },
-          { id: 'q2', question: 'Is A higher than B', status: 'rejected' },
+          { id: 'q2', question: 'Is A higher than B', status: 'skipped' },
         ],
       };
     }
@@ -107,9 +109,16 @@ test('one press runs a discovery and lands on the results', async ({ page }) => 
   const overview = page.getByRole('region', { name: 'Research overview' });
   await overview.getByRole('button', { name: 'Run a discovery for me' }).click();
 
+  // The round is watchable and stoppable while it runs.
+  await expect(overview.getByRole('progressbar', { name: 'Questions finished' })).toBeVisible();
+  await expect(overview.getByRole('button', { name: 'Stop' })).toBeEnabled();
+  await expect(overview.getByText('Now working on')).toBeVisible();
+
   const status = overview.getByRole('status');
   await expect(status).toContainText('Working');
   await expect(status).toContainText('Done');
+  // A round that ends early says why.
+  await expect(overview.getByText('stopped early: this question produced a result')).toBeVisible();
   await overview.getByRole('button', { name: 'See the results' }).click();
 
   const results = page.getByRole('region', { name: 'Research results' });

@@ -27,6 +27,56 @@ var ErrDiscoveryNotFound = fmt.Errorf("discovery not found: %w", os.ErrNotExist)
 // discovery whose background run is still writing its own record.
 var ErrDiscoveryRunning = errors.New("discovery is still running; wait for it to finish")
 
+// ErrDiscoveryNotRunning is returned when a caller tries to stop a round that
+// has already finished.
+var ErrDiscoveryNotRunning = errors.New("discovery is not running")
+
+// discoveryCancels holds the cancel function of every in-flight round, keyed by
+// run id, so an operator can stop one from the API. Guarded by discoveryMu.
+var discoveryCancels = map[string]context.CancelFunc{}
+
+func (s *Service) registerDiscoveryCancel(id string, cancel context.CancelFunc) {
+	discoveryMu.Lock()
+	defer discoveryMu.Unlock()
+	discoveryCancels[id] = cancel
+}
+
+func (s *Service) clearDiscoveryCancel(id string) {
+	discoveryMu.Lock()
+	defer discoveryMu.Unlock()
+	delete(discoveryCancels, id)
+}
+
+// StopDiscovery cancels an in-flight round. The round records what it had
+// already established and marks every question it never reached as skipped, so
+// a stopped round is still an honest record rather than a hole.
+func (s *Service) StopDiscovery(id string) (models.DiscoveryRun, error) {
+	discoveryMu.Lock()
+	run, err := s.loadDiscovery(id)
+	if err != nil {
+		discoveryMu.Unlock()
+		return run, err
+	}
+	cancel := discoveryCancels[id]
+	discoveryMu.Unlock()
+	if run.Status != "running" {
+		return run, ErrDiscoveryNotRunning
+	}
+	if cancel == nil {
+		// The process restarted, or the goroutine already exited: record the
+		// stop so the round does not sit at "running" forever.
+		run.Status = "stopped"
+		run.StopReason = "stopped by the operator"
+		run.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := s.saveDiscovery(run); err != nil {
+			return run, err
+		}
+		return run, nil
+	}
+	cancel()
+	return s.GetDiscovery(id)
+}
+
 func (s *Service) discoveryStore() *Store {
 	return NewStore(filepath.Join(s.store.root, "discoveries"))
 }
@@ -36,7 +86,7 @@ func (s *Service) discoveryStore() *Store {
 // each through the topic pipeline, and scores them as a worked discovery (a
 // recorded computation/figure) or a no-data rejection. It runs asynchronously
 // and returns the run id immediately; callers poll GetDiscovery for progress.
-func (s *Service) StartDiscovery(ctx context.Context, theme string, count int) (models.DiscoveryRun, error) {
+func (s *Service) StartDiscovery(ctx context.Context, theme string, count int, stopOnResult bool) (models.DiscoveryRun, error) {
 	if count < 1 {
 		count = 1
 	}
@@ -51,20 +101,22 @@ func (s *Service) StartDiscovery(ctx context.Context, theme string, count int) (
 		return models.DiscoveryRun{}, err
 	}
 	run := models.DiscoveryRun{
-		ID:        hex.EncodeToString(token),
-		Theme:     strings.TrimSpace(theme),
-		Status:    "running",
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Questions: make([]models.DiscoveryQuestion, 0, count),
+		ID:           hex.EncodeToString(token),
+		Theme:        strings.TrimSpace(theme),
+		Status:       "running",
+		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
+		Questions:    make([]models.DiscoveryQuestion, 0, count),
+		StopOnResult: stopOnResult,
 	}
 	if err := s.saveDiscovery(run); err != nil {
 		return models.DiscoveryRun{}, err
 	}
 	// Run the discovery in the background with a context NOT tied to the HTTP
-	// request, which is cancelled as soon as the handler returns. Each question's
-	// own verification run has its own deadline; the discovery completes when all
-	// questions are scored.
-	go s.executeDiscovery(context.Background(), run, count)
+	// request, which is cancelled as soon as the handler returns. The context is
+	// kept so an operator can stop the round from the API.
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.registerDiscoveryCancel(run.ID, cancel)
+	go s.executeDiscovery(runCtx, run, count)
 	return run, nil
 }
 
@@ -204,11 +256,14 @@ func (s *Service) executeDiscovery(ctx context.Context, run models.DiscoveryRun,
 	defer func() {
 		if run.Status == "running" {
 			run.Status = "completed"
-			if run.CompletedAt == "" {
-				run.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-			}
+		}
+		// A stopped or failed round is finished too, so it gets a completion time
+		// rather than looking like it is still in flight.
+		if run.CompletedAt == "" {
+			run.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 		}
 		_ = s.saveDiscovery(run)
+		s.clearDiscoveryCancel(run.ID)
 	}()
 	questions, err := s.generateDiscoveryQuestions(ctx, run.Theme, count)
 	if err != nil {
@@ -216,27 +271,93 @@ func (s *Service) executeDiscovery(ctx context.Context, run models.DiscoveryRun,
 		run.Error = err.Error()
 		return
 	}
-	for _, q := range questions {
-		select {
-		case <-ctx.Done():
-			run.Status = "failed"
-			run.Error = ctx.Err().Error()
+	run.Planned = len(questions)
+	_ = s.saveDiscovery(run)
+
+	// Mark every question the round will not reach, so a stopped or early-ended
+	// round still accounts for the questions it proposed.
+	skipRemaining := func(from int, reason string) {
+		run.Questions = append(run.Questions, skippedDiscoveryQuestions(questions, from, reason)...)
+	}
+
+	for index, question := range questions {
+		if ctx.Err() != nil {
+			run.Status = "stopped"
+			run.StopReason = "stopped by the operator"
+			skipRemaining(index, "not run: the round was stopped")
 			return
-		default:
 		}
-		result := s.runDiscoveryQuestion(ctx, run.ID, q)
-		run.Questions = append(run.Questions, result)
+		// Publish the question while it runs: without this the record only grows
+		// when a question finishes, so a caller cannot see what is in flight.
+		run.Questions = append(run.Questions, models.DiscoveryQuestion{
+			ID:       hex.EncodeToString(randToken(8)),
+			Question: question,
+			Status:   "running",
+		})
 		_ = s.saveDiscovery(run)
-	}
-	run.WorkedCount = 0
-	run.RejectedCount = 0
-	for _, q := range run.Questions {
-		if q.Status == "completed" {
-			run.WorkedCount++
-		} else if q.Status == "rejected" {
-			run.RejectedCount++
+
+		result := s.runDiscoveryQuestion(ctx, run.ID, question)
+		if ctx.Err() != nil {
+			// The round was stopped mid-question; the verification run also has to
+			// be cancelled or it keeps working with nobody waiting for it.
+			if result.RunID != "" {
+				_ = s.CancelVerification(result.RunID)
+			}
+			result.Status = "stopped"
+			// The operator-facing reason, not the raw "context canceled".
+			result.Error = "stopped by the operator"
+		}
+		if len(run.Questions) > 0 {
+			run.Questions[len(run.Questions)-1] = result
+		}
+		run.WorkedCount, run.RejectedCount = discoveryOutcomeCounts(run.Questions)
+		_ = s.saveDiscovery(run)
+
+		if ctx.Err() != nil {
+			run.Status = "stopped"
+			run.StopReason = "stopped by the operator"
+			skipRemaining(index+1, "not run: the round was stopped")
+			return
+		}
+		if run.StopOnResult && result.Status == "completed" {
+			run.StopReason = "stopped early: this question produced a result"
+			skipRemaining(index+1, "not run: the round stops at the first result")
+			return
 		}
 	}
+	run.WorkedCount, run.RejectedCount = discoveryOutcomeCounts(run.Questions)
+}
+
+// skippedDiscoveryQuestions records the questions a round proposed but never
+// reached, so the record accounts for every question rather than hiding them.
+func skippedDiscoveryQuestions(questions []string, from int, reason string) []models.DiscoveryQuestion {
+	if from >= len(questions) {
+		return nil
+	}
+	out := make([]models.DiscoveryQuestion, 0, len(questions)-from)
+	for _, question := range questions[from:] {
+		out = append(out, models.DiscoveryQuestion{
+			ID:       hex.EncodeToString(randToken(8)),
+			Question: question,
+			Status:   "skipped",
+			Error:    reason,
+		})
+	}
+	return out
+}
+
+// discoveryOutcomeCounts scores a round from its questions, so a partially run
+// round reports the same numbers a finished one would.
+func discoveryOutcomeCounts(questions []models.DiscoveryQuestion) (worked int, rejected int) {
+	for _, question := range questions {
+		switch question.Status {
+		case "completed":
+			worked++
+		case "rejected":
+			rejected++
+		}
+	}
+	return worked, rejected
 }
 
 // generateDiscoveryQuestions uses the LLM to propose `count` specific, testable
@@ -306,14 +427,20 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 		}
 		return false
 	}
-	// The model occasionally returns no valid questions; retry a couple of times
-	// before giving up rather than failing the whole discovery on one bad reply.
+	// The model occasionally returns no usable questions, usually because every
+	// suggestion duplicates an earlier round. Retry, telling it what it already
+	// proposed so it moves on instead of reformulating the same idea three times.
 	var lastErr error
+	var repeated []string
 	for attempt := 0; attempt < 3; attempt++ {
 		out = out[:0]
 		accepted = accepted[:0]
 		resp.Questions = nil
-		lastErr = s.brain.GetSearchProvider().GenerateJSON(ctx, `You propose `+fmt.Sprintf("%d", count)+` SPECIFIC, TESTABLE scientific research questions. Every question must be answerable with a computation on real data (a group comparison or a correlation), never vague or philosophical. Prefer questions that an available open dataset below, or a claim in the corpus, can directly answer; if a dataset is named, anchor the question to it. Do not invent data. If the theme is empty, choose across different fields. Return JSON {"questions":["one plain question each, maximum 90 characters"]}. Requested count: `+fmt.Sprintf("%d", count)+`. CONTEXT: `+string(payload), &resp)
+		prompt := `You propose ` + fmt.Sprintf("%d", count) + ` SPECIFIC, TESTABLE scientific research questions. Every question must be answerable with a computation on real data (a group comparison or a correlation), never vague or philosophical. Prefer questions that an available open dataset below, or a claim in the corpus, can directly answer; if a dataset is named, anchor the question to it. Do not invent data. If the theme is empty, choose across different fields. Return JSON {"questions":["one plain question each, maximum 90 characters"]}. Requested count: ` + fmt.Sprintf("%d", count) + `. CONTEXT: ` + string(payload)
+		if len(repeated) > 0 {
+			prompt += ` These questions have already been asked in earlier rounds; do NOT repeat them or reword them. Move to a different field or a different variable: ` + strings.Join(repeated, " | ") + `.`
+		}
+		lastErr = s.brain.GetSearchProvider().GenerateJSON(ctx, prompt, &resp)
 		if lastErr != nil {
 			continue
 		}
@@ -326,6 +453,9 @@ func (s *Service) generateDiscoveryQuestions(ctx context.Context, theme string, 
 				q = strings.TrimSuffix(q, "?")
 			}
 			if isDuplicate(q) {
+				if len(repeated) < 20 {
+					repeated = append(repeated, q)
+				}
 				continue
 			}
 			out = append(out, q)

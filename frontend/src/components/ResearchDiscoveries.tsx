@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, FileText, Play, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, FileText, Play, Square, Trash2, X } from 'lucide-react';
 import ResearchPublicationConsole from './ResearchPublicationConsole';
 
 const API = 'http://127.0.0.1:8080/api/research';
@@ -223,6 +223,15 @@ export default function ResearchDiscoveries() {
                 <span className="hud-readout text-[11px] text-[#f6c879]">{d.rejectedCount} no-data</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {running(d) && (
+                  <button
+                    className="hud-button hud-button--danger"
+                    disabled={busy}
+                    onClick={() => void act(() => request(`/discoveries/${d.id}/stop`, {}), 'Stopped. Whatever was already found is kept.')}
+                  >
+                    <Square size={12} aria-hidden />Stop
+                  </button>
+                )}
                 {d.dismissed ? (
                   <button
                     className="hud-button"

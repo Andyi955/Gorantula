@@ -3,6 +3,7 @@ package research
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -112,6 +113,83 @@ func listDiscoveryAPI(t *testing.T, s *Service, path string) []models.DiscoveryR
 		t.Fatalf("GET %s: %v (%s)", path, err, w.Body.String())
 	}
 	return runs
+}
+
+func TestSkippedDiscoveryQuestionsAccountsForUnreachedQuestions(t *testing.T) {
+	questions := []string{"one", "two", "three"}
+	skipped := skippedDiscoveryQuestions(questions, 1, "not run: the round was stopped")
+	if len(skipped) != 2 {
+		t.Fatalf("expected the two unreached questions, got %+v", skipped)
+	}
+	for _, question := range skipped {
+		if question.Status != "skipped" || question.Error == "" || question.ID == "" {
+			t.Errorf("skipped question must carry a status, a reason and an id: %+v", question)
+		}
+	}
+	if skipped[0].Question != "two" || skipped[1].Question != "three" {
+		t.Errorf("skipped questions = %+v", skipped)
+	}
+	if got := skippedDiscoveryQuestions(questions, 3, "x"); got != nil {
+		t.Errorf("nothing to skip at the end, got %+v", got)
+	}
+}
+
+func TestDiscoveryOutcomeCounts(t *testing.T) {
+	worked, rejected := discoveryOutcomeCounts([]models.DiscoveryQuestion{
+		{Status: "completed"}, {Status: "rejected"}, {Status: "stopped"}, {Status: "skipped"}, {Status: "failed"}, {Status: "completed"},
+	})
+	if worked != 2 || rejected != 1 {
+		t.Errorf("worked=%d rejected=%d, want 2 and 1", worked, rejected)
+	}
+}
+
+func TestStopDiscoveryRejectsAFinishedRound(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+	if _, err := s.StopDiscovery(run.ID); !errors.Is(err, ErrDiscoveryNotRunning) {
+		t.Fatalf("stopping a finished round: got %v, want ErrDiscoveryNotRunning", err)
+	}
+	if _, err := s.StopDiscovery("deadbeef"); err == nil {
+		t.Error("stopping an unknown round must fail")
+	}
+
+	// A round that is running but has no registered cancel (for example after a
+	// restart) is still recorded as stopped rather than sitting at running.
+	running := models.DiscoveryRun{ID: run.ID, Status: "running", CreatedAt: run.CreatedAt}
+	if err := s.saveDiscovery(running); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := s.StopDiscovery(run.ID)
+	if err != nil {
+		t.Fatalf("StopDiscovery: %v", err)
+	}
+	if stopped.Status != "stopped" || stopped.StopReason == "" || stopped.CompletedAt == "" {
+		t.Errorf("stopped round = %+v", stopped)
+	}
+}
+
+func TestStopDiscoveryCancelsTheRegisteredRun(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "running")
+	cancelled := false
+	s.registerDiscoveryCancel(run.ID, func() { cancelled = true })
+	if _, err := s.StopDiscovery(run.ID); err != nil {
+		t.Fatalf("StopDiscovery: %v", err)
+	}
+	if !cancelled {
+		t.Error("stopping a running round must cancel its context")
+	}
+	s.clearDiscoveryCancel(run.ID)
+}
+
+func TestDiscoveryStopAPIRejectsAFinishedRound(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+	w := callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/"+run.ID+"/stop", `{}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("stop on a finished round: got %d, want 409 (%s)", w.Code, w.Body.String())
+	}
+	w = callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/missing/stop", `{}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("stop on an unknown round: got %d, want 404", w.Code)
+	}
 }
 
 func TestRotatedDiscoverySeedsDifferBetweenRuns(t *testing.T) {

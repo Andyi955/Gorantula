@@ -16156,8 +16156,44 @@ body {
 .research-overview__spin { color: var(--hud-accent); animation: hud-spin 1.6s linear infinite; }
 @keyframes hud-spin { to { transform: rotate(360deg); } }
 
+/* A determinate bar: the round knows how many questions it proposed, so the
+   reader gets a real fraction rather than an indeterminate spinner. */
+.research-overview__bar {
+  position: relative;
+  height: 4px;
+  margin: 14px 0 0;
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+  background: var(--hud-surface-2);
+  overflow: hidden;
+}
+.research-overview__bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--hud-accent-dim), var(--forensic-accent));
+  box-shadow: 0 0 14px -2px var(--hud-accent-soft);
+  transition: width 320ms ease;
+}
+.research-overview__current {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--forensic-text-muted);
+}
+.research-overview__current em { font-style: normal; color: var(--forensic-text); }
+.research-overview__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--forensic-text-muted);
+  cursor: pointer;
+}
+.research-overview__option input { accent-color: var(--forensic-accent); }
+
 @media (prefers-reduced-motion: reduce) {
   .research-overview__spin { animation: none; }
+  .research-overview__bar span { transition: none; }
 }
 
 /* --- Reduced motion ----------------------------------------------------- */
