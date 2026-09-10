@@ -23,6 +23,7 @@ test('one pipeline leads to a report and approval highlights missing user input'
     await route.fulfill({json:value, headers:{'Access-Control-Allow-Origin':'*'}});
   });
   await page.getByRole('button', {name:'Research',exact:true}).click();
+  await page.getByRole('button', {name:'Pipeline',exact:true}).click();
   await page.getByRole('button', {name:'Start research pipeline'}).click();
   await expect(page.getByText('The recorded samples differ. More evidence is needed.')).toBeVisible();
   await expect(page.getByRole('button', {name:'Prepare candidate paper'})).toHaveCount(0);

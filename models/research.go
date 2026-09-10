@@ -159,4 +159,11 @@ type CandidateHypothesis struct {
 	ApprovedBy    string              `json:"approvedBy,omitempty"`
 	ApprovedAt    string              `json:"approvedAt,omitempty"`
 	CreatedAt     string              `json:"createdAt,omitempty"`
+	// Dismissed archives a candidate out of the reviewable queue without
+	// discarding its checklist and evidence; RestoreCandidate reverses it.
+	// Both fields are omitempty and are cleared before any content digest is
+	// computed: shelving is a queue decision, not part of the hypothesis, so it
+	// must not invalidate a stored publication revision.
+	Dismissed   bool   `json:"dismissed,omitempty"`
+	DismissedAt string `json:"dismissedAt,omitempty"`
 }

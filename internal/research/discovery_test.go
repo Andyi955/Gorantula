@@ -3,10 +3,17 @@ package research
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Andyi955/Gorantula/brain"
+	"github.com/Andyi955/Gorantula/models"
 )
 
 func TestGenerateDiscoveryQuestions(t *testing.T) {
@@ -42,6 +49,17 @@ func TestDiscoveryQuestionDuplicateSemantic(t *testing.T) {
 		{"Does fertilizer increase crop yield", "Do penguins differ in body mass", false},
 		{"Do penguins differ in body mass", "Do penguins differ in body mass", true},
 		{"Do birds differ in wing length", "", false},
+		// Real pairs from a live round. Naming the data source made the same
+		// question long enough that Jaccard scored it 0.444 and let it through.
+		{
+			"Does species richness correlate with latitude in the Global Biodiversity Information Facility dataset",
+			"Does species richness correlate with latitude in the open dataset",
+			true,
+		},
+		// The distinguishing word is the measured variable, not the source, so
+		// these are different questions however alike they read.
+		{"Does species richness correlate with latitude", "Does species richness correlate with temperature", false},
+		{"Does species richness correlate with latitude", "Does bird species richness correlate with latitude", true},
 	}
 	for _, tc := range cases {
 		got := discoveryQuestionDuplicateSemantic(tc.a, tc.b)
@@ -58,5 +76,288 @@ func TestGenerateDiscoveryQuestionsEmpty(t *testing.T) {
 	}}}}
 	if _, err := s.generateDiscoveryQuestions(context.Background(), "x", 1); err == nil {
 		t.Fatal("expected an error when no bounded question is proposed")
+	}
+}
+
+// newDiscoveryServiceWithRun stores one discovery run in a temp store and
+// returns the service plus the stored run.
+func newDiscoveryServiceWithRun(t *testing.T, status string) (*Service, models.DiscoveryRun) {
+	t.Helper()
+	s := NewService(t.TempDir(), nil)
+	run := models.DiscoveryRun{
+		ID:        strings.Repeat("a", 32),
+		Theme:     "ecology",
+		Status:    status,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Questions: []models.DiscoveryQuestion{},
+	}
+	if err := s.saveDiscovery(run); err != nil {
+		t.Fatal(err)
+	}
+	return s, run
+}
+
+// callDiscoveryAPI drives the real router; a non-empty body is sent as JSON so
+// the handlers' application/json requirement is exercised.
+func callDiscoveryAPI(t *testing.T, s *Service, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, path, nil)
+	} else {
+		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	HandleAPI(w, r, s)
+	return w
+}
+
+func listDiscoveryAPI(t *testing.T, s *Service, path string) []models.DiscoveryRun {
+	t.Helper()
+	w := callDiscoveryAPI(t, s, http.MethodGet, path, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s: got %d: %s", path, w.Code, w.Body.String())
+	}
+	var runs []models.DiscoveryRun
+	if err := json.Unmarshal(w.Body.Bytes(), &runs); err != nil {
+		t.Fatalf("GET %s: %v (%s)", path, err, w.Body.String())
+	}
+	return runs
+}
+
+func TestSkippedDiscoveryQuestionsAccountsForUnreachedQuestions(t *testing.T) {
+	questions := []string{"one", "two", "three"}
+	skipped := skippedDiscoveryQuestions(questions, 1, "not run: the round was stopped")
+	if len(skipped) != 2 {
+		t.Fatalf("expected the two unreached questions, got %+v", skipped)
+	}
+	for _, question := range skipped {
+		if question.Status != "skipped" || question.Error == "" || question.ID == "" {
+			t.Errorf("skipped question must carry a status, a reason and an id: %+v", question)
+		}
+	}
+	if skipped[0].Question != "two" || skipped[1].Question != "three" {
+		t.Errorf("skipped questions = %+v", skipped)
+	}
+	if got := skippedDiscoveryQuestions(questions, 3, "x"); got != nil {
+		t.Errorf("nothing to skip at the end, got %+v", got)
+	}
+}
+
+func TestDiscoveryOutcomeCounts(t *testing.T) {
+	worked, rejected := discoveryOutcomeCounts([]models.DiscoveryQuestion{
+		{Status: "completed"}, {Status: "rejected"}, {Status: "stopped"}, {Status: "skipped"}, {Status: "failed"}, {Status: "completed"},
+	})
+	if worked != 2 || rejected != 1 {
+		t.Errorf("worked=%d rejected=%d, want 2 and 1", worked, rejected)
+	}
+}
+
+func TestStopDiscoveryRejectsAFinishedRound(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+	if _, err := s.StopDiscovery(run.ID); !errors.Is(err, ErrDiscoveryNotRunning) {
+		t.Fatalf("stopping a finished round: got %v, want ErrDiscoveryNotRunning", err)
+	}
+	if _, err := s.StopDiscovery("deadbeef"); err == nil {
+		t.Error("stopping an unknown round must fail")
+	}
+
+	// A round that is running but has no registered cancel (for example after a
+	// restart) is still recorded as stopped rather than sitting at running.
+	running := models.DiscoveryRun{ID: run.ID, Status: "running", CreatedAt: run.CreatedAt}
+	if err := s.saveDiscovery(running); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := s.StopDiscovery(run.ID)
+	if err != nil {
+		t.Fatalf("StopDiscovery: %v", err)
+	}
+	if stopped.Status != "stopped" || stopped.StopReason == "" || stopped.CompletedAt == "" {
+		t.Errorf("stopped round = %+v", stopped)
+	}
+}
+
+func TestStopDiscoveryCancelsTheRegisteredRun(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "running")
+	cancelled := false
+	s.registerDiscoveryCancel(run.ID, func() { cancelled = true })
+	if _, err := s.StopDiscovery(run.ID); err != nil {
+		t.Fatalf("StopDiscovery: %v", err)
+	}
+	if !cancelled {
+		t.Error("stopping a running round must cancel its context")
+	}
+	s.clearDiscoveryCancel(run.ID)
+}
+
+func TestDiscoveryStopAPIRejectsAFinishedRound(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+	w := callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/"+run.ID+"/stop", `{}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("stop on a finished round: got %d, want 409 (%s)", w.Code, w.Body.String())
+	}
+	w = callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/missing/stop", `{}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("stop on an unknown round: got %d, want 404", w.Code)
+	}
+}
+
+func TestRotatedDiscoverySeedsDifferBetweenRuns(t *testing.T) {
+	first := rotatedDiscoverySeeds(0)
+	second := rotatedDiscoverySeeds(1)
+	if len(first) != 3 || len(second) != 3 {
+		t.Fatalf("expected 3 seeds each, got %v and %v", first, second)
+	}
+	if first[0] == second[0] && first[1] == second[1] && first[2] == second[2] {
+		t.Errorf("consecutive blank-theme runs must explore different fields, got %v twice", first)
+	}
+	for _, seed := range append(first, second...) {
+		if strings.TrimSpace(seed) == "" {
+			t.Errorf("seeds must not be empty: %v", append(first, second...))
+		}
+	}
+	if got := rotatedDiscoverySeeds(len(discoverySeedPool)); got[0] != first[0] {
+		t.Errorf("rotation must wrap around: %v vs %v", got, first)
+	}
+}
+
+func TestCSVHeaderColumnsReadsHeaderOnly(t *testing.T) {
+	got := csvHeaderColumns([]byte("\ufeffpond_id, frog density ,year\r\n1,2,3\r\n"))
+	want := []string{"pond_id", "frog density", "year"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("column %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDiscoveryDatasetFitsFailsOpenWithoutAModel(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	if !service.discoveryDatasetFits(context.Background(), "Does X correlate with Y", openDataset{Name: "anything"}, []string{"a", "b"}) {
+		t.Error("without a model the relevance check must accept the dataset rather than block every run")
+	}
+}
+
+func TestDiscoveryDismissHidesRunFromListing(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+
+	w := callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/"+run.ID+"/dismiss", `{}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dismiss: got %d: %s", w.Code, w.Body.String())
+	}
+	var dismissed models.DiscoveryRun
+	if err := json.Unmarshal(w.Body.Bytes(), &dismissed); err != nil {
+		t.Fatal(err)
+	}
+	if !dismissed.Dismissed || dismissed.DismissedAt == "" {
+		t.Fatalf("dismiss response must carry the marker: %+v", dismissed)
+	}
+
+	if runs := listDiscoveryAPI(t, s, "/api/research/discoveries"); len(runs) != 0 {
+		t.Fatalf("dismissed run must be hidden from the default listing: %+v", runs)
+	}
+	all := listDiscoveryAPI(t, s, "/api/research/discoveries?includeDismissed=1")
+	if len(all) != 1 || !all[0].Dismissed || all[0].DismissedAt == "" {
+		t.Fatalf("includeDismissed listing must return the archived run: %+v", all)
+	}
+	if all[0].ID != run.ID {
+		t.Fatalf("wrong run returned: %+v", all[0])
+	}
+	if w := callDiscoveryAPI(t, s, http.MethodGet, "/api/research/discoveries/"+run.ID, ""); w.Code != http.StatusOK {
+		t.Fatalf("archived run must stay retrievable by id, got %d", w.Code)
+	}
+}
+
+func TestDiscoveryRestoreClearsDismissal(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+	if _, err := s.DismissDiscovery(run.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	w := callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/"+run.ID+"/restore", `{}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("restore: got %d: %s", w.Code, w.Body.String())
+	}
+	var restored models.DiscoveryRun
+	if err := json.Unmarshal(w.Body.Bytes(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Dismissed || restored.DismissedAt != "" {
+		t.Fatalf("restore must clear the marker and timestamp: %+v", restored)
+	}
+	if runs := listDiscoveryAPI(t, s, "/api/research/discoveries"); len(runs) != 1 || runs[0].ID != run.ID {
+		t.Fatalf("restored run must be listed again: %+v", runs)
+	}
+	if all := listDiscoveryAPI(t, s, "/api/research/discoveries?includeDismissed=1"); len(all) != 1 || all[0].Dismissed {
+		t.Fatalf("includeDismissed listing must show the restored run un-flagged: %+v", all)
+	}
+}
+
+func TestDiscoveryDeleteRemovesRecord(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "completed")
+
+	w := callDiscoveryAPI(t, s, http.MethodDelete, "/api/research/discoveries/"+run.ID, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body["deleted"] {
+		t.Fatalf("delete response must report the deletion: %s", w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(s.discoveryStore().root, run.ID+".json")); !os.IsNotExist(err) {
+		t.Fatalf("record must be removed from disk, stat err = %v", err)
+	}
+	if w := callDiscoveryAPI(t, s, http.MethodDelete, "/api/research/discoveries/"+run.ID, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("second delete must be 404, got %d", w.Code)
+	}
+	if w := callDiscoveryAPI(t, s, http.MethodGet, "/api/research/discoveries/"+run.ID, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("deleted run must be gone, got %d", w.Code)
+	}
+}
+
+func TestDiscoveryDismissAndDeleteRejectRunningRun(t *testing.T) {
+	s, run := newDiscoveryServiceWithRun(t, "running")
+
+	if w := callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/"+run.ID+"/dismiss", `{}`); w.Code != http.StatusConflict {
+		t.Fatalf("dismiss of a running run must be 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := callDiscoveryAPI(t, s, http.MethodDelete, "/api/research/discoveries/"+run.ID, ""); w.Code != http.StatusConflict {
+		t.Fatalf("delete of a running run must be 409, got %d: %s", w.Code, w.Body.String())
+	}
+	current, err := s.GetDiscovery(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != "running" || current.Dismissed || current.DismissedAt != "" {
+		t.Fatalf("rejected calls must leave the record intact: %+v", current)
+	}
+	// Restore is not gated on a running run: it only clears the archive marker.
+	if w := callDiscoveryAPI(t, s, http.MethodPost, "/api/research/discoveries/"+run.ID+"/restore", `{}`); w.Code != http.StatusOK {
+		t.Fatalf("restore must not be rejected for a running run, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDiscoveryArchiveAndDeleteUnknownID(t *testing.T) {
+	s, _ := newDiscoveryServiceWithRun(t, "completed")
+	missing := strings.Repeat("f", 32)
+	for _, tc := range []struct {
+		method, path, body string
+	}{
+		{http.MethodPost, "/api/research/discoveries/" + missing + "/dismiss", `{}`},
+		{http.MethodPost, "/api/research/discoveries/" + missing + "/restore", `{}`},
+		{http.MethodDelete, "/api/research/discoveries/" + missing, ""},
+		{http.MethodPost, "/api/research/discoveries/not-an-id/dismiss", `{}`},
+		{http.MethodDelete, "/api/research/discoveries/not-an-id", ""},
+	} {
+		if w := callDiscoveryAPI(t, s, tc.method, tc.path, tc.body); w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s: got %d want 404: %s", tc.method, tc.path, w.Code, w.Body.String())
+		}
 	}
 }

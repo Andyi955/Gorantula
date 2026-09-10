@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,26 @@ func reservedDatasetIP(ip net.IP) bool {
 
 func fetchDatasetURL(ctx context.Context, raw string) ([]byte, string, error) {
 	return fetchResearchURL(ctx, raw, maxDatasetBytes)
+}
+
+// describeOpenDataCandidates renders the candidate list the agent sees and the
+// download links that dataset-import accepts, so the search tool and the
+// up-front seeding of a topic run describe candidates identically.
+func describeOpenDataCandidates(found []openDataset) (string, []string) {
+	if len(found) == 0 {
+		return "No open-data repository candidate with a downloadable CSV/TSV matched the query. This records that none was found; it is not evidence that the data does not exist.", nil
+	}
+	var sb strings.Builder
+	sb.WriteString("Open-data repository candidates (verify relevance and provenance before importing; a downloadable file is not proof of good data): ")
+	links := make([]string, 0, len(found))
+	for i, d := range found {
+		if i > 0 {
+			sb.WriteString(" | ")
+		}
+		fmt.Fprintf(&sb, "%s [%s, %d KB, file %s]", d.Name, d.Provider, d.Size>>10, d.File)
+		links = append(links, d.DownloadURL)
+	}
+	return truncateRunes(sb.String(), 1600), links
 }
 
 func fetchResearchURL(ctx context.Context, raw string, limit int64) ([]byte, string, error) {
@@ -71,26 +92,72 @@ func fetchResearchURL(ctx context.Context, raw string, limit int64) ([]byte, str
 		}
 		return nil
 	}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, "", err
+	// Many data hosts answer an unadorned request with 403, so the fetch
+	// identifies itself as a browser and retries once with a plain client
+	// agent, which some hosts gate differently. Access failures stay explicit:
+	// a 403 means access failed, not that the data does not exist.
+	return fetchWithAgents(ctx, client, u.String(), limit)
+}
+
+// fetchWithAgents runs the request once per configured user agent, retrying
+// only on status codes that mean "access refused" rather than "not there".
+func fetchWithAgents(ctx context.Context, client *http.Client, raw string, limit int64) ([]byte, string, error) {
+	var lastErr error
+	for attempt, agent := range datasetUserAgents {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, "", ctx.Err()
+			case <-time.After(400 * time.Millisecond):
+			}
+		}
+		data, final, retryable, err := fetchResearchURLOnce(ctx, client, raw, limit, agent)
+		if err == nil {
+			return data, final, nil
+		}
+		lastErr = err
+		if !retryable {
+			break
+		}
 	}
+	return nil, "", lastErr
+}
+
+// datasetUserAgents are tried in order. The second entry exists because some
+// hosts treat a browser string as a scraper and a plain client as acceptable,
+// and vice versa.
+var datasetUserAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+	"curl/8.5.0",
+}
+
+func fetchResearchURLOnce(ctx context.Context, client *http.Client, raw string, limit int64, agent string) ([]byte, string, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return nil, "", false, err
+	}
+	req.Header.Set("User-Agent", agent)
+	req.Header.Set("Accept", "text/csv, application/csv, text/plain, application/octet-stream, */*")
+	req.Header.Set("Accept-Language", "en")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("dataset source returned HTTP %d", resp.StatusCode)
+		retryable := resp.StatusCode == http.StatusForbidden ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusServiceUnavailable
+		return nil, "", retryable, fmt.Errorf("dataset source returned HTTP %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if int64(len(data)) > limit {
-		return nil, "", fmt.Errorf("source exceeds %d MiB", limit>>20)
+		return nil, "", false, fmt.Errorf("source exceeds %d MiB", limit>>20)
 	}
-	return data, resp.Request.URL.String(), nil
+	return data, resp.Request.URL.String(), false, nil
 }
 
 func inspectDataset(d models.ResearchDataset) (models.DatasetResult, error) {
@@ -210,6 +277,195 @@ func (s *Service) filterDataset(d models.ResearchDataset, call models.DatasetCal
 	return child, s.verificationStore("datasets").saveSlice(child.ID+".json", child)
 }
 
+// aggregateDataset collapses repeated rows per group into one row per group. A
+// country-year panel is not a set of independent observations, so a question
+// about differences across countries needs one row per country before any
+// correlation; without this the only way to reduce a panel is to filter it down
+// to a single entity.
+func (s *Service) aggregateDataset(d models.ResearchDataset, call models.DatasetCall) (models.ResearchDataset, error) {
+	if strings.TrimSpace(call.Rationale) == "" || len(call.Rationale) > 2000 {
+		return d, fmt.Errorf("provide a bounded aggregate and rationale")
+	}
+	operation := strings.ToLower(strings.TrimSpace(call.Operation))
+	switch operation {
+	case "mean", "median", "sum", "min", "max", "count", "weighted-mean":
+	default:
+		return d, fmt.Errorf("unsupported aggregate operation")
+	}
+	if operation == "weighted-mean" && strings.TrimSpace(call.WeightColumn) == "" {
+		return d, fmt.Errorf("weighted-mean requires a weight column")
+	}
+	if len(call.ValueColumns) == 0 || len(call.ValueColumns) > 4 {
+		return d, fmt.Errorf("name 1 to 4 value columns")
+	}
+	headers, rows, err := parseVerificationCSV(d.CSV)
+	if err != nil {
+		return d, err
+	}
+	weightIndex := -1
+	if operation == "weighted-mean" {
+		for i, h := range headers {
+			if h == call.WeightColumn {
+				weightIndex = i
+			}
+		}
+		if weightIndex < 0 {
+			return d, fmt.Errorf("unknown weight column %q", call.WeightColumn)
+		}
+	}
+	groupIndex := -1
+	for i, h := range headers {
+		if h == call.GroupColumn {
+			groupIndex = i
+		}
+	}
+	if groupIndex < 0 {
+		return d, fmt.Errorf("unknown group column")
+	}
+	valueIndexes := make([]int, 0, len(call.ValueColumns))
+	for _, name := range call.ValueColumns {
+		index := -1
+		for i, h := range headers {
+			if h == name {
+				index = i
+			}
+		}
+		if index < 0 {
+			return d, fmt.Errorf("unknown value column %q", name)
+		}
+		valueIndexes = append(valueIndexes, index)
+	}
+	order := []string{}
+	samples := map[string][][]float64{}
+	weights := map[string][][]float64{}
+	counts := map[string]int{}
+	for _, row := range rows {
+		group := strings.TrimSpace(row[groupIndex])
+		if group == "" {
+			continue
+		}
+		if _, seen := samples[group]; !seen {
+			order = append(order, group)
+			samples[group] = make([][]float64, len(valueIndexes))
+			weights[group] = make([][]float64, len(valueIndexes))
+		}
+		counts[group]++
+		for i, index := range valueIndexes {
+			cell := strings.TrimSpace(row[index])
+			if missingDatasetCell(cell) {
+				continue
+			}
+			n, parseErr := strconv.ParseFloat(cell, 64)
+			if parseErr != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+				continue
+			}
+			if weightIndex >= 0 {
+				weight, weightErr := strconv.ParseFloat(strings.TrimSpace(row[weightIndex]), 64)
+				if weightErr != nil || math.IsNaN(weight) || math.IsInf(weight, 0) || weight <= 0 {
+					continue
+				}
+				weights[group][i] = append(weights[group][i], weight)
+			}
+			samples[group][i] = append(samples[group][i], n)
+		}
+	}
+	if len(order) < 2 {
+		return d, fmt.Errorf("aggregate needs at least two groups")
+	}
+	outHeaders := []string{call.GroupColumn, "rows"}
+	for _, name := range call.ValueColumns {
+		outHeaders = append(outHeaders, name+"_"+operation)
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write(outHeaders)
+	kept := 0
+	for _, group := range order {
+		record := []string{group, strconv.Itoa(counts[group])}
+		complete := true
+		for i := range valueIndexes {
+			if len(samples[group][i]) == 0 {
+				complete = false
+				break
+			}
+			if weightIndex >= 0 && len(weights[group][i]) != len(samples[group][i]) {
+				complete = false
+				break
+			}
+			record = append(record, strconv.FormatFloat(aggregateValues(samples[group][i], weights[group][i], operation), 'g', -1, 64))
+		}
+		if !complete {
+			continue
+		}
+		_ = w.Write(record)
+		kept++
+	}
+	w.Flush()
+	if w.Error() != nil {
+		return d, w.Error()
+	}
+	if kept < 2 {
+		return d, fmt.Errorf("aggregate leaves fewer than two complete groups")
+	}
+	child := models.ResearchDataset{Name: d.Name, Source: d.Source, CSV: buf.String(), Digest: digestBytes(buf.Bytes()), Columns: outHeaders, Rows: kept, ParentID: d.ID, ParentDigest: d.Digest, Aggregate: &call}
+	encoded, _ := json.Marshal(child)
+	child.ID = digestBytes(encoded)
+	return child, s.verificationStore("datasets").saveSlice(child.ID+".json", child)
+}
+
+func aggregateValues(sample, weights []float64, operation string) float64 {
+	switch operation {
+	case "count":
+		return float64(len(sample))
+	case "weighted-mean":
+		total, weightTotal := 0.0, 0.0
+		for i, value := range sample {
+			total += value * weights[i]
+			weightTotal += weights[i]
+		}
+		if weightTotal == 0 {
+			return 0
+		}
+		return total / weightTotal
+	case "sum":
+		total := 0.0
+		for _, value := range sample {
+			total += value
+		}
+		return total
+	case "min":
+		best := sample[0]
+		for _, value := range sample {
+			if value < best {
+				best = value
+			}
+		}
+		return best
+	case "max":
+		best := sample[0]
+		for _, value := range sample {
+			if value > best {
+				best = value
+			}
+		}
+		return best
+	case "median":
+		sorted := append([]float64(nil), sample...)
+		sort.Float64s(sorted)
+		middle := len(sorted) / 2
+		if len(sorted)%2 == 1 {
+			return sorted[middle]
+		}
+		return (sorted[middle-1] + sorted[middle]) / 2
+	default: // mean
+		total := 0.0
+		for _, value := range sample {
+			total += value
+		}
+		return total / float64(len(sample))
+	}
+}
+
 func datasetLinks(data []byte, base string) []string {
 	u, err := url.Parse(base)
 	if err != nil {
@@ -313,6 +569,15 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		var d models.ResearchDataset
 		d, err = s.loadDataset(call.DatasetID)
 		if err == nil {
+			// A saved snapshot from an earlier run is not data supplied for this
+			// question. Selecting one that cannot answer the topic is how an
+			// off-topic computation used to be scored as a finding, so the same
+			// relevance check that guards seeding guards selection too.
+			if strings.TrimSpace(run.Request.Topic) != "" && d.ID != run.Dataset.ID &&
+				!s.datasetAnswersQuestion(ctx, run.Request.Topic, d.Name, d.Source, d.Columns) {
+				err = fmt.Errorf("the selected dataset does not contain the variables this question needs; use dataset-search to find data that does, or dataset-import a candidate link")
+				break
+			}
 			// Keep earlier calculation inputs for replay if selection follows a failure.
 			if run.Dataset.ID != "" {
 				run.DatasetParents = append(run.DatasetParents, run.Dataset)
@@ -380,21 +645,7 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		if err != nil {
 			break
 		}
-		if len(found) == 0 {
-			out.Summary = "No open-data repository candidate with a downloadable CSV/TSV matched the query. This records that none was found; it is not evidence that the data does not exist."
-			out.Call = call
-			break
-		}
-		var sb strings.Builder
-		sb.WriteString("Open-data repository candidates (verify relevance and provenance before importing; a downloadable file is not proof of good data): ")
-		for i, d := range found {
-			if i > 0 {
-				sb.WriteString(" | ")
-			}
-			fmt.Fprintf(&sb, "%s [%s, %d KB, file %s]", d.Name, d.Provider, d.Size>>10, d.File)
-			out.Links = append(out.Links, d.DownloadURL)
-		}
-		out.Summary = truncateRunes(sb.String(), 1600)
+		out.Summary, out.Links = describeOpenDataCandidates(found)
 		out.Call = call
 	case "dataset-filter":
 		if hasSuccessfulCalculation(run.Results) {
@@ -406,6 +657,19 @@ func (s *Service) executeDatasetCallWithFetcher(ctx context.Context, run *models
 		if err == nil {
 			run.DatasetParents = append(run.DatasetParents, run.Dataset)
 			out.Summary = fmt.Sprintf("Kept %d of %d rows. Original snapshot retained; filter and parent digest recorded.", d.Rows, run.Dataset.Rows)
+			out.DatasetID = d.ID
+			run.Dataset = d
+		}
+	case "dataset-aggregate":
+		if hasSuccessfulCalculation(run.Results) {
+			err = fmt.Errorf("dataset is frozen after the first successful calculation")
+			break
+		}
+		var d models.ResearchDataset
+		d, err = s.aggregateDataset(run.Dataset, call)
+		if err == nil {
+			run.DatasetParents = append(run.DatasetParents, run.Dataset)
+			out.Summary = fmt.Sprintf("Collapsed %d rows into %d group rows: one row per %s with the %s of %s. Original snapshot retained; aggregate and parent digest recorded.", run.Dataset.Rows, d.Rows, call.GroupColumn, call.Operation, strings.Join(call.ValueColumns, ", "))
 			out.DatasetID = d.ID
 			run.Dataset = d
 		}

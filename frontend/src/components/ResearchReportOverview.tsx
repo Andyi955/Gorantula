@@ -46,9 +46,9 @@ export default function ResearchReportOverview({run, figures, paperCount, claimC
                 const high = Math.max(0, ...f.data.map(g => g.mean));
                 const range = high - low || 1;
                 const zero = -low / range * 100;
-                return f.data.map(g => <div className="research-bar-row" key={g.name}>
+                return f.data.map((g, row) => <div className="research-bar-row" key={g.name}>
                   <span className="research-bar-label">{g.name}<small>n = {g.count}</small></span>
-                  <div className="research-bar-track"><i className="research-zero" style={{left:`${zero}%`}} /><span className="research-bar" style={{left:`${Math.min(zero, (g.mean-low)/range*100)}%`, width:`${Math.abs(g.mean)/range*100}%`}} /></div>
+                  <div className="research-bar-track"><i className="research-zero" style={{left:`${zero}%`}} /><span className="research-bar" style={{left:`${Math.min(zero, (g.mean-low)/range*100)}%`, width:`${Math.abs(g.mean)/range*100}%`, transformOrigin: g.mean < 0 ? 'right center' : 'left center', animationDelay: `${row * 70}ms`}} /></div>
                   <strong>{g.mean.toLocaleString(undefined, {maximumFractionDigits:2})}</strong>
                 </div>);
               })()}

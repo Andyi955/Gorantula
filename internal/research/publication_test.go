@@ -259,6 +259,16 @@ func TestPublicationFlagsHistoricalUnrelatedClaims(t *testing.T) {
 	}
 }
 
+func TestPublicationRevisionIgnoresCandidateArchiving(t *testing.T) {
+	draft := models.PublicationDraft{Candidate: models.CandidateHypothesis{ID: "cand", State: models.CandidateStateReviewed}}
+	before := publicationRevision(draft)
+	draft.Candidate.Dismissed = true
+	draft.Candidate.DismissedAt = "2026-09-08T10:00:00Z"
+	if after := publicationRevision(draft); after != before {
+		t.Errorf("archiving a candidate changed the publication content digest: %q -> %q", before, after)
+	}
+}
+
 func TestPublicationGeneratedFigureDeterministic(t *testing.T) {
 	f := models.PublicationFigure{Title: "Known means", Data: []models.VerificationGroup{{Name: "negative", Count: 2, Mean: -2}, {Name: "positive", Count: 2, Mean: 8}}, Metrics: map[string]float64{"difference": 10}}
 	a, err := publicationFigurePNG(f)

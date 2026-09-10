@@ -20,8 +20,8 @@ import (
 )
 
 const verificationToolVersion = "native-v1"
-const maxDatasetBytes = 1 << 20
-const maxDatasetRows = 2000
+const maxDatasetBytes = 4 << 20
+const maxDatasetRows = 30000
 
 func digestBytes(data []byte) string {
 	sum := sha256.Sum256(data)
@@ -35,7 +35,7 @@ func parseVerificationCSV(raw string) ([]string, [][]string, error) {
 		return nil, nil, fmt.Errorf("CSV must use UTF-8 encoding")
 	}
 	if len(raw) == 0 || len(raw) > maxDatasetBytes {
-		return nil, nil, fmt.Errorf("CSV must contain 1 byte to 1 MiB")
+		return nil, nil, fmt.Errorf("CSV must contain 1 byte to %d MiB", maxDatasetBytes>>20)
 	}
 	r := csv.NewReader(strings.NewReader(strings.TrimPrefix(raw, "\ufeff")))
 	header, err := r.Read()

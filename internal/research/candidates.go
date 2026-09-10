@@ -99,6 +99,15 @@ var candidateChecklist = []checklistCriterion{
 	}},
 }
 
+// candidateIsRunScoped reports whether a candidate was created by a free-text
+// topic run rather than derived from corpus signals. A run-scoped candidate is
+// an artifact of its run (the run, its verification and its publication all
+// reference it by id), so it stays persisted and resolvable but is kept out of
+// the reviewable idea queue the Candidates tab shows.
+func candidateIsRunScoped(candidate models.CandidateHypothesis) bool {
+	return strings.HasPrefix(candidate.ID, "topic-")
+}
+
 // buildCandidates promotes each contradiction/convergence signal into a
 // reviewable candidate hypothesis.
 func buildCandidates(signals []models.ResearchSignal, claims []models.Claim) []models.CandidateHypothesis {

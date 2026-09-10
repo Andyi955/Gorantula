@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import BrainSignalsPanel, { resetBrainBundleCacheForTests } from '../../src/components/BrainSignalsPanel'
+import BrainSignalsPanel from '../../src/components/BrainSignalsPanel'
+import { resetBrainBundleCacheForTests } from '../../src/components/brainMemoryBundleCache'
 import type {
   BrainAttentionSummary,
   BrainAutonomyQueueItem,
@@ -473,16 +474,6 @@ const makeSuggestion = (overrides: Partial<BrainSuggestion> = {}): BrainSuggesti
   relatedMemoryLinkIds: overrides.relatedMemoryLinkIds || suggestion.relatedMemoryLinkIds,
   relatedClusterIds: overrides.relatedClusterIds || suggestion.relatedClusterIds,
   targetInvestigationIds: overrides.targetInvestigationIds || suggestion.targetInvestigationIds,
-})
-
-const makeFollowUp = (overrides: Partial<BrainFollowUpAction> = {}): BrainFollowUpAction => ({
-  ...followUpAction,
-  ...overrides,
-  targetInvestigationIds: overrides.targetInvestigationIds || followUpAction.targetInvestigationIds,
-  relatedSignalIds: overrides.relatedSignalIds || followUpAction.relatedSignalIds,
-  relatedMemoryLinkIds: overrides.relatedMemoryLinkIds || followUpAction.relatedMemoryLinkIds,
-  relatedClusterIds: overrides.relatedClusterIds || followUpAction.relatedClusterIds,
-  reasonSamples: overrides.reasonSamples || followUpAction.reasonSamples,
 })
 
 const makeAutonomyState = (overrides: Partial<BrainAutonomyState> = {}): BrainAutonomyState => ({
@@ -3337,7 +3328,6 @@ describe('BrainSignalsPanel', () => {
   })
 
   it('flags blocked and awaiting-approval autonomy work on the pulse strip', async () => {
-    const user = userEvent.setup()
     installBrainFetch({
       signals: [signal],
       links: [],

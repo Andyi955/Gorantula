@@ -2,6 +2,10 @@ package research
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Andyi955/Gorantula/models"
@@ -135,6 +139,168 @@ func TestCandidateApproveAndReject(t *testing.T) {
 	}
 	if found {
 		t.Errorf("unknown candidate should not be found")
+	}
+}
+
+func TestCandidateQueueExcludesRunScopedAndArchived(t *testing.T) {
+	svc := NewService(t.TempDir(), nil)
+	_ = svc.store.SaveCandidates([]models.CandidateHypothesis{
+		{ID: "candidate-signal-1", State: models.CandidateStateReviewed},
+		{ID: "candidate-signal-2", State: models.CandidateStateReviewed, Dismissed: true, DismissedAt: "2026-09-08T10:00:00Z"},
+		{ID: "topic-run-1", State: models.CandidateStateProposed},
+		{ID: "publication-trial", State: models.CandidateStateApproved},
+	})
+
+	queue, err := svc.ListCandidateQueue(false)
+	if err != nil {
+		t.Fatalf("ListCandidateQueue: %v", err)
+	}
+	ids := candidateIDs(queue)
+	if len(ids) != 2 || !containsID(ids, "candidate-signal-1") || !containsID(ids, "publication-trial") {
+		t.Fatalf("default queue = %v, want the two non-run candidates", ids)
+	}
+	if containsID(ids, "topic-run-1") {
+		t.Errorf("run-scoped candidate leaked into the queue: %v", ids)
+	}
+	if containsID(ids, "candidate-signal-2") {
+		t.Errorf("archived candidate leaked into the default queue: %v", ids)
+	}
+
+	withArchived, err := svc.ListCandidateQueue(true)
+	if err != nil {
+		t.Fatalf("ListCandidateQueue(includeDismissed): %v", err)
+	}
+	ids = candidateIDs(withArchived)
+	if !containsID(ids, "candidate-signal-2") {
+		t.Errorf("archived candidate missing when includeDismissed is set: %v", ids)
+	}
+	if containsID(ids, "topic-run-1") {
+		t.Errorf("run-scoped candidate must stay out even with includeDismissed: %v", ids)
+	}
+
+	// A run-scoped candidate stays resolvable by id for its own run.
+	all, err := svc.ListCandidates()
+	if err != nil {
+		t.Fatalf("ListCandidates: %v", err)
+	}
+	if !containsID(candidateIDs(all), "topic-run-1") {
+		t.Errorf("run-scoped candidate must remain persisted: %v", candidateIDs(all))
+	}
+}
+
+func TestCandidateDismissAndRestore(t *testing.T) {
+	svc := NewService(t.TempDir(), nil)
+	_ = svc.store.SaveCandidates([]models.CandidateHypothesis{{ID: "cand-a", State: models.CandidateStateReviewed}})
+
+	dismissed, found, err := svc.DismissCandidate("cand-a")
+	if err != nil || !found {
+		t.Fatalf("DismissCandidate: %v found=%v", err, found)
+	}
+	if !dismissed.Dismissed || dismissed.DismissedAt == "" {
+		t.Errorf("dismiss did not set marker/timestamp: %+v", dismissed)
+	}
+
+	// Dismissing twice keeps the original timestamp.
+	again, _, err := svc.DismissCandidate("cand-a")
+	if err != nil {
+		t.Fatalf("second DismissCandidate: %v", err)
+	}
+	if again.DismissedAt != dismissed.DismissedAt {
+		t.Errorf("re-dismiss changed the timestamp: %q then %q", dismissed.DismissedAt, again.DismissedAt)
+	}
+
+	restored, found, err := svc.RestoreCandidate("cand-a")
+	if err != nil || !found {
+		t.Fatalf("RestoreCandidate: %v found=%v", err, found)
+	}
+	if restored.Dismissed || restored.DismissedAt != "" {
+		t.Errorf("restore did not clear the archive marker: %+v", restored)
+	}
+
+	if _, found, _ := svc.DismissCandidate("not-there"); found {
+		t.Errorf("dismissing an unknown candidate should not report found")
+	}
+	if _, found, _ := svc.RestoreCandidate("not-there"); found {
+		t.Errorf("restoring an unknown candidate should not report found")
+	}
+}
+
+func candidateIDs(candidates []models.CandidateHypothesis) []string {
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ID)
+	}
+	return ids
+}
+
+func containsID(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCandidateQueueAPIHidesRunScopedAndArchives(t *testing.T) {
+	svc := NewService(t.TempDir(), nil)
+	_ = svc.store.SaveCandidates([]models.CandidateHypothesis{
+		{ID: "candidate-signal-1", State: models.CandidateStateReviewed},
+		{ID: "topic-run-1", State: models.CandidateStateProposed},
+	})
+
+	call := func(method, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		var r *http.Request
+		if method == http.MethodPost {
+			r = httptest.NewRequest(method, path, strings.NewReader("{}"))
+			r.Header.Set("Content-Type", "application/json")
+		} else {
+			r = httptest.NewRequest(method, path, nil)
+		}
+		w := httptest.NewRecorder()
+		HandleAPI(w, r, svc)
+		return w
+	}
+	list := func(path string) []string {
+		t.Helper()
+		w := call(http.MethodGet, path)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: got %d: %s", path, w.Code, w.Body.String())
+		}
+		var candidates []models.CandidateHypothesis
+		if err := json.Unmarshal(w.Body.Bytes(), &candidates); err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		return candidateIDs(candidates)
+	}
+
+	if ids := list("/api/research/candidates"); len(ids) != 1 || ids[0] != "candidate-signal-1" {
+		t.Fatalf("queue = %v, want only the corpus candidate", ids)
+	}
+
+	if w := call(http.MethodPost, "/api/research/candidates/candidate-signal-1/dismiss"); w.Code != http.StatusOK {
+		t.Fatalf("dismiss: got %d: %s", w.Code, w.Body.String())
+	}
+	if ids := list("/api/research/candidates"); len(ids) != 0 {
+		t.Fatalf("archived candidate still listed: %v", ids)
+	}
+	if ids := list("/api/research/candidates?includeDismissed=1"); len(ids) != 1 {
+		t.Fatalf("includeDismissed=1 = %v, want the archived candidate", ids)
+	}
+
+	if w := call(http.MethodPost, "/api/research/candidates/candidate-signal-1/restore"); w.Code != http.StatusOK {
+		t.Fatalf("restore: got %d: %s", w.Code, w.Body.String())
+	}
+	if ids := list("/api/research/candidates"); len(ids) != 1 {
+		t.Fatalf("restored candidate missing: %v", ids)
+	}
+
+	if w := call(http.MethodPost, "/api/research/candidates/not-there/dismiss"); w.Code != http.StatusNotFound {
+		t.Errorf("dismiss unknown id: got %d, want 404", w.Code)
+	}
+	if w := call(http.MethodPost, "/api/research/candidates/not-there/restore"); w.Code != http.StatusNotFound {
+		t.Errorf("restore unknown id: got %d, want 404", w.Code)
 	}
 }
 

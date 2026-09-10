@@ -62,7 +62,7 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -127,7 +127,14 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 			break
 		}
 		w.Header().Set("Content-Type", "application/pdf")
-		w.Header().Set("Content-Disposition", `inline; filename="research-report.pdf"`)
+		// ?download=1 saves the report instead of opening the browser viewer.
+		// Cross-origin <a download> is ignored, so the disposition has to come
+		// from the server for a real "Download PDF" action.
+		disposition := "inline"
+		if r.URL.Query().Get("download") == "1" {
+			disposition = "attachment"
+		}
+		w.Header().Set("Content-Disposition", disposition+`; filename="research-report.pdf"`)
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(pdf)
 	case parts[2] == "publications" && len(parts) == 5 && r.Method == http.MethodPost:
@@ -279,11 +286,14 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 		var req struct {
 			Theme string `json:"theme"`
 			Count int    `json:"count"`
+			// StopOnResult ends the round as soon as one question produces a
+			// result, instead of running every proposed question.
+			StopOnResult bool `json:"stopOnResult"`
 		}
 		if !read(&req) {
 			return true
 		}
-		run, err := s.StartDiscovery(r.Context(), req.Theme, req.Count)
+		run, err := s.StartDiscovery(r.Context(), req.Theme, req.Count, req.StopOnResult)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
@@ -291,11 +301,60 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 			respond(run, nil)
 		}
 	case len(parts) == 3 && parts[2] == "discoveries" && r.Method == http.MethodGet:
+		if r.URL.Query().Get("includeDismissed") == "1" {
+			runs, err := s.ListDiscoveriesIncludingDismissed()
+			respond(runs, err)
+			break
+		}
 		runs, err := s.ListDiscoveries()
 		respond(runs, err)
 	case len(parts) == 4 && parts[2] == "discoveries" && r.Method == http.MethodGet:
 		run, err := s.GetDiscovery(parts[3])
 		respond(run, err)
+	case len(parts) == 5 && parts[2] == "discoveries" && parts[4] == "stop" && r.Method == http.MethodPost:
+		var req struct{}
+		if !read(&req) {
+			return true
+		}
+		run, err := s.StopDiscovery(parts[3])
+		if errors.Is(err, ErrDiscoveryNotRunning) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			break
+		}
+		respond(run, err)
+	case len(parts) == 5 && parts[2] == "discoveries" && parts[4] == "dismiss" && r.Method == http.MethodPost:
+		var req struct{}
+		if !read(&req) {
+			return true
+		}
+		run, err := s.DismissDiscovery(parts[3])
+		if errors.Is(err, ErrDiscoveryRunning) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			break
+		}
+		respond(run, err)
+	case len(parts) == 5 && parts[2] == "discoveries" && parts[4] == "restore" && r.Method == http.MethodPost:
+		var req struct{}
+		if !read(&req) {
+			return true
+		}
+		run, err := s.RestoreDiscovery(parts[3])
+		if errors.Is(err, ErrDiscoveryRunning) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			break
+		}
+		respond(run, err)
+	case len(parts) == 4 && parts[2] == "discoveries" && r.Method == http.MethodDelete:
+		err := s.DeleteDiscovery(parts[3])
+		if errors.Is(err, ErrDiscoveryRunning) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			break
+		}
+		if err != nil {
+			respond(nil, err)
+			break
+		}
+		respond(map[string]bool{"deleted": true}, nil)
 	default:
 		http.NotFound(w, r)
 	}

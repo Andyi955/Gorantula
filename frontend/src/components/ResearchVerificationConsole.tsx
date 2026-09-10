@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ResearchDataWorkbench from './ResearchDataWorkbench';
-import { FlaskConical, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8080/api/research';
 interface Dataset { id: string; name: string; source: string; columns: string[]; rows: number; digest: string; parentId?: string }
@@ -22,12 +22,12 @@ async function request<T>(path: string, body?: unknown, signal?: AbortSignal): P
   if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
   return response.json() as Promise<T>;
 }
-const field = 'mt-1 w-full min-w-0 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2 text-sm text-[var(--forensic-text)] placeholder-[var(--forensic-text-faint)] outline-none focus:border-[var(--forensic-accent)]';
-const button = 'rounded-lg border border-[var(--forensic-border-soft)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)] transition-colors hover:border-[var(--forensic-border)] hover:text-[var(--forensic-text)] disabled:opacity-40';
-const primaryButton = 'rounded-lg border border-[var(--forensic-accent)] bg-[var(--forensic-glow)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-[var(--forensic-accent-strong)] transition-colors hover:border-[var(--forensic-accent-strong)] disabled:opacity-40';
+const field = 'hud-field min-w-0';
+const button = 'hud-button';
+const primaryButton = 'hud-button hud-button--primary';
 // Match the research verdict palette; completion describes execution, not scientific support.
 const statusTone = (status: string) => status === 'completed' ? 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' : status === 'failed' ? 'text-[#ff8c86] border-[#ff8c86]/45 bg-[#ff8c86]/10' : 'text-[#f6c879] border-[#f6c879]/45 bg-[#f6c879]/10';
-const card = 'rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4';
+const card = 'hud-panel p-4';
 
 export default function ResearchVerificationConsole({ candidates }: Props) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -85,12 +85,8 @@ export default function ResearchVerificationConsole({ candidates }: Props) {
     catch (e) { if (mounted.current) setError(String(e)); }
   };
 
-  return <section className="mt-4 flex flex-col gap-3" aria-label="Verification console">
-    <div>
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-[var(--forensic-text)]"><FlaskConical size={16} className="text-[var(--forensic-accent)]" aria-hidden />Check a research idea</h2>
-      <p className="mt-1 text-xs leading-relaxed text-[var(--forensic-text-muted)]">Choose an idea and let the research agent look for data, choose the checks, and explain the results. You do not need to choose a statistical test.</p>
-    </div>
-    {error && <p role="alert" className="rounded-lg border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</p>}
+  return <section className="flex flex-col gap-3" aria-label="Verification console">
+    {error && <p role="alert" className="rounded border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</p>}
     <form className={`${card} grid gap-3 sm:grid-cols-2`} onSubmit={e => { e.preventDefault(); void act(() => request('/verify', {
       mode, candidateId: candidate?.id, datasetId: dataset?.id,
       ...(mode === 'manual' ? { calls: [{ tool, groupColumn, valueColumn, statement, rationale }] } : {}),
@@ -148,11 +144,11 @@ export default function ResearchVerificationConsole({ candidates }: Props) {
         <label className="text-xs">Provenance (source and relevance)<input required maxLength={2000} className={field} value={source} onChange={e => setSource(e.target.value)} placeholder="Paper DOI, supplement, or synthetic test data" /></label>
         <label className="text-xs sm:col-span-2">CSV file<input type="file" accept=".csv,text/csv" className="mt-1 block" onChange={e => {
           const file = e.target.files?.[0]; if (!file) return;
-          if (file.size > 1048576) { setError('CSV must be at most 1 MiB.'); return; }
+          if (file.size > 4194304) { setError('CSV must be at most 4 MiB.'); return; }
           void file.text().then(text => { if (mounted.current) { setCSV(text); setName(file.name); } }).catch(e => setError(String(e)));
         }} /></label>
         <label className="text-xs sm:col-span-2">CSV contents<textarea aria-label="CSV contents" required className={`${field} h-28 font-mono`} value={csv} onChange={e => setCSV(e.target.value)} placeholder={'group,value\ncontrol,2\ncontrol,3\ntreatment,4\ntreatment,5'} /></label>
-        <p className="text-xs text-[var(--forensic-text-muted)]">Up to 2,000 rows, 32 columns, 1 MiB. Originals stay unchanged.</p>
+        <p className="text-xs text-[var(--forensic-text-muted)]">Up to 10,000 rows, 32 columns, 4 MiB. Originals stay unchanged.</p>
         <button className={primaryButton} disabled={busy || !csv || !name || !source}>Save dataset snapshot</button>
       </form>
       <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); void act(async () => {
@@ -165,7 +161,7 @@ export default function ResearchVerificationConsole({ candidates }: Props) {
 
     <details className={card}><summary className="cursor-pointer text-sm">Advanced: work with data manually</summary><ResearchDataWorkbench candidateId={candidate?.id} datasetId={dataset?.id} datasets={datasets} onDataset={id => {setDatasetId(id); void reload();}} /></details>
     <h3 className="text-sm font-bold">Verification history</h3>
-    {loading ? <p className="text-sm">Loading verification history…</p> : !runs.length && <p className="rounded-xl border border-dashed border-[var(--forensic-border-soft)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">No verification runs yet. Choose a candidate and dataset to begin.</p>}
+    {loading ? <p className="text-sm">Loading verification history…</p> : !runs.length && <p className="rounded border border-dashed border-[var(--hud-line)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">No verification runs yet. Choose a candidate and dataset to begin.</p>}
     {runs.map(run => {
       const active = run.status === 'running' || run.status === 'queued';
       // Prefer polled results when a previously opened run has since advanced.

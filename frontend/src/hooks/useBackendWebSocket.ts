@@ -35,7 +35,12 @@ export const useBackendWebSocket = ({
   const backendOfflineNoticeShownRef = useRef(false)
   const getSyncVaultIdsRef = useRef(getSyncVaultIds)
 
-  getSyncVaultIdsRef.current = getSyncVaultIds
+  // The refs mirror the latest callback for use inside async handlers, which
+  // run after commit. Assigning them during render violates the React rule that
+  // refs are not written while rendering.
+  useEffect(() => {
+    getSyncVaultIdsRef.current = getSyncVaultIds
+  }, [getSyncVaultIds])
 
   const isBackendReachable = useCallback(async () => {
     if (!shouldProbeBackend) {
@@ -114,7 +119,10 @@ export const useBackendWebSocket = ({
     }
   }, [debug, isBackendReachable, scheduleReconnect, socketUrl])
 
-  connectRef.current = connect
+  // Mirror the latest connect callback for the reconnect timer, after commit.
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   useEffect(() => {
     isUnmountedRef.current = false

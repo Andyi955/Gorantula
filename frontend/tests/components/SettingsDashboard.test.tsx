@@ -25,7 +25,7 @@ describe('SettingsDashboard', () => {
           keys: {
             OPENAI_API_KEY: 'masked-key',
             DEFAULT_SEARCH_MODEL: 'openai',
-            DEEPSEEK_MODEL: 'deepseek-v4-flash',
+            DEEPSEEK_MODEL: 'deepseek-chat',
             OLLAMA_HOST: 'http://localhost:11434',
             LMSTUDIO_BASE_URL: 'http://localhost:1234/v1',
           },
@@ -40,7 +40,7 @@ describe('SettingsDashboard', () => {
           keys: {
             OPENAI_API_KEY: 'remasked',
             DEFAULT_SEARCH_MODEL: 'openai',
-            DEEPSEEK_MODEL: 'deepseek-v4-flash',
+            DEEPSEEK_MODEL: 'deepseek-chat',
             OLLAMA_HOST: 'http://localhost:11434',
             LMSTUDIO_BASE_URL: 'http://localhost:1234/v1',
           },
@@ -65,7 +65,7 @@ describe('SettingsDashboard', () => {
     expect(screen.getByPlaceholderText('http://localhost:1234/v1')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /model ids/i }))
-    const deepseekModelInput = screen.getByPlaceholderText('deepseek-v4-flash') as HTMLInputElement
+    const deepseekModelInput = screen.getByPlaceholderText('deepseek-chat') as HTMLInputElement
     await user.clear(deepseekModelInput)
     await user.type(deepseekModelInput, 'deepseek-v4-pro')
     await user.click(screen.getByRole('tab', { name: /local ids/i }))

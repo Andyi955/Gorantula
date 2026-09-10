@@ -11,9 +11,9 @@ interface Draft {
   candidate: { id?: string; hypothesis: string };
   audit: { action: string; operator: string; reason: string; at: string; revision: string }[];
 }
-const field = 'w-full rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] p-2 text-sm text-[var(--forensic-text)]';
-const button = 'rounded-lg border border-[var(--forensic-border-soft)] px-3 py-2 text-xs text-[var(--forensic-accent)] disabled:opacity-40';
-const card = 'rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4';
+const field = 'hud-field';
+const button = 'hud-button';
+const card = 'hud-panel p-4';
 async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const r = await fetch(API + path, body === undefined ? { signal } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
   if (!r.ok) throw new Error(await r.text());
@@ -25,7 +25,7 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function ResearchPublicationConsole({ publicationId, onRebuild }: { publicationId?: string; onRebuild?: (candidateId: string) => void } = {}) {
+export default function ResearchPublicationConsole({ publicationId, onRebuild, readOnly }: { publicationId?: string; onRebuild?: (candidateId: string) => void; readOnly?: boolean } = {}) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selected, setSelected] = useState<Draft>();
@@ -98,14 +98,13 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild }:
     });
   };
   return <section aria-label="Publication console" className="research-publication">
-    {!publicationId && <div><h2 className="text-xl font-semibold">Review and publish</h2><p className="research-muted">Your reports, evidence and sharing decisions.</p></div>}
     {error && <p role="alert" className="text-sm text-[#ff8c86]">{error}</p>}
     {!publicationId && <><div className={card}>
       <label className="text-xs">Finished verification<select aria-label="Finished verification" className={field} value={runId} onChange={e => setRunId(e.target.value)}><option value="">Choose a run</option>{runs.map(r => <option key={r.id} value={r.id}>{r.candidate.hypothesis} — {r.status}</option>)}</select></label>
       <button className={`${button} mt-3`} disabled={busy || !runId} onClick={() => void act(() => request<Draft>('/publications', { runId }))}>Prepare candidate paper</button>
       {!runs.length && <p className="mt-2 text-xs text-[var(--forensic-text-muted)]">Complete a verification first. Failed and inconclusive results can also be reported.</p>}
     </div>
-    <div className="flex flex-wrap gap-2" aria-label="Paper drafts">{drafts.map(d => <button className={button} key={d.id} disabled={busy} onClick={() => void act(() => request<Draft>(`/publications/${d.id}`))}>{d.candidate.hypothesis.slice(0, 65)} · {d.status}{d.stale ? ' · evidence changed' : ''}</button>)}</div></>}
+    <div className="flex flex-wrap gap-2" aria-label="Paper drafts">{drafts.map(d => <button className={`${button} hud-button--list`} key={d.id} disabled={busy} onClick={() => void act(() => request<Draft>(`/publications/${d.id}`))}>{d.candidate.hypothesis.slice(0, 65)} · {d.status}{d.stale ? ' · evidence changed' : ''}</button>)}</div></>}
     {selected && <>
       <div ref={reportIssues} className={`research-report-state ${attempted && (selected.stale || selected.reviewIssues?.length) ? 'ring-2 ring-[#f6c879]' : ''}`}>
         <p className="text-xs">Publication: <strong>{selected.status}</strong> · Evidence: <strong>{selected.evidenceStatus}</strong></p>
@@ -125,7 +124,7 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild }:
           img: ({ src, alt }) => { const f = selected.figures.find(x => src === `figures/${x.id}.png`); return f?.png ? <img src={`data:image/png;base64,${f.png}`} alt={alt} className="max-h-96 max-w-full" /> : <span className="text-[#f6c879]">Image not attached: {alt}</span>; },
         }}>{selected.markdown}</ReactMarkdown>
       </article></details>
-      <details ref={figuresDetails} className={`research-surface research-advanced ${attempted && missingFigures ? 'ring-2 ring-[#f6c879]' : ''}`}><summary className="cursor-pointer text-sm">Advanced: figures and attachments</summary><div><h3 className="text-sm font-semibold">Publication figures</h3><p className="mt-2 text-sm text-[var(--forensic-text-muted)]">New reports include charts drawn locally from the recorded values. You can replace an image if you want a different presentation; the original data stays available in the figure specification.</p>{!selected.figures.length && <p className="mt-2 text-sm">This run has no completed numeric results requiring a figure.</p>}</div>
+      <details ref={figuresDetails} className={`research-surface research-advanced ${attempted && missingFigures ? 'ring-2 ring-[#f6c879]' : ''}`} hidden={readOnly}><summary className="cursor-pointer text-sm">Advanced: figures and attachments</summary><div><h3 className="text-sm font-semibold">Publication figures</h3><p className="mt-2 text-sm text-[var(--forensic-text-muted)]">New reports include charts drawn locally from the recorded values. You can replace an image if you want a different presentation; the original data stays available in the figure specification.</p>{!selected.figures.length && <p className="mt-2 text-sm">This run has no completed numeric results requiring a figure.</p>}</div>
       {selected.figures.map(f => <div className={card} key={f.id}>
         <h3 className="text-sm font-semibold">{f.id}: {f.title}</h3><p className="mt-1 text-xs">{f.caption}</p>
         <button className={`${button} mt-2`} onClick={() => { const { png: _png, ...spec } = f; void _png; download(`${f.id}.json`, JSON.stringify(spec, null, 2)); }}>Download figure spec</button>
@@ -133,7 +132,7 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild }:
         <p className="mt-2 text-xs text-[var(--forensic-text-muted)]">{f.imageDigest ? 'Attached — review the image against the recorded data.' : 'Image not attached — download the specification, create a PNG with your preferred plotting tool, then attach it here. A specification is data and instructions, not an image.'}</p>
         {(!canDecide || selected.status !== 'draft') && <p className="mt-2 text-xs text-[#f6c879]">{selected.status !== 'draft' ? 'Attachments can only change on a draft. Prepare a new paper to change figures.' : commonReason}</p>}
       </div>)}</details>
-      <div className="research-decision">
+      <div className="research-decision" hidden={readOnly}>
         <div className="research-decision-heading"><h3>Your decision</h3><p>{selected.status === 'draft' ? 'Approve sharing this report with its limitations included.' : selected.status === 'withdrawn' ? 'Sharing approval was withdrawn. Start a new research run to prepare another revision.' : selected.status === 'rejected' ? 'This revision was rejected. Start a new research run to prepare another revision.' : selected.status === 'exported' ? 'This report has been saved locally. Its sharing history is available below.' : 'Sharing approved. You can now save the report and evidence locally.'}</p><small>Nothing is posted online by this action.</small></div>
         <label className="research-name">Reviewer name<input ref={nameInput} aria-invalid={attempted && !operator.trim()} className={`${field} ${attempted && !operator.trim() ? 'ring-2 ring-[#f6c879]' : ''}`} placeholder="Your name for the sharing record" value={operator} onChange={e => setOperator(e.target.value)} maxLength={100} /></label>
         <label className={`research-consent flex items-start gap-2 rounded-lg p-2 text-sm leading-relaxed ${attempted && !reviewed ? 'ring-2 ring-[#f6c879]' : ''}`}><input ref={reviewInput} aria-invalid={attempted && !reviewed} type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} />I want to share this report with its stated uncertainties. This is not a claim that the research is proven.</label>
@@ -156,7 +155,7 @@ export default function ResearchPublicationConsole({ publicationId, onRebuild }:
         <p className="research-export-note">Saving creates a local folder containing report.pdf, the report text and its evidence. Nothing is posted online.</p>
         {selected.exportPath && <p role="status" className="research-export-note break-all">Export folder: {selected.exportPath}</p>}
       </div>
-      <details className="research-surface research-advanced"><summary className="text-xs">Approval audit and revision</summary><button className={`${button} mt-2`} onClick={() => download("verification-evidence.json", JSON.stringify(selected.run, null, 2))}>Download evidence for review</button><code className="mt-2 block break-all text-xs">{selected.revision}</code>{selected.audit.map((a, i) => <p key={i} className="mt-2 text-xs">{a.at} · {a.operator} · {a.action}: {a.reason}</p>)}</details>
+      <details className="research-surface research-advanced" hidden={readOnly}><summary className="text-xs">Approval audit and revision</summary><button className={`${button} mt-2`} onClick={() => download("verification-evidence.json", JSON.stringify(selected.run, null, 2))}>Download evidence for review</button><code className="mt-2 block break-all text-xs">{selected.revision}</code>{selected.audit.map((a, i) => <p key={i} className="mt-2 text-xs">{a.at} · {a.operator} · {a.action}: {a.reason}</p>)}</details>
     </>}
   </section>;
 }

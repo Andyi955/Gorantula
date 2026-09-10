@@ -67,7 +67,7 @@ func HandleAPI(w http.ResponseWriter, r *http.Request, service *Service) {
 		_ = json.NewEncoder(w).Encode(signals)
 
 	case len(parts) == 3 && parts[2] == "candidates" && r.Method == http.MethodGet:
-		candidates, err := service.ListCandidates()
+		candidates, err := service.ListCandidateQueue(r.URL.Query().Get("includeDismissed") == "1")
 		if err != nil {
 			httpError(w, err)
 			return
@@ -106,6 +106,10 @@ func handleCandidateTransition(w http.ResponseWriter, r *http.Request, service *
 		candidate, found, err = service.ApproveCandidate(candidateID, operator)
 	case "reject":
 		candidate, found, err = service.RejectCandidate(candidateID, operator)
+	case "dismiss":
+		candidate, found, err = service.DismissCandidate(candidateID)
+	case "restore":
+		candidate, found, err = service.RestoreCandidate(candidateID)
 	default:
 		http.NotFound(w, r)
 		return

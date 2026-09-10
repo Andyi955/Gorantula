@@ -29,9 +29,23 @@ const zenodoFixture = `{
   }
 }`
 
+// zenodoOnlyProviders isolates the Zenodo parser in tests that assert its CSV
+// filtering; the pooled cross-provider behaviour has its own test.
+func zenodoOnlyProviders() (restore func()) {
+	original := openDataProviders
+	openDataProviders = []func(context.Context, string) ([]openDataset, error){
+		func(ctx context.Context, query string) ([]openDataset, error) { return searchZenodo(ctx, query) },
+		func(ctx context.Context, query string) ([]openDataset, error) {
+			return searchZenodo(ctx, "everything:"+query+" AND (dataset OR data OR measurements OR csv)")
+		},
+	}
+	return func() { openDataProviders = original }
+}
+
 func TestSearchOpenDataFiltersToCSV(t *testing.T) {
 	original := openDataFetch
-	defer func() { openDataFetch = original }()
+	restoreProviders := zenodoOnlyProviders()
+	defer func() { openDataFetch = original; restoreProviders() }()
 	openDataFetch = func(_ context.Context, _ string, _ int64) ([]byte, string, error) {
 		return []byte(zenodoFixture), "", nil
 	}
@@ -52,7 +66,8 @@ func TestSearchOpenDataFiltersToCSV(t *testing.T) {
 }
 func TestSearchOpenDataEmpty(t *testing.T) {
 	original := openDataFetch
-	defer func() { openDataFetch = original }()
+	restoreProviders := zenodoOnlyProviders()
+	defer func() { openDataFetch = original; restoreProviders() }()
 	openDataFetch = func(_ context.Context, _ string, _ int64) ([]byte, string, error) {
 		return []byte(`{"hits":{"total":0,"hits":[]}}`), "", nil
 	}
@@ -68,7 +83,8 @@ func TestSearchOpenDataQueryRequired(t *testing.T) {
 
 func TestSearchOpenDataRetriesWideQuery(t *testing.T) {
 	original := openDataFetch
-	defer func() { openDataFetch = original }()
+	restoreProviders := zenodoOnlyProviders()
+	defer func() { openDataFetch = original; restoreProviders() }()
 	openDataFetch = func(_ context.Context, raw string, _ int64) ([]byte, string, error) {
 		// The primary topic query yields nothing; the dataset-oriented retry
 		// (everything:...) surfaces a CSV-bearing record.
@@ -89,7 +105,8 @@ func TestSearchOpenDataRetriesWideQuery(t *testing.T) {
 func TestDatasetSearchToolReturnsLinksAndSummary(t *testing.T) {
 	s := NewService(t.TempDir(), nil)
 	original := openDataFetch
-	defer func() { openDataFetch = original }()
+	restoreProviders := zenodoOnlyProviders()
+	defer func() { openDataFetch = original; restoreProviders() }()
 	openDataFetch = func(_ context.Context, _ string, _ int64) ([]byte, string, error) {
 		return []byte(zenodoFixture), "", nil
 	}

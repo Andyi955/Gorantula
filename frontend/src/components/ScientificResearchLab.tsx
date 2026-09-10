@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Microscope, Plus, GitBranch, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Microscope, Plus, Check, Archive, ArchiveRestore, GitBranch, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
 import ResearchVerificationConsole from './ResearchVerificationConsole';
 import ResearchPublicationConsole from './ResearchPublicationConsole';
 import ResearchPipeline from './ResearchPipeline';
 import ResearchDiscoveries from './ResearchDiscoveries';
+import ResearchOverview from './ResearchOverview';
+import ResearchResults from './ResearchResults';
 
 const RESEARCH_API = 'http://127.0.0.1:8080/api/research';
 
@@ -81,6 +83,8 @@ interface Candidate {
   state: string;
   approvedBy?: string;
   approvedAt?: string;
+  dismissed?: boolean;
+  dismissedAt?: string;
 }
 
 interface CandidateExpansion {
@@ -89,7 +93,7 @@ interface CandidateExpansion {
   retrieved?: Paper[];
 }
 
-type View = 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
+type View = 'overview' | 'results' | 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
 
 const VERDICT_META: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Agreed', tone: 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' },
@@ -106,6 +110,17 @@ const STATE_LABEL: Record<string, string> = {
   approved: 'Approved',
   rejected: 'Rejected',
 };
+
+// "Open" is every state the operator has not yet decided on. The finer state
+// (proposed / reviewed / tested / supported / refuted) stays visible as a chip
+// on each card, so four filters cover seven states without a tab per state.
+const CANDIDATE_OPEN_STATES = ['proposed', 'reviewed', 'tested', 'supported', 'refuted'];
+const CANDIDATE_FILTERS: { id: 'open' | 'approved' | 'rejected' | 'all'; label: string }[] = [
+  { id: 'open', label: 'Open' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'all', label: 'All' },
+];
 
 const VERDICT_RECOMMENDATION: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Approve — all criteria are satisfied.', tone: 'text-[#90f3da]' },
@@ -159,8 +174,68 @@ const relationLabel = (kind: string) => {
   }
 };
 
+// Every view is a stage of one research cockpit, so each non-pipeline tab
+// renders in the same rail + main-column shell the pipeline uses. That keeps
+// the layout from jumping when you move between tabs.
+const VIEW_META: Record<Exclude<View, 'pipeline'>, { eyebrow: string; rail: string; heading: string; blurb: string }> = {
+  overview: {
+    eyebrow: 'Overview',
+    rail: 'What this area does, what it has found so far, and where to go next.',
+    heading: 'Research',
+    blurb: 'Ask a question. The engine finds the data and runs the numbers.',
+  },
+  results: {
+    eyebrow: 'Results',
+    rail: 'Every question the engine answered with a real computation, ready to read or download.',
+    heading: 'What the engine found',
+    blurb: 'The computations that worked, with their reports.',
+  },
+  signals: {
+    eyebrow: 'Findings',
+    rail: 'Contradictions, convergences and gaps the engine surfaced across your papers.',
+    heading: 'Cross-paper findings',
+    blurb: 'What the corpus says when papers are read against each other.',
+  },
+  candidates: {
+    eyebrow: 'Candidates',
+    rail: 'Hypotheses derived from connected claims, each with its own evidence checklist.',
+    heading: 'Candidate hypotheses',
+    blurb: 'Proposed research ideas, with the review that grades their evidence.',
+  },
+  discoveries: {
+    eyebrow: 'Discoveries',
+    rail: 'Questions the engine proposed and ran on its own, scored worked or no-data.',
+    heading: 'Autonomous discovery',
+    blurb: 'Let the engine propose its own questions and report what the data actually supports.',
+  },
+  verification: {
+    eyebrow: 'Verification',
+    rail: 'Recorded calculations on a chosen dataset, with replays and evidence bundles.',
+    heading: 'Check a research idea',
+    blurb: 'Choose an idea and let the research agent find data, choose the checks and explain the results.',
+  },
+  publish: {
+    eyebrow: 'Publish',
+    rail: 'Reports, their evidence and your sharing decisions. Nothing is posted online.',
+    heading: 'Review and publish',
+    blurb: 'Your reports, evidence and sharing decisions.',
+  },
+  corpus: {
+    eyebrow: 'Corpus',
+    rail: 'Papers ingested into this lab and the grounded claims extracted from them.',
+    heading: 'Paper corpus',
+    blurb: 'Add papers and the engine extracts grounded, entity-tagged claims.',
+  },
+  relations: {
+    eyebrow: 'Claim graph',
+    rail: 'How extracted claims connect across papers, and on what basis.',
+    heading: 'Claim graph',
+    blurb: 'Every recorded connection between claims, with the shared evidence behind it.',
+  },
+};
+
 const ScientificResearchLab = () => {
-  const [view, setView] = useState<View>('pipeline');
+  const [view, setView] = useState<View>('overview');
   const [pipelineRunId, setPipelineRunId] = useState<string>();
   const rebuildReport = async (candidateId: string) => {
     try {
@@ -174,6 +249,11 @@ const ScientificResearchLab = () => {
   const [relations, setRelations] = useState<ClaimRelation[]>([]);
   const [signals, setSignals] = useState<ResearchSignal[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  // Archived candidates are fetched separately so the queue that feeds the
+  // Pipeline picker and the Verification console stays free of shelved ideas.
+  const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
+  const [showArchivedCandidates, setShowArchivedCandidates] = useState(false);
+  const [candidateFilter, setCandidateFilter] = useState<'open' | 'approved' | 'rejected' | 'all'>('open');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -213,6 +293,16 @@ const ScientificResearchLab = () => {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const loadArchivedCandidates = useCallback(async () => {
+    try {
+      const all = await fetch(`${RESEARCH_API}/candidates?includeDismissed=1`).then((res) => res.json());
+      setArchivedCandidates(Array.isArray(all) ? all.filter((c: Candidate) => c.dismissed) : []);
+    } catch {
+      // The active queue still renders; the archived view just stays empty.
+      setArchivedCandidates([]);
+    }
+  }, []);
 
   const claimCountByPaper = useMemo(() => {
     const map: Record<string, number> = {};
@@ -255,10 +345,15 @@ const ScientificResearchLab = () => {
     }
   };
 
-  const transitionCandidate = async (id: string, action: 'approve' | 'reject') => {
+  const transitionCandidate = async (id: string, action: 'approve' | 'reject' | 'dismiss' | 'restore') => {
     try {
-      await fetch(`${RESEARCH_API}/candidates/${id}/${action}?by=operator`, { method: 'POST' });
-      await reload();
+      const response = await fetch(`${RESEARCH_API}/candidates/${id}/${action}?by=operator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) throw new Error(await response.text());
+      await Promise.all([reload(), loadArchivedCandidates()]);
     } catch {
       setError('Could not update the candidate.');
     }
@@ -270,22 +365,19 @@ const ScientificResearchLab = () => {
         <button
           key={item.id}
           type="button"
+          aria-pressed={view === item.id}
           onClick={() => setView(item.id)}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
-            view === item.id
-              ? 'border-[var(--forensic-accent)] bg-[var(--forensic-glow)] text-[var(--forensic-accent-strong)]'
-              : 'border-[var(--forensic-border-soft)] text-[var(--forensic-text-muted)] hover:border-[var(--forensic-border)] hover:text-[var(--forensic-text)]'
-          }`}
+          className="hud-tab"
         >
           {item.label}
-          <span className="ml-1.5 opacity-60">{item.count}</span>
+          {item.count && <span className="hud-tab-count">{item.count}</span>}
         </button>
       ))}
     </div>
   );
 
   const emptyState = (message: string) => (
-    <div className="mt-6 rounded-xl border border-dashed border-[var(--forensic-border-soft)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">
+    <div className="rounded border border-dashed border-[var(--hud-line)] px-5 py-8 text-center text-sm text-[var(--forensic-text-muted)]">
       {message}
     </div>
   );
@@ -295,12 +387,12 @@ const ScientificResearchLab = () => {
       return emptyState('No cross-paper findings yet. Add a couple of papers to surface contradictions and convergences.');
     }
     return (
-      <div className="mt-4 flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
         {signals.map((signal) => {
           const meta = SIGNAL_META[signal.kind] || SIGNAL_META.hypothesis;
           const Icon = meta.icon;
           return (
-            <div key={signal.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+            <div key={signal.id} className="hud-panel hud-panel--action p-4">
               <div className="flex items-center gap-2">
                 <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${meta.tone}`}>
                   <Icon size={12} aria-hidden />
@@ -355,8 +447,8 @@ const ScientificResearchLab = () => {
   };
 
   const renderCorpus = () => (
-    <div className="mt-4 flex flex-col gap-3">
-      <div className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+    <div className="flex flex-col gap-3">
+      <div className="hud-panel p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-[var(--forensic-text)]">
           <Plus size={16} className="text-[var(--forensic-accent)]" aria-hidden />
           Add papers
@@ -366,20 +458,20 @@ const ScientificResearchLab = () => {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Title"
-          className="mt-3 w-full rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2 text-sm text-[var(--forensic-text)] placeholder-[var(--forensic-text-faint)] outline-none focus:border-[var(--forensic-accent)]"
+          className="hud-field mt-3"
         />
         <textarea
           value={abstract}
           onChange={(e) => setAbstract(e.target.value)}
           placeholder="Abstract / full text"
           rows={4}
-          className="mt-2 w-full resize-none rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2 text-sm text-[var(--forensic-text)] placeholder-[var(--forensic-text-faint)] outline-none focus:border-[var(--forensic-accent)]"
+          className="hud-field mt-2 resize-none"
         />
         <button
           type="button"
           onClick={submitIngest}
           disabled={adding || !title.trim() || !abstract.trim()}
-          className="mt-3 rounded-lg border border-[var(--forensic-accent)] bg-[var(--forensic-glow)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-[var(--forensic-accent-strong)] disabled:opacity-40"
+          className="hud-button hud-button--primary mt-3"
         >
           {adding ? 'Ingesting…' : 'Ingest & analyze'}
         </button>
@@ -389,7 +481,7 @@ const ScientificResearchLab = () => {
         emptyState('No papers yet — add one above to seed the corpus.')
       ) : (
         papers.map((paper) => (
-          <div key={paper.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+          <div key={paper.id} className="hud-panel p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--forensic-text)]">{paper.title}</p>
@@ -411,13 +503,13 @@ const ScientificResearchLab = () => {
       return emptyState('No cross-paper claim relations yet. Ingest papers that share entities to see them connect.');
     }
     return (
-      <div className="mt-4 flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         {relations.map((relation) => {
           const source = claimById[relation.sourceClaimID];
           const target = claimById[relation.targetClaimID];
           const basis = relation.basis?.map((key) => key.split('|').pop()).filter(Boolean).join(', ') || '';
           return (
-            <div key={relation.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+            <div key={relation.id} className="hud-panel hud-panel--action p-4">
               <p className={`text-sm text-[var(--forensic-text)] ${expanded[relation.id] ? '' : 'line-clamp-3'}`}>
                 <span className="font-semibold">{source ? source.text : relation.sourceClaimID}</span>{' '}
                 <span className="text-[var(--forensic-accent)]">{relationLabel(relation.relationKind)}</span>{' '}
@@ -458,12 +550,44 @@ const ScientificResearchLab = () => {
   };
 
   const renderCandidates = () => {
-    if (candidates.length === 0) {
-      return emptyState('No candidates yet. Ingest papers that share entities to surface reviewable hypotheses.');
-    }
+    const all = showArchivedCandidates ? [...candidates, ...archivedCandidates] : candidates;
+    const countFor = (id: typeof candidateFilter) => id === 'open'
+      ? all.filter((c) => CANDIDATE_OPEN_STATES.includes(c.state)).length
+      : id === 'all' ? all.length : all.filter((c) => c.state === id).length;
+    const visible = all.filter((c) => (candidateFilter === 'open'
+      ? CANDIDATE_OPEN_STATES.includes(c.state)
+      : candidateFilter === 'all' || c.state === candidateFilter));
     return (
-      <div className="mt-4 flex flex-col gap-3">
-        {candidates.map((candidate) => {
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {CANDIDATE_FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className="hud-tab"
+              aria-pressed={candidateFilter === filter.id}
+              onClick={() => setCandidateFilter(filter.id)}
+            >
+              {filter.label}<span className="hud-tab-count">{countFor(filter.id)}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="hud-tab ml-auto"
+            aria-pressed={showArchivedCandidates}
+            onClick={() => {
+              const next = !showArchivedCandidates;
+              setShowArchivedCandidates(next);
+              if (next) void loadArchivedCandidates();
+            }}
+          >
+            Show archived
+          </button>
+        </div>
+        {visible.length === 0 && emptyState(all.length === 0
+          ? 'No candidates yet. Ingest papers that share entities to surface reviewable hypotheses.'
+          : 'Nothing in this view. Try another filter.')}
+        {visible.map((candidate) => {
           const verdict = VERDICT_META[candidate.verdict || 'disputed'] || VERDICT_META.disputed;
           const checklist = candidate.checklist || [];
           const confirmed = checklist.filter((item) => item.answer === 'yes').length;
@@ -484,10 +608,11 @@ const ScientificResearchLab = () => {
                 ? 'partially covered'
                 : 'already studied';
           return (
-            <div key={candidate.id} className="rounded-xl border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-card)] p-4">
+            <div key={candidate.id} className="hud-panel hud-panel--action p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${verdict.tone}`}>{verdict.label}</span>
                 <span className="rounded-md border border-[var(--forensic-border-soft)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--forensic-text-muted)]">{STATE_LABEL[candidate.state] || candidate.state}</span>
+                {candidate.dismissed && <span className="hud-chip text-[#8b9dae]">Archived</span>}
                 {noveltyPct !== null && (
                   <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${noveltyTone}`}>
                     <span aria-hidden>◎</span>
@@ -513,7 +638,7 @@ const ScientificResearchLab = () => {
                 </p>
               )}
               {candidate.rationale && (
-                <div className="mt-2 rounded-lg border border-[var(--forensic-border-soft)] bg-[var(--forensic-bg-panel)] px-3 py-2">
+                <div className="hud-inset mt-2 px-3 py-2">
                   <p className="text-xs italic leading-relaxed text-[var(--forensic-text-muted)]">{candidate.rationale}</p>
                 </div>
               )}
@@ -587,10 +712,29 @@ const ScientificResearchLab = () => {
                     </button>
                   )}
                   {candidate.state !== 'approved' && (
-                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'approve')} className="rounded-lg border border-[#90f3da]/50 bg-[#90f3da]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#90f3da] hover:bg-[#90f3da]/20">Approve</button>
+                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'approve')} className="hud-button text-[#90f3da]">Approve</button>
                   )}
                   {candidate.state !== 'rejected' && (
-                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'reject')} className="rounded-lg border border-[#ff8c86]/45 bg-[#ff8c86]/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#ff8c86] hover:bg-[#ff8c86]/20">Reject</button>
+                    <button type="button" onClick={() => transitionCandidate(candidate.id, 'reject')} className="hud-button hud-button--danger text-[#ff8c86]">Reject</button>
+                  )}
+                  {candidate.dismissed ? (
+                    <button
+                      type="button"
+                      onClick={() => void transitionCandidate(candidate.id, 'restore')}
+                      className="hud-button"
+                      aria-label={`Restore ${candidate.hypothesis.slice(0, 60)} to the queue`}
+                    >
+                      <ArchiveRestore size={13} aria-hidden />Restore
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void transitionCandidate(candidate.id, 'dismiss')}
+                      className="hud-button"
+                      aria-label={`Archive ${candidate.hypothesis.slice(0, 60)} out of the queue`}
+                    >
+                      <Archive size={13} aria-hidden />Archive
+                    </button>
                   )}
                 </div>
               </div>
@@ -601,17 +745,52 @@ const ScientificResearchLab = () => {
     );
   };
 
+  // The rail tracks the same five stages the pipeline walks, derived from the
+  // lab's own data so it stays truthful on every tab.
+  const currentCandidate = candidates[0];
+  const reviewed = candidates.filter((c) => ['reviewed', 'tested', 'supported', 'refuted'].includes(c.state)).length;
+  const approved = candidates.filter((c) => c.state === 'approved').length;
+  const journey: { title: string; note: string; done: boolean; target: View }[] = [
+    { title: 'Set the topic', note: currentCandidate ? 'A focused research idea' : 'Choose a research idea', done: !!currentCandidate, target: 'pipeline' },
+    { title: 'Source papers', note: `${papers.length} paper${papers.length === 1 ? '' : 's'} in the corpus`, done: papers.length > 0, target: 'corpus' },
+    { title: 'Connect the evidence', note: `${relations.length} connection${relations.length === 1 ? '' : 's'} recorded`, done: relations.length > 0, target: 'relations' },
+    { title: 'Challenge & check', note: reviewed ? `${reviewed} candidate${reviewed === 1 ? '' : 's'} reviewed` : 'Calculations and source review', done: reviewed > 0, target: 'verification' },
+    { title: 'Your decision', note: approved ? 'Sharing decision recorded' : 'Review and decide on sharing', done: approved > 0, target: 'publish' },
+  ];
+  const stage = Math.max(0, journey.findIndex((step) => !step.done));
+  const meta = view === 'pipeline' ? undefined : VIEW_META[view];
+
+  const rail = meta && (
+    <aside className="research-journey" aria-label="Research context">
+      <p className="research-eyebrow">{meta.eyebrow}</p>
+      <div className="research-topic"><Microscope size={23} /><span>{meta.rail}</span></div>
+      <ol aria-label="Research journey" className="research-steps">
+        {journey.map((step, i) => (
+          <li key={step.title} className={`${i === stage ? 'is-current' : ''} ${step.done ? 'is-complete' : ''}`} aria-current={i === stage ? 'step' : undefined}>
+            <button onClick={() => setView(step.target)}>
+              <span className="research-step-number">{step.done ? <Check size={17} /> : i + 1}</span>
+              <span><strong>{step.title}</strong><small>{step.note}</small></span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <button className="research-new" onClick={() => setView('pipeline')}><Plus size={17} />New research run</button>
+    </aside>
+  );
+
   return (
-    <div className={`research-lab h-full overflow-y-auto bg-[var(--forensic-bg-root)] text-[var(--forensic-text)] ${view === 'pipeline' ? 'research-lab-pipeline' : 'p-6'}`}>
-      <div className={view === 'pipeline' ? 'research-lab-inner' : 'mx-auto max-w-6xl'}>
+    <div className="research-lab research-lab-pipeline h-full overflow-y-auto text-[var(--forensic-text)]">
+      <div className="research-lab-inner">
         <div className="research-lab-title flex items-center gap-2">
           <Microscope size={18} className="text-[var(--forensic-accent)]" aria-hidden />
           <h1 className="text-lg font-black tracking-tight text-[var(--forensic-text)]">Scientific Research</h1>
         </div>
         <p className="mt-1 text-xs text-[var(--forensic-text-faint)]">Cross-paper evidence engine — contradictions, convergences, and grounded claims.</p>
 
-        <div className="research-tabs mt-3 flex flex-wrap gap-2">
+        <div className="research-tabs flex flex-wrap gap-2">
           {nav([
+            { id: 'overview', label: 'Overview', count: '' },
+            { id: 'results', label: 'Results', count: '' },
             { id: 'signals', label: 'Findings', count: `${signals.length}` },
             { id: 'candidates', label: 'Candidates', count: `${candidates.length}` },
             { id: 'pipeline', label: 'Pipeline', count: '' },
@@ -623,21 +802,49 @@ const ScientificResearchLab = () => {
           ])}
         </div>
 
-        {error && <div className="mt-3 rounded-lg border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</div>}
+        {error && <div className="mx-6 mt-3 rounded border border-[#ff8c86]/40 bg-[#ff8c86]/10 px-3 py-2 text-xs text-[#ffb0ab]">{error}</div>}
 
         {loading ? (
-          <p className="mt-6 text-sm text-[var(--forensic-text-muted)]">Loading corpus…</p>
+          <div className="px-6 py-6" role="status" aria-live="polite">
+            <p className="hud-label">Loading corpus…</p>
+            <div className="mt-3 flex flex-col gap-2">
+              <div className="hud-skeleton w-2/3" />
+              <div className="hud-skeleton w-1/2" />
+              <div className="hud-skeleton w-3/5" />
+            </div>
+          </div>
+        ) : view === 'pipeline' ? (
+          <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={next => { setView(next); void reload(); }} />
         ) : (
-          <>
-            {view === 'signals' && renderSignals()}
-            {view === 'candidates' && renderCandidates()}
-            {view === 'pipeline' && <ResearchPipeline candidates={candidates} initialRunId={pipelineRunId} onNavigate={next => { setView(next); void reload(); }} />}
-            {view === 'discoveries' && <ResearchDiscoveries />}
-            {view === 'verification' && <ResearchVerificationConsole candidates={candidates} />}
-            {view === 'publish' && <ResearchPublicationConsole onRebuild={id => void rebuildReport(id)} />}
-            {view === 'corpus' && renderCorpus()}
-            {view === 'relations' && renderRelations()}
-          </>
+          <div className="research-workspace">
+            {rail}
+            <main key={view} className="research-workspace-main">
+              {/* The overview carries its own hero heading, so the shared page
+                  heading would just repeat it. */}
+              {meta && view !== 'overview' && (
+                <header className="research-page-heading">
+                  <h2>{meta.heading}</h2>
+                  <p>{meta.blurb}</p>
+                </header>
+              )}
+              {view === 'overview' && (
+                <ResearchOverview
+                  onNavigate={(next) => setView(next)}
+                  paperCount={papers.length}
+                  candidateCount={candidates.length}
+                  findingCount={signals.length}
+                />
+              )}
+              {view === 'results' && <ResearchResults />}
+              {view === 'signals' && renderSignals()}
+              {view === 'candidates' && renderCandidates()}
+              {view === 'discoveries' && <ResearchDiscoveries />}
+              {view === 'verification' && <ResearchVerificationConsole candidates={candidates} />}
+              {view === 'publish' && <ResearchPublicationConsole onRebuild={id => void rebuildReport(id)} />}
+              {view === 'corpus' && renderCorpus()}
+              {view === 'relations' && renderRelations()}
+            </main>
+          </div>
         )}
       </div>
     </div>

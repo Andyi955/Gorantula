@@ -36,6 +36,11 @@ import {
   Zap,
 } from 'lucide-react'
 import BrainRadarEmblem from './BrainRadarEmblem'
+import {
+  readBrainBundleCache,
+  writeBrainBundleCache,
+  type BrainMemoryBundle,
+} from './brainMemoryBundleCache'
 import { loadBrainLabEnabled, saveBrainLabEnabled } from '../utils/brainLab'
 import {
   BOARD_WORKSPACE_STATE_UPDATED_EVENT,
@@ -146,26 +151,7 @@ interface BrainSignalsPanelProps {
 // investigation (module-level: it survives tab switches so revisiting an
 // investigation renders instantly instead of replaying the fetch chain).
 // Every load still refreshes from the backend and overwrites the entry.
-type BrainMemoryBundle = {
-  signals: BrainSignal[]
-  links: MemoryLink[]
-  brainMap: BrainMapView | null
-  clusters: MemoryCluster[]
-  suggestions: BrainSuggestion[]
-  followUps: BrainFollowUpAction[]
-  autonomy: BrainAutonomyState | null
-  attention: BrainAttentionSummary | null
-}
-
-const BRAIN_BUNDLE_CACHE_LIMIT = 12
 const BRAIN_FIRED_REFRESH_DEBOUNCE_MS = 1500
-const brainBundleCache = new Map<string, BrainMemoryBundle>()
-
-// Test hook: the cache intentionally survives panel unmounts and switches,
-// so tests reset it in beforeEach to stay hermetic.
-export const resetBrainBundleCacheForTests = () => {
-  brainBundleCache.clear()
-}
 
 const PRIORITY_SIGNAL_LIMIT = 10
 const LINKED_MEMORY_PRIORITY_LIMIT = 5
@@ -804,7 +790,7 @@ export default function BrainSignalsPanel({
     // Stale-while-revalidate: a previously loaded bundle renders instantly so
     // switching between investigations never replays the fetch chain; the
     // fresh fetch lands right behind it and corrects anything that changed.
-    const cachedBundle = brainBundleCache.get(currentInvestigationId)
+    const cachedBundle = readBrainBundleCache(currentInvestigationId)
     if (isManualRefresh) {
       setIsRefreshing(true)
     } else if (!isBackgroundRefresh && !cachedBundle) {
@@ -891,13 +877,7 @@ export default function BrainSignalsPanel({
         autonomy: nextAutonomyState,
         attention: nextAttention,
       }
-      if (brainBundleCache.size >= BRAIN_BUNDLE_CACHE_LIMIT) {
-        const oldest = brainBundleCache.keys().next().value
-        if (oldest !== undefined) {
-          brainBundleCache.delete(oldest)
-        }
-      }
-      brainBundleCache.set(currentInvestigationId, bundle)
+      writeBrainBundleCache(currentInvestigationId, bundle)
       applyBundle(bundle, isBackgroundRefresh)
 
       // The auxiliary gateway registry lands AFTER the core restore: a busy
