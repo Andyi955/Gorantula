@@ -49,6 +49,17 @@ func TestDiscoveryQuestionDuplicateSemantic(t *testing.T) {
 		{"Does fertilizer increase crop yield", "Do penguins differ in body mass", false},
 		{"Do penguins differ in body mass", "Do penguins differ in body mass", true},
 		{"Do birds differ in wing length", "", false},
+		// Real pairs from a live round. Naming the data source made the same
+		// question long enough that Jaccard scored it 0.444 and let it through.
+		{
+			"Does species richness correlate with latitude in the Global Biodiversity Information Facility dataset",
+			"Does species richness correlate with latitude in the open dataset",
+			true,
+		},
+		// The distinguishing word is the measured variable, not the source, so
+		// these are different questions however alike they read.
+		{"Does species richness correlate with latitude", "Does species richness correlate with temperature", false},
+		{"Does species richness correlate with latitude", "Does bird species richness correlate with latitude", true},
 	}
 	for _, tc := range cases {
 		got := discoveryQuestionDuplicateSemantic(tc.a, tc.b)

@@ -691,9 +691,21 @@ func discoveryWordMatch(a, b string) bool {
 }
 
 // discoveryQuestionDuplicateSemantic reports whether two questions are
-// near-duplicates (same meaning, possibly different wording) using Jaccard
-// overlap on content words. Identical questions collide; a generic and a
-// specific question (species vs penguins) generally do not.
+// near-duplicates (same meaning, possibly different wording).
+//
+// It uses the overlap coefficient over content words rather than Jaccard.
+// A question that names its dataset ("...correlate with latitude in the Global
+// Biodiversity Information Facility dataset") is much longer than the same
+// question without it, and Jaccard punishes that length difference: the real
+// pair measured 0.444, below the 0.5 cutoff, so a near-identical question was
+// asked again in the next round. Overlap asks the sharper question instead: is
+// the shorter question's content essentially contained in the longer one? That
+// pair measures 0.800.
+//
+// Overlap alone would be too eager on very short questions, where two shared
+// words out of three can be coincidence, so it also requires three shared
+// content words. Notably "correlate with latitude" against "correlate with
+// temperature" shares only two and is correctly left distinct.
 func discoveryQuestionDuplicateSemantic(a, b string) bool {
 	wa := discoveryQuestionWords(a)
 	wb := discoveryQuestionWords(b)
@@ -709,9 +721,22 @@ func discoveryQuestionDuplicateSemantic(a, b string) bool {
 			}
 		}
 	}
-	union := len(wa) + len(wb) - shared
-	if union == 0 {
+	shorter := len(wa)
+	if len(wb) < shorter {
+		shorter = len(wb)
+	}
+	if shorter == 0 {
 		return false
 	}
-	return float64(shared)/float64(union) >= 0.5
+	return shared >= discoveryDedupMinShared && float64(shared)/float64(shorter) >= discoveryDedupMinOverlap
 }
+
+const (
+	// discoveryDedupMinShared is the weakest evidence of a duplicate: with only
+	// two content words in common a shared variable can coincide by chance.
+	discoveryDedupMinShared = 3
+	// discoveryDedupMinOverlap is the share of the shorter question that must be
+	// contained in the longer one. 0.75 keeps "iris types" and "iris species"
+	// together (3 of 4) while separating "latitude" from "temperature" (2 of 3).
+	discoveryDedupMinOverlap = 0.75
+)
