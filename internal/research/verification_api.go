@@ -127,7 +127,14 @@ func handleVerificationAPI(w http.ResponseWriter, r *http.Request, s *Service) b
 			break
 		}
 		w.Header().Set("Content-Type", "application/pdf")
-		w.Header().Set("Content-Disposition", `inline; filename="research-report.pdf"`)
+		// ?download=1 saves the report instead of opening the browser viewer.
+		// Cross-origin <a download> is ignored, so the disposition has to come
+		// from the server for a real "Download PDF" action.
+		disposition := "inline"
+		if r.URL.Query().Get("download") == "1" {
+			disposition = "attachment"
+		}
+		w.Header().Set("Content-Disposition", disposition+`; filename="research-report.pdf"`)
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(pdf)
 	case parts[2] == "publications" && len(parts) == 5 && r.Method == http.MethodPost:

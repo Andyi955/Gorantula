@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, Compass, Database, FileText, Lightbulb } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowRight, Compass, Database, FileText, Lightbulb, Loader, Play, RotateCw } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8080/api/research';
 
 interface DiscoveryRun {
+  id: string;
   status: string;
   workedCount: number;
   rejectedCount: number;
@@ -16,12 +17,23 @@ interface Stats {
   noData: number;
   reports: number;
 }
+interface Progress {
+  questions: number;
+  worked: number;
+  noData: number;
+}
 
-export type ResearchTarget = 'pipeline' | 'discoveries' | 'verification' | 'publish' | 'signals' | 'candidates' | 'corpus';
+export type ResearchTarget =
+  | 'pipeline' | 'discoveries' | 'results' | 'verification' | 'publish'
+  | 'signals' | 'candidates' | 'corpus';
+
+// How many questions one press of the button asks. Two keeps a single press
+// short enough to watch while still being worth reading afterwards.
+const RUN_SIZE = 2;
 
 // The Research tab opens here. It answers three questions in plain language
 // before showing any of the machinery: what this area does, what it has found
-// so far, and where to go next.
+// so far, and how to make it go.
 export default function ResearchOverview({
   onNavigate,
   paperCount,
@@ -35,6 +47,15 @@ export default function ResearchOverview({
 }) {
   const [stats, setStats] = useState<Stats>();
   const [error, setError] = useState('');
+  const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
+  const [progress, setProgress] = useState<Progress>({ questions: 0, worked: 0, noData: 0 });
+  const [finished, setFinished] = useState<Progress>();
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -43,6 +64,7 @@ export default function ResearchOverview({
         fetch(`${API}/publications`).then((response) => response.json()),
       ]);
       const list: DiscoveryRun[] = Array.isArray(runs) ? runs : [];
+      if (!mounted.current) return;
       setStats({
         runs: list.length,
         questions: list.reduce((total, run) => total + (run.questions?.length ?? 0), 0),
@@ -52,7 +74,7 @@ export default function ResearchOverview({
       });
       setError('');
     } catch {
-      setError('Could not reach the research engine. Is the backend running at :8080?');
+      if (mounted.current) setError('Could not reach the research engine. Is the backend running at :8080?');
     }
   }, []);
 
@@ -60,9 +82,52 @@ export default function ResearchOverview({
     void load();
   }, [load]);
 
+  // One press: the engine proposes its own questions, finds public data for
+  // each, computes, and writes a report. This only starts it and watches.
+  const runNow = async () => {
+    setPhase('running');
+    setError('');
+    setFinished(undefined);
+    setProgress({ questions: 0, worked: 0, noData: 0 });
+    try {
+      const response = await fetch(`${API}/discover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme: '', count: RUN_SIZE }),
+      });
+      if (!response.ok) throw new Error((await response.text()) || `Could not start a run (${response.status})`);
+      const started: DiscoveryRun = await response.json();
+      let current = started;
+      while (current.status === 'running') {
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+        if (!mounted.current) return;
+        current = await fetch(`${API}/discoveries/${started.id}`).then((next) => next.json());
+        if (mounted.current) {
+          setProgress({
+            questions: current.questions?.length ?? 0,
+            worked: current.workedCount ?? 0,
+            noData: current.rejectedCount ?? 0,
+          });
+        }
+      }
+      if (!mounted.current) return;
+      setFinished({
+        questions: current.questions?.length ?? 0,
+        worked: current.workedCount ?? 0,
+        noData: current.rejectedCount ?? 0,
+      });
+      setPhase('done');
+      void load();
+    } catch (thrown) {
+      if (!mounted.current) return;
+      setError(thrown instanceof Error ? thrown.message : String(thrown));
+      setPhase('failed');
+    }
+  };
+
   const tiles: { key: string; label: string; value: number | undefined; tone: string; note: string; target: ResearchTarget }[] = [
     { key: 'questions', label: 'Questions asked', value: stats?.questions, tone: '', note: `across ${stats?.runs ?? 0} rounds`, target: 'discoveries' },
-    { key: 'worked', label: 'Produced a result', value: stats?.worked, tone: 'research-overview__value--worked', note: 'the engine computed a real number', target: 'discoveries' },
+    { key: 'worked', label: 'Produced a result', value: stats?.worked, tone: 'research-overview__value--worked', note: 'the engine computed a real number', target: 'results' },
     { key: 'nodata', label: 'No usable data', value: stats?.noData, tone: 'research-overview__value--nodata', note: 'it looked, found nothing, invented nothing', target: 'discoveries' },
     { key: 'reports', label: 'Reports written', value: stats?.reports, tone: '', note: 'ready to read', target: 'publish' },
   ];
@@ -76,22 +141,69 @@ export default function ResearchOverview({
 
   return (
     <section aria-label="Research overview" className="research-overview">
-      <header className="hud-panel research-overview__intro">
+      <header className={`hud-panel research-overview__intro ${phase === 'running' ? 'hud-panel--live' : ''}`}>
         <p className="hud-label">Start here</p>
         <h2>Ask a question. The engine finds the data and runs the numbers.</h2>
         <p className="research-overview__lede">
           It searches public datasets and repositories, computes a real result, and writes a short report you can read.
           When there is no usable data it says so — it never invents an answer.
         </p>
-        <div className="research-overview__actions">
-          <button type="button" className="hud-button hud-button--primary" onClick={() => onNavigate('discoveries')}>
-            Discover something new
-            <ArrowRight size={14} aria-hidden />
-          </button>
-          <button type="button" className="hud-button" onClick={() => onNavigate('pipeline')}>
-            Research my own topic
-          </button>
-        </div>
+
+        {phase === 'idle' && (
+          <div className="research-overview__actions">
+            <button type="button" className="hud-button hud-button--primary" onClick={() => void runNow()}>
+              <Play size={14} aria-hidden />
+              Run a discovery for me
+            </button>
+            <button type="button" className="hud-button" onClick={() => onNavigate('pipeline')}>
+              Research my own topic
+            </button>
+          </div>
+        )}
+
+        {phase === 'running' && (
+          <div className="research-overview__progress" role="status" aria-live="polite">
+            <p className="research-overview__progress-line">
+              <Loader size={14} className="research-overview__spin" aria-hidden />
+              Working — proposing questions, searching for data, running the numbers.
+            </p>
+            <p className="research-overview__progress-detail hud-readout">
+              {progress.questions} question{progress.questions === 1 ? '' : 's'} finished
+              {progress.questions > 0 ? ` · ${progress.worked} produced a result · ${progress.noData} no usable data` : ''}
+            </p>
+            <p className="research-overview__hint">You can leave this page — the run keeps going.</p>
+          </div>
+        )}
+
+        {phase === 'done' && finished && (
+          <div className="research-overview__progress" role="status" aria-live="polite">
+            <p className="research-overview__progress-line">
+              <span className="hud-live-dot" aria-hidden /> Done. {finished.questions} question{finished.questions === 1 ? '' : 's'} asked,
+              {' '}{finished.worked} produced a result.
+            </p>
+            <div className="research-overview__actions">
+              <button type="button" className="hud-button hud-button--primary" onClick={() => onNavigate('results')}>
+                See the results
+                <ArrowRight size={14} aria-hidden />
+              </button>
+              <button type="button" className="hud-button" onClick={() => void runNow()}>
+                <RotateCw size={13} aria-hidden />Run another
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'failed' && (
+          <div className="research-overview__actions">
+            <button type="button" className="hud-button hud-button--primary" onClick={() => void runNow()}>
+              <RotateCw size={13} aria-hidden />Try again
+            </button>
+            <button type="button" className="hud-button" onClick={() => onNavigate('pipeline')}>
+              Research my own topic
+            </button>
+          </div>
+        )}
+
         {error && <p role="alert" className="research-overview__error">{error}</p>}
       </header>
 

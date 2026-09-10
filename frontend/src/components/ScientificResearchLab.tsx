@@ -5,6 +5,7 @@ import ResearchPublicationConsole from './ResearchPublicationConsole';
 import ResearchPipeline from './ResearchPipeline';
 import ResearchDiscoveries from './ResearchDiscoveries';
 import ResearchOverview from './ResearchOverview';
+import ResearchResults from './ResearchResults';
 
 const RESEARCH_API = 'http://127.0.0.1:8080/api/research';
 
@@ -92,7 +93,7 @@ interface CandidateExpansion {
   retrieved?: Paper[];
 }
 
-type View = 'overview' | 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
+type View = 'overview' | 'results' | 'pipeline' | 'discoveries' | 'signals' | 'corpus' | 'relations' | 'candidates' | 'verification' | 'publish';
 
 const VERDICT_META: Record<string, { label: string; tone: string }> = {
   agreed: { label: 'Agreed', tone: 'text-[#90f3da] border-[#90f3da]/45 bg-[#90f3da]/10' },
@@ -182,6 +183,12 @@ const VIEW_META: Record<Exclude<View, 'pipeline'>, { eyebrow: string; rail: stri
     rail: 'What this area does, what it has found so far, and where to go next.',
     heading: 'Research',
     blurb: 'Ask a question. The engine finds the data and runs the numbers.',
+  },
+  results: {
+    eyebrow: 'Results',
+    rail: 'Every question the engine answered with a real computation, ready to read or download.',
+    heading: 'What the engine found',
+    blurb: 'The computations that worked, with their reports.',
   },
   signals: {
     eyebrow: 'Findings',
@@ -783,6 +790,7 @@ const ScientificResearchLab = () => {
         <div className="research-tabs flex flex-wrap gap-2">
           {nav([
             { id: 'overview', label: 'Overview', count: '' },
+            { id: 'results', label: 'Results', count: '' },
             { id: 'signals', label: 'Findings', count: `${signals.length}` },
             { id: 'candidates', label: 'Candidates', count: `${candidates.length}` },
             { id: 'pipeline', label: 'Pipeline', count: '' },
@@ -827,6 +835,7 @@ const ScientificResearchLab = () => {
                   findingCount={signals.length}
                 />
               )}
+              {view === 'results' && <ResearchResults />}
               {view === 'signals' && renderSignals()}
               {view === 'candidates' && renderCandidates()}
               {view === 'discoveries' && <ResearchDiscoveries />}

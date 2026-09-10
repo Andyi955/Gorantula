@@ -16044,6 +16044,122 @@ body {
   .research-overview__link { transition: none; }
 }
 
+/* --- Research results ---------------------------------------------------
+   The "so what came out of it" page: one card per computed finding, with the
+   headline number first because that is the part a non-researcher wants. */
+
+.research-results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.research-results__head { max-width: 68ch; }
+.research-results__lede {
+  margin: 10px 0 0;
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--forensic-text-muted);
+}
+.research-results__error {
+  border-left: 2px solid var(--forensic-danger);
+  padding-left: 12px;
+  font-size: 13px;
+  color: #ffb0ab;
+}
+.research-results__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 40px 24px;
+  border: 1px dashed var(--hud-line);
+  border-radius: 2px;
+  text-align: center;
+  color: var(--forensic-text-muted);
+}
+.research-results__empty svg { color: var(--hud-accent); }
+.research-results__empty p { margin: 0; font-size: 13.5px; }
+.research-results__empty strong { color: var(--forensic-text); }
+
+.research-results__list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.research-results__card { padding: 22px 24px 20px; }
+.research-results__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--hud-text-faint);
+}
+.research-results__question {
+  margin: 14px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--forensic-text);
+}
+.research-results__headline {
+  margin: 12px 0 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--forensic-success);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--forensic-text);
+}
+.research-results__headline--pending {
+  border-left-color: var(--hud-line);
+  color: var(--hud-text-faint);
+}
+.research-results__narrative {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--forensic-text-muted);
+}
+.research-results__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.research-results__actions .hud-button { text-decoration: none; }
+
+/* --- Running state on the overview ------------------------------------- */
+
+.research-overview__progress { margin-top: 26px; }
+.research-overview__progress-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 15px;
+  color: var(--forensic-text);
+}
+.research-overview__progress-detail {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--forensic-text-muted);
+}
+.research-overview__hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--hud-text-faint);
+}
+.research-overview__progress .research-overview__actions { margin-top: 20px; }
+.research-overview__spin { color: var(--hud-accent); animation: hud-spin 1.6s linear infinite; }
+@keyframes hud-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .research-overview__spin { animation: none; }
+}
+
 /* --- Reduced motion ----------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
