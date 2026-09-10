@@ -283,10 +283,18 @@ export default function ResearchOverview({
           <div className="research-overview__progress">
             <p className="research-overview__progress-line" role="status" aria-live="polite">
               <span className="hud-live-dot" aria-hidden />{' '}
-              {finished.status === 'stopped' ? 'Stopped.' : 'Done.'} {finished.progress.done} question
-              {finished.progress.done === 1 ? '' : 's'} finished, {finished.progress.worked} produced a result.
+              {finished.status === 'stopped'
+                ? `Stopped. ${finished.progress.done} question${finished.progress.done === 1 ? '' : 's'} finished before you stopped it.`
+                : finished.progress.worked > 0
+                  ? `Done. ${finished.progress.done} question${finished.progress.done === 1 ? '' : 's'} finished, ${finished.progress.worked} produced a result.`
+                  : `Finished. ${finished.progress.done} question${finished.progress.done === 1 ? '' : 's'} asked — none found usable data this time.`}
             </p>
             {finished.stopReason && <p className="research-overview__progress-detail">{finished.stopReason}.</p>}
+            {finished.progress.worked === 0 && finished.status !== 'stopped' && (
+              <p className="research-overview__progress-detail">
+                That is a normal outcome, not a failure: the engine reports no usable data rather than inventing a result.
+              </p>
+            )}
             <div className="research-overview__actions">
               <button type="button" className="hud-button hud-button--primary" onClick={() => onNavigate('results')}>
                 See the results

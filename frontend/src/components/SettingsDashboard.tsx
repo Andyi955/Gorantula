@@ -40,7 +40,7 @@ const MODEL_FIELDS = [
     { id: 'GEMINI_MODEL', name: 'Gemini Default', default: 'gemini-3-flash-preview' },
     { id: 'OPENAI_MODEL', name: 'OpenAI Default', default: 'gpt-5.4-mini' },
     { id: 'ANTHROPIC_MODEL', name: 'Anthropic Default', default: 'claude-sonnet-4-6' },
-    { id: 'DEEPSEEK_MODEL', name: 'DeepSeek Default', default: 'deepseek-v4-flash' },
+    { id: 'DEEPSEEK_MODEL', name: 'DeepSeek Default', default: 'deepseek-chat' },
     { id: 'DASHSCOPE_MODEL', name: 'DashScope Default', default: 'qwen3.6-plus' },
     { id: 'ZHIPUAI_MODEL', name: 'Zhipu AI Default', default: 'glm-5-turbo' },
     { id: 'MOONSHOT_MODEL', name: 'Moonshot Default', default: 'kimi-k2.6' },
@@ -225,7 +225,7 @@ const SettingsDashboard = () => {
 
     const selectedSearchProvider = keys.DEFAULT_SEARCH_MODEL || 'deepseek';
     const selectedPersonaProvider = keys.DEFAULT_PERSONA_MODEL || 'deepseek';
-    const deepseekModel = keys.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+    const deepseekModel = keys.DEEPSEEK_MODEL || 'deepseek-chat';
     const credentialFieldsForActiveGroup = useMemo(() => {
         const group = CREDENTIAL_GROUPS.find(candidate => candidate.id === activeCredentialGroup) || CREDENTIAL_GROUPS[0];
         const fieldIds = new Set<string>(group.fields);

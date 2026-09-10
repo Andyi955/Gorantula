@@ -9,7 +9,7 @@ const (
 	DefaultGeminiModel    = "gemini-3-flash-preview"
 	DefaultOpenAIModel    = "gpt-5.4-mini"
 	DefaultAnthropicModel = "claude-sonnet-4-6"
-	DefaultDeepSeekModel  = "deepseek-v4-flash"
+	DefaultDeepSeekModel  = "deepseek-chat"
 	DefaultDashScopeModel = "qwen3.6-plus"
 	DefaultZhipuAIModel   = "glm-5-turbo"
 	DefaultMoonshotModel  = "kimi-k2.6"
